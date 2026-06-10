@@ -1,0 +1,37 @@
+{
+  "name": "create-mirin",
+  "version": "0.0.1-alpha.0",
+  "description": "Scaffold a new mirin desktop app: npm create mirin@latest",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/Netko-Labs/mirin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netko-Labs/mirin.git",
+    "directory": "packages/create-mirin"
+  },
+  "bugs": "https://github.com/Netko-Labs/mirin/issues",
+  "keywords": [
+    "mirin",
+    "create",
+    "scaffold",
+    "desktop",
+    "bun"
+  ],
+  "bin": {
+    "create-mirin": "./src/index.ts"
+  },
+  "exports": {
+    ".": "./src/scaffold.ts"
+  },
+  "files": [
+    "src",
+    "template"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,53 @@
+[package]
+name = "mirin-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# M1 smoke test: boots CEF and opens a mirin-owned NSWindow without Bun.
+# Temporary derisking binary; the real entry is the Bun host calling mirin_run via FFI.
+[[bin]]
+name = "m1-smoke"
+path = "src/bin/m1_smoke.rs"
+
+[features]
+default = ["sandbox"]
+sandbox = ["cef/sandbox"]
+
+[dependencies]
+cef.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit = { workspace = true, features = [
+    "NSApplication",
+    "NSEvent",
+    "NSResponder",
+    "NSUserInterfaceValidation",
+    "NSView",
+    "NSWindow",
+    "NSGraphics",
+    "NSMenu",
+    "NSMenuItem",
+    "NSCell",
+    "NSRunningApplication",
+    "objc2-core-foundation",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSButton",
+    "NSControl",
+    "NSImage",
+    "NSPasteboard",
+    "NSAlert",
+    "NSPanel",
+    "NSSavePanel",
+    "NSOpenPanel",
+    "NSColor",
+] }

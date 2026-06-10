@@ -1,0 +1,26 @@
+{
+  "name": "@mirin/darwin-arm64",
+  "version": "0.0.1-alpha.0",
+  "description": "Prebuilt mirin native binaries for macOS arm64 (libmirin_core + helper).",
+  "license": "MIT",
+  "homepage": "https://github.com/Netko-Labs/mirin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netko-Labs/mirin.git",
+    "directory": "packages/native-darwin-arm64"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "libmirin_core.dylib",
+    "mirin-helper",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

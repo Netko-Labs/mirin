@@ -1,0 +1,41 @@
+{
+  "name": "mirin",
+  "version": "0.0.1-alpha.0",
+  "description": "Build desktop apps with Bun, TypeScript, and Chromium (CEF). The Bun-native Electron alternative.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/Netko-Labs/mirin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netko-Labs/mirin.git",
+    "directory": "packages/mirin"
+  },
+  "bugs": "https://github.com/Netko-Labs/mirin/issues",
+  "keywords": [
+    "bun",
+    "desktop",
+    "cef",
+    "chromium",
+    "electron-alternative",
+    "macos",
+    "rpc",
+    "webview"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./config": "./src/config.ts",
+    "./rpc": "./src/rpc.ts",
+    "./client": "./src/client.ts",
+    "./host": "./src/host.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

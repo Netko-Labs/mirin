@@ -1,0 +1,23 @@
+{
+  "name": "__APP_NAME__",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "mirin dev",
+    "build": "mirin build"
+  },
+  "dependencies": {
+    "mirin": "__MIRIN_VERSION__",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@mirin/cli": "__MIRIN_VERSION__",
+    "vite": "npm:rolldown-vite@^7.3.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.0"
+  }
+}

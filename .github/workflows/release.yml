@@ -1,0 +1,67 @@
+name: Release
+
+# Tag a release to publish: `git tag v0.0.1-alpha.0 && git push --tags`.
+# Requires the repo secret NPM_TOKEN (an npm automation token with publish rights
+# to `mirin`, `create-mirin`, and the `@mirin` scope).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub Release + upload the CEF asset
+
+jobs:
+  release:
+    runs-on: macos-14 # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build tools
+        run: brew install ninja
+
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(bun -e 'console.log(require("./packages/mirin/package.json").version)')
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG != package version $PKG (run scripts/version.ts)"; exit 1
+          fi
+
+      - name: Fetch CEF
+        run: bun scripts/fetch-cef.ts
+
+      - name: Install deps
+        run: bun install
+
+      - name: Build native (release)
+        run: cargo build --release -p mirin-core -p mirin-helper
+
+      - name: Stage prebuilt native package
+        run: |
+          cp target/release/libmirin_core.dylib packages/native-darwin-arm64/
+          cp target/release/mirin-helper packages/native-darwin-arm64/
+
+      - name: Package CEF framework for the CLI to download
+        run: tar -czf cef-darwin-arm64.tar.gz -C vendor/cef "Chromium Embedded Framework.framework"
+
+      - name: GitHub Release (CEF asset)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: cef-darwin-arm64.tar.gz
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
+
+      - name: Publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          bun scripts/publish-all.ts

@@ -1,0 +1,12 @@
+[package]
+name = "mirin-helper"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["sandbox"]
+sandbox = ["cef/sandbox"]
+
+[dependencies]
+cef.workspace = true

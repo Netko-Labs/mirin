@@ -1,0 +1,89 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent; /* the window is translucent; only the panel paints */
+  font-family: -apple-system, system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+  padding: 16px;
+}
+
+.panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(28, 28, 38, 0.78);
+  backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  color: #f0f0f6;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.search .glyph {
+  font-size: 20px;
+  opacity: 0.6;
+}
+
+.search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font-size: 22px;
+}
+
+.search input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.results {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+
+.result {
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 15px;
+  cursor: default;
+}
+
+.result.active {
+  background: rgba(109, 109, 240, 0.9);
+}
+
+.empty {
+  padding: 20px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 14px;
+}
+
+.hint {
+  padding: 8px 16px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+}

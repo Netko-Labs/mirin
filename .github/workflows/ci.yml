@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: macos-14 # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build tools
+        run: brew install ninja
+
+      - name: Cache CEF
+        id: cef-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/cef
+          key: cef-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}
+
+      - name: Fetch CEF
+        if: steps.cef-cache.outputs.cache-hit != 'true'
+        run: bun scripts/fetch-cef.ts
+
+      - name: Install deps
+        run: bun install
+
+      - name: Build native
+        run: cargo build --workspace
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Rust format check
+        run: cargo fmt --all --check

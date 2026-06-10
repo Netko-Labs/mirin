@@ -1,0 +1,4 @@
+[env]
+# CEF binary distribution location (populated by scripts/fetch-cef.ts / export-cef-dir).
+# cef-dll-sys's build.rs reads this; without it, it re-downloads CEF per target dir.
+CEF_PATH = { value = "vendor/cef", force = false, relative = true }

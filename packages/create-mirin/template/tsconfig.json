@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "types": ["bun"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": ["mirin.config.ts", "main", "ui", "vite.config.ts"]
+}

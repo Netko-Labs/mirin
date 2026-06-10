@@ -1,0 +1,129 @@
+import { useEffect, useState } from "react";
+import { api } from "./api.ts";
+
+export function App() {
+  const log = useEventLog();
+
+  return (
+    <>
+      <div className="titlebar">mirin · Kitchen Sink</div>
+      <div className="content" onContextMenu={(e) => (e.preventDefault(), api.showContextMenu(null))}>
+        <h1>Native feature tour</h1>
+        <p className="sub">
+          Every button drives a native macOS capability from the Bun process over typed RPC.
+          Right-click anywhere for a native context menu. Custom title bar above is draggable.
+        </p>
+
+        <div className="grid">
+          <WindowSection />
+          <DialogSection />
+          <ClipboardSection />
+          <SystemSection />
+          <EventLog entries={log} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+function WindowSection() {
+  const [onTop, setOnTop] = useState(false);
+  return (
+    <section className="card">
+      <h2>Window controls</h2>
+      <div className="row">
+        <button onClick={() => api.minimize(null)}>Minimize</button>
+        <button onClick={() => api.toggleFullscreen(null)}>Fullscreen</button>
+        <button
+          onClick={() => {
+            const next = !onTop;
+            setOnTop(next);
+            api.setAlwaysOnTop(next);
+          }}
+        >
+          Always on top: {onTop ? "on" : "off"}
+        </button>
+        <button onClick={() => api.openSecondWindow(null)}>Open window</button>
+      </div>
+    </section>
+  );
+}
+
+function DialogSection() {
+  const [result, setResult] = useState("");
+  return (
+    <section className="card">
+      <h2>Dialogs</h2>
+      <div className="row">
+        <button onClick={async () => setResult(fmt(await api.openFile(null)))}>Open file…</button>
+        <button onClick={async () => setResult(fmt(await api.saveFile(null)))}>Save as…</button>
+        <button onClick={async () => setResult(`button ${(await api.messageBox(null)).button}`)}>
+          Message box
+        </button>
+      </div>
+      <div className="result">{result}</div>
+    </section>
+  );
+}
+
+function ClipboardSection() {
+  const [text, setText] = useState("mirin ❤ bun");
+  const [read, setRead] = useState("");
+  return (
+    <section className="card">
+      <h2>Clipboard</h2>
+      <div className="row">
+        <input value={text} onChange={(e) => setText(e.target.value)} />
+        <button onClick={() => api.clipboardWrite(text)}>Copy</button>
+        <button onClick={async () => setRead(await api.clipboardRead(null))}>Read</button>
+      </div>
+      <div className="result">{read && `clipboard: ${read}`}</div>
+    </section>
+  );
+}
+
+function SystemSection() {
+  return (
+    <section className="card">
+      <h2>Menus · Tray · Shortcuts</h2>
+      <div className="result" style={{ marginTop: 0 }}>
+        The app menu (File / Edit / View) and a 🍴 menu-bar tray are set up at launch. Try{" "}
+        <strong>File → Say Hello</strong> (⌘⇧H), the tray menu, or the global hotkey{" "}
+        <strong>⌘⇧K</strong> — each pushes an event into the log below.
+      </div>
+    </section>
+  );
+}
+
+function EventLog({ entries }: { entries: string[] }) {
+  return (
+    <section className="card log">
+      <h2>Events from the main process</h2>
+      <ul>
+        {entries.length === 0 && <li>waiting for menu / tray / shortcut events…</li>}
+        {entries.map((e, i) => (
+          <li key={i}>{e}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function useEventLog(): string[] {
+  const [entries, setEntries] = useState<string[]>([]);
+  useEffect(() => {
+    const add = (msg: string) => setEntries((prev) => [msg, ...prev].slice(0, 30));
+    const offs = [
+      api.menuAction.on(({ action }) => add(`menu: ${action}`)),
+      api.trayAction.on(({ action }) => add(`tray: ${action}`)),
+      api.shortcutFired.on(({ name }) => add(`shortcut: ${name}`)),
+    ];
+    return () => offs.forEach((off) => off());
+  }, []);
+  return entries;
+}
+
+function fmt(value: string | string[] | null): string {
+  if (value === null) return "cancelled";
+  return Array.isArray(value) ? value.join(", ") : value;
+}

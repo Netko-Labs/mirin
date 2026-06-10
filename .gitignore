@@ -1,0 +1,20 @@
+# reference clone, not part of mirin
+electrobun-reference/
+
+# deps & build output
+node_modules/
+target/
+dist/
+.build/
+vendor/cef/
+
+# OS
+.DS_Store
+cef-rs-reference/
+
+# per-app dev/build output
+**/.mirin/
+examples/*/build/
+
+# Bun compile temp artifacts
+*.bun-build
