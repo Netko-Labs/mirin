@@ -32,8 +32,10 @@ git push --follow-tags
 2. fetches CEF and builds the release native binaries,
 3. stages `libmirin_core.dylib` + `mirin-helper` into `@mirinjs/darwin-arm64`,
 4. uploads `cef-darwin-arm64.tar.gz` to the GitHub Release (the CLI downloads it),
-5. publishes `@mirinjs/darwin-arm64`, `create-mirinjs`, `mirinjs`, `@mirinjs/cli` to the registry
-   (`bun publish` rewrites `workspace:*` to the concrete version).
+5. publishes `@mirinjs/darwin-arm64`, `create-mirinjs`, `mirinjs`, `@mirinjs/cli` to the registry.
+   Each is packed with `bun pm pack` (which rewrites `workspace:*` to the concrete
+   version) and uploaded with `npm publish <tarball>` — `bun publish` doesn't read
+   `~/.npmrc` auth in CI (oven-sh/bun#24124).
 
 Pre-release tags (`-alpha`/`-beta`) are marked as GitHub pre-releases and should
 be published to the registry under the `alpha` dist-tag once the workflow is hardened.
