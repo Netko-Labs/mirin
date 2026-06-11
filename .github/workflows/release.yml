@@ -1,8 +1,10 @@
 name: Release
 
 # Tag a release to publish: `git tag v0.0.1-alpha.0 && git push --tags`.
-# Requires the repo secret NPM_TOKEN (an npm automation token with publish rights
-# to `mirinjs`, `create-mirinjs`, and the unscoped names).
+# Requires:
+#   - repo secret NPM_TOKEN (npm automation token with publish rights to
+#     `mirinjs`, `create-mirinjs`, and the `@mirinjs/*` scope), and
+#   - the Blacksmith GitHub app installed on the Netko-Labs org (org-only runner).
 on:
   push:
     tags: ["v*"]
@@ -12,7 +14,9 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-14 # Apple Silicon (arm64)
+    # Blacksmith Apple Silicon runner; release binaries built on macOS 15 for
+    # broad runtime compatibility (Liquid Glass still activates at runtime on 26+).
+    runs-on: blacksmith-6vcpu-macos-15
     steps:
       - uses: actions/checkout@v4
 

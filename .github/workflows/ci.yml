@@ -1,13 +1,23 @@
 name: CI
 
+# Runs on Blacksmith's Apple Silicon macOS runners. Requires the Blacksmith
+# GitHub app installed on the Netko-Labs org (app.blacksmith.sh); Blacksmith is
+# org-only. Building on macOS 15 is fine even though Liquid Glass needs macOS 26
+# at runtime — NSGlassEffectView is resolved dynamically, not linked.
+
 on:
   push:
     branches: [main]
   pull_request:
 
+# Newer pushes cancel in-flight runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
-    runs-on: macos-14 # Apple Silicon (arm64)
+    runs-on: blacksmith-6vcpu-macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -16,7 +26,10 @@ jobs:
           bun-version: latest
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
+      # Transparently backed by Blacksmith's colocated cache on their runners.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install build tools
@@ -38,6 +51,9 @@ jobs:
 
       - name: Build native
         run: cargo build --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Typecheck
         run: bun run typecheck

@@ -12,6 +12,10 @@ unscoped. The org and the publish token are already configured:
 - **`@mirinjs` org** — owned on the registry; the publish token has access to it.
 - **`NPM_TOKEN` secret** — an automation token with publish rights, set as the
   repo secret (`gh secret set NPM_TOKEN --repo Netko-Labs/mirin`).
+- **Blacksmith** — CI/release run on Blacksmith's Apple Silicon macOS runners
+  (`blacksmith-6vcpu-macos-15`). Install the Blacksmith GitHub app on the
+  **Netko-Labs org** at <https://app.blacksmith.sh> (Blacksmith is org-only). To
+  fall back to GitHub-hosted runners, change `runs-on` to `macos-14`.
 
 ## Cutting a release
 
