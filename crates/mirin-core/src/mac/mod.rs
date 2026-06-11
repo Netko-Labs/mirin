@@ -12,5 +12,6 @@ pub mod window;
 pub use app::{setup_app_delegate, setup_application};
 pub use window::{
     add_titlebar_drag, close_all_windows, close_window, create_window, detach_browser_view,
-    make_view_autoresizing, set_window_title, window_id_for_view, TitleBarStyle, WindowParams,
+    make_browser_view_transparent, make_view_autoresizing, set_window_title, window_id_for_view,
+    TitleBarStyle, WindowParams,
 };

@@ -27,6 +27,8 @@ thread_local! {
     static WINDOWS: RefCell<HashMap<u32, Retained<NSWindow>>> = RefCell::new(HashMap::new());
     /// Windows with a custom title bar that want a draggable top strip.
     static CUSTOM_TITLEBARS: RefCell<HashSet<u32>> = RefCell::new(HashSet::new());
+    /// Transparent windows whose embedded CEF view must be made non-opaque.
+    static TRANSPARENT_WINDOWS: RefCell<HashSet<u32>> = RefCell::new(HashSet::new());
 }
 
 /// Run `f` with the live NSWindow for `id`, if present. Main thread only.
@@ -252,8 +254,38 @@ pub fn create_window(
     if params.title_bar_style != TitleBarStyle::Default {
         CUSTOM_TITLEBARS.with(|s| s.borrow_mut().insert(params.id));
     }
+    if params.transparent {
+        TRANSPARENT_WINDOWS.with(|s| s.borrow_mut().insert(params.id));
+    }
     WINDOWS.with(|w| w.borrow_mut().insert(params.id, window));
     (content_ptr, bounds)
+}
+
+/// Make a transparent window's embedded CEF view composite without an opaque
+/// backing, so the page's transparent areas show through to the window (and
+/// desktop). Without this, a windowed CEF browser paints opaque white — the
+/// "white border" around a translucent panel. Call after the browser view
+/// exists. Main thread only.
+pub fn make_browser_view_transparent(id: u32, view: *mut std::ffi::c_void) {
+    if !TRANSPARENT_WINDOWS.with(|s| s.borrow().contains(&id)) {
+        return;
+    }
+    let view = view as *mut AnyObject;
+    let Some(view) = (unsafe { view.as_ref() }) else {
+        return;
+    };
+    unsafe {
+        let _: () = msg_send![view, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![view, layer];
+        if !layer.is_null() {
+            let _: () = msg_send![layer, setOpaque: false];
+            // Clear the layer's backing color (a clear CGColor) so nothing opaque
+            // is painted behind the page's transparent areas.
+            let clear = NSColor::clearColor();
+            let cg = clear.CGColor();
+            let _: () = msg_send![layer, setBackgroundColor: &*cg];
+        }
+    }
 }
 
 define_class!(

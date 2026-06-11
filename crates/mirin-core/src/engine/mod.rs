@@ -352,12 +352,19 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
         dict.set_int(Some(&CefString::from("windowId")), id as i32);
     }
 
+    // Transparent windows: ask CEF for a transparent backing color so the page's
+    // own background (or lack of one) shows through.
+    let browser_settings = BrowserSettings {
+        background_color: if opts.transparent { 0 } else { 0xFF_FF_FF_FF },
+        ..Default::default()
+    };
+
     let url = CefString::from(opts.url.as_str());
     browser_host_create_browser(
         Some(&window_info),
         client.as_mut(),
         Some(&url),
-        Some(&BrowserSettings::default()),
+        Some(&browser_settings),
         extra_info.as_mut(),
         None,
     );
@@ -482,6 +489,7 @@ impl MirinHandler {
             if let Some(window_id) = mac::window_id_for_view(view) {
                 self.window_ids.insert(browser.identifier(), window_id);
                 mac::add_titlebar_drag(window_id);
+                mac::make_browser_view_transparent(window_id, view);
                 emit_event(&format!(r#"{{"type":"window.created","id":{window_id}}}"#));
             }
         }
