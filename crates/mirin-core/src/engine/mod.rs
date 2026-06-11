@@ -489,7 +489,6 @@ impl MirinHandler {
             if let Some(window_id) = mac::window_id_for_view(view) {
                 self.window_ids.insert(browser.identifier(), window_id);
                 mac::add_titlebar_drag(window_id);
-                mac::make_browser_view_transparent(window_id, view);
                 emit_event(&format!(r#"{{"type":"window.created","id":{window_id}}}"#));
             }
         }

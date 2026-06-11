@@ -50,5 +50,4 @@ objc2-app-kit = { workspace = true, features = [
     "NSSavePanel",
     "NSOpenPanel",
     "NSColor",
-    "objc2-core-graphics",
 ] }
