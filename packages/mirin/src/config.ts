@@ -5,6 +5,37 @@
  * The CLI and the host bootstrap both read it without running app code.
  */
 
+/**
+ * A native macOS background material rendered behind the web UI. macOS only.
+ *
+ * - `"liquidGlass"` — Apple's Liquid Glass (NSGlassEffectView, macOS 26+);
+ *   automatically falls back to a frosted vibrancy material on older systems.
+ * - the rest map to NSVisualEffectView vibrancy materials.
+ */
+export type WindowMaterial =
+  | "liquidGlass"
+  | "sidebar"
+  | "menu"
+  | "popover"
+  | "hud"
+  | "fullScreenUI"
+  | "underWindowBackground"
+  | "contentBackground"
+  | "windowBackground"
+  | "titlebar"
+  | "selection"
+  | "headerView"
+  | "sheet"
+  | "toolTip";
+
+export interface WindowMaterialOptions {
+  type: WindowMaterial;
+  /** Liquid Glass tint as a CSS hex color (e.g. "#3b82f6" or "#3b82f680"). */
+  tint?: string;
+  /** Corner radius in points (defaults to the panel radius, 14). */
+  cornerRadius?: number;
+}
+
 export interface WindowConfig {
   /** Page to load: `app://` (bundled assets) or http(s). */
   url: string;
@@ -19,6 +50,12 @@ export interface WindowConfig {
   titleBarStyle?: "hidden" | "hiddenInset";
   /** Non-opaque window (for transparent/blurred UIs). */
   transparent?: boolean;
+  /**
+   * Native background material behind the web UI (macOS). Implies `transparent`,
+   * so the page should use a translucent or clear background. Pass a material
+   * name or an object with `tint`/`cornerRadius`.
+   */
+  material?: WindowMaterial | WindowMaterialOptions;
   /** Float above normal windows. */
   alwaysOnTop?: boolean;
   /** Drag the window from anywhere in its background. */

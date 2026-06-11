@@ -6,9 +6,10 @@ html,
 body {
   margin: 0;
   height: 100%;
-  /* Solid panel; the window's rounded corners are clipped natively, and the
-     corner notches show the desktop. (Full see-through/blur needs OSR.) */
-  background: #16161f;
+  /* Fully clear: Apple's Liquid Glass (NSGlassEffectView) renders natively
+     behind the web UI via OSR, so the page itself draws no background — only
+     content. The glass provides the surface, blur, and rounded corners. */
+  background: transparent;
   font-family: -apple-system, system-ui, sans-serif;
   overflow: hidden;
 }
@@ -21,8 +22,8 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #16161f;
-  color: #f0f0f6;
+  background: transparent;
+  color: #f5f5fa;
   overflow: hidden;
 }
 

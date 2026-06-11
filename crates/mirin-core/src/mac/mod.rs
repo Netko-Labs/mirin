@@ -5,6 +5,7 @@ pub mod app;
 pub mod clipboard;
 pub mod dialog;
 pub mod menu;
+pub mod osr;
 pub mod shortcut;
 pub mod tray;
 pub mod window;

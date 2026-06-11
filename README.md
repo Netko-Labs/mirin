@@ -58,8 +58,10 @@ Built: native core + helper (Rust/CEF), the Bun host/Worker handoff, the FFI
 command surface, manifest-driven windows, preload injection, typed RPC over a
 localhost WebSocket, the `app://` scheme handler, `mirin dev` / `mirin build`,
 and the macOS app-shell tier — **native menus + context menus, a menu-bar
-tray, dialogs, clipboard, global shortcuts, window controls, and custom /
-frameless title bars** (`docs/macos-mvp.md`, M0–M6 done).
+tray, dialogs, clipboard, global shortcuts, window controls, custom /
+frameless title bars, and genuinely transparent windows backed by native
+materials (Apple Liquid Glass + vibrancy) via off-screen rendering**
+(`docs/macos-mvp.md`, M0–M6 done).
 
 ### Examples
 
@@ -67,8 +69,10 @@ frameless title bars** (`docs/macos-mvp.md`, M0–M6 done).
 - `examples/kitchen-sink` — every native feature in one app (menus, tray,
   dialogs, clipboard, ⌘⇧K global shortcut, window controls, draggable custom
   title bar).
-- `examples/spotlight` — a ⌘⇧J-summoned frameless translucent command palette
-  (type-to-filter over RPC, Esc to dismiss, stays resident).
+- `examples/spotlight` — a ⌘⇧J-summoned frameless command palette on Apple
+  **Liquid Glass** (type-to-filter over RPC, Esc to dismiss, stays resident).
+- `examples/liquid-glass` — live picker that swaps native background materials
+  (Liquid Glass + vibrancy) on a transparent window.
 
 Not yet built (toward Electron/electrobun parity): `mirin init`, notarization +
 dmg packaging, multi-webview windows, the auto-updater, and the Windows/Linux

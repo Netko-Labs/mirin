@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["packages/*", "examples/*"],
   "scripts": {
-    "typecheck": "tsc --noEmit -p packages/mirin && tsc --noEmit -p packages/create-mirin && tsc --noEmit -p packages/mirin-cli && tsc --noEmit -p examples/hello-react && tsc --noEmit -p examples/kitchen-sink && tsc --noEmit -p examples/spotlight",
+    "typecheck": "tsc --noEmit -p packages/mirin && tsc --noEmit -p packages/create-mirin && tsc --noEmit -p packages/mirin-cli && tsc --noEmit -p examples/hello-react && tsc --noEmit -p examples/kitchen-sink && tsc --noEmit -p examples/spotlight && tsc --noEmit -p examples/liquid-glass",
     "check:rust": "cargo check --workspace",
     "fetch-cef": "bun scripts/fetch-cef.ts",
     "dev-bundle": "bun scripts/dev-bundle.ts"

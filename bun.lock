@@ -40,6 +40,21 @@
         "vite": "npm:rolldown-vite@^7.3.1",
       },
     },
+    "examples/liquid-glass": {
+      "name": "liquid-glass",
+      "dependencies": {
+        "mirinjs": "workspace:*",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+      "devDependencies": {
+        "@mirinjs/cli": "workspace:*",
+        "@types/react": "^19.2.0",
+        "@types/react-dom": "^19.2.0",
+        "@vitejs/plugin-react": "^6.0.2",
+        "vite": "npm:rolldown-vite@^7.3.1",
+      },
+    },
     "examples/spotlight": {
       "name": "spotlight",
       "dependencies": {
@@ -180,6 +195,8 @@
     "lightningcss-win32-arm64-msvc": ["lightningcss-win32-arm64-msvc@1.32.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-8SbC8BR40pS6baCM8sbtYDSwEVQd4JlFTOlaD3gWGHfThTcABnNDBda6eTZeqbofalIJhFx0qKzgHJmcPTnGdw=="],
 
     "lightningcss-win32-x64-msvc": ["lightningcss-win32-x64-msvc@1.32.0", "", { "os": "win32", "cpu": "x64" }, "sha512-Amq9B/SoZYdDi1kFrojnoqPLxYhQ4Wo5XiL8EVJrVsB8ARoC1PWW6VGtT0WKCemjy8aC+louJnjS7U18x3b06Q=="],
+
+    "liquid-glass": ["liquid-glass@workspace:examples/liquid-glass"],
 
     "mirinjs": ["mirinjs@workspace:packages/mirin"],
 

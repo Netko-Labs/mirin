@@ -22,6 +22,7 @@ const symbols = {
   mirin_window_load_url: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_window_set_title: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_window_control: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
+  mirin_window_set_material: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_app_quit: { args: [], returns: FFIType.void },
   mirin_set_app_menu: { args: [FFIType.ptr], returns: FFIType.void },
   mirin_popup_menu: { args: [FFIType.ptr], returns: FFIType.void },
@@ -99,6 +100,11 @@ export class Core {
   windowControl(id: number, verb: string): void {
     const buf = nullTerminated(verb);
     this.#lib.symbols.mirin_window_control(id, ptr(buf));
+  }
+
+  windowSetMaterial(id: number, specJson: string): void {
+    const buf = nullTerminated(specJson);
+    this.#lib.symbols.mirin_window_set_material(id, ptr(buf));
   }
 
   quit(): void {

@@ -80,6 +80,13 @@ pub extern "C" fn mirin_window_control(id: u32, verb: *const c_char) {
     engine::window_control(id, cstr(verb).to_string());
 }
 
+/// Change a window's native background material live (OSR windows only). JSON is
+/// `{ type, tint?, cornerRadius? }`, or `null`/`{"type":"none"}` to remove it.
+#[no_mangle]
+pub extern "C" fn mirin_window_set_material(id: u32, spec_json: *const c_char) {
+    engine::set_material(id, cstr(spec_json).to_string());
+}
+
 // ---- menus ----
 
 #[no_mangle]

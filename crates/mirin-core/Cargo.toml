@@ -50,4 +50,13 @@ objc2-app-kit = { workspace = true, features = [
     "NSSavePanel",
     "NSOpenPanel",
     "NSColor",
+    "NSScreen",
+    "NSVisualEffectView",
+    "NSGlassEffectView",
+] }
+objc2-core-foundation = { workspace = true, features = ["CFData"] }
+objc2-core-graphics = { workspace = true, features = [
+    "CGImage",
+    "CGColorSpace",
+    "CGDataProvider",
 ] }

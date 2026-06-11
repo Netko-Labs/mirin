@@ -22,6 +22,7 @@ use crate::mac;
 pub mod clipboard;
 pub mod dialog;
 pub mod menu;
+pub mod osr;
 pub mod shortcut;
 pub mod tray;
 
@@ -66,6 +67,9 @@ pub struct WindowOpts {
     pub title_bar_style: Option<String>,
     #[serde(default)]
     pub transparent: bool,
+    /// Native background material behind the web UI (implies transparent/OSR).
+    #[serde(default)]
+    pub material: Option<WindowMaterial>,
     #[serde(default)]
     pub always_on_top: bool,
     #[serde(default)]
@@ -73,6 +77,22 @@ pub struct WindowOpts {
     /// Show the window at creation (false creates it hidden, e.g. a Spotlight panel).
     #[serde(default = "default_true")]
     pub visible: bool,
+}
+
+/// A window's native background material (the `material` config option,
+/// normalized to object form by the TS runtime).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowMaterial {
+    /// "liquidGlass" | a vibrancy name (sidebar/menu/popover/hud/…).
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    /// Optional Liquid Glass tint as a CSS hex color (#RGB/#RRGGBB/#RRGGBBAA).
+    #[serde(default)]
+    pub tint: Option<String>,
+    /// Optional corner radius in points.
+    #[serde(default)]
+    pub corner_radius: Option<f64>,
 }
 
 impl WindowOpts {
@@ -84,6 +104,7 @@ impl WindowOpts {
             url,
             title_bar_style: None,
             transparent: false,
+            material: None,
             always_on_top: false,
             movable_by_background: false,
             visible: true,
@@ -203,6 +224,9 @@ pub fn run_core(config: CoreConfig) -> i32 {
     let mut settings = Settings {
         no_sandbox: !cfg!(feature = "sandbox") as _,
         root_cache_path: CefString::from(cache_path.as_str()),
+        // Permit windowless (OSR) browsers, which transparent windows use; this
+        // doesn't change windowed browsers.
+        windowless_rendering_enabled: 1,
         ..Default::default()
     };
     if let Some(path) = subprocess_path {
@@ -308,6 +332,49 @@ pub fn window_control(id: u32, verb: String) {
     post_task(ThreadId::UI, Some(&mut task));
 }
 
+/// Change a window's native background material live. `spec_json` is the same
+/// normalized `{ type, tint?, cornerRadius? }` shape as the create option, or
+/// `null`/`{}`/`{"type":"none"}` to remove the material. Only affects OSR
+/// (transparent) windows.
+pub fn set_material(id: u32, spec_json: String) {
+    let material: Option<WindowMaterial> = serde_json::from_str(&spec_json).ok().flatten();
+    let mut task = SetMaterialTask::new(id, RefCell::new(Some(material)));
+    post_task(ThreadId::UI, Some(&mut task));
+}
+
+/// Convert a parsed config material into the AppKit layer's option struct.
+#[cfg(target_os = "macos")]
+fn material_opts(m: &WindowMaterial) -> mac::osr::MaterialOpts {
+    mac::osr::MaterialOpts {
+        kind: m.kind.clone(),
+        tint: m.tint.as_deref().and_then(parse_hex_rgba),
+        corner_radius: m.corner_radius.unwrap_or(14.0),
+    }
+}
+
+/// Parse a CSS hex color (#RGB, #RRGGBB, #RRGGBBAA) into sRGB rgba in 0..1.
+#[cfg(target_os = "macos")]
+fn parse_hex_rgba(hex: &str) -> Option<[f64; 4]> {
+    let h = hex.strip_prefix('#').unwrap_or(hex);
+    let byte = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+    let (r, g, b, a) = match h.len() {
+        3 => {
+            let d = |c: char| c.to_digit(16).map(|v| (v * 17) as u8);
+            let mut it = h.chars();
+            (d(it.next()?)?, d(it.next()?)?, d(it.next()?)?, 255)
+        }
+        6 => (byte(0)?, byte(2)?, byte(4)?, 255),
+        8 => (byte(0)?, byte(2)?, byte(4)?, byte(6)?),
+        _ => return None,
+    };
+    Some([
+        r as f64 / 255.0,
+        g as f64 / 255.0,
+        b as f64 / 255.0,
+        a as f64 / 255.0,
+    ])
+}
+
 /// Build the per-window NSWindow + embedded CEF browser. UI thread only.
 #[cfg(target_os = "macos")]
 fn create_window_on_ui(id: u32, opts: WindowOpts) {
@@ -317,13 +384,17 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
         Some("hiddenInset") => mac::TitleBarStyle::HiddenInset,
         _ => mac::TitleBarStyle::Default,
     };
+    // A material implies a transparent (windowless/OSR) window: the native glass
+    // or vibrancy view must show through the web content.
+    let material = opts.material.as_ref().map(material_opts);
+    let transparent = opts.transparent || material.is_some();
     let params = mac::WindowParams {
         id,
         title: &opts.title,
         width: opts.width,
         height: opts.height,
         title_bar_style,
-        transparent: opts.transparent,
+        transparent,
         always_on_top: opts.always_on_top,
         movable_by_background: opts.movable_by_background,
         show: opts.visible,
@@ -332,11 +403,23 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
 
     let mut client = CLIENT.with(|c| c.borrow().clone());
 
-    // Alloy runtime: CEF's embedding-friendly style for a browser parented into
-    // an app-owned window. extra_info carries the RPC endpoint + window id to the
-    // renderer (mirin-helper injects window.mirin from it).
-    let mut window_info = WindowInfo::default().set_as_child(content_view, &bounds);
-    window_info.runtime_style = RuntimeStyle::ALLOY;
+    // Transparent windows render windowless (OSR): a windowed CEF browser can't
+    // be see-through, so CEF paints into a buffer we draw onto a transparent
+    // NSView (mac::osr), optionally behind a native material. Opaque windows
+    // embed the browser as a child view.
+    //
+    // Alloy runtime in both cases (embedding-friendly). extra_info carries the
+    // RPC endpoint + window id to the renderer (mirin-helper injects
+    // window.mirin from it).
+    let window_info = if transparent {
+        osr::mark_window(id);
+        let osr_view = mac::osr::install(mtm, id, opts.width, opts.height, material);
+        WindowInfo::default().set_as_windowless(osr_view)
+    } else {
+        let mut info = WindowInfo::default().set_as_child(content_view, &bounds);
+        info.runtime_style = RuntimeStyle::ALLOY;
+        info
+    };
 
     let mut extra_info = dictionary_value_create();
     if let Some(dict) = extra_info.as_mut() {
@@ -355,7 +438,7 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
     // Transparent windows: ask CEF for a transparent backing color so the page's
     // own background (or lack of one) shows through.
     let browser_settings = BrowserSettings {
-        background_color: if opts.transparent { 0 } else { 0xFF_FF_FF_FF },
+        background_color: if transparent { 0 } else { 0xFF_FF_FF_FF },
         ..Default::default()
     };
 
@@ -485,10 +568,17 @@ impl MirinHandler {
         #[cfg(target_os = "macos")]
         if let Some(host) = browser.host() {
             let view = host.window_handle();
-            unsafe { mac::make_view_autoresizing(view) };
             if let Some(window_id) = mac::window_id_for_view(view) {
                 self.window_ids.insert(browser.identifier(), window_id);
-                mac::add_titlebar_drag(window_id);
+                if osr::is_osr_window(window_id) {
+                    // Windowless: no embedded view to size; register for paint +
+                    // input, then prime CEF with the initial view size.
+                    osr::register(window_id, browser.clone());
+                    host.was_resized();
+                } else {
+                    unsafe { mac::make_view_autoresizing(view) };
+                    mac::add_titlebar_drag(window_id);
+                }
                 emit_event(&format!(r#"{{"type":"window.created","id":{window_id}}}"#));
             }
         }
@@ -503,10 +593,19 @@ impl MirinHandler {
         }
         // Detach CEF's view from our content view: with the host view torn down,
         // returning false makes CEF destroy the browser and fire on_before_close.
+        // Windowless (OSR) browsers have no embedded child view, so they close
+        // straightforwardly and must NOT have their content view removed.
         #[cfg(target_os = "macos")]
         if let Some(browser) = browser {
-            if let Some(host) = browser.host() {
-                unsafe { mac::detach_browser_view(host.window_handle()) };
+            let is_osr = self
+                .window_ids
+                .get(&browser.identifier())
+                .map(|wid| osr::is_osr_window(*wid))
+                .unwrap_or(false);
+            if !is_osr {
+                if let Some(host) = browser.host() {
+                    unsafe { mac::detach_browser_view(host.window_handle()) };
+                }
             }
         }
         false
@@ -517,6 +616,7 @@ impl MirinHandler {
         let mut browser = browser.cloned().expect("browser is None");
         let ident = browser.identifier();
 
+        osr::unregister(ident);
         if let Some(window_id) = self.window_ids.remove(&ident) {
             emit_event(&format!(r#"{{"type":"window.closed","id":{window_id}}}"#));
             #[cfg(target_os = "macos")]
@@ -573,6 +673,11 @@ wrap_client! {
         }
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(MirinDisplayHandler::new())
+        }
+        /// CEF only invokes this for windowless (OSR) browsers; windowed ones
+        /// ignore it. Transparent windows are the OSR case.
+        fn render_handler(&self) -> Option<RenderHandler> {
+            Some(osr::render_handler())
         }
     }
 }
@@ -709,6 +814,23 @@ wrap_task! {
             #[cfg(target_os = "macos")]
             if let Some(verb) = self.verb.borrow_mut().take() {
                 mac::window::control(self.id, &verb);
+            }
+        }
+    }
+}
+
+wrap_task! {
+    struct SetMaterialTask {
+        id: u32,
+        material: RefCell<Option<Option<WindowMaterial>>>,
+    }
+    impl Task {
+        fn execute(&self) {
+            debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            #[cfg(target_os = "macos")]
+            if let Some(material) = self.material.borrow_mut().take() {
+                let mtm = objc2::MainThreadMarker::new().expect("UI thread");
+                mac::osr::set_material(mtm, self.id, material.as_ref().map(material_opts));
             }
         }
     }

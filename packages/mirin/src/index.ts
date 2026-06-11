@@ -24,11 +24,24 @@ export { clipboard } from "./clipboard.ts";
 export { globalShortcut } from "./shortcut.ts";
 export { NotAttachedError } from "./runtime.ts";
 
-export type { WindowEvents, AppEvents, WindowHandle, WindowOpenOptions, ServeHandle, BroadcastEmitters } from "./app.ts";
+export type {
+  WindowEvents,
+  WindowMaterialInfo,
+  AppEvents,
+  WindowHandle,
+  WindowOpenOptions,
+  ServeHandle,
+  BroadcastEmitters,
+} from "./app.ts";
 export type { MenuItemTemplate, MenuRole } from "./menu.ts";
 export type { TrayOptions } from "./tray.ts";
 export type { OpenDialogOptions, SaveDialogOptions, MessageDialogOptions } from "./dialog.ts";
-export type { MirinConfig, WindowConfig } from "./config.ts";
+export type {
+  MirinConfig,
+  WindowConfig,
+  WindowMaterial,
+  WindowMaterialOptions,
+} from "./config.ts";
 
 wireAppEvents();
 boot();

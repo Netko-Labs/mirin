@@ -78,6 +78,30 @@ Principles:
 - Events come as `.on(type, fn)` **and** `.events(type)` async iterators, both fully typed.
 - Dynamic windows are handle-first; `name` is an optional registration for later lookup. *(Defaulted decision — veto if you want handle-only.)*
 
+## 2a. Transparent windows & native materials (macOS)
+
+A window can be genuinely see-through and sit on a native macOS material — Apple's **Liquid Glass** or classic **vibrancy** — rendered *behind* the web UI:
+
+```ts
+windows: {
+  panel: {
+    url: "app://ui/index.html",
+    titleBarStyle: "hidden",
+    material: { type: "liquidGlass", cornerRadius: 18, tint: "#3b82f6aa" },
+    // material implies a transparent window; the page uses a clear/translucent
+    // background so the native material shows through.
+  },
+}
+```
+
+- `material` is either a name (`"liquidGlass"`, `"sidebar"`, `"hud"`, `"popover"`, `"menu"`, `"underWindowBackground"`, `"fullScreenUI"`, …) or `{ type, tint?, cornerRadius? }`. `tint` (Liquid Glass only) is a CSS hex color.
+- `material` implies `transparent: true`. Transparent windows render **windowless (OSR)** — a windowed CEF browser can't be see-through — so the page should draw no opaque background.
+- `"liquidGlass"` needs macOS 26+ (`NSGlassEffectView`); on older systems it falls back to a frosted vibrancy material automatically.
+- Swap it live: `await win.setMaterial("popover")` / `await win.setMaterial({ type: "liquidGlass", tint: "#ec4899aa" })` / `await win.setMaterial(null)` to remove it.
+- `transparent: true` with no `material` gives a plain see-through window with rounded corners.
+
+See `examples/spotlight` (Liquid Glass command palette) and `examples/liquid-glass` (live material picker).
+
 ## 3. Typed RPC
 
 One router definition; both sides infer from it. No channel strings, no `any`. The router is **global** — any webview can call any procedure — and every handler receives a `ctx` identifying the caller. Per-window scoping can layer on post-MVP.

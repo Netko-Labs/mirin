@@ -5,7 +5,17 @@
 
 import { runtime, onNativeEvent, resolveUrl, type NativeEvent } from "./runtime.ts";
 import type { Router, EventProc } from "./rpc.ts";
-import type { WindowConfig } from "./config.ts";
+import type { WindowConfig, WindowMaterial, WindowMaterialOptions } from "./config.ts";
+
+/** Which native backend a window's `material` resolved to. */
+export type WindowMaterialInfo = {
+  /** The material that was requested. */
+  requested: string;
+  /** What actually rendered: real Liquid Glass, a vibrancy material, or none. */
+  backend: "liquidGlass" | "vibrancy" | "none";
+  /** Whether Apple's Liquid Glass (NSGlassEffectView, macOS 26+) is available. */
+  liquidGlassAvailable: boolean;
+};
 
 export type WindowEvents = {
   focus: void;
@@ -13,6 +23,8 @@ export type WindowEvents = {
   moved: void;
   resized: void;
   closed: void;
+  /** Fired when a native background material is applied (see setMaterial). */
+  material: WindowMaterialInfo;
 };
 
 export type AppEvents = {
@@ -107,6 +119,14 @@ export class WindowHandle extends Emitter<WindowEvents> {
     this.#control(on ? "alwaysOnTop:on" : "alwaysOnTop:off");
   }
 
+  /**
+   * Change the window's native background material live (macOS, transparent
+   * windows only). Pass `null` to remove it. See {@link WindowMaterial}.
+   */
+  async setMaterial(material: WindowMaterial | WindowMaterialOptions | null): Promise<void> {
+    runtime().core.windowSetMaterial(this.id, JSON.stringify(normalizeMaterial(material)));
+  }
+
   #control(verb: string): void {
     runtime().core.windowControl(this.id, verb);
   }
@@ -171,7 +191,11 @@ class Windows {
   async open(options: WindowOpenOptions | string): Promise<WindowHandle> {
     const opts = typeof options === "string" ? manifestWindow(options) : options;
     const id = runtime().core.windowCreate(
-      JSON.stringify({ ...opts, url: resolveUrl(opts.url) }),
+      JSON.stringify({
+        ...opts,
+        url: resolveUrl(opts.url),
+        material: normalizeMaterial(opts.material),
+      }),
     );
     const handle = new WindowHandle(id, opts.name);
     this.#register(handle);
@@ -201,6 +225,14 @@ function manifestWindow(name: string): WindowOpenOptions {
   const found = runtime().manifestWindows.find((w) => w.name === name);
   if (!found) throw new Error(`no window "${name}" declared in the manifest`);
   return found;
+}
+
+/** Normalize the `material` option (name or object, or null) to native form. */
+function normalizeMaterial(
+  material: WindowMaterial | WindowMaterialOptions | null | undefined,
+): WindowMaterialOptions | null {
+  if (!material) return null;
+  return typeof material === "string" ? { type: material } : material;
 }
 
 class MirinApp extends Emitter<AppEvents> {
@@ -248,6 +280,16 @@ export function wireAppEvents(): void {
   });
 
   onNativeEvent("window.all-closed", () => app._emit("window-all-closed", undefined));
+
+  onNativeEvent("window.material", (event: NativeEvent) => {
+    const id = event.id as number | undefined;
+    if (id == null) return;
+    app.windows._byId(id)?._emit("material", {
+      requested: String(event.requested ?? ""),
+      backend: (event.backend as WindowMaterialInfo["backend"]) ?? "none",
+      liquidGlassAvailable: Boolean(event.liquidGlassAvailable),
+    });
+  });
 
   for (const kind of WINDOW_EVENTS) {
     onNativeEvent(`window.${kind}`, (event: NativeEvent) => {
