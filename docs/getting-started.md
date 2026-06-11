@@ -13,14 +13,14 @@ No Rust toolchain is needed to *use* mirin; the native core ships prebuilt.
 ## Create an app
 
 ```bash
-npm create mirin@latest my-app
+npm create mirinjs@latest my-app
 cd my-app
 bun install
 bun run dev
 ```
 
 The first `dev`/`build` downloads the Chromium Embedded Framework once
-(~hundreds of MB) into `~/.mirin/cef/`.
+(~hundreds of MB) into `~/.mirinjs/cef/`.
 
 You get a native window rendering React with Vite HMR and typed RPC between the
 Bun main process and the webview.
@@ -51,10 +51,10 @@ produce a distributable, notarizable app.
 ## Native features
 
 Native capabilities run in the **main process** and are invoked from the UI via
-RPC. Available from `mirin`:
+RPC. Available from `mirinjs`:
 
 ```ts
-import { app, menu, Tray, dialog, clipboard, globalShortcut } from "mirin";
+import { app, menu, Tray, dialog, clipboard, globalShortcut } from "mirinjs";
 ```
 
 - `menu.setApplicationMenu(template)` / `menu.popup(template)` — roles + typed click handlers

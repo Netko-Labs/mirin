@@ -1,5 +1,5 @@
 {
-  "name": "@mirin/darwin-arm64",
+  "name": "mirinjs-darwin-arm64",
   "version": "0.0.1-alpha.0",
   "description": "Prebuilt mirin native binaries for macOS arm64 (libmirin_core + helper).",
   "license": "MIT",

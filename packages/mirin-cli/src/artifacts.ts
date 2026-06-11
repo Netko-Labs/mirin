@@ -4,10 +4,10 @@
  *
  *  - **in-repo** (this CLI is running inside the mirin monorepo): build the Rust
  *    crates from source and use `vendor/cef`. For contributors.
- *  - **installed** (a consumer ran `npm i -D @mirin/cli`): use the prebuilt
- *    binaries from the per-platform `@mirin/<os>-<arch>` package, the `host`
+ *  - **installed** (a consumer ran `npm i -D mirinjs-cli`): use the prebuilt
+ *    binaries from the per-platform `mirinjs-<os>-<arch>` package, the `host`
  *    entry from the `mirin` package, and a CEF framework downloaded once from
- *    the matching GitHub Release into `~/.mirin/cef/<version>`. No Rust needed.
+ *    the matching GitHub Release into `~/.mirinjs/cef/<version>`. No Rust needed.
  *
  * Alpha supports macOS arm64 only.
  */
@@ -60,7 +60,7 @@ export async function resolveArtifacts(opts: { release: boolean }): Promise<Arti
   return {
     coreDylib: join(nativeDir, "libmirin_core.dylib"),
     helperBin: join(nativeDir, "mirin-helper"),
-    hostEntry: resolvePackageFile("mirin/host"),
+    hostEntry: resolvePackageFile("mirinjs/host"),
     cefPath,
   };
 }
@@ -78,13 +78,13 @@ function platformTag(): string {
 }
 
 function resolveNativeDir(): string {
-  const pkg = `@mirin/${platformTag()}`;
+  const pkg = `mirinjs-${platformTag()}`;
   try {
     return dirname(resolvePackageFile(`${pkg}/package.json`));
   } catch {
     throw new Error(
       `mirin: prebuilt native package "${pkg}" is not installed. Run \`npm install\` ` +
-        `(it is an optional dependency of @mirin/cli for your platform).`,
+        `(it is an optional dependency of mirinjs-cli for your platform).`,
     );
   }
 }
@@ -110,7 +110,7 @@ async function ensureCef(): Promise<string> {
   }
 
   const version = cliVersion();
-  const cacheDir = join(homedir(), ".mirin", "cef", `${version}-${platformTag()}`);
+  const cacheDir = join(homedir(), ".mirinjs", "cef", `${version}-${platformTag()}`);
   if (existsSync(join(cacheDir, "Chromium Embedded Framework.framework"))) return cacheDir;
 
   mkdirSync(cacheDir, { recursive: true });

@@ -1,4 +1,4 @@
-import { app, globalShortcut } from "mirin";
+import { app, globalShortcut } from "mirinjs";
 import { router } from "./rpc.ts";
 
 app.serve(router);

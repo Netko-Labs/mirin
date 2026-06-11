@@ -1,4 +1,4 @@
-import { app } from "mirin";
+import { app } from "mirinjs";
 import { router } from "./rpc.ts";
 
 const mirin = app.serve(router);

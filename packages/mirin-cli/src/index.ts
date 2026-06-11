@@ -6,7 +6,7 @@
 import { resolve } from "node:path";
 import { dev } from "./dev.ts";
 import { build } from "./build.ts";
-import { scaffold } from "create-mirin";
+import { scaffold } from "create-mirinjs";
 
 const [command, arg] = Bun.argv.slice(2);
 

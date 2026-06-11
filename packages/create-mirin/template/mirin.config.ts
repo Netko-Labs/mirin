@@ -1,4 +1,4 @@
-import { defineConfig } from "mirin/config";
+import { defineConfig } from "mirinjs/config";
 
 export default defineConfig({
   id: "__APP_ID__",

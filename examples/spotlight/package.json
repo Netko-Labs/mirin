@@ -7,7 +7,7 @@
     "build": "mirin build"
   },
   "dependencies": {
-    "mirin": "workspace:*",
+    "mirinjs": "workspace:*",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -16,6 +16,6 @@
     "@vitejs/plugin-react": "^6.0.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@mirin/cli": "workspace:*"
+    "mirinjs-cli": "workspace:*"
   }
 }

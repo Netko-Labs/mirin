@@ -28,7 +28,7 @@ See [docs/architecture.md](docs/architecture.md) for the full picture, [docs/api
 ## Quickstart (macOS arm64)
 
 ```bash
-npm create mirin@latest my-app
+npm create mirinjs@latest my-app
 cd my-app
 bun install
 bun run dev      # native window: React + Vite HMR + typed RPC
@@ -41,7 +41,7 @@ round-tripping to the Bun process, and live `tick` events pushed back to the UI
 in a build it's served from the bundle via the native `app://` scheme.
 
 The first run downloads the pinned CEF framework once (~hundreds of MB) into
-`~/.mirin/cef/`. Requires Bun and the Xcode command-line tools — **no Rust
+`~/.mirinjs/cef/`. Requires Bun and the Xcode command-line tools — **no Rust
 toolchain needed**; the native core ships prebuilt. See
 [docs/getting-started.md](docs/getting-started.md).
 

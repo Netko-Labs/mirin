@@ -1,5 +1,5 @@
-import { rpc } from "mirin/rpc";
-import { app, dialog, clipboard, menu } from "mirin";
+import { rpc } from "mirinjs/rpc";
+import { app, dialog, clipboard, menu } from "mirinjs";
 
 /** Window controls act on the calling window (ctx.webview === window id). */
 function callerWindow(webview: number) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * `npm create mirin@latest [dir]` — scaffold a new mirin app.
+ * `npm create mirinjs@latest [dir]` — scaffold a new mirin app.
  */
 
 import { resolve } from "node:path";
@@ -19,6 +19,6 @@ try {
   console.log("  bun run build   # packages a standalone .app\n");
   console.log("Requires macOS arm64, Bun, and the Xcode command-line tools.");
 } catch (err) {
-  console.error(`create-mirin: ${err instanceof Error ? err.message : err}`);
+  console.error(`create-mirinjs: ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 }

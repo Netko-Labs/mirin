@@ -5,12 +5,17 @@ artifacts and publishes to npm. Nothing is published until you tag.
 
 ## One-time setup
 
-1. **npm `@mirin` scope** — create an npm org named `mirin` (npmjs.com → Add
-   Organization), or ensure the publishing account owns the scope. The bare
-   `mirin` and `create-mirin` names are published by the same account.
-2. **`NPM_TOKEN` secret** — create an npm **automation** access token with
-   publish rights, then add it as the repo secret `NPM_TOKEN`
-   (`gh secret set NPM_TOKEN`).
+All package names are **unscoped** (`mirinjs`, `mirinjs-cli`, `mirinjs-darwin-arm64`,
+`create-mirinjs`), so **no npm org is required** — they're claimed by the
+publishing account on the first publish.
+
+- **`NPM_TOKEN` secret** — create an npm **automation** access token with
+  publish rights and add it as the repo secret `NPM_TOKEN`
+  (`gh secret set NPM_TOKEN --repo Netko-Labs/mirin`). Already configured.
+
+> Want the `@mirinjs/*` scope instead? Create a free npm org named `mirinjs`
+> first, then rename `mirinjs-cli` → `@mirinjs/cli` and `mirinjs-darwin-arm64` →
+> `@mirinjs/darwin-arm64`.
 
 ## Cutting a release
 
@@ -25,9 +30,9 @@ git push --follow-tags
 
 1. verifies the tag matches `packages/mirin`'s version,
 2. fetches CEF and builds the release native binaries,
-3. stages `libmirin_core.dylib` + `mirin-helper` into `@mirin/darwin-arm64`,
+3. stages `libmirin_core.dylib` + `mirin-helper` into `mirinjs-darwin-arm64`,
 4. uploads `cef-darwin-arm64.tar.gz` to the GitHub Release (the CLI downloads it),
-5. publishes `@mirin/darwin-arm64`, `create-mirin`, `mirin`, `@mirin/cli` to npm
+5. publishes `mirinjs-darwin-arm64`, `create-mirinjs`, `mirinjs`, `mirinjs-cli` to npm
    (`bun publish` rewrites `workspace:*` to the concrete version).
 
 Pre-release tags (`-alpha`/`-beta`) are marked as GitHub pre-releases and should
@@ -37,11 +42,11 @@ be published to npm under the `alpha` dist-tag once the workflow is hardened.
 
 | Package | Contents |
 |---|---|
-| `mirin` | runtime API (TS source) |
-| `@mirin/cli` | `mirin` CLI; optional-deps the per-platform native package |
-| `@mirin/darwin-arm64` | prebuilt `libmirin_core.dylib` + `mirin-helper` |
-| `create-mirin` | scaffolder + starter template |
+| `mirinjs` | runtime API (TS source) |
+| `mirinjs-cli` | `mirinjs` CLI; optional-deps the per-platform native package |
+| `mirinjs-darwin-arm64` | prebuilt `libmirin_core.dylib` + `mirin-helper` |
+| `create-mirinjs` | scaffolder + starter template |
 | GitHub Release asset | `cef-darwin-arm64.tar.gz` (CEF is too large for npm) |
 
-Adding a platform later = a new `@mirin/<os>-<arch>` package + a matching CEF
+Adding a platform later = a new `mirinjs-<os>-<arch>` package + a matching CEF
 release asset + a CI build matrix entry.

@@ -1,4 +1,4 @@
-import { rpc } from "mirin/rpc";
+import { rpc } from "mirinjs/rpc";
 
 /** The app's RPC surface — imported by the main process (handlers) and, as a
  *  type only, by the UI (`mirin/client`). */

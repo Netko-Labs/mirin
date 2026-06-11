@@ -2,7 +2,7 @@ name: Release
 
 # Tag a release to publish: `git tag v0.0.1-alpha.0 && git push --tags`.
 # Requires the repo secret NPM_TOKEN (an npm automation token with publish rights
-# to `mirin`, `create-mirin`, and the `@mirin` scope).
+# to `mirinjs`, `create-mirinjs`, and the unscoped names).
 on:
   push:
     tags: ["v*"]
