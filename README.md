@@ -28,7 +28,7 @@ See [docs/architecture.md](docs/architecture.md) for the full picture, [docs/api
 ## Quickstart (macOS arm64)
 
 ```bash
-npm create mirinjs@latest my-app
+bun create mirinjs my-app
 cd my-app
 bun install
 bun run dev      # native window: React + Vite HMR + typed RPC

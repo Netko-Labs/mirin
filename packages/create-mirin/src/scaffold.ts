@@ -1,6 +1,6 @@
 /**
  * Copy the starter template into a target directory, substituting the app name,
- * id, and the mirin version. Shared by `npm create mirin` and `mirin init`.
+ * id, and the mirin version. Shared by `bun create mirinjs` and `mirin init`.
  */
 
 import {

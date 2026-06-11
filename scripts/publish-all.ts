@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * Publish the mirin packages to npm in dependency order. `bun publish` rewrites
+ * Publish the mirin packages to the registry in dependency order. `bun publish` rewrites
  * `workspace:*` deps to the concrete version. Run from CI (release.yml) with
- * ~/.npmrc auth in place, or locally after `npm login`.
+ * ~/.npmrc auth in place, or locally with ~/.npmrc auth in place.
  *
- * `@mirin/darwin-arm64` must already contain its prebuilt binaries (CI stages
+ * `@mirinjs/darwin-arm64` must already contain its prebuilt binaries (CI stages
  * them; see release.yml).
  */
 

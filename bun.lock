@@ -5,8 +5,8 @@
     "": {
       "name": "mirin-monorepo",
       "devDependencies": {
+        "@mirinjs/cli": "workspace:*",
         "@types/bun": "^1.2.0",
-        "mirinjs-cli": "workspace:*",
         "typescript": "^5.8.0",
       },
     },
@@ -18,10 +18,10 @@
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
+        "@mirinjs/cli": "workspace:*",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
-        "mirinjs-cli": "workspace:*",
         "vite": "npm:rolldown-vite@^7.3.1",
       },
     },
@@ -33,10 +33,10 @@
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
+        "@mirinjs/cli": "workspace:*",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
-        "mirinjs-cli": "workspace:*",
         "vite": "npm:rolldown-vite@^7.3.1",
       },
     },
@@ -48,10 +48,10 @@
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
+        "@mirinjs/cli": "workspace:*",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
-        "mirinjs-cli": "workspace:*",
         "vite": "npm:rolldown-vite@^7.3.1",
       },
     },
@@ -67,7 +67,7 @@
       "version": "0.0.1-alpha.0",
     },
     "packages/mirin-cli": {
-      "name": "mirinjs-cli",
+      "name": "@mirinjs/cli",
       "version": "0.0.1-alpha.0",
       "bin": {
         "mirin": "./src/index.ts",
@@ -76,11 +76,11 @@
         "create-mirinjs": "workspace:*",
       },
       "optionalDependencies": {
-        "mirinjs-darwin-arm64": "workspace:*",
+        "@mirinjs/darwin-arm64": "workspace:*",
       },
     },
     "packages/native-darwin-arm64": {
-      "name": "mirinjs-darwin-arm64",
+      "name": "@mirinjs/darwin-arm64",
       "version": "0.0.1-alpha.0",
     },
   },
@@ -90,6 +90,10 @@
     "@emnapi/runtime": ["@emnapi/runtime@1.11.0", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-55coeOFKHv1ywEcUXJtWU5f+Jr/W5tZDvZig8DLKSwUN1JpROQ4rk/SNOQiFWmaR/VKF4zuFyW1B8JduOSv6Pg=="],
 
     "@emnapi/wasi-threads": ["@emnapi/wasi-threads@1.2.2", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA=="],
+
+    "@mirinjs/cli": ["@mirinjs/cli@workspace:packages/mirin-cli"],
+
+    "@mirinjs/darwin-arm64": ["@mirinjs/darwin-arm64@workspace:packages/native-darwin-arm64"],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.1.5", "", { "dependencies": { "@tybys/wasm-util": "^0.10.2" }, "peerDependencies": { "@emnapi/core": "^1.7.1", "@emnapi/runtime": "^1.7.1" } }, "sha512-AWPoBRJ9tsnVhor4sjO7rkni+7p+2IAEFj6cx06UgP10jkQHqay/36uRV/bFkgrh18D9vb4cr8Q0Pthskgzy+Q=="],
 
@@ -178,10 +182,6 @@
     "lightningcss-win32-x64-msvc": ["lightningcss-win32-x64-msvc@1.32.0", "", { "os": "win32", "cpu": "x64" }, "sha512-Amq9B/SoZYdDi1kFrojnoqPLxYhQ4Wo5XiL8EVJrVsB8ARoC1PWW6VGtT0WKCemjy8aC+louJnjS7U18x3b06Q=="],
 
     "mirinjs": ["mirinjs@workspace:packages/mirin"],
-
-    "mirinjs-cli": ["mirinjs-cli@workspace:packages/mirin-cli"],
-
-    "mirinjs-darwin-arm64": ["mirinjs-darwin-arm64@workspace:packages/native-darwin-arm64"],
 
     "nanoid": ["nanoid@3.3.12", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ=="],
 

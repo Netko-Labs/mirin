@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * `npm create mirinjs@latest [dir]` — scaffold a new mirin app.
+ * `bun create mirinjs [dir]` — scaffold a new mirin app.
  */
 
 import { resolve } from "node:path";

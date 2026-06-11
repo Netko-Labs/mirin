@@ -1,5 +1,5 @@
 {
-  "name": "mirinjs-cli",
+  "name": "@mirinjs/cli",
   "version": "0.0.1-alpha.0",
   "description": "CLI for mirin apps: dev, build, init.",
   "type": "module",
@@ -30,7 +30,7 @@
     "create-mirinjs": "workspace:*"
   },
   "optionalDependencies": {
-    "mirinjs-darwin-arm64": "workspace:*"
+    "@mirinjs/darwin-arm64": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

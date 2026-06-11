@@ -13,7 +13,7 @@ No Rust toolchain is needed to *use* mirin; the native core ships prebuilt.
 ## Create an app
 
 ```bash
-npm create mirinjs@latest my-app
+bun create mirinjs my-app
 cd my-app
 bun install
 bun run dev

@@ -35,8 +35,8 @@ crates/
   mirin-helper/  CEF subprocess (preload injection)
 packages/
   mirin/             runtime API (apps import this)        → npm: mirinjs
-  mirin-cli/         the `mirinjs` CLI (dev/build/init)       → npm: mirinjs-cli
-  native-darwin-arm64/  prebuilt binaries (CI-populated)    → npm: mirinjs-darwin-arm64
+  mirin-cli/         the `mirinjs` CLI (dev/build/init)       → npm: @mirinjs/cli
+  native-darwin-arm64/  prebuilt binaries (CI-populated)    → npm: @mirinjs/darwin-arm64
   create-mirin/      scaffolder + template                 → npm: create-mirinjs
 examples/            hello-react, kitchen-sink, spotlight
 docs/                architecture, api-design, macos-mvp, getting-started

@@ -4,7 +4,7 @@
  *
  *  - **in-repo** (this CLI is running inside the mirin monorepo): build the Rust
  *    crates from source and use `vendor/cef`. For contributors.
- *  - **installed** (a consumer ran `npm i -D mirinjs-cli`): use the prebuilt
+ *  - **installed** (a consumer ran `bun add -d @mirinjs/cli`): use the prebuilt
  *    binaries from the per-platform `mirinjs-<os>-<arch>` package, the `host`
  *    entry from the `mirin` package, and a CEF framework downloaded once from
  *    the matching GitHub Release into `~/.mirinjs/cef/<version>`. No Rust needed.
@@ -78,13 +78,13 @@ function platformTag(): string {
 }
 
 function resolveNativeDir(): string {
-  const pkg = `mirinjs-${platformTag()}`;
+  const pkg = `@mirinjs/${platformTag()}`;
   try {
     return dirname(resolvePackageFile(`${pkg}/package.json`));
   } catch {
     throw new Error(
-      `mirin: prebuilt native package "${pkg}" is not installed. Run \`npm install\` ` +
-        `(it is an optional dependency of mirinjs-cli for your platform).`,
+      `mirin: prebuilt native package "${pkg}" is not installed. Run \`bun install\` ` +
+        `(it is an optional dependency of @mirinjs/cli for your platform).`,
     );
   }
 }
