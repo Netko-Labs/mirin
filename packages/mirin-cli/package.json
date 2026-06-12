@@ -1,6 +1,6 @@
 {
   "name": "@mirinjs/cli",
-  "version": "0.0.1-alpha.0",
+  "version": "0.0.1-alpha.1",
   "description": "CLI for mirin apps: dev, build, init.",
   "type": "module",
   "license": "MIT",
