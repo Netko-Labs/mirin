@@ -36,28 +36,40 @@ const cargo = readFileSync(cargoPath, "utf8").replace(
 writeFileSync(cargoPath, cargo);
 console.log(`Cargo.toml [workspace.package] → ${version}`);
 
-// Keep the in-repo examples in sync. They depend on the published packages
-// (`^<version>`) rather than `workspace:*`, so they stay copyable as real apps;
-// the monorepo install still links them to local source for development.
+// Sync inter-package dependency versions to CONCRETE versions (never
+// `workspace:*`). bun pm pack rewrites `workspace:*` to the stale lockfile
+// version at publish time, which skews e.g. @mirinjs/cli's @mirinjs/darwin-arm64
+// pin from the runtime — so we keep real versions here and bump them in lockstep.
+//   - published packages (@mirinjs/cli → create-mirinjs / @mirinjs/darwin-arm64):
+//     EXACT pin, so the prebuilt dylib can never drift from the runtime.
+//   - in-repo examples: `^<version>` so they read as copyable real apps; the
+//     monorepo install still links them to local source for development.
 const DEP_FIELDS = ["dependencies", "devDependencies", "optionalDependencies"];
-const examplesDir = join(ROOT, "examples");
-for (const name of readdirSync(examplesDir)) {
-  const file = join(examplesDir, name, "package.json");
-  if (!existsSync(file)) continue;
-  const pkg = JSON.parse(readFileSync(file, "utf8"));
-  let changed = false;
-  for (const field of DEP_FIELDS) {
-    for (const dep of Object.keys(pkg[field] ?? {})) {
-      if (dep === "mirinjs" || dep.startsWith("@mirinjs/")) {
-        pkg[field][dep] = `^${version}`;
-        changed = true;
+const isMirinDep = (dep: string) =>
+  dep === "mirinjs" || dep === "create-mirinjs" || dep.startsWith("@mirinjs/");
+
+function syncDeps(baseDir: string, label: string, range: string) {
+  for (const name of readdirSync(baseDir)) {
+    const file = join(baseDir, name, "package.json");
+    if (!existsSync(file)) continue;
+    const pkg = JSON.parse(readFileSync(file, "utf8"));
+    let changed = false;
+    for (const field of DEP_FIELDS) {
+      for (const dep of Object.keys(pkg[field] ?? {})) {
+        if (isMirinDep(dep)) {
+          pkg[field][dep] = range;
+          changed = true;
+        }
       }
     }
-  }
-  if (changed) {
-    writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
-    console.log(`examples/${name} → mirin deps ^${version}`);
+    if (changed) {
+      writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+      console.log(`${label}/${name} → mirin deps ${range}`);
+    }
   }
 }
+
+syncDeps(join(ROOT, "packages"), "packages", version);
+syncDeps(join(ROOT, "examples"), "examples", `^${version}`);
 
 console.log(`\nNext: git commit -am "v${version}" && git tag v${version} && git push --follow-tags`);

@@ -118,13 +118,17 @@ async function ensureCef(): Promise<string> {
   const url = `https://github.com/${REPO_SLUG}/releases/download/v${version}/${asset}`;
   console.log(`[mirin] downloading CEF for ${platformTag()} (one-time, ~hundreds of MB)…`);
 
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`mirin: failed to download CEF from ${url} (HTTP ${res.status}).`);
-  }
+  // Download with curl, not `Bun.write(file, await fetch(url))`: the latter
+  // pins a core at 100% CPU and never completes on large gzip responses
+  // (the streaming write path). curl is fast and ubiquitous.
   const archive = join(tmpdir(), asset);
-  await Bun.write(archive, res);
-  await $`tar -xzf ${archive} -C ${cacheDir}`;
+  try {
+    await $`curl -fSL --retry 3 -o ${archive} ${url}`;
+    await $`tar -xzf ${archive} -C ${cacheDir}`;
+  } catch (err) {
+    rmSync(archive, { force: true });
+    throw new Error(`mirin: failed to download CEF from ${url} (${err}).`);
+  }
   rmSync(archive, { force: true });
   return cacheDir;
 }
