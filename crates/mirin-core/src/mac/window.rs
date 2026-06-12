@@ -9,8 +9,8 @@ use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use objc2_app_kit::{
-    NSApplication, NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowButton, NSWindowDelegate,
-    NSWindowStyleMask,
+    NSApplication, NSBackingStoreType, NSColor, NSEvent, NSView, NSWindow, NSWindowButton,
+    NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{NSNotification, NSPoint, NSRect, NSSize, NSString};
 use std::cell::{Cell, RefCell};
@@ -276,7 +276,15 @@ pub fn create_window(
             }
         }
     }
-    if params.movable_by_background || params.title_bar_style != TitleBarStyle::Default {
+    // Opaque (windowed) custom-title-bar windows drag via the overlay's
+    // `mouseDown:` (performWindowDragWithEvent:), which is immediate. We avoid
+    // `movableByWindowBackground` there: it makes AppKit run window-drag
+    // detection on every title-bar click, which noticeably delays clicks on web
+    // controls in the bar. Transparent (OSR) windows have no overlay, so they
+    // still rely on it for dragging.
+    let needs_background_drag = params.movable_by_background
+        || (params.transparent && params.title_bar_style != TitleBarStyle::Default);
+    if needs_background_drag {
         window.setMovableByWindowBackground(true);
     }
     if params.transparent {
@@ -336,6 +344,16 @@ struct TitleBarDragViewIvars {
     window_id: Cell<u32>,
 }
 
+/// Outcome of testing a point against a window's draggable regions.
+enum RegionHit {
+    /// No regions reported yet — fall back to the blanket top strip.
+    NoRegions,
+    /// Inside a draggable region (and no hole): the overlay handles the drag.
+    Drag,
+    /// Outside any draggable region: let the click reach the webview.
+    PassThrough,
+}
+
 define_class!(
     /// A transparent overlay that moves the window when dragged. CEF doesn't apply
     /// `-webkit-app-region` to the native window itself, so we sit this on top of
@@ -349,46 +367,64 @@ define_class!(
     struct TitleBarDragView;
 
     impl TitleBarDragView {
-        #[unsafe(method(mouseDownCanMoveWindow))]
-        unsafe fn mouse_down_can_move_window(&self) -> Bool {
-            Bool::YES
+        /// Start a window drag immediately on mouse-down in a drag region.
+        /// `performWindowDragWithEvent:` distinguishes click vs. drag without the
+        /// latency `mouseDownCanMoveWindow` + movableByWindowBackground impose on
+        /// title-bar clicks, so web controls beside the drag area feel instant.
+        #[unsafe(method(mouseDown:))]
+        unsafe fn mouse_down(&self, event: &NSEvent) {
+            if let Some(window) = self.window() {
+                let _: () = unsafe { msg_send![&window, performWindowDragWithEvent: event] };
+            }
         }
 
         #[unsafe(method(hitTest:))]
         unsafe fn hit_test(&self, point: NSPoint) -> *mut NSView {
             let id = self.ivars().window_id.get();
-            let Some(regions) = DRAG_REGIONS.with(|r| r.borrow().get(&id).cloned()) else {
-                // No app-region info yet: behave as a plain (blanket) drag view.
-                return unsafe { msg_send![super(self), hitTest: point] };
-            };
             // `point` is in our superview (content view) coords: bottom-left
             // origin. CEF regions are top-left, so flip with the content height.
             let height = self
                 .superview()
                 .map(|sv| sv.bounds().size.height)
                 .unwrap_or(0.0);
-            let mut in_drag = false;
-            let mut in_hole = false;
-            for region in &regions {
-                let y = height - (region.y + region.h);
-                let inside = point.x >= region.x
-                    && point.x <= region.x + region.w
-                    && point.y >= y
-                    && point.y <= y + region.h;
-                if inside {
-                    if region.draggable {
-                        in_drag = true;
-                    } else {
-                        in_hole = true;
+            // Resolve hit/miss inside the borrow to avoid cloning the region list
+            // on every hit-test (these fire continuously during mouse movement).
+            let decision = DRAG_REGIONS.with(|r| {
+                let map = r.borrow();
+                let Some(regions) = map.get(&id) else {
+                    return RegionHit::NoRegions;
+                };
+                let mut in_drag = false;
+                let mut in_hole = false;
+                for region in regions {
+                    let y = height - (region.y + region.h);
+                    let inside = point.x >= region.x
+                        && point.x <= region.x + region.w
+                        && point.y >= y
+                        && point.y <= y + region.h;
+                    if inside {
+                        if region.draggable {
+                            in_drag = true;
+                        } else {
+                            in_hole = true;
+                        }
                     }
                 }
-            }
-            if in_drag && !in_hole {
-                let this: *const TitleBarDragView = self;
-                this as *mut NSView
-            } else {
+                if in_drag && !in_hole {
+                    RegionHit::Drag
+                } else {
+                    RegionHit::PassThrough
+                }
+            });
+            match decision {
+                // No app-region info yet: behave as a plain (blanket) drag view.
+                RegionHit::NoRegions => unsafe { msg_send![super(self), hitTest: point] },
+                RegionHit::Drag => {
+                    let this: *const TitleBarDragView = self;
+                    this as *mut NSView
+                }
                 // Not a drag area (e.g. a button): let the click reach the webview.
-                std::ptr::null_mut()
+                RegionHit::PassThrough => std::ptr::null_mut(),
             }
         }
     }
