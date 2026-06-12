@@ -47,6 +47,26 @@ pub struct DragRegion {
     pub draggable: bool,
 }
 
+define_class!(
+    /// The window's content view. Identical to `NSView` except it reports it
+    /// cannot move the window: the default content view returns YES for
+    /// `mouseDownCanMoveWindow`, which makes AppKit add latency to title-bar
+    /// clicks while it disambiguates a click from a window drag (web controls in
+    /// a custom title bar feel laggy as a result). Dragging still works — the
+    /// overlay drives it explicitly via `performWindowDragWithEvent:`. CEF's own
+    /// browser views already report NO, so only this view needed fixing.
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    struct MirinContentView;
+
+    impl MirinContentView {
+        #[unsafe(method(mouseDownCanMoveWindow))]
+        unsafe fn mouse_down_can_move_window(&self) -> Bool {
+            Bool::NO
+        }
+    }
+);
+
 /// Run `f` with the live NSWindow for `id`, if present. Main thread only.
 pub fn with_window<R>(id: u32, f: impl FnOnce(&NSWindow) -> R) -> Option<R> {
     WINDOWS.with(|w| w.borrow().get(&id).map(|win| f(win)))
@@ -304,7 +324,21 @@ pub fn create_window(
         window.makeKeyAndOrderFront(None);
     }
 
-    let content = window.contentView().expect("window has no content view");
+    // Install our own content view (won't move the window on click) so title-bar
+    // control clicks aren't delayed; CEF embeds its browser into it.
+    let content: Retained<NSView> = {
+        let frame = window.contentView().map(|v| v.frame()).unwrap_or_else(|| {
+            NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                NSSize::new(params.width, params.height),
+            )
+        });
+        let view = MirinContentView::alloc(mtm).set_ivars(());
+        let view: Retained<MirinContentView> =
+            unsafe { msg_send![super(view), initWithFrame: frame] };
+        window.setContentView(Some(&view));
+        Retained::into_super(view)
+    };
     let bounds = cef::Rect {
         x: 0,
         y: 0,
