@@ -82,9 +82,19 @@ pub struct WindowOpts {
     pub always_on_top: bool,
     #[serde(default)]
     pub movable_by_background: bool,
+    /// Custom traffic-light inset for a custom title bar (macOS).
+    #[serde(default)]
+    pub traffic_light_position: Option<TrafficLightPos>,
     /// Show the window at creation (false creates it hidden, e.g. a Spotlight panel).
     #[serde(default = "default_true")]
     pub visible: bool,
+}
+
+/// Custom traffic-light inset (the `trafficLightPosition` config option).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct TrafficLightPos {
+    pub x: f64,
+    pub y: f64,
 }
 
 /// A window's native background material (the `material` config option,
@@ -117,6 +127,7 @@ impl WindowOpts {
             material: None,
             always_on_top: false,
             movable_by_background: false,
+            traffic_light_position: None,
             visible: true,
         }
     }
@@ -440,6 +451,10 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
         show: opts.visible,
     };
     let (content_view, bounds) = mac::create_window(mtm, &params);
+
+    if let Some(pos) = opts.traffic_light_position {
+        mac::set_traffic_light_position(id, pos.x, pos.y);
+    }
 
     let mut client = CLIENT.with(|c| c.borrow().clone());
 

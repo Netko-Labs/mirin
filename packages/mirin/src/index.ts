@@ -3,8 +3,8 @@
  *
  * Importing this module boots the runtime (loads libmirin_core, starts the RPC
  * server, begins draining native events) and exposes the developer-facing API:
- * the `app` singleton plus the `menu`, `Tray`, `dialog`, `clipboard`, and
- * `globalShortcut` features (docs/api-design.md).
+ * the `app` singleton plus the `menu`, `Tray`, `dialog`, `clipboard`,
+ * `globalShortcut`, and `logger` features (docs/api-design.md).
  */
 
 import { app, wireAppEvents } from "./app.ts";
@@ -22,6 +22,7 @@ export { Tray } from "./tray.ts";
 export { dialog } from "./dialog.ts";
 export { clipboard } from "./clipboard.ts";
 export { globalShortcut } from "./shortcut.ts";
+export { logger, setLogLevel, getLogLevel, Logger } from "./logger.ts";
 export { NotAttachedError } from "./runtime.ts";
 
 export type {
@@ -36,6 +37,7 @@ export type {
   Dock,
 } from "./app.ts";
 export type { MenuItemTemplate, MenuRole } from "./menu.ts";
+export type { LogLevel } from "./logger.ts";
 export type { TrayOptions } from "./tray.ts";
 export type { OpenDialogOptions, SaveDialogOptions, MessageDialogOptions } from "./dialog.ts";
 export type {

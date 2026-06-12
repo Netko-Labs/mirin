@@ -13,12 +13,16 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
 import { resolveArtifacts } from "./artifacts.ts";
+import { sweepBuildTemps } from "./temps.ts";
 
 const DEV_URL = "http://localhost:5173";
 
 export async function dev(projectDir = process.cwd()): Promise<number> {
   const work = join(projectDir, ".mirin");
   mkdirSync(work, { recursive: true });
+  // `bun build --compile` drops temp *.bun-build files in the cwd; clear any left
+  // behind by a previously interrupted run so they don't pile up in the project.
+  sweepBuildTemps(projectDir);
 
   // --- load the manifest ---
   const config = (await import(join(projectDir, "mirin.config.ts"))).default;

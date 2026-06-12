@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/mirin-core", "crates/mirin-helper"]
 
 [workspace.package]
-version = "0.0.1-alpha.9"
+version = "0.0.1-alpha.10"
 edition = "2021"
 license = "MIT"
 

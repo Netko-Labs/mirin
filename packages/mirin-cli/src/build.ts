@@ -20,12 +20,14 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
 import { resolveArtifacts } from "./artifacts.ts";
+import { sweepBuildTemps } from "./temps.ts";
 
 export async function build(projectDir = process.cwd()): Promise<number> {
   const outDir = join(projectDir, "build");
   const work = join(projectDir, ".mirin");
   mkdirSync(outDir, { recursive: true });
   mkdirSync(work, { recursive: true });
+  sweepBuildTemps(projectDir);
 
   const config = (await import(join(projectDir, "mirin.config.ts"))).default;
   const appName: string = config.name ?? "Mirin App";

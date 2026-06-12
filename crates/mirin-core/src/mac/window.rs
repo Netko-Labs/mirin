@@ -5,8 +5,8 @@
 use objc2::{
     define_class, msg_send,
     rc::Retained,
-    runtime::{AnyClass, AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject, Sel},
-    sel, DefinedClass, MainThreadMarker, MainThreadOnly,
+    runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject},
+    DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSColor, NSEvent, NSView, NSWindow, NSWindowButton,
@@ -35,6 +35,59 @@ thread_local! {
     /// coords). Absent until a page declares them; then the overlay hit-tests
     /// against these instead of acting as a blanket strip.
     static DRAG_REGIONS: RefCell<HashMap<u32, Vec<DragRegion>>> = RefCell::new(HashMap::new());
+    /// Requested traffic-light inset (x, y) per window, re-applied on resize.
+    static TRAFFIC_LIGHTS: RefCell<HashMap<u32, (f64, f64)>> = RefCell::new(HashMap::new());
+}
+
+/// Set (and apply) the traffic-light inset for a custom-title-bar window. Follows
+/// the Tauri/decorum model: the title bar container is grown to `button_height +
+/// y` and the three buttons are centered in it, inset `x` from the left. Stored
+/// so it can be re-applied on resize (macOS resets button positions). Main thread.
+pub fn set_traffic_light_position(id: u32, x: f64, y: f64) {
+    TRAFFIC_LIGHTS.with(|t| {
+        t.borrow_mut().insert(id, (x, y));
+    });
+    apply_traffic_light_position(id);
+}
+
+/// Re-apply the stored traffic-light inset for `id`, if any. Main thread only.
+fn apply_traffic_light_position(id: u32) {
+    let Some((x, y)) = TRAFFIC_LIGHTS.with(|t| t.borrow().get(&id).copied()) else {
+        return;
+    };
+    with_window(id, |window| {
+        let buttons = [
+            window.standardWindowButton(NSWindowButton::CloseButton),
+            window.standardWindowButton(NSWindowButton::MiniaturizeButton),
+            window.standardWindowButton(NSWindowButton::ZoomButton),
+        ];
+        let [Some(close), Some(mini), Some(zoom)] = buttons else {
+            return;
+        };
+        let button_height = close.frame().size.height;
+        let title_bar_height = button_height + y;
+
+        // Grow the title bar container to the target height, pinned to the top,
+        // so the buttons can sit centered within a taller custom title bar.
+        if let Some(titlebar) = unsafe { close.superview() } {
+            if let Some(container) = unsafe { titlebar.superview() } {
+                let win_h = window.frame().size.height;
+                let mut f = container.frame();
+                f.size.height = title_bar_height;
+                f.origin.y = win_h - title_bar_height;
+                container.setFrame(f);
+            }
+        }
+
+        const SPACE: f64 = 20.0;
+        for (i, btn) in [&close, &mini, &zoom].into_iter().enumerate() {
+            let origin = NSPoint::new(
+                x + i as f64 * SPACE,
+                (title_bar_height - button_height) / 2.0 - 4.0,
+            );
+            btn.setFrameOrigin(origin);
+        }
+    });
 }
 
 /// One `-webkit-app-region` rectangle in web coordinates (top-left origin).
@@ -70,85 +123,6 @@ define_class!(
 /// Run `f` with the live NSWindow for `id`, if present. Main thread only.
 pub fn with_window<R>(id: u32, f: impl FnOnce(&NSWindow) -> R) -> Option<R> {
     WINDOWS.with(|w| w.borrow().get(&id).map(|win| f(win)))
-}
-
-/// Replacement `hitTest:` for `NSTitlebarContainerView`. The native title bar sits
-/// above the content view and, for empty (non-button) areas, hit-tests to itself
-/// — which makes AppKit run window-drag/double-click disambiguation and delays
-/// clicks on web controls drawn in a custom title bar. We instead return the
-/// traffic-light button under the point if there is one, else `nil` so the click
-/// falls through to the web content below. Only applied to mirin custom-title-bar
-/// windows; default windows keep the native behavior.
-extern "C-unwind" fn titlebar_hit_test(
-    this: *mut AnyObject,
-    _cmd: Sel,
-    point: NSPoint,
-) -> *mut AnyObject {
-    let view: &NSView = unsafe { &*(this as *const NSView) };
-
-    // `point` is in our superview's coordinates. Bail if it's not within us.
-    let frame = view.frame();
-    let in_frame = point.x >= frame.origin.x
-        && point.x <= frame.origin.x + frame.size.width
-        && point.y >= frame.origin.y
-        && point.y <= frame.origin.y + frame.size.height;
-    if !in_frame {
-        return std::ptr::null_mut();
-    }
-
-    // Test our subviews (traffic-light buttons live here) in front-to-back order.
-    let superview = unsafe { view.superview() };
-    let local = match superview.as_deref() {
-        Some(sv) => view.convertPoint_fromView(point, Some(sv)),
-        None => point,
-    };
-    let subviews = view.subviews().to_vec();
-    for sub in subviews.iter().rev() {
-        let hit: *mut AnyObject = unsafe { msg_send![&**sub, hitTest: local] };
-        if !hit.is_null() {
-            return hit;
-        }
-    }
-
-    // Empty title-bar area. For mirin custom-title-bar windows, pass the click
-    // through (nil); otherwise preserve the native "self" so dragging works.
-    let id = window_id_for_view(this as *mut std::ffi::c_void);
-    let is_custom = id
-        .map(|id| CUSTOM_TITLEBARS.with(|s| s.borrow().contains(&id)))
-        .unwrap_or(false);
-    if is_custom {
-        std::ptr::null_mut()
-    } else {
-        this.cast()
-    }
-}
-
-/// Override `NSTitlebarContainerView.hitTest:` once, process-wide, so empty
-/// title-bar areas don't intercept clicks meant for the web content beneath
-/// them. Idempotent. Main thread only.
-fn install_titlebar_passthrough() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static INSTALLED: AtomicBool = AtomicBool::new(false);
-    if INSTALLED.swap(true, Ordering::Relaxed) {
-        return;
-    }
-    let Some(cls) = AnyClass::get(c"NSTitlebarContainerView") else {
-        return;
-    };
-    let imp: objc2::runtime::Imp = unsafe {
-        std::mem::transmute::<
-            extern "C-unwind" fn(*mut AnyObject, Sel, NSPoint) -> *mut AnyObject,
-            unsafe extern "C-unwind" fn(),
-        >(titlebar_hit_test)
-    };
-    unsafe {
-        objc2::ffi::class_replaceMethod(
-            (cls as *const AnyClass) as *mut AnyClass,
-            sel!(hitTest:),
-            imp,
-            c"@@:{CGPoint=dd}".as_ptr(),
-        );
-    }
 }
 
 /// Close one window by id. Removing it from the registry drops the strong ref so
@@ -234,7 +208,9 @@ define_class!(
 
         #[unsafe(method(windowDidBecomeKey:))]
         unsafe fn window_did_become_key(&self, _n: &NSNotification) {
-            crate::engine::emit_window_event(self.ivars().window_id.get(), "focus");
+            let id = self.ivars().window_id.get();
+            apply_traffic_light_position(id);
+            crate::engine::emit_window_event(id, "focus");
         }
 
         #[unsafe(method(windowDidResignKey:))]
@@ -250,9 +226,23 @@ define_class!(
         #[unsafe(method(windowDidResize:))]
         unsafe fn window_did_resize(&self, _n: &NSNotification) {
             let id = self.ivars().window_id.get();
+            // macOS resets the traffic-light positions on resize; re-apply ours.
+            apply_traffic_light_position(id);
             // Windowless (OSR) windows must tell CEF to re-query the view size.
             crate::engine::osr::resized(id);
             emit_frame_event(id, "resized");
+        }
+
+        /// Entering/exiting native fullscreen also resets the traffic-light
+        /// positions, so re-apply our inset on each transition.
+        #[unsafe(method(windowDidEnterFullScreen:))]
+        unsafe fn window_did_enter_full_screen(&self, _n: &NSNotification) {
+            apply_traffic_light_position(self.ivars().window_id.get());
+        }
+
+        #[unsafe(method(windowDidExitFullScreen:))]
+        unsafe fn window_did_exit_full_screen(&self, _n: &NSNotification) {
+            apply_traffic_light_position(self.ivars().window_id.get());
         }
     }
 );
@@ -386,6 +376,13 @@ pub fn create_window(
     if needs_background_drag {
         window.setMovableByWindowBackground(true);
     }
+    // Opaque custom-title-bar windows: disable AppKit's native window movement so
+    // it stops running drag/double-click disambiguation on title-bar clicks (the
+    // click latency on web controls). The overlay still drags the window via
+    // performWindowDragWithEvent:, which works independently of `isMovable`.
+    if params.title_bar_style != TitleBarStyle::Default && !params.transparent {
+        window.setMovable(false);
+    }
     if params.transparent {
         window.setOpaque(false);
         window.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -450,6 +447,20 @@ pub fn create_window(
     (content_ptr, bounds)
 }
 
+/// Run the user's configured "double-click the title bar" action, since we set
+/// the window non-movable (which also disables AppKit's built-in handling).
+/// Honors the `AppleActionOnDoubleClick` preference: Maximize (zoom), Minimize,
+/// or None. Defaults to zoom when unset.
+fn perform_titlebar_double_click(window: &NSWindow) {
+    let action = objc2_foundation::NSUserDefaults::standardUserDefaults()
+        .stringForKey(&NSString::from_str("AppleActionOnDoubleClick"));
+    match action.as_ref().map(|s| s.to_string()).as_deref() {
+        Some("Minimize") => window.miniaturize(None),
+        Some("None") => {}
+        _ => window.zoom(None),
+    }
+}
+
 /// Ivars for the title-bar drag overlay: which window it belongs to, so its
 /// `hitTest:` can look up that window's reported draggable regions.
 #[derive(Default)]
@@ -480,13 +491,19 @@ define_class!(
     struct TitleBarDragView;
 
     impl TitleBarDragView {
-        /// Start a window drag immediately on mouse-down in a drag region.
-        /// `performWindowDragWithEvent:` distinguishes click vs. drag without the
-        /// latency `mouseDownCanMoveWindow` + movableByWindowBackground impose on
-        /// title-bar clicks, so web controls beside the drag area feel instant.
+        /// Drive window dragging (and the standard title-bar double-click action)
+        /// for the drag region. We do it explicitly because the window is set
+        /// non-movable to remove AppKit's click-vs-drag latency on title-bar
+        /// clicks; `performWindowDragWithEvent:` still works in that mode.
         #[unsafe(method(mouseDown:))]
         unsafe fn mouse_down(&self, event: &NSEvent) {
-            if let Some(window) = self.window() {
+            let Some(window) = self.window() else {
+                return;
+            };
+            let click_count: isize = unsafe { msg_send![event, clickCount] };
+            if click_count == 2 {
+                perform_titlebar_double_click(&window);
+            } else {
                 let _: () = unsafe { msg_send![&window, performWindowDragWithEvent: event] };
             }
         }
@@ -549,9 +566,6 @@ pub fn add_titlebar_drag(id: u32) {
     if !CUSTOM_TITLEBARS.with(|s| s.borrow().contains(&id)) {
         return;
     }
-    // Stop the native title bar from intercepting clicks on web controls drawn
-    // in the custom title-bar strip (the remaining source of click latency).
-    install_titlebar_passthrough();
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };

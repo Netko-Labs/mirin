@@ -51,6 +51,13 @@ export interface WindowConfig {
   open?: "auto" | "manual";
   /** Custom title bar: hide it (content fills) or inset the traffic lights. */
   titleBarStyle?: "hidden" | "hiddenInset";
+  /**
+   * Reposition the macOS traffic-light buttons for a custom title bar.
+   * `x` insets the leftmost button from the left edge; `y` sets the effective
+   * title-bar height the buttons are vertically centered in (so `y` ≈ your CSS
+   * title-bar height minus the button height). Re-applied automatically on resize.
+   */
+  trafficLightPosition?: { x: number; y: number };
   /** Non-opaque window (for transparent/blurred UIs). */
   transparent?: boolean;
   /**
