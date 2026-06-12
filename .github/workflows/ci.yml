@@ -19,7 +19,7 @@ jobs:
   check:
     runs-on: blacksmith-6vcpu-macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -37,7 +37,7 @@ jobs:
 
       - name: Cache CEF
         id: cef-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: vendor/cef
           key: cef-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}

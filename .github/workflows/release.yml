@@ -18,7 +18,7 @@ jobs:
     # broad runtime compatibility (Liquid Glass still activates at runtime on 26+).
     runs-on: blacksmith-6vcpu-macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -57,7 +57,7 @@ jobs:
         run: tar -czf cef-darwin-arm64.tar.gz -C vendor/cef "Chromium Embedded Framework.framework"
 
       - name: GitHub Release (CEF asset)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: cef-darwin-arm64.tar.gz
           generate_release_notes: true
