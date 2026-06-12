@@ -39,13 +39,18 @@ const coreConfig = JSON.parse(
     JSON.stringify(process.env.MIRIN_DEV_URL ? {} : { resources_path: resourcesDir }),
 );
 
+// Load the native core on the main thread FIRST. The Worker also dlopens the
+// same dylib in its boot; doing the main-thread dlopen before spawning the
+// Worker serializes the first-time load instead of racing two concurrent
+// dlopens across threads.
+const core = new Core(corePath);
+
 const worker = new Worker(workerPath, {
   workerData: { corePath, manifest, devUrl: process.env.MIRIN_DEV_URL },
 });
 worker.on("error", (err) => console.error("[mirin worker]", err));
 
 // Hand the main thread to CEF. Blocks in the message loop until the app quits.
-const core = new Core(corePath);
 const exitCode = core.run(JSON.stringify(coreConfig));
 
 void worker.terminate();
