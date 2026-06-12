@@ -59,6 +59,7 @@ export async function build(projectDir = process.cwd()): Promise<number> {
     coreDylib: artifacts.coreDylib,
     helperBin: artifacts.helperBin,
     cefPath: artifacts.cefPath,
+    icon: config.icon ? join(projectDir, config.icon) : undefined,
     signIdentity: process.env.MIRIN_SIGN_IDENTITY,
     resources: {
       uiDir: join(projectDir, "dist"),

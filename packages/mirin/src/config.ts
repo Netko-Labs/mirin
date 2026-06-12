@@ -73,6 +73,12 @@ export interface MirinConfig {
   name: string;
   /** Main-process entry, relative to the project root (runs in the Bun Worker). */
   main: string;
+  /**
+   * App icon, relative to the project root (macOS). Accepts a `.icns`, a
+   * `.iconset` directory, or a single square `.png` (≥512px) that mirin renders
+   * into an `.icns`. Embedded in the bundle for the Dock and Finder.
+   */
+  icon?: string;
   windows: Record<string, WindowConfig>;
 }
 

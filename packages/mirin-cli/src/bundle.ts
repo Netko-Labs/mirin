@@ -33,6 +33,8 @@ export interface BundleOptions {
   coreDylib: string; // libmirin_core.dylib
   helperBin: string; // compiled mirin-helper binary
   cefPath: string; // dir containing the CEF framework (vendor/cef)
+  /** App icon source: a .icns, a .iconset dir, or a square .png. Optional. */
+  icon?: string;
   /** Codesign identity; "-" (default) is ad-hoc. Set to a Developer ID to ship. */
   signIdentity?: string;
   /** Production-only resources placed under Contents/Resources. */
@@ -41,6 +43,50 @@ export interface BundleOptions {
     workerJs?: string; // bundled main-process Worker entry -> Resources/worker.js
     manifestJson?: string; // serialized manifest -> Resources/mirin.manifest.json
   };
+}
+
+/** The 10 standard iconset renditions (point size + @1x/@2x pixel size). */
+const ICONSET_RENDITIONS = [
+  { name: "icon_16x16.png", px: 16 },
+  { name: "icon_16x16@2x.png", px: 32 },
+  { name: "icon_32x32.png", px: 32 },
+  { name: "icon_32x32@2x.png", px: 64 },
+  { name: "icon_128x128.png", px: 128 },
+  { name: "icon_128x128@2x.png", px: 256 },
+  { name: "icon_256x256.png", px: 256 },
+  { name: "icon_256x256@2x.png", px: 512 },
+  { name: "icon_512x512.png", px: 512 },
+  { name: "icon_512x512@2x.png", px: 1024 },
+];
+
+/**
+ * Render the app icon to `Resources/icon.icns` and return the CFBundleIconFile
+ * stem ("icon"), or undefined if there's no usable source. Accepts a `.icns`
+ * (copied), a `.iconset` directory (iconutil), or a square `.png` (rendered to
+ * a full iconset via sips, then iconutil).
+ */
+async function writeIcon(iconSrc: string, resources: string): Promise<string | undefined> {
+  if (!existsSync(iconSrc)) {
+    console.warn(`[mirin] icon not found, skipping: ${iconSrc}`);
+    return undefined;
+  }
+  const icns = join(resources, "icon.icns");
+
+  if (iconSrc.endsWith(".icns")) {
+    cpSync(iconSrc, icns);
+  } else if (iconSrc.endsWith(".iconset")) {
+    await $`iconutil -c icns ${iconSrc} -o ${icns}`.quiet();
+  } else {
+    const iconset = join(resources, "icon.iconset");
+    rmSync(iconset, { recursive: true, force: true });
+    mkdirSync(iconset, { recursive: true });
+    for (const { name, px } of ICONSET_RENDITIONS) {
+      await $`sips -z ${px} ${px} ${iconSrc} --out ${join(iconset, name)}`.quiet();
+    }
+    await $`iconutil -c icns ${iconset} -o ${icns}`.quiet();
+    rmSync(iconset, { recursive: true, force: true });
+  }
+  return "icon";
 }
 
 type PlistValue = string | boolean | Record<string, string>;
@@ -87,25 +133,29 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   cpSync(opts.hostExe, join(macos, appName));
   cpSync(opts.coreDylib, join(macos, "libmirin_core.dylib"));
 
-  writeFileSync(
-    join(contents, "Info.plist"),
-    plist({
-      CFBundleDevelopmentRegion: "en",
-      CFBundleDisplayName: appName,
-      CFBundleExecutable: appName,
-      CFBundleIdentifier: bundleId,
-      CFBundleInfoDictionaryVersion: "6.0",
-      CFBundleName: appName,
-      CFBundlePackageType: "APPL",
-      CFBundleShortVersionString: "0.0.1",
-      CFBundleVersion: "0.0.1",
-      LSMinimumSystemVersion: "13.0",
-      NSHighResolutionCapable: true,
-      NSSupportsAutomaticGraphicsSwitching: true,
-      LSFileQuarantineEnabled: true,
-      LSEnvironment: { MallocNanoZone: "0" },
-    }),
-  );
+  // Render the icon (if any) into Resources before writing the plist, so we
+  // only set CFBundleIconFile when an icon was actually produced.
+  const iconFile = opts.icon ? await writeIcon(opts.icon, join(contents, "Resources")) : undefined;
+
+  const info: Record<string, PlistValue> = {
+    CFBundleDevelopmentRegion: "en",
+    CFBundleDisplayName: appName,
+    CFBundleExecutable: appName,
+    CFBundleIdentifier: bundleId,
+    CFBundleInfoDictionaryVersion: "6.0",
+    CFBundleName: appName,
+    CFBundlePackageType: "APPL",
+    CFBundleShortVersionString: "0.0.1",
+    CFBundleVersion: "0.0.1",
+    LSMinimumSystemVersion: "13.0",
+    NSHighResolutionCapable: true,
+    NSSupportsAutomaticGraphicsSwitching: true,
+    LSFileQuarantineEnabled: true,
+    LSEnvironment: { MallocNanoZone: "0" },
+  };
+  if (iconFile) info.CFBundleIconFile = iconFile;
+
+  writeFileSync(join(contents, "Info.plist"), plist(info));
 
   cpSync(join(cefPath, FRAMEWORK), join(frameworks, FRAMEWORK), {
     recursive: true,

@@ -1,6 +1,6 @@
 {
   "name": "@mirinjs/cli",
-  "version": "0.0.1-alpha.4",
+  "version": "0.0.1-alpha.5",
   "description": "CLI for mirin apps: dev, build, init.",
   "type": "module",
   "license": "MIT",
@@ -27,10 +27,10 @@
     "bun": ">=1.2.0"
   },
   "dependencies": {
-    "create-mirinjs": "0.0.1-alpha.4"
+    "create-mirinjs": "0.0.1-alpha.5"
   },
   "optionalDependencies": {
-    "@mirinjs/darwin-arm64": "0.0.1-alpha.4"
+    "@mirinjs/darwin-arm64": "0.0.1-alpha.5"
   },
   "publishConfig": {
     "access": "public"

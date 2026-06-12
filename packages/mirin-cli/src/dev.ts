@@ -46,6 +46,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     coreDylib: artifacts.coreDylib,
     helperBin: artifacts.helperBin,
     cefPath: artifacts.cefPath,
+    icon: config.icon ? join(projectDir, config.icon) : undefined,
   });
 
   // --- start Vite ---
