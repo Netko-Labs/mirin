@@ -130,6 +130,22 @@ impl MirinAppDelegate {
     }
 }
 
+/// Show or hide the app's Dock icon (and menu-bar presence). Hiding switches the
+/// activation policy to Accessory — a resident, agent-style app (e.g. a
+/// hotkey-summoned panel) with no Dock tile and no menu bar; showing restores
+/// the Regular policy. Main thread only.
+pub fn set_dock_visible(visible: bool) {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let policy = if visible {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    NSApp(mtm).setActivationPolicy(policy);
+}
+
 /// Install the app delegate and the default main menu (so Cmd+Q works), then
 /// activate. The app can replace the menu later via `mac::menu::set_app_menu`.
 pub fn setup_app_delegate() -> Retained<MirinAppDelegate> {

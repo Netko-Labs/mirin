@@ -24,6 +24,7 @@ const symbols = {
   mirin_window_control: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_window_set_material: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_app_quit: { args: [], returns: FFIType.void },
+  mirin_app_set_dock_visible: { args: [FFIType.i32], returns: FFIType.void },
   mirin_set_app_menu: { args: [FFIType.ptr], returns: FFIType.void },
   mirin_popup_menu: { args: [FFIType.ptr], returns: FFIType.void },
   mirin_tray_create: { args: [FFIType.ptr], returns: FFIType.void },
@@ -109,6 +110,10 @@ export class Core {
 
   quit(): void {
     this.#lib.symbols.mirin_app_quit();
+  }
+
+  appSetDockVisible(visible: boolean): void {
+    this.#lib.symbols.mirin_app_set_dock_visible(visible ? 1 : 0);
   }
 
   setAppMenu(templateJson: string): void {

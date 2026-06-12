@@ -32,6 +32,7 @@ export type {
   WindowOpenOptions,
   ServeHandle,
   BroadcastEmitters,
+  Dock,
 } from "./app.ts";
 export type { MenuItemTemplate, MenuRole } from "./menu.ts";
 export type { TrayOptions } from "./tray.ts";

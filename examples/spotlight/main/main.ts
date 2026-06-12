@@ -3,6 +3,11 @@ import { router } from "./rpc.ts";
 
 app.serve(router);
 
+// A resident hotkey palette shouldn't sit in the Dock or the menu bar — hide it
+// so the app lives only behind ⌘⇧J. (The panel itself is already title-bar-less
+// via `titleBarStyle: "hidden"` in mirin.config.ts.)
+app.dock.hide();
+
 app.on("ready", () => {
   const panel = app.windows.get("panel");
   let shown = false;

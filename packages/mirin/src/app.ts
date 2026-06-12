@@ -235,8 +235,36 @@ function normalizeMaterial(
   return typeof material === "string" ? { type: material } : material;
 }
 
+/** macOS Dock-icon controls (no-ops off macOS). */
+export interface Dock {
+  /** Hide the Dock icon and menu-bar presence (agent/accessory app). */
+  hide(): void;
+  /** Restore the Dock icon and menu bar. */
+  show(): void;
+}
+
 class MirinApp extends Emitter<AppEvents> {
   readonly windows = new Windows();
+
+  /** macOS Dock-icon controls. Hiding suits resident, hotkey-summoned apps. */
+  readonly dock: Dock = {
+    hide: () => this.#setDock(false),
+    show: () => this.#setDock(true),
+  };
+
+  /** Apply the Dock policy now if the core is up, else once it's ready. The
+   *  native command needs the CEF UI thread, which only runs after `ready`. */
+  #setDock(visible: boolean): void {
+    const apply = () => runtime().core.appSetDockVisible(visible);
+    if (runtime().core.isReady()) {
+      apply();
+    } else {
+      const off = this.on("ready", () => {
+        off();
+        apply();
+      });
+    }
+  }
 
   serve<R extends Router<any>>(router: R): ServeHandle<R> {
     runtime().rpc.setRouter(router);

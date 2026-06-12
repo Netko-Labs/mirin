@@ -47,6 +47,12 @@ pub extern "C" fn mirin_app_quit() {
     engine::quit();
 }
 
+/// Show (1) or hide (0) the app's Dock icon / menu-bar presence (macOS).
+#[no_mangle]
+pub extern "C" fn mirin_app_set_dock_visible(visible: c_int) {
+    engine::set_dock_visible(visible != 0);
+}
+
 // ---- windows ----
 
 /// Create a window from JSON opts; returns the window id synchronously.

@@ -326,6 +326,12 @@ pub fn quit() {
     }
 }
 
+/// Show/hide the app's Dock icon (and menu-bar presence) on the UI thread.
+pub fn set_dock_visible(visible: bool) {
+    let mut task = SetDockVisibleTask::new(visible);
+    post_task(ThreadId::UI, Some(&mut task));
+}
+
 /// Apply a window control verb (minimize/maximize/fullscreen/focus/…) on the UI thread.
 pub fn window_control(id: u32, verb: String) {
     let mut task = WindowControlTask::new(id, RefCell::new(Some(verb)));
@@ -799,6 +805,19 @@ wrap_task! {
         fn execute(&self) {
             #[cfg(target_os = "macos")]
             mac::close_all_windows();
+        }
+    }
+}
+
+wrap_task! {
+    struct SetDockVisibleTask {
+        visible: bool,
+    }
+    impl Task {
+        fn execute(&self) {
+            debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            #[cfg(target_os = "macos")]
+            mac::app::set_dock_visible(self.visible);
         }
     }
 }

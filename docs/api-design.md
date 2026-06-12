@@ -102,6 +102,15 @@ windows: {
 
 See `examples/spotlight` (Liquid Glass command palette) and `examples/liquid-glass` (live material picker).
 
+**Dock icon (macOS).** A resident, hotkey-summoned app can drop out of the Dock and menu bar entirely:
+
+```ts
+app.dock.hide();   // accessory app: no Dock tile, no menu bar (windows still show)
+app.dock.show();   // back to a regular app
+```
+
+Calls made before the app is ready are applied once it is. Combine with `titleBarStyle: "hidden"` for a chromeless, Dock-less panel (the Spotlight example does both).
+
 ## 3. Typed RPC
 
 One router definition; both sides infer from it. No channel strings, no `any`. The router is **global** — any webview can call any procedure — and every handler receives a `ctx` identifying the caller. Per-window scoping can layer on post-MVP.
