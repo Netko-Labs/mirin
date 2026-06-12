@@ -5,8 +5,8 @@
 use objc2::{
     define_class, msg_send,
     rc::Retained,
-    runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject},
-    DefinedClass, MainThreadMarker, MainThreadOnly,
+    runtime::{AnyClass, AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject, Sel},
+    sel, DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSColor, NSEvent, NSView, NSWindow, NSWindowButton,
@@ -70,6 +70,85 @@ define_class!(
 /// Run `f` with the live NSWindow for `id`, if present. Main thread only.
 pub fn with_window<R>(id: u32, f: impl FnOnce(&NSWindow) -> R) -> Option<R> {
     WINDOWS.with(|w| w.borrow().get(&id).map(|win| f(win)))
+}
+
+/// Replacement `hitTest:` for `NSTitlebarContainerView`. The native title bar sits
+/// above the content view and, for empty (non-button) areas, hit-tests to itself
+/// — which makes AppKit run window-drag/double-click disambiguation and delays
+/// clicks on web controls drawn in a custom title bar. We instead return the
+/// traffic-light button under the point if there is one, else `nil` so the click
+/// falls through to the web content below. Only applied to mirin custom-title-bar
+/// windows; default windows keep the native behavior.
+extern "C-unwind" fn titlebar_hit_test(
+    this: *mut AnyObject,
+    _cmd: Sel,
+    point: NSPoint,
+) -> *mut AnyObject {
+    let view: &NSView = unsafe { &*(this as *const NSView) };
+
+    // `point` is in our superview's coordinates. Bail if it's not within us.
+    let frame = view.frame();
+    let in_frame = point.x >= frame.origin.x
+        && point.x <= frame.origin.x + frame.size.width
+        && point.y >= frame.origin.y
+        && point.y <= frame.origin.y + frame.size.height;
+    if !in_frame {
+        return std::ptr::null_mut();
+    }
+
+    // Test our subviews (traffic-light buttons live here) in front-to-back order.
+    let superview = unsafe { view.superview() };
+    let local = match superview.as_deref() {
+        Some(sv) => view.convertPoint_fromView(point, Some(sv)),
+        None => point,
+    };
+    let subviews = view.subviews().to_vec();
+    for sub in subviews.iter().rev() {
+        let hit: *mut AnyObject = unsafe { msg_send![&**sub, hitTest: local] };
+        if !hit.is_null() {
+            return hit;
+        }
+    }
+
+    // Empty title-bar area. For mirin custom-title-bar windows, pass the click
+    // through (nil); otherwise preserve the native "self" so dragging works.
+    let id = window_id_for_view(this as *mut std::ffi::c_void);
+    let is_custom = id
+        .map(|id| CUSTOM_TITLEBARS.with(|s| s.borrow().contains(&id)))
+        .unwrap_or(false);
+    if is_custom {
+        std::ptr::null_mut()
+    } else {
+        this.cast()
+    }
+}
+
+/// Override `NSTitlebarContainerView.hitTest:` once, process-wide, so empty
+/// title-bar areas don't intercept clicks meant for the web content beneath
+/// them. Idempotent. Main thread only.
+fn install_titlebar_passthrough() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(cls) = AnyClass::get(c"NSTitlebarContainerView") else {
+        return;
+    };
+    let imp: objc2::runtime::Imp = unsafe {
+        std::mem::transmute::<
+            extern "C-unwind" fn(*mut AnyObject, Sel, NSPoint) -> *mut AnyObject,
+            unsafe extern "C-unwind" fn(),
+        >(titlebar_hit_test)
+    };
+    unsafe {
+        objc2::ffi::class_replaceMethod(
+            (cls as *const AnyClass) as *mut AnyClass,
+            sel!(hitTest:),
+            imp,
+            c"@@:{CGPoint=dd}".as_ptr(),
+        );
+    }
 }
 
 /// Close one window by id. Removing it from the registry drops the strong ref so
@@ -470,6 +549,9 @@ pub fn add_titlebar_drag(id: u32) {
     if !CUSTOM_TITLEBARS.with(|s| s.borrow().contains(&id)) {
         return;
     }
+    // Stop the native title bar from intercepting clicks on web controls drawn
+    // in the custom title-bar strip (the remaining source of click latency).
+    install_titlebar_passthrough();
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
