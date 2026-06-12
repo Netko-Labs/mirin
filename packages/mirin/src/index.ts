@@ -27,6 +27,7 @@ export { NotAttachedError } from "./runtime.ts";
 export type {
   WindowEvents,
   WindowMaterialInfo,
+  WindowFrame,
   AppEvents,
   WindowHandle,
   WindowOpenOptions,

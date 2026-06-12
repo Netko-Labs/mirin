@@ -93,6 +93,12 @@ pub extern "C" fn mirin_window_set_material(id: u32, spec_json: *const c_char) {
     engine::set_material(id, cstr(spec_json).to_string());
 }
 
+/// Move a window's bottom-left origin to screen point (x, y), in points.
+#[no_mangle]
+pub extern "C" fn mirin_window_set_position(id: u32, x: f64, y: f64) {
+    engine::window_set_position(id, x, y);
+}
+
 // ---- menus ----
 
 #[no_mangle]

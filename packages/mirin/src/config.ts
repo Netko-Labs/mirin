@@ -42,6 +42,9 @@ export interface WindowConfig {
   title?: string;
   width?: number;
   height?: number;
+  /** Screen position (bottom-left origin, points). Centered when absent. */
+  x?: number;
+  y?: number;
   /** "ready" (default) shows on first paint to avoid a white flash. */
   show?: "ready" | "immediately";
   /** "auto" (default) opens at launch; "manual" windows are templates for app.windows.open(name). */

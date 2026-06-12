@@ -125,7 +125,7 @@ define_class!(
 
         #[unsafe(method(windowDidMove:))]
         unsafe fn window_did_move(&self, _n: &NSNotification) {
-            crate::engine::emit_window_event(self.ivars().window_id.get(), "moved");
+            emit_frame_event(self.ivars().window_id.get(), "moved");
         }
 
         #[unsafe(method(windowDidResize:))]
@@ -133,7 +133,7 @@ define_class!(
             let id = self.ivars().window_id.get();
             // Windowless (OSR) windows must tell CEF to re-query the view size.
             crate::engine::osr::resized(id);
-            crate::engine::emit_window_event(id, "resized");
+            emit_frame_event(id, "resized");
         }
     }
 );
@@ -164,11 +164,40 @@ pub struct WindowParams<'a> {
     pub title: &'a str,
     pub width: f64,
     pub height: f64,
+    /// Screen position (bottom-left origin, points). Centered when absent.
+    pub x: Option<f64>,
+    pub y: Option<f64>,
     pub title_bar_style: TitleBarStyle,
     pub transparent: bool,
     pub always_on_top: bool,
     pub movable_by_background: bool,
     pub show: bool,
+}
+
+/// Current window frame (x, y bottom-left origin; width, height) in screen
+/// points, or None if the window isn't open. Main thread only.
+pub fn frame_of(id: u32) -> Option<(f64, f64, f64, f64)> {
+    with_window(id, |w| {
+        let f = w.frame();
+        (f.origin.x, f.origin.y, f.size.width, f.size.height)
+    })
+}
+
+/// Whether the window is zoomed (maximized). Main thread only.
+pub fn is_zoomed(id: u32) -> bool {
+    with_window(id, |w| w.isZoomed()).unwrap_or(false)
+}
+
+/// Move the window's bottom-left origin to screen point (x, y). Main thread only.
+pub fn set_position(id: u32, x: f64, y: f64) {
+    with_window(id, |w| w.setFrameOrigin(NSPoint::new(x, y)));
+}
+
+/// Emit a `window.<kind>` event carrying the current frame + maximized state.
+fn emit_frame_event(id: u32, kind: &str) {
+    if let Some((x, y, w, h)) = frame_of(id) {
+        crate::engine::emit_window_frame(id, kind, x, y, w, h, is_zoomed(id));
+    }
 }
 
 /// Create a mirin-owned NSWindow registered under `id`, returning its content
@@ -200,7 +229,11 @@ pub fn create_window(
     };
     unsafe { window.setReleasedWhenClosed(false) };
     window.setTitle(&NSString::from_str(params.title));
-    window.center();
+    // Restore a saved position if given, else center.
+    match (params.x, params.y) {
+        (Some(x), Some(y)) => window.setFrameOrigin(NSPoint::new(x, y)),
+        _ => window.center(),
+    }
 
     match params.title_bar_style {
         TitleBarStyle::Default => {}
@@ -271,6 +304,8 @@ pub fn create_window(
         CUSTOM_TITLEBARS.with(|s| s.borrow_mut().insert(params.id));
     }
     WINDOWS.with(|w| w.borrow_mut().insert(params.id, window));
+    // Seed the worker's tracked frame with the initial geometry.
+    emit_frame_event(params.id, "moved");
     (content_ptr, bounds)
 }
 

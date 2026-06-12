@@ -32,6 +32,14 @@ export type AppEvents = {
   "window-all-closed": void;
 };
 
+/** A window's frame in screen points (bottom-left origin, like AppKit). */
+export interface WindowFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 type Listener<P> = (payload: P) => void;
 
 class Emitter<Events extends Record<string, unknown>> {
@@ -125,6 +133,31 @@ export class WindowHandle extends Emitter<WindowEvents> {
    */
   async setMaterial(material: WindowMaterial | WindowMaterialOptions | null): Promise<void> {
     runtime().core.windowSetMaterial(this.id, JSON.stringify(normalizeMaterial(material)));
+  }
+
+  /** Move the window's bottom-left origin to screen point (x, y), in points. */
+  setPosition(x: number, y: number): void {
+    runtime().core.windowSetPosition(this.id, x, y);
+  }
+
+  /** The latest known window frame (screen points, bottom-left origin). Tracked
+   *  from `moved`/`resized` events, so it's current without a round-trip. */
+  getFrame(): WindowFrame {
+    return this.#frame ?? { x: 0, y: 0, width: 0, height: 0 };
+  }
+
+  /** Whether the window is currently zoomed (maximized). */
+  isMaximized(): boolean {
+    return this.#maximized;
+  }
+
+  #frame: WindowFrame | null = null;
+  #maximized = false;
+
+  /** @internal — fed from native window frame events. */
+  _setFrame(frame: WindowFrame, maximized: boolean): void {
+    this.#frame = frame;
+    this.#maximized = maximized;
   }
 
   #control(verb: string): void {
@@ -322,7 +355,15 @@ export function wireAppEvents(): void {
   for (const kind of WINDOW_EVENTS) {
     onNativeEvent(`window.${kind}`, (event: NativeEvent) => {
       const id = event.id as number | undefined;
-      if (id != null) app.windows._byId(id)?._emit(kind, undefined);
+      if (id == null) return;
+      const handle = app.windows._byId(id);
+      if (!handle) return;
+      // moved/resized carry the current frame + maximized state; track them so
+      // getFrame()/isMaximized() are answerable without a round-trip.
+      if (event.frame) {
+        handle._setFrame(event.frame as WindowFrame, Boolean(event.maximized));
+      }
+      handle._emit(kind, undefined);
     });
   }
 }

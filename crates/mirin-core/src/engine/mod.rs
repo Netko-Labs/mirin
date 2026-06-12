@@ -61,6 +61,11 @@ pub struct WindowOpts {
     pub width: f64,
     #[serde(default = "default_height")]
     pub height: f64,
+    /// Screen position (bottom-left origin, points). Centered when absent.
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
     pub url: String,
     /// "hidden" | "hiddenInset" | absent (standard title bar).
     #[serde(default)]
@@ -101,6 +106,8 @@ impl WindowOpts {
             title: default_title(),
             width: default_width(),
             height: default_height(),
+            x: None,
+            y: None,
             url,
             title_bar_style: None,
             transparent: false,
@@ -166,6 +173,14 @@ pub fn emit_event(json: &str) {
 /// Queue a `window.<kind>` event for `id` (focus/blur/moved/resized/...).
 pub fn emit_window_event(id: u32, kind: &str) {
     emit_event(&format!(r#"{{"type":"window.{kind}","id":{id}}}"#));
+}
+
+/// Queue a `window.<kind>` event carrying the window's frame + maximized state.
+/// Frame coordinates are screen points with a bottom-left origin.
+pub fn emit_window_frame(id: u32, kind: &str, x: f64, y: f64, w: f64, h: f64, maximized: bool) {
+    emit_event(&format!(
+        r#"{{"type":"window.{kind}","id":{id},"frame":{{"x":{x},"y":{y},"width":{w},"height":{h}}},"maximized":{maximized}}}"#
+    ));
 }
 
 /// Pop the next queued event as a C string (valid until the next call), or null.
@@ -338,6 +353,12 @@ pub fn window_control(id: u32, verb: String) {
     post_task(ThreadId::UI, Some(&mut task));
 }
 
+/// Move a window's bottom-left origin to screen point (x, y) on the UI thread.
+pub fn window_set_position(id: u32, x: f64, y: f64) {
+    let mut task = WindowSetPositionTask::new(id, x, y);
+    post_task(ThreadId::UI, Some(&mut task));
+}
+
 /// Change a window's native background material live. `spec_json` is the same
 /// normalized `{ type, tint?, cornerRadius? }` shape as the create option, or
 /// `null`/`{}`/`{"type":"none"}` to remove the material. Only affects OSR
@@ -399,6 +420,8 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
         title: &opts.title,
         width: opts.width,
         height: opts.height,
+        x: opts.x,
+        y: opts.y,
         title_bar_style,
         transparent,
         always_on_top: opts.always_on_top,
@@ -834,6 +857,21 @@ wrap_task! {
             if let Some(verb) = self.verb.borrow_mut().take() {
                 mac::window::control(self.id, &verb);
             }
+        }
+    }
+}
+
+wrap_task! {
+    struct WindowSetPositionTask {
+        id: u32,
+        x: f64,
+        y: f64,
+    }
+    impl Task {
+        fn execute(&self) {
+            debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            #[cfg(target_os = "macos")]
+            mac::window::set_position(self.id, self.x, self.y);
         }
     }
 }
