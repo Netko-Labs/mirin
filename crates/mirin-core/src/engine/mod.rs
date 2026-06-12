@@ -48,6 +48,9 @@ pub struct CoreConfig {
     pub resources_path: String,
     /// If set, open a window with this URL at startup (Bun-less m1-smoke test).
     pub startup_url: Option<String>,
+    /// Development run (`mirin dev`): enables web-inspector context-menu items.
+    #[serde(default)]
+    pub dev: bool,
 }
 
 /// Per-window creation options (from the Bun Worker via `mirin_window_create`).
@@ -136,6 +139,8 @@ fn default_true() -> bool {
 
 static NEXT_WINDOW_ID: AtomicU32 = AtomicU32::new(1);
 static READY: AtomicBool = AtomicBool::new(false);
+/// True under `mirin dev`; gates the web-inspector context-menu item.
+static IS_DEV: AtomicBool = AtomicBool::new(false);
 static RPC_PORT: AtomicU16 = AtomicU16::new(0);
 static RPC_TOKEN: Mutex<String> = Mutex::new(String::new());
 
@@ -160,6 +165,11 @@ pub fn set_rpc_endpoint(port: u16, token: String) {
 
 pub fn is_ready() -> bool {
     READY.load(Ordering::SeqCst)
+}
+
+/// Whether this is a `mirin dev` run (enables the Inspect Element context menu).
+pub fn is_dev() -> bool {
+    IS_DEV.load(Ordering::Relaxed)
 }
 
 /// Queue a JSON event for the Worker to drain.
@@ -203,6 +213,7 @@ pub fn poll_event() -> *const c_char {
 /// the process main thread (the FFI `mirin_run`, or the m1-smoke binary). Does
 /// not return until the app quits.
 pub fn run_core(config: CoreConfig) -> i32 {
+    IS_DEV.store(config.dev, Ordering::Relaxed);
     let _library = load_cef();
 
     let args = cef::args::Args::new();
@@ -703,10 +714,112 @@ wrap_client! {
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(MirinDisplayHandler::new())
         }
+        /// Reports `-webkit-app-region` regions so custom title bars can drag
+        /// from declared areas while leaving controls clickable.
+        fn drag_handler(&self) -> Option<DragHandler> {
+            Some(MirinDragHandler::new(self.inner.clone()))
+        }
+        /// Adds an "Inspect Element" item to the native context menu in dev runs.
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+            Some(MirinContextMenuHandler::new())
+        }
         /// CEF only invokes this for windowless (OSR) browsers; windowed ones
         /// ignore it. Transparent windows are the OSR case.
         fn render_handler(&self) -> Option<RenderHandler> {
             Some(osr::render_handler())
+        }
+    }
+}
+
+wrap_drag_handler! {
+    struct MirinDragHandler {
+        inner: Arc<Mutex<MirinHandler>>,
+    }
+
+    impl DragHandler {
+        /// A page's `-webkit-app-region` regions changed. Forward them to the
+        /// hosting window's drag overlay (macOS, windowed). Called on the UI
+        /// thread, so AppKit work here is safe.
+        fn on_draggable_regions_changed(
+            &self,
+            browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            regions: Option<&[DraggableRegion]>,
+        ) {
+            #[cfg(target_os = "macos")]
+            {
+                let Some(browser) = browser else {
+                    return;
+                };
+                let window_id = {
+                    let handler = self.inner.lock().expect("failed to lock MirinHandler");
+                    handler.window_ids.get(&browser.identifier()).copied()
+                };
+                let Some(window_id) = window_id else {
+                    return;
+                };
+                let regions = regions
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|r| mac::DragRegion {
+                        x: r.bounds.x as f64,
+                        y: r.bounds.y as f64,
+                        w: r.bounds.width as f64,
+                        h: r.bounds.height as f64,
+                        draggable: r.draggable != 0,
+                    })
+                    .collect();
+                mac::set_draggable_regions(window_id, regions);
+            }
+        }
+    }
+}
+
+/// Context-menu command id for "Inspect Element" (CEF user range 26500..28500).
+const MENU_ID_INSPECT: i32 = 26600;
+
+wrap_context_menu_handler! {
+    struct MirinContextMenuHandler {}
+
+    impl ContextMenuHandler {
+        /// Append an "Inspect Element" entry to the page's native context menu,
+        /// dev runs only. The default menu items (passed in `model`) are kept.
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            if !is_dev() {
+                return;
+            }
+            if let Some(model) = model {
+                model.add_separator();
+                model.add_item(MENU_ID_INSPECT, Some(&CefString::from("Inspect Element")));
+            }
+        }
+
+        /// Open DevTools at the clicked element when "Inspect Element" is chosen.
+        fn on_context_menu_command(
+            &self,
+            browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            params: Option<&mut ContextMenuParams>,
+            command_id: i32,
+            _event_flags: EventFlags,
+        ) -> i32 {
+            if command_id != MENU_ID_INSPECT {
+                return 0;
+            }
+            if let Some(host) = browser.and_then(|b| b.host()) {
+                let at = params.map(|p| Point {
+                    x: p.xcoord(),
+                    y: p.ycoord(),
+                });
+                host.show_dev_tools(None, None, None, at.as_ref());
+            }
+            1
         }
     }
 }

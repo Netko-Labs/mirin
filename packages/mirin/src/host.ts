@@ -36,7 +36,9 @@ const manifest = JSON.parse(
 
 const coreConfig = JSON.parse(
   process.env.MIRIN_CONFIG_JSON ??
-    JSON.stringify(process.env.MIRIN_DEV_URL ? {} : { resources_path: resourcesDir }),
+    JSON.stringify(
+      process.env.MIRIN_DEV_URL ? { dev: true } : { resources_path: resourcesDir },
+    ),
 );
 
 // Load the native core on the main thread FIRST. The Worker also dlopens the
