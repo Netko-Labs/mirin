@@ -103,11 +103,15 @@ define_class!(
         #[unsafe(method(keyDown:))]
         unsafe fn key_down(&self, event: &NSEvent) {
             self.key(event, KEY_RAWKEYDOWN);
-            // Follow with a CHAR event carrying the typed character.
+            // Then a CHAR event so text actually gets inserted — but only for
+            // real text, not arrows/F-keys/nav keys (their characters live in
+            // AppKit's function-key private-use range 0xF700–0xF8FF).
             if let Some(ch) = first_char(event) {
-                let id = self.window_id();
-                let (vk, native) = key_codes(event);
-                crate::engine::osr::key(id, KEY_CHAR, modifiers(event), vk, native, ch, ch);
+                if !is_function_key(ch) {
+                    let id = self.window_id();
+                    let (vk, native) = key_codes(event);
+                    crate::engine::osr::key(id, KEY_CHAR, modifiers(event), vk, native, ch, ch);
+                }
             }
         }
         #[unsafe(method(keyUp:))]
@@ -152,14 +156,19 @@ impl MirinOsrView {
 
     fn key(&self, event: &NSEvent, type_code: i32) {
         let (vk, native) = key_codes(event);
+        // Populate character/unmodified_character even for non-text keys. Left
+        // zero, Chromium's macOS OSR path re-interprets the event and dispatches
+        // a duplicate keydown (special keys, e.g. arrows, firing twice).
+        let ch = first_char(event).unwrap_or(0);
+        let unmod = first_unmodified_char(event).unwrap_or(ch);
         crate::engine::osr::key(
             self.window_id(),
             type_code,
             modifiers(event),
             vk,
             native,
-            0,
-            0,
+            ch,
+            unmod,
         );
     }
 }
@@ -189,6 +198,19 @@ fn modifiers(event: &NSEvent) -> u32 {
 fn first_char(event: &NSEvent) -> Option<u16> {
     let chars = event.characters()?;
     chars.to_string().encode_utf16().next()
+}
+
+/// The character the key would produce ignoring modifiers (used for CEF's
+/// `unmodified_character`, which it needs to identify shortcut keys).
+fn first_unmodified_char(event: &NSEvent) -> Option<u16> {
+    let chars = event.charactersIgnoringModifiers()?;
+    chars.to_string().encode_utf16().next()
+}
+
+/// AppKit reports arrows, F-keys, page nav, etc. as characters in the Unicode
+/// private-use range 0xF700–0xF8FF — not real text.
+fn is_function_key(ch: u16) -> bool {
+    (0xF700..=0xF8FF).contains(&ch)
 }
 
 /// (windows_key_code, native_key_code) for a key event.
