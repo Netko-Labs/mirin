@@ -12,7 +12,7 @@
  */
 
 import { $ } from "bun";
-import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const FRAMEWORK = "Chromium Embedded Framework.framework";
@@ -208,14 +208,66 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     );
   }
 
-  // Sign inside-out: framework, helpers, then the outer app. Ad-hoc ("-") by
-  // default; pass a Developer ID to produce a distributable, notarizable app.
+  // Sign inside-out. Ad-hoc ("-") by default for local builds; pass a Developer
+  // ID to produce a distributable, notarizable app. Notarization requires the
+  // hardened runtime (--options runtime), a secure timestamp (--timestamp), and
+  // entitlements that let CEF + Bun JIT and load unsigned executable memory —
+  // without all three the Apple notary service returns "Invalid".
   const identity = opts.signIdentity ?? "-";
-  await $`codesign --force --sign ${identity} ${join(frameworks, FRAMEWORK)}`.quiet();
-  for (const { suffix } of HELPER_TYPES) {
-    await $`codesign --force --sign ${identity} ${join(frameworks, `${appName} Helper${suffix}.app`)}`.quiet();
+  const notarizable = identity !== "-";
+  const cef = join(frameworks, FRAMEWORK);
+
+  if (notarizable) {
+    // Mirrors the entitlement set Electrobun ships for Bun + CEF under hardened
+    // runtime (electrobun-reference/package/src/cli/index.ts).
+    const entitlements = join(opts.outDir, "_entitlements.plist");
+    writeFileSync(
+      entitlements,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>
+`,
+    );
+    const sign = (path: string, ents = false) =>
+      ents
+        ? $`codesign --force --timestamp --options runtime --entitlements ${entitlements} --sign ${identity} ${path}`.quiet()
+        : $`codesign --force --timestamp --options runtime --sign ${identity} ${path}`.quiet();
+
+    // 1. CEF's nested libraries, then 2. the framework bundle itself.
+    const cefLibs = join(cef, "Libraries");
+    if (existsSync(cefLibs)) {
+      for (const lib of readdirSync(cefLibs)) {
+        if (lib.endsWith(".dylib")) await sign(join(cefLibs, lib));
+      }
+    }
+    await sign(cef);
+    // 3. our FFI core dylib.
+    await sign(join(macos, "libmirin_core.dylib"));
+    // 4. each helper: the inner executable, then the .app wrapper (entitlements
+    //    on both — the renderer/GPU helpers are what actually JIT).
+    for (const { suffix } of HELPER_TYPES) {
+      const name = `${appName} Helper${suffix}`;
+      const helperApp = join(frameworks, `${name}.app`);
+      await sign(join(helperApp, "Contents", "MacOS", name), true);
+      await sign(helperApp, true);
+    }
+    // 5. finally the outer app.
+    await sign(app, true);
+    rmSync(entitlements, { force: true });
+  } else {
+    // Ad-hoc: enough to launch locally; not distributable or notarizable.
+    await $`codesign --force --sign ${identity} ${cef}`.quiet();
+    for (const { suffix } of HELPER_TYPES) {
+      await $`codesign --force --sign ${identity} ${join(frameworks, `${appName} Helper${suffix}.app`)}`.quiet();
+    }
+    await $`codesign --force --sign ${identity} ${app}`.quiet();
   }
-  await $`codesign --force --sign ${identity} ${app}`.quiet();
 
   return { app, exe: join(macos, appName) };
 }

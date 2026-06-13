@@ -52,9 +52,30 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     console.log("[mirin release] notarizing (this can take a few minutes)…");
     const zip = join(buildDir, "_notarize.zip");
     await $`ditto -c -k --keepParent ${result.app} ${zip}`;
-    await $`xcrun notarytool submit ${zip} --apple-id ${apple} --password ${pw} --team-id ${team} --wait`;
-    await $`xcrun stapler staple ${result.app}`;
+    // `notarytool submit --wait` exits 0 even when the result is "Invalid", so
+    // parse the JSON status ourselves and surface the notary log on rejection —
+    // otherwise the only symptom is a confusing `stapler` failure downstream.
+    const out =
+      await $`xcrun notarytool submit ${zip} --apple-id ${apple} --password ${pw} --team-id ${team} --wait --output-format json`.text();
     rmSync(zip, { force: true });
+    let sub: { id?: string; status?: string } = {};
+    try {
+      sub = JSON.parse(out);
+    } catch {
+      console.error(out);
+    }
+    if (sub.status !== "Accepted") {
+      console.error(`[mirin release] notarization ${sub.status ?? "failed"} (id: ${sub.id ?? "?"})`);
+      if (sub.id) {
+        const log =
+          await $`xcrun notarytool log ${sub.id} --apple-id ${apple} --password ${pw} --team-id ${team}`
+            .text()
+            .catch(() => "");
+        if (log) console.error(log);
+      }
+      throw new Error(`notarization not accepted: ${sub.status ?? "unknown"}`);
+    }
+    await $`xcrun stapler staple ${result.app}`;
   }
 
   const codec = loadCodec(result.coreDylib);
