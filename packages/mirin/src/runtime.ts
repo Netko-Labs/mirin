@@ -20,6 +20,8 @@ export interface Runtime {
   devUrl?: string;
   /** Contents/Resources of the running .app (for the updater). Absent in dev. */
   resourcesDir?: string;
+  /** Path to libmirin_core (for the updater codec). */
+  corePath?: string;
 }
 
 export class NotAttachedError extends Error {
@@ -95,6 +97,13 @@ export function boot(): void {
     data.manifest?.windows ?? {},
   ).map(([name, cfg]) => ({ name, ...cfg }));
 
-  current = { core, rpc, manifestWindows, devUrl: data.devUrl, resourcesDir: data.resourcesDir };
+  current = {
+    core,
+    rpc,
+    manifestWindows,
+    devUrl: data.devUrl,
+    resourcesDir: data.resourcesDir,
+    corePath,
+  };
   core.onEvent(dispatch);
 }

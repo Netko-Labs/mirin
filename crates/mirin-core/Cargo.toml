@@ -21,6 +21,9 @@ sandbox = ["cef/sandbox"]
 cef.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Updater codec (delta patches): zstd compression + binary bsdiff/bspatch.
+zstd = "0.13"
+qbsdiff = "1.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true

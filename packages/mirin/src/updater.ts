@@ -1,26 +1,24 @@
 /**
  * mirin/updater — the `app.updater` API (runs in the Bun Worker).
  *
- * Reads the app's own `Resources/version.json` (embedded by `mirin build` when
- * `release` is configured), polls the manifest at `{baseUrl}/{prefix}-update.json`,
- * downloads the full `.app` bundle when a different version is published, verifies
- * its SHA-256, then swaps the whole `.app` and relaunches.
+ * Reads the app's `Resources/version.json` (embedded by `mirin build` when
+ * `release` is set), polls `{baseUrl}/{prefix}-update.json`, and when a different
+ * version is published downloads it, verifies its SHA-256, then swaps the whole
+ * `.app` and relaunches. Updates prefer a small **delta patch** (bsdiff) from the
+ * currently-installed version and fall back to the full bundle whenever a patch
+ * isn't usable.
  *
  * A signed/notarized `.app` cannot be modified in place without breaking its
- * signature, so every update replaces the entire bundle. Updates run only in a
- * packaged app with `release` set; in `mirin dev` (no version.json) the updater
- * stays idle and `checkForUpdate()` resolves `null`.
- *
- *   import { app } from "mirinjs";
- *   const info = await app.updater.checkForUpdate();
- *   if (info) { await app.updater.download(p => …); await app.updater.applyAndRelaunch(); }
+ * signature, so the whole bundle is always replaced. Updates run only in a
+ * packaged app with `release` set; in `mirin dev` the updater is idle.
  */
 
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { $ } from "bun";
 import { runtime } from "./runtime.ts";
+import { loadCodec } from "./codec.ts";
 
 export type UpdaterStatus =
   | "idle"
@@ -40,17 +38,23 @@ interface VersionInfo {
   identifier: string;
 }
 
+/** The published-release manifest ({prefix}-update.json). */
+interface Manifest {
+  version: string;
+  channel: string;
+  platform: string;
+  arch: string;
+  /** SHA-256 of the uncompressed bundle tar (update identity + integrity). */
+  tarHash: string;
+  bundle: { url: string; sha256: string; size?: number };
+  patches?: Array<{ fromVersion: string; url: string; sha256: string; size?: number }>;
+}
+
 /** A published release the running app can update to. */
 export interface UpdateInfo {
-  /** Version being offered. */
   version: string;
-  /** The currently-running version. */
   currentVersion: string;
   channel: string;
-  /** Artifact filename, relative to baseUrl. */
-  url: string;
-  sha256: string;
-  size?: number;
 }
 
 export interface UpdateProgress {
@@ -72,12 +76,11 @@ type Listener<P> = (payload: P) => void;
 export class Updater {
   #listeners = new Map<keyof UpdaterEvents, Set<Listener<unknown>>>();
   #status: UpdaterStatus = "idle";
-  #info: VersionInfo | null | undefined; // undefined = not yet read
-  #pending: UpdateInfo | null = null;
-  #staged: string | null = null; // path to the extracted, verified .app
+  #info: VersionInfo | null | undefined;
+  #manifest: Manifest | null = null;
+  #staged: string | null = null;
   #autoCheck: ReturnType<typeof setInterval> | undefined;
 
-  /** Subscribe to an updater event. Returns an unsubscribe function. */
   on<K extends keyof UpdaterEvents>(type: K, listener: Listener<UpdaterEvents[K]>): () => void {
     let set = this.#listeners.get(type);
     if (!set) this.#listeners.set(type, (set = new Set()));
@@ -94,15 +97,12 @@ export class Updater {
   get channel(): string {
     return this.#version()?.channel ?? "stable";
   }
-  /** Whether this build has updates configured (packaged + `release` set). */
+  /** Whether updates are configured (packaged build with `release` set). */
   get enabled(): boolean {
     return this.#version() != null;
   }
 
-  /**
-   * Fetch the channel manifest and report an available update, or `null` if the
-   * app is up to date / updates aren't configured. Never throws.
-   */
+  /** Fetch the channel manifest; report an available update or `null`. Never throws. */
   async checkForUpdate(): Promise<UpdateInfo | null> {
     const v = this.#version();
     if (!v) return null;
@@ -111,25 +111,14 @@ export class Updater {
       const url = `${v.baseUrl.replace(/\/$/, "")}/${this.#prefix()}-update.json?t=${Date.now()}`;
       const res = await fetch(url, { redirect: "follow" });
       if (!res.ok) throw new Error(`manifest ${res.status}`);
-      const m = (await res.json()) as {
-        version: string;
-        url: string;
-        sha256: string;
-        size?: number;
-      };
+      const m = (await res.json()) as Manifest;
       if (!m.version || m.version === v.version) {
+        this.#manifest = null;
         this.#setStatus("idle");
         return null;
       }
-      const info: UpdateInfo = {
-        version: m.version,
-        currentVersion: v.version,
-        channel: v.channel,
-        url: m.url,
-        sha256: m.sha256,
-        size: m.size,
-      };
-      this.#pending = info;
+      this.#manifest = m;
+      const info: UpdateInfo = { version: m.version, currentVersion: v.version, channel: v.channel };
       this.#setStatus("update-available");
       this.#emit("update-available", info);
       return info;
@@ -140,53 +129,64 @@ export class Updater {
   }
 
   /**
-   * Download (and verify) the pending update's bundle into the app's support
-   * dir. Emits `progress`. Call `checkForUpdate()` first.
+   * Download + verify the pending update — a delta patch from the installed
+   * version when available, else the full bundle. Emits `progress`.
    */
   async download(onProgress?: (p: UpdateProgress) => void): Promise<void> {
     const v = this.#version();
-    if (!v || !this.#pending) throw new Error("no update to download — call checkForUpdate() first");
-    const info = this.#pending;
+    const m = this.#manifest;
+    if (!v || !m) throw new Error("no update to download — call checkForUpdate() first");
     this.#setStatus("downloading");
     try {
-      const dir = this.#updatesDir(v);
-      rmSync(dir, { recursive: true, force: true });
-      mkdirSync(dir, { recursive: true });
+      const codec = loadCodec(this.#corePath());
+      const support = this.#supportDir(v);
+      const tarsDir = join(support, "tars");
+      const work = join(support, "updates");
+      mkdirSync(tarsDir, { recursive: true });
+      rmSync(work, { recursive: true, force: true });
+      mkdirSync(work, { recursive: true });
 
-      const url = `${v.baseUrl.replace(/\/$/, "")}/${info.url}`;
-      const res = await fetch(url, { redirect: "follow" });
-      if (!res.ok || !res.body) throw new Error(`download ${res.status}`);
-      const total = Number(res.headers.get("content-length") ?? info.size ?? 0);
+      const base = v.baseUrl.replace(/\/$/, "");
+      const newTar = join(work, "new.tar");
+      const cachedTar = join(tarsDir, `${v.version}.tar`);
+      const patch = m.patches?.find((p) => p.fromVersion === v.version);
 
-      const reader = res.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let received = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.byteLength;
-        const p: UpdateProgress = { received, total, fraction: total ? received / total : 0 };
-        this.#emit("progress", p);
-        onProgress?.(p);
+      let ok = false;
+      if (patch && existsSync(cachedTar)) {
+        try {
+          const patchZst = join(work, "patch.zst");
+          await this.#fetchToFile(`${base}/${patch.url}`, patchZst, patch.sha256, onProgress);
+          const patchRaw = join(work, "patch.bin");
+          codec.decompress(patchZst, patchRaw);
+          codec.patch(cachedTar, patchRaw, newTar); // bspatch
+          await this.#verify(newTar, m.tarHash);
+          ok = true;
+        } catch {
+          ok = false; // delta failed → full bundle
+        }
       }
-      const buf = Buffer.concat(chunks);
-
-      // Integrity: the manifest's sha256 must match the downloaded artifact.
-      const got = new Bun.CryptoHasher("sha256").update(buf).digest("hex");
-      if (got !== info.sha256) {
-        throw new Error(`hash mismatch (expected ${info.sha256.slice(0, 12)}…, got ${got.slice(0, 12)}…)`);
+      if (!ok) {
+        const bundleZst = join(work, "bundle.tar.zst");
+        await this.#fetchToFile(`${base}/${m.bundle.url}`, bundleZst, m.bundle.sha256, onProgress);
+        codec.decompress(bundleZst, newTar);
+        await this.#verify(newTar, m.tarHash);
       }
 
-      const tarPath = join(dir, "update.tar.gz");
-      await Bun.write(tarPath, buf);
-      await $`tar -xzf ${tarPath} -C ${dir}`.quiet();
-      const staged = join(dir, `${v.name}.app`);
+      // Cache the new tar (for the next delta) and extract for swapping.
+      const keepTar = join(tarsDir, `${m.version}.tar`);
+      rmSync(keepTar, { force: true });
+      renameSync(newTar, keepTar);
+      await $`tar -xf ${keepTar} -C ${work}`.quiet();
+      const staged = join(work, `${v.name}.app`);
       if (!existsSync(staged)) throw new Error(`extracted bundle not found at ${staged}`);
 
-      // Refuse a tampered/corrupt bundle (works for ad-hoc + Developer ID).
       const verify = await $`codesign --verify --deep --strict ${staged}`.quiet().nothrow();
       if (verify.exitCode !== 0) throw new Error("codesign verification failed on the downloaded update");
+
+      // Keep only the newest cached tar.
+      for (const f of readdirSync(tarsDir)) {
+        if (f !== `${m.version}.tar`) rmSync(join(tarsDir, f), { force: true });
+      }
 
       this.#staged = staged;
       this.#setStatus("update-available");
@@ -196,11 +196,7 @@ export class Updater {
     }
   }
 
-  /**
-   * Swap the running `.app` with the downloaded bundle and relaunch. Spawns a
-   * detached helper that waits for this process to exit, replaces the bundle,
-   * strips quarantine, and reopens the app — then quits.
-   */
+  /** Swap the running `.app` with the downloaded bundle and relaunch. */
   async applyAndRelaunch(): Promise<void> {
     const v = this.#version();
     if (!v || !this.#staged) throw new Error("no staged update — call download() first");
@@ -211,7 +207,6 @@ export class Updater {
         `APP=${sh(runningApp)}`,
         `NEW=${sh(this.#staged)}`,
         `PID=${process.pid}`,
-        // Wait for the running app to fully exit before swapping.
         `while kill -0 "$PID" 2>/dev/null; do sleep 0.2; done`,
         `sleep 0.3`,
         `rm -rf "$APP"`,
@@ -227,7 +222,6 @@ export class Updater {
       }).unref();
 
       this.#setStatus("complete");
-      // Quit; the detached helper does the swap + relaunch after we exit.
       runtime().core.quit();
     } catch (err) {
       this.#fail(err);
@@ -250,6 +244,39 @@ export class Updater {
 
   // ---- internals ----
 
+  async #fetchToFile(
+    url: string,
+    dest: string,
+    expectedSha: string,
+    onProgress?: (p: UpdateProgress) => void,
+  ): Promise<void> {
+    const res = await fetch(url, { redirect: "follow" });
+    if (!res.ok || !res.body) throw new Error(`download ${res.status}`);
+    const total = Number(res.headers.get("content-length") ?? 0);
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+      const p: UpdateProgress = { received, total, fraction: total ? received / total : 0 };
+      this.#emit("progress", p);
+      onProgress?.(p);
+    }
+    const buf = Buffer.concat(chunks);
+    const got = new Bun.CryptoHasher("sha256").update(buf).digest("hex");
+    if (got !== expectedSha) throw new Error("download hash mismatch");
+    await Bun.write(dest, buf);
+  }
+
+  async #verify(file: string, expectedSha: string): Promise<void> {
+    const buf = await Bun.file(file).bytes();
+    const got = new Bun.CryptoHasher("sha256").update(buf).digest("hex");
+    if (got !== expectedSha) throw new Error("reconstructed bundle hash mismatch");
+  }
+
   #version(): VersionInfo | null {
     if (this.#info !== undefined) return this.#info;
     const dir = this.#resourcesDir();
@@ -270,17 +297,22 @@ export class Updater {
     try {
       return runtime().resourcesDir;
     } catch {
-      return undefined; // detached (not under the host)
+      return undefined;
     }
   }
 
-  #prefix(): string {
-    const v = this.#version()!;
-    return `${v.channel}-darwin-${process.arch}`;
+  #corePath(): string {
+    const p = runtime().corePath;
+    if (!p) throw new Error("libmirin_core path unavailable");
+    return p;
   }
 
-  #updatesDir(v: VersionInfo): string {
-    return join(homedir(), "Library", "Application Support", v.identifier, v.channel, "updates");
+  #prefix(): string {
+    return `${this.#version()!.channel}-darwin-${process.arch}`;
+  }
+
+  #supportDir(v: VersionInfo): string {
+    return join(homedir(), "Library", "Application Support", v.identifier, v.channel);
   }
 
   #setStatus(status: UpdaterStatus): void {
@@ -297,7 +329,6 @@ export class Updater {
 
   #emit<K extends keyof UpdaterEvents>(type: K, payload: UpdaterEvents[K]): void {
     this.#listeners.get(type)?.forEach((fn) => fn(payload));
-    // Bridge to webviews so frontends can react without polling.
     try {
       runtime().rpc.broadcast(`mirin:updater:${type}`, payload);
     } catch {

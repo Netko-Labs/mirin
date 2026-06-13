@@ -159,3 +159,49 @@ pub extern "C" fn mirin_clipboard_write_text(text: *const c_char) {
 pub extern "C" fn mirin_dialog_show(spec_json: *const c_char) {
     engine::dialog_show(cstr(spec_json).to_string());
 }
+
+// ---- updater codec (zstd + bsdiff; file-path; 0 = ok, non-zero = error) ----
+
+#[no_mangle]
+pub extern "C" fn mirin_zstd_compress_file(
+    src: *const c_char,
+    dst: *const c_char,
+    level: c_int,
+) -> c_int {
+    match engine::codec::zstd_compress_file(cstr(src), cstr(dst), level) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mirin_zstd_decompress_file(src: *const c_char, dst: *const c_char) -> c_int {
+    match engine::codec::zstd_decompress_file(cstr(src), cstr(dst)) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mirin_bsdiff_file(
+    old: *const c_char,
+    new: *const c_char,
+    patch: *const c_char,
+) -> c_int {
+    match engine::codec::bsdiff_file(cstr(old), cstr(new), cstr(patch)) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mirin_bspatch_file(
+    old: *const c_char,
+    patch: *const c_char,
+    new: *const c_char,
+) -> c_int {
+    match engine::codec::bspatch_file(cstr(old), cstr(patch), cstr(new)) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}

@@ -8,11 +8,18 @@ the `mirin release` artifacts, hostable on **GitHub Releases** or **any static h
 - `mirin.config.ts` sets `release.baseUrl` + `channel`.
 - `mirin release` builds the signed `.app` and emits, under `build/release/`:
   - `stable-darwin-<arch>-update.json` — the manifest the app polls
-  - `stable-darwin-<arch>-UpdaterExample.app.tar.gz` — the full bundle
+  - `stable-darwin-<arch>-UpdaterExample.app.tar.zst` — the full bundle (fallback)
+  - `stable-darwin-<arch>-<prevVersion>.patch` — a small **delta** from the previous release
 - The running app's `app.updater` polls `${baseUrl}/${channel}-darwin-${arch}-update.json`,
   compares the advertised `version` to its own (from the embedded `version.json`),
-  downloads the bundle, verifies its `sha256`, then **swaps the whole `.app`** and relaunches.
+  downloads a delta patch from its installed version when available (else the full
+  bundle), verifies the result's `sha256`, then **swaps the whole `.app`** and relaunches.
   (A signed/notarized `.app` must be replaced whole — never edited in place.)
+
+**Small updates:** because the bundle is dominated by the unchanging Chromium framework,
+a release where only your app code changed produces a **few-KB patch** instead of a
+100 MB+ download. The first update on a fresh install is full (no local base to patch
+from); subsequent ones are deltas.
 
 > Updates run only in a packaged build with `release` set. In `mirin dev` the updater is inert.
 

@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use crate::mac;
 
 pub mod clipboard;
+pub mod codec;
 pub mod dialog;
 pub mod menu;
 pub mod osr;

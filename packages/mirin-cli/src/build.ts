@@ -33,6 +33,8 @@ export interface BuildResult {
   channel: string;
   /** Update baseUrl, if `release` is configured. */
   baseUrl?: string;
+  /** libmirin_core path (for the updater codec at release time). */
+  coreDylib: string;
 }
 
 /** Read the project's package.json version (the single source of app version). */
@@ -106,5 +108,5 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
 
   console.log(`\n[mirin build] done → ${app}`);
   console.log(`  open "${app}"`);
-  return { app, appName, bundleId, version, channel, baseUrl };
+  return { app, appName, bundleId, version, channel, baseUrl, coreDylib: artifacts.coreDylib };
 }
