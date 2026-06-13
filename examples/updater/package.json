@@ -1,10 +1,14 @@
 {
-  "name": "spotlight",
+  "name": "updater-example",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "mirin dev",
-    "build": "mirin build"
+    "build": "mirin build",
+    "release": "mirin release",
+    "serve": "bun serve.ts",
+    "vite": "vite"
   },
   "dependencies": {
     "mirinjs": "^0.0.1-alpha.11",

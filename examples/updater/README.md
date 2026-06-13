@@ -1,0 +1,54 @@
+# mirin updater example
+
+Shows mirin's built-in auto-updater: `app.updater` (check / download / apply) and
+the `mirin release` artifacts, hostable on **GitHub Releases** or **any static host**.
+
+## How it works
+
+- `mirin.config.ts` sets `release.baseUrl` + `channel`.
+- `mirin release` builds the signed `.app` and emits, under `build/release/`:
+  - `stable-darwin-<arch>-update.json` — the manifest the app polls
+  - `stable-darwin-<arch>-UpdaterExample.app.tar.gz` — the full bundle
+- The running app's `app.updater` polls `${baseUrl}/${channel}-darwin-${arch}-update.json`,
+  compares the advertised `version` to its own (from the embedded `version.json`),
+  downloads the bundle, verifies its `sha256`, then **swaps the whole `.app`** and relaunches.
+  (A signed/notarized `.app` must be replaced whole — never edited in place.)
+
+> Updates run only in a packaged build with `release` set. In `mirin dev` the updater is inert.
+
+## Try it locally (self-host)
+
+```bash
+bun install
+
+# 1. Build + publish v1.0.0, then install it
+bun run release
+cp -R build/"Updater Example".app /Applications/
+
+# 2. Serve the release dir (acts as baseUrl http://localhost:4000)
+bun run serve            # leave running
+
+# 3. Bump the version, release v1.0.1
+#    (edit "version" in package.json → 1.0.1)
+bun run release          # overwrites build/release with v1.0.1 artifacts
+
+# 4. Launch the installed v1.0.0 and click "Check for updates" → Download → Restart.
+open /Applications/"Updater Example".app
+```
+
+The app finds v1.0.1, downloads it with a progress bar, and relaunches into the new version.
+
+## Host on GitHub Releases
+
+Point `release.baseUrl` at your repo's latest release:
+
+```ts
+release: { baseUrl: "https://github.com/<org>/<repo>/releases/latest/download", channel: "stable" }
+```
+
+Then publish on a tag with the included workflow (`.github/workflows/release.yml`), which
+builds, runs `mirin release`, codesigns + notarizes (Developer ID), and uploads everything
+in `build/release/` as release assets. `…/releases/latest/download/<file>` resolves to the
+newest non-prerelease — so `stable` updates work with zero servers.
+
+Other channels (e.g. `beta`) use a pre-release tag or a separate `baseUrl`/path.

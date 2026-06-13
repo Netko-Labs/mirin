@@ -86,7 +86,22 @@ export interface MirinConfig {
    * into an `.icns`. Embedded in the bundle for the Dock and Finder.
    */
   icon?: string;
+  /**
+   * Auto-update configuration (macOS). Omit to disable updates entirely.
+   * `baseUrl` is a flat directory of release artifacts (a GitHub Releases
+   * `…/releases/latest/download` URL, an S3/R2 bucket, or any static host).
+   * `channel` (default "stable") is baked into artifact filenames + the app's
+   * support folder, so multiple channels can coexist at the same `baseUrl`.
+   */
+  release?: ReleaseConfig;
   windows: Record<string, WindowConfig>;
+}
+
+export interface ReleaseConfig {
+  /** Flat directory URL hosting `{channel}-{platform}-{arch}-*` update files. */
+  baseUrl: string;
+  /** Update channel; baked into artifact names + support dir. Default "stable". */
+  channel?: string;
 }
 
 /** Identity function for typing/intellisense. `const` generic preserves window names as literal keys. */

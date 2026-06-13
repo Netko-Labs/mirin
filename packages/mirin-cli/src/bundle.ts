@@ -33,6 +33,8 @@ export interface BundleOptions {
   coreDylib: string; // libmirin_core.dylib
   helperBin: string; // compiled mirin-helper binary
   cefPath: string; // dir containing the CEF framework (vendor/cef)
+  /** App version → Info.plist CFBundleShortVersionString/CFBundleVersion. */
+  version?: string;
   /** App icon source: a .icns, a .iconset dir, or a square .png. Optional. */
   icon?: string;
   /** Codesign identity; "-" (default) is ad-hoc. Set to a Developer ID to ship. */
@@ -42,6 +44,7 @@ export interface BundleOptions {
     uiDir?: string; // Vite dist/, copied to Resources/ui (served via app://ui)
     workerJs?: string; // bundled main-process Worker entry -> Resources/worker.js
     manifestJson?: string; // serialized manifest -> Resources/mirin.manifest.json
+    versionJson?: string; // serialized version.json -> Resources/version.json (updater)
   };
 }
 
@@ -136,6 +139,7 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   // Render the icon (if any) into Resources before writing the plist, so we
   // only set CFBundleIconFile when an icon was actually produced.
   const iconFile = opts.icon ? await writeIcon(opts.icon, join(contents, "Resources")) : undefined;
+  const version = opts.version ?? "0.0.1";
 
   const info: Record<string, PlistValue> = {
     CFBundleDevelopmentRegion: "en",
@@ -145,8 +149,8 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     CFBundleInfoDictionaryVersion: "6.0",
     CFBundleName: appName,
     CFBundlePackageType: "APPL",
-    CFBundleShortVersionString: "0.0.1",
-    CFBundleVersion: "0.0.1",
+    CFBundleShortVersionString: version,
+    CFBundleVersion: version,
     LSMinimumSystemVersion: "13.0",
     NSHighResolutionCapable: true,
     NSSupportsAutomaticGraphicsSwitching: true,
@@ -173,6 +177,11 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   if (opts.resources?.manifestJson != null) {
     writeFileSync(join(resources, "mirin.manifest.json"), opts.resources.manifestJson);
   }
+  // version.json is the running app's self-knowledge for the updater. Written
+  // before the codesign loop below so the signature covers it.
+  if (opts.resources?.versionJson != null) {
+    writeFileSync(join(resources, "version.json"), opts.resources.versionJson);
+  }
 
   for (const { suffix, id } of HELPER_TYPES) {
     const name = `${appName} Helper${suffix}`;
@@ -189,8 +198,8 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
         CFBundleInfoDictionaryVersion: "6.0",
         CFBundleName: name,
         CFBundlePackageType: "APPL",
-        CFBundleShortVersionString: "0.0.1",
-        CFBundleVersion: "0.0.1",
+        CFBundleShortVersionString: version,
+        CFBundleVersion: version,
         LSMinimumSystemVersion: "13.0",
         LSUIElement: "1",
         NSHighResolutionCapable: true,

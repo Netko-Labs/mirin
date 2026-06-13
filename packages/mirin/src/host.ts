@@ -48,7 +48,7 @@ const coreConfig = JSON.parse(
 const core = new Core(corePath);
 
 const worker = new Worker(workerPath, {
-  workerData: { corePath, manifest, devUrl: process.env.MIRIN_DEV_URL },
+  workerData: { corePath, manifest, devUrl: process.env.MIRIN_DEV_URL, resourcesDir },
 });
 worker.on("error", (err) => console.error("[mirin worker]", err));
 

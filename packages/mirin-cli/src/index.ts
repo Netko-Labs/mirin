@@ -6,6 +6,7 @@
 import { resolve } from "node:path";
 import { dev } from "./dev.ts";
 import { build } from "./build.ts";
+import { release } from "./release.ts";
 import { scaffold } from "create-mirinjs";
 
 const [command, arg] = Bun.argv.slice(2);
@@ -15,6 +16,7 @@ const USAGE = `mirin — build desktop apps with Bun + Chromium
 Usage:
   mirin dev          run the app against the Vite dev server (HMR + typed RPC)
   mirin build        package a standalone, signed .app (output: ./build)
+  mirin release      build + emit update artifacts (output: ./build/release)
   mirin init [dir]   scaffold a new app
 `;
 
@@ -24,7 +26,12 @@ switch (command) {
     break;
   }
   case "build": {
-    process.exit(await build());
+    await build();
+    process.exit(0);
+    break;
+  }
+  case "release": {
+    process.exit(await release());
     break;
   }
   case "init": {

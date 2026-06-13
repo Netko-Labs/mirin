@@ -18,6 +18,8 @@ export interface Runtime {
   rpc: RpcServer;
   manifestWindows: ManifestWindowConfig[];
   devUrl?: string;
+  /** Contents/Resources of the running .app (for the updater). Absent in dev. */
+  resourcesDir?: string;
 }
 
 export class NotAttachedError extends Error {
@@ -79,6 +81,7 @@ export function boot(): void {
     corePath?: string;
     manifest?: { windows?: Record<string, WindowConfig> };
     devUrl?: string;
+    resourcesDir?: string;
   };
   const corePath = data.corePath ?? process.env.MIRIN_CORE;
   if (!corePath) return; // not under the host; the API stays detached
@@ -92,6 +95,6 @@ export function boot(): void {
     data.manifest?.windows ?? {},
   ).map(([name, cfg]) => ({ name, ...cfg }));
 
-  current = { core, rpc, manifestWindows, devUrl: data.devUrl };
+  current = { core, rpc, manifestWindows, devUrl: data.devUrl, resourcesDir: data.resourcesDir };
   core.onEvent(dispatch);
 }

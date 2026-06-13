@@ -70,33 +70,49 @@
         "vite": "npm:rolldown-vite@^7.3.1",
       },
     },
+    "examples/updater": {
+      "name": "updater-example",
+      "version": "1.0.0",
+      "dependencies": {
+        "mirinjs": "^0.0.1-alpha.10",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+      "devDependencies": {
+        "@mirinjs/cli": "^0.0.1-alpha.10",
+        "@types/react": "^19.2.0",
+        "@types/react-dom": "^19.2.0",
+        "@vitejs/plugin-react": "^6.0.2",
+        "vite": "npm:rolldown-vite@^7.3.1",
+      },
+    },
     "packages/create-mirin": {
       "name": "create-mirinjs",
-      "version": "0.0.1-alpha.0",
+      "version": "0.0.1-alpha.10",
       "bin": {
         "create-mirinjs": "./src/index.ts",
       },
     },
     "packages/mirin": {
       "name": "mirinjs",
-      "version": "0.0.1-alpha.0",
+      "version": "0.0.1-alpha.10",
     },
     "packages/mirin-cli": {
       "name": "@mirinjs/cli",
-      "version": "0.0.1-alpha.0",
+      "version": "0.0.1-alpha.10",
       "bin": {
         "mirin": "./src/index.ts",
       },
       "dependencies": {
-        "create-mirinjs": "workspace:*",
+        "create-mirinjs": "0.0.1-alpha.10",
       },
       "optionalDependencies": {
-        "@mirinjs/darwin-arm64": "workspace:*",
+        "@mirinjs/darwin-arm64": "0.0.1-alpha.10",
       },
     },
     "packages/native-darwin-arm64": {
       "name": "@mirinjs/darwin-arm64",
-      "version": "0.0.1-alpha.0",
+      "version": "0.0.1-alpha.10",
     },
   },
   "packages": {
@@ -227,6 +243,8 @@
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "undici-types": ["undici-types@7.24.6", "", {}, "sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg=="],
+
+    "updater-example": ["updater-example@workspace:examples/updater"],
 
     "vite": ["rolldown-vite@7.3.1", "", { "dependencies": { "@oxc-project/runtime": "0.101.0", "fdir": "^6.5.0", "lightningcss": "^1.30.2", "picomatch": "^4.0.3", "postcss": "^8.5.6", "rolldown": "1.0.0-beta.53", "tinyglobby": "^0.2.15" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "peerDependencies": { "@types/node": "^20.19.0 || >=22.12.0", "esbuild": "^0.27.0", "jiti": ">=1.21.0", "less": "^4.0.0", "sass": "^1.70.0", "sass-embedded": "^1.70.0", "stylus": ">=0.54.8", "sugarss": "^5.0.0", "terser": "^5.16.0", "tsx": "^4.8.1", "yaml": "^2.4.2" }, "optionalPeers": ["@types/node", "esbuild", "jiti", "less", "sass", "sass-embedded", "stylus", "sugarss", "terser", "tsx", "yaml"], "bin": { "vite": "bin/vite.js" } }, "sha512-LYzdNAjRHhF2yA4JUQm/QyARyi216N2rpJ0lJZb8E9FU2y5v6Vk+xq/U4XBOxMefpWixT5H3TslmAHm1rqIq2w=="],
 

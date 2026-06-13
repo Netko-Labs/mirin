@@ -1,0 +1,62 @@
+# Release workflow for a mirin app with auto-updates (macOS).
+#
+# On a version tag (v*), this builds the app, runs `mirin release`, codesigns +
+# notarizes the bundle (Developer ID), and uploads the artifacts in
+# build/release/ to the GitHub Release. A built app whose release.baseUrl is
+# `https://github.com/<org>/<repo>/releases/latest/download` then auto-updates
+# from these assets.
+#
+# Required repo secrets:
+#   MACOS_CERT_P12_BASE64   base64 of your Developer ID Application .p12
+#   MACOS_CERT_PASSWORD     password for that .p12
+#   MACOS_SIGN_IDENTITY     e.g. "Developer ID Application: Your Name (TEAMID)"
+#   NOTARYTOOL_APPLE_ID     Apple ID email
+#   NOTARYTOOL_PASSWORD     app-specific password
+#   NOTARYTOOL_TEAM_ID      Apple Developer Team ID
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install deps
+        run: bun install
+
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+
+      - name: Build, sign, notarize + emit update artifacts
+        env:
+          MIRIN_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MIRIN_NOTARY_APPLE_ID: ${{ secrets.NOTARYTOOL_APPLE_ID }}
+          MIRIN_NOTARY_PASSWORD: ${{ secrets.NOTARYTOOL_PASSWORD }}
+          MIRIN_NOTARY_TEAM_ID: ${{ secrets.NOTARYTOOL_TEAM_ID }}
+        run: bun run release # signs → notarizes + staples → tars + manifest
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: build/release/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true

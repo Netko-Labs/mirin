@@ -23,6 +23,7 @@ export { dialog } from "./dialog.ts";
 export { clipboard } from "./clipboard.ts";
 export { globalShortcut } from "./shortcut.ts";
 export { logger, setLogLevel, getLogLevel, Logger } from "./logger.ts";
+export { updater, Updater } from "./updater.ts";
 export { NotAttachedError } from "./runtime.ts";
 
 export type {
@@ -38,6 +39,7 @@ export type {
 } from "./app.ts";
 export type { MenuItemTemplate, MenuRole } from "./menu.ts";
 export type { LogLevel } from "./logger.ts";
+export type { UpdaterStatus, UpdateInfo, UpdateProgress, UpdaterEvents } from "./updater.ts";
 export type { TrayOptions } from "./tray.ts";
 export type { OpenDialogOptions, SaveDialogOptions, MessageDialogOptions } from "./dialog.ts";
 export type {

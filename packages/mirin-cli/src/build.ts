@@ -16,13 +16,37 @@
  */
 
 import { $ } from "bun";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
 import { resolveArtifacts } from "./artifacts.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
-export async function build(projectDir = process.cwd()): Promise<number> {
+export interface BuildResult {
+  /** Path to the assembled .app. */
+  app: string;
+  appName: string;
+  bundleId: string;
+  /** App version (from the project's package.json). */
+  version: string;
+  /** Update channel (config.release.channel ?? "stable"). */
+  channel: string;
+  /** Update baseUrl, if `release` is configured. */
+  baseUrl?: string;
+}
+
+/** Read the project's package.json version (the single source of app version). */
+function appVersion(projectDir: string): string {
+  const pkgPath = join(projectDir, "package.json");
+  if (!existsSync(pkgPath)) return "0.0.0";
+  try {
+    return JSON.parse(readFileSync(pkgPath, "utf8")).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const outDir = join(projectDir, "build");
   const work = join(projectDir, ".mirin");
   mkdirSync(outDir, { recursive: true });
@@ -33,8 +57,11 @@ export async function build(projectDir = process.cwd()): Promise<number> {
   const appName: string = config.name ?? "Mirin App";
   const bundleId: string = config.id ?? "dev.mirin.app";
   const mainEntry = join(projectDir, config.main ?? "main/main.ts");
+  const version = appVersion(projectDir);
+  const channel: string = config.release?.channel ?? "stable";
+  const baseUrl: string | undefined = config.release?.baseUrl;
 
-  console.log(`[mirin build] ${appName}`);
+  console.log(`[mirin build] ${appName} ${version}`);
 
   // 1. production UI
   console.log("[mirin build] vite build…");
@@ -53,6 +80,11 @@ export async function build(projectDir = process.cwd()): Promise<number> {
   // 5. assemble + sign
   console.log("[mirin build] assembling .app…");
   rmSync(join(outDir, `${appName}.app`), { recursive: true, force: true });
+  // version.json embeds the running app's update identity (read by app.updater).
+  // Only when `release` is configured — otherwise the app has no updater.
+  const versionJson = baseUrl
+    ? JSON.stringify({ version, channel, baseUrl, name: appName, identifier: bundleId })
+    : undefined;
   const { app } = await buildAppBundle({
     appName,
     bundleId,
@@ -61,16 +93,18 @@ export async function build(projectDir = process.cwd()): Promise<number> {
     coreDylib: artifacts.coreDylib,
     helperBin: artifacts.helperBin,
     cefPath: artifacts.cefPath,
+    version,
     icon: config.icon ? join(projectDir, config.icon) : undefined,
     signIdentity: process.env.MIRIN_SIGN_IDENTITY,
     resources: {
       uiDir: join(projectDir, "dist"),
       workerJs,
       manifestJson: JSON.stringify({ windows: config.windows }),
+      versionJson,
     },
   });
 
   console.log(`\n[mirin build] done → ${app}`);
   console.log(`  open "${app}"`);
-  return 0;
+  return { app, appName, bundleId, version, channel, baseUrl };
 }

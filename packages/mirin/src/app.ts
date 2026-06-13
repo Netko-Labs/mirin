@@ -6,6 +6,8 @@
 import { runtime, onNativeEvent, resolveUrl, type NativeEvent } from "./runtime.ts";
 import type { Router, EventProc } from "./rpc.ts";
 import type { WindowConfig, WindowMaterial, WindowMaterialOptions } from "./config.ts";
+import { updater } from "./updater.ts";
+import type { Updater } from "./updater.ts";
 
 /** Which native backend a window's `material` resolved to. */
 export type WindowMaterialInfo = {
@@ -278,6 +280,9 @@ export interface Dock {
 
 class MirinApp extends Emitter<AppEvents> {
   readonly windows = new Windows();
+
+  /** Auto-updater (macOS). Inert unless the app was built with `release` set. */
+  readonly updater: Updater = updater;
 
   /** macOS Dock-icon controls. Hiding suits resident, hotkey-summoned apps. */
   readonly dock: Dock = {
