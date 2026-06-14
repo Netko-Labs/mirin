@@ -35,6 +35,12 @@ export interface BuildResult {
   baseUrl?: string;
   /** libmirin_core path (for the updater codec at release time). */
   coreDylib: string;
+  /** Project root (so `mirin release` can resolve relative asset paths). */
+  projectDir: string;
+  /** DMG config from mirin.config.ts (`true`/object/`false`); default `true`. */
+  dmg: boolean | import("mirinjs").DmgConfig;
+  /** Codesign identity used for the bundle, if any (MIRIN_SIGN_IDENTITY). */
+  signIdentity?: string;
 }
 
 /** Read the project's package.json version (the single source of app version). */
@@ -62,6 +68,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const version = appVersion(projectDir);
   const channel: string = config.release?.channel ?? "stable";
   const baseUrl: string | undefined = config.release?.baseUrl;
+  const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
 
   console.log(`[mirin build] ${appName} ${version}`);
 
@@ -74,6 +81,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
 
   // 3 + 4. host + worker (minified)
   console.log("[mirin build] compiling host + bundling main process…");
+  const signIdentity = process.env.MIRIN_SIGN_IDENTITY;
   const hostExe = join(work, "host-release");
   const workerJs = join(work, "worker.release.js");
   await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
@@ -97,7 +105,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
     cefPath: artifacts.cefPath,
     version,
     icon: config.icon ? join(projectDir, config.icon) : undefined,
-    signIdentity: process.env.MIRIN_SIGN_IDENTITY,
+    signIdentity,
     resources: {
       uiDir: join(projectDir, "dist"),
       workerJs,
@@ -108,5 +116,16 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
 
   console.log(`\n[mirin build] done → ${app}`);
   console.log(`  open "${app}"`);
-  return { app, appName, bundleId, version, channel, baseUrl, coreDylib: artifacts.coreDylib };
+  return {
+    app,
+    appName,
+    bundleId,
+    version,
+    channel,
+    baseUrl,
+    coreDylib: artifacts.coreDylib,
+    projectDir,
+    dmg,
+    signIdentity,
+  };
 }

@@ -21,6 +21,7 @@ import { mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { build } from "./build.ts";
+import { buildDmg, notarizeAndStaple, type DmgOptions } from "./dmg.ts";
 import { loadCodec } from "mirinjs/codec";
 
 const sha256File = (path: string) =>
@@ -44,39 +45,10 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
 
-  // Optional notarize + staple (Developer ID) before packing, when configured.
-  const apple = process.env.MIRIN_NOTARY_APPLE_ID;
-  const pw = process.env.MIRIN_NOTARY_PASSWORD;
-  const team = process.env.MIRIN_NOTARY_TEAM_ID;
-  if (apple && pw && team) {
-    console.log("[mirin release] notarizing (this can take a few minutes)…");
-    const zip = join(buildDir, "_notarize.zip");
-    await $`ditto -c -k --keepParent ${result.app} ${zip}`;
-    // `notarytool submit --wait` exits 0 even when the result is "Invalid", so
-    // parse the JSON status ourselves and surface the notary log on rejection —
-    // otherwise the only symptom is a confusing `stapler` failure downstream.
-    const out =
-      await $`xcrun notarytool submit ${zip} --apple-id ${apple} --password ${pw} --team-id ${team} --wait --output-format json`.text();
-    rmSync(zip, { force: true });
-    let sub: { id?: string; status?: string } = {};
-    try {
-      sub = JSON.parse(out);
-    } catch {
-      console.error(out);
-    }
-    if (sub.status !== "Accepted") {
-      console.error(`[mirin release] notarization ${sub.status ?? "failed"} (id: ${sub.id ?? "?"})`);
-      if (sub.id) {
-        const log =
-          await $`xcrun notarytool log ${sub.id} --apple-id ${apple} --password ${pw} --team-id ${team}`
-            .text()
-            .catch(() => "");
-        if (log) console.error(log);
-      }
-      throw new Error(`notarization not accepted: ${sub.status ?? "unknown"}`);
-    }
-    await $`xcrun stapler staple ${result.app}`;
-  }
+  // Notarize + staple the .app (Developer ID) before packing, when credentials
+  // are present. The .tar.zst / patch updater bundles are made from this signed,
+  // stapled .app, so the updater swaps in an already-notarized app.
+  await notarizeAndStaple(result.app);
 
   const codec = loadCodec(result.coreDylib);
 
@@ -141,11 +113,33 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   const manifestName = `${prefix}-update.json`;
   await Bun.write(join(outDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
 
+  // Distributable installer: a drag-to-Applications .dmg of the same signed,
+  // stapled .app — for first-time installs (the updater uses the .tar.zst/patch).
+  let dmgName: string | undefined;
+  let dmgSize = 0;
+  if (result.dmg !== false) {
+    dmgName = `${prefix}-${safeName}.dmg`;
+    console.log(`[mirin release] building installer → ${dmgName}`);
+    const options: DmgOptions = typeof result.dmg === "object" ? result.dmg : {};
+    const dmgPath = await buildDmg({
+      app: result.app,
+      appName: result.appName,
+      outDir,
+      fileName: dmgName,
+      options,
+      projectDir: result.projectDir,
+      signIdentity: result.signIdentity,
+    });
+    await notarizeAndStaple(dmgPath); // no-op without notary credentials
+    dmgSize = readFileSync(dmgPath).byteLength;
+  }
+
   const mb = (n: number) => (n / 1e6).toFixed(1);
   console.log(`\n[mirin release] done → build/release/`);
   console.log(`  ${manifestName}`);
   console.log(`  ${bundleName} (${mb(bundleSize)} MB)`);
   for (const p of patches) console.log(`  ${p.url} (${mb(p.size)} MB delta from ${p.fromVersion})`);
+  if (dmgName) console.log(`  ${dmgName} (${mb(dmgSize)} MB installer)`);
   console.log(`\nUpload all of build/release/ to: ${result.baseUrl}`);
   if (existsSync(join(outDir, "_new.tar"))) rmSync(join(outDir, "_new.tar"), { force: true });
   return 0;

@@ -47,6 +47,8 @@ export type {
   WindowConfig,
   WindowMaterial,
   WindowMaterialOptions,
+  ReleaseConfig,
+  DmgConfig,
 } from "./config.ts";
 
 wireAppEvents();

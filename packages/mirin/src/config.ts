@@ -94,7 +94,40 @@ export interface MirinConfig {
    * support folder, so multiple channels can coexist at the same `baseUrl`.
    */
   release?: ReleaseConfig;
+  /**
+   * macOS `.dmg` installer produced by `mirin release` (alongside the updater
+   * artifacts). `true`/omitted builds a default drag-to-Applications DMG; an
+   * object customizes it; `false` disables it. The DMG is codesigned and (when
+   * notary credentials are set) notarized + stapled like the `.app`.
+   */
+  dmg?: boolean | DmgConfig;
   windows: Record<string, WindowConfig>;
+}
+
+export interface DmgConfig {
+  /** Volume name shown when the DMG is mounted. Default: the app name. */
+  volumeName?: string;
+  /**
+   * Disk-image format. `ULFO` (lzfse, default) compresses large CEF frameworks
+   * best on modern macOS; `UDZO` (zlib) is the most broadly compatible; `UDBZ`
+   * (bzip2) is smallest but slowest.
+   */
+  format?: "ULFO" | "UDZO" | "UDBZ";
+  /**
+   * Background image for the mounted Finder window (path relative to the project
+   * root). Setting this — or any position/size below — switches to the laid-out
+   * DMG (Finder window styled via AppleScript); best-effort, falling back to a
+   * plain DMG if Finder automation is unavailable.
+   */
+  background?: string;
+  /** Mounted Finder window size, in points. Default 640×400. */
+  windowSize?: { width: number; height: number };
+  /** Icon size in the mounted window, in points. Default 128. */
+  iconSize?: number;
+  /** App icon position in the window. Default centered-left. */
+  appPosition?: { x: number; y: number };
+  /** `/Applications` symlink position. Default centered-right. */
+  applicationsPosition?: { x: number; y: number };
 }
 
 export interface ReleaseConfig {
