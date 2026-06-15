@@ -527,6 +527,12 @@ wrap_app! {
             let is_browser = process_type.map(|t| t.to_string().is_empty()).unwrap_or(true);
             if let (true, Some(command_line)) = (is_browser, command_line) {
                 command_line.append_switch(Some(&CefString::from("use-mock-keychain")));
+                // app:// is a SECURE scheme (so pages get crypto.subtle,
+                // navigator.clipboard, etc.). Let the secure origin still reach
+                // its own loopback RPC: allow insecure localhost (matches
+                // Electrobun) — loopback is potentially-trustworthy, so the
+                // ws://127.0.0.1 connection isn't treated as mixed content.
+                command_line.append_switch(Some(&CefString::from("allow-insecure-localhost")));
                 // The app:// origin isn't "local" address space, so Chromium's
                 // Local/Private Network Access checks block the RPC
                 // ws://127.0.0.1 connection. Disable those features (a desktop

@@ -87,9 +87,11 @@ wrap_app! {
         // won't treat it as a standard/secure origin.
         fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
             if let Some(reg) = registrar {
-                // Must match mirin-core scheme::app_scheme_options (NOT secure,
-                // so the RPC ws://127.0.0.1 isn't blocked as mixed content).
+                // Must match mirin-core scheme::app_scheme_options exactly
+                // (standard + secure + cors + fetch — SECURE gives app:// the
+                // secure-context Web APIs; loopback RPC still works, see core).
                 let opts = (SchemeOptions::STANDARD.get_raw()
+                    | SchemeOptions::SECURE.get_raw()
                     | SchemeOptions::CORS_ENABLED.get_raw()
                     | SchemeOptions::FETCH_ENABLED.get_raw()) as i32;
                 reg.add_custom_scheme(Some(&CefString::from("app")), opts);

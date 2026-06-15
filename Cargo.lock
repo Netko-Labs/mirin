@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "mirin-core"
-version = "0.0.1-alpha.14"
+version = "0.0.1-alpha.15"
 dependencies = [
  "cef",
  "objc2",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "mirin-helper"
-version = "0.0.1-alpha.14"
+version = "0.0.1-alpha.15"
 dependencies = [
  "cef",
 ]

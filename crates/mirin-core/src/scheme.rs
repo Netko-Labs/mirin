@@ -18,13 +18,16 @@ use std::sync::Mutex;
 
 pub const APP_SCHEME: &str = "app";
 
-/// Standard + CORS + fetch (a real web origin for module scripts, `fetch`, and
-/// `WebSocket`). Deliberately NOT secure: as a secure origin, the RPC
-/// `ws://127.0.0.1` connection is blocked as mixed content (a non-localhost
-/// secure scheme doesn't get the loopback exception). Keep in sync with
-/// mirin-helper's registration.
+/// Standard + secure + CORS + fetch. `SECURE` makes `app://` a secure context,
+/// so pages get the secure-context-only Web APIs (`crypto.randomUUID`,
+/// `crypto.subtle`, `navigator.clipboard`, WebAuthn, …). The RPC
+/// `ws://127.0.0.1` still connects because loopback is "potentially trustworthy"
+/// (not mixed content) and Private/Local Network Access checks are disabled in
+/// the browser command line (engine `on_before_command_line_processing`, plus
+/// `--allow-insecure-localhost`). Keep in sync with mirin-helper's registration.
 pub fn app_scheme_options() -> i32 {
     (SchemeOptions::STANDARD.get_raw()
+        | SchemeOptions::SECURE.get_raw()
         | SchemeOptions::CORS_ENABLED.get_raw()
         | SchemeOptions::FETCH_ENABLED.get_raw()) as i32
 }
