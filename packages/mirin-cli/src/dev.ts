@@ -97,7 +97,9 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       MIRIN_WORKER: workerJs,
       MIRIN_DEV_URL: devUrl,
       MIRIN_MANIFEST_JSON: JSON.stringify({ windows: config.windows }),
-      MIRIN_CONFIG_JSON: "{}",
+      // dev: true → enables inspect-element AND gives this run its own `-dev`
+      // CEF cache dir, so `mirin dev` can run alongside the installed app.
+      MIRIN_CONFIG_JSON: JSON.stringify({ dev: true }),
       MIRIN_SIDECAR_DIR: sidecarsDir,
       MIRIN_WORKERS_DIR: workersDir,
     },

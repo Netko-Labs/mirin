@@ -271,16 +271,24 @@ pub fn run_core(config: CoreConfig) -> i32 {
         settings.browser_subprocess_path = CefString::from(path.as_str());
     }
 
-    assert_eq!(
-        initialize(
-            Some(main_args),
-            Some(&settings),
-            Some(&mut app),
-            std::ptr::null_mut()
-        ),
-        1,
-        "failed to initialize CEF"
-    );
+    // CEF returns 0 here when another instance already owns this user-data-dir
+    // ("Opening in existing browser session"). Exit cleanly instead of
+    // panicking — a panic across the FFI boundary aborts with a crash report and
+    // can leave a stray Chromium window. (Per-app `-dev` cache dirs mean this
+    // normally only happens if the *same* app is launched twice.)
+    if initialize(
+        Some(main_args),
+        Some(&settings),
+        Some(&mut app),
+        std::ptr::null_mut(),
+    ) != 1
+    {
+        eprintln!(
+            "[mirin] CEF did not initialize — another instance of this app is \
+             likely already running (same cache dir). Exiting."
+        );
+        return 1;
+    }
 
     #[cfg(target_os = "macos")]
     let _delegate = mac::setup_app_delegate();
