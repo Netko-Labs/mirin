@@ -149,6 +149,14 @@ them via `MIRIN_SIDECAR_DIR` / `MIRIN_WORKERS_DIR`; prod resolves them in-bundle
 relative to `Contents/Resources`. The host threads both dirs to the Worker through
 `workerData` (see `host.ts`, `runtime.ts`).
 
+**Deep links** — `urlSchemes: ["anko"]` registers the app as the macOS handler for
+`anko://…` URLs (written to `Info.plist` `CFBundleURLTypes` by `bundle.ts`). macOS
+launches the app (or routes to the running instance — the per-app CEF cache dir makes
+mirin apps single-instance) and delivers the URL to the AppKit delegate's
+`application:openURLs:` (`mac/app.rs`), which emits an `app.open-url` native event the
+Worker surfaces as `app.on("open-url", (url) => …)` — including the URL the app was
+launched with.
+
 ## 8. Windows & Linux (forward notes, not MVP)
 
 - The host/Worker/FFI model is platform-independent; only `mirin-core`'s windowing backend and the bundle layout change.

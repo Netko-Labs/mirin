@@ -121,6 +121,14 @@ export interface MirinConfig {
    * app worker owns AppKit/CEF (see docs/architecture.md).
    */
   workers?: Record<string, string>;
+  /**
+   * Custom URL schemes this app registers as a handler for (macOS
+   * `CFBundleURLTypes`), e.g. `["anko"]` so `anko://…` links launch the app (or
+   * focus it if already running). Incoming URLs are delivered to
+   * `app.on("open-url", (url) => …)` — including the URL the app was launched
+   * with. Scheme names should be lowercase letters/digits (no `://`).
+   */
+  urlSchemes?: string[];
   windows: Record<string, WindowConfig>;
 }
 

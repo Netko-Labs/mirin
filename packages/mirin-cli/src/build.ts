@@ -111,6 +111,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
     version,
     icon: config.icon ? join(projectDir, config.icon) : undefined,
     signIdentity,
+    urlSchemes: config.urlSchemes,
     resources: {
       uiDir: join(projectDir, "dist"),
       workerJs,

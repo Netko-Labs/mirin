@@ -13,6 +13,7 @@ use objc2_app_kit::{
     NSApp, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
     NSApplicationTerminateReply, NSEvent,
 };
+use objc2_foundation::{NSArray, NSURL};
 use std::cell::Cell;
 
 use crate::engine::MirinHandler;
@@ -119,6 +120,20 @@ define_class!(
             _sender: &NSApplication,
         ) -> Bool {
             Bool::YES
+        }
+
+        /// Deep links: macOS delivers `myscheme://…` URLs here (both the URL the
+        /// app was launched with and, while running, any new ones — the app is
+        /// already single-instance per the per-app cache dir). Forward each to
+        /// the Worker as an `app.open-url` event (`app.on("open-url")`).
+        #[unsafe(method(application:openURLs:))]
+        unsafe fn application_open_urls(&self, _app: &NSApplication, urls: &NSArray<NSURL>) {
+            for url in urls.iter() {
+                if let Some(s) = url.absoluteString() {
+                    let event = serde_json::json!({ "type": "app.open-url", "url": s.to_string() });
+                    crate::engine::emit_event(&event.to_string());
+                }
+            }
         }
     }
 );

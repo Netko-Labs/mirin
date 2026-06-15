@@ -3,6 +3,11 @@ import { router } from "./rpc.ts";
 
 const mirin = app.serve(router);
 
+// Deep links: `mirin-sink://…` (declared in mirin.config.ts urlSchemes) launches
+// or focuses the app; forward each URL to the UI's event log. Try, in a terminal:
+//   open "mirin-sink://hello?from=terminal"
+app.on("open-url", (url) => mirin.rpc.deepLink.broadcast({ url }));
+
 let tray: Tray | undefined;
 
 app.on("ready", () => {

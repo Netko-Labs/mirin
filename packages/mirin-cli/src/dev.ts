@@ -68,6 +68,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     helperBin: artifacts.helperBin,
     cefPath: artifacts.cefPath,
     icon: config.icon ? join(projectDir, config.icon) : undefined,
+    urlSchemes: config.urlSchemes,
   });
 
   // --- start Vite on a free port so concurrent dev sessions don't collide ---

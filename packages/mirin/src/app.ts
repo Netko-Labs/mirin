@@ -34,6 +34,9 @@ export type WindowEvents = {
 export type AppEvents = {
   ready: void;
   "window-all-closed": void;
+  /** A deep-link URL (a registered `urlSchemes` scheme) opened the app, or
+   *  arrived while it was running. Includes the launch URL. */
+  "open-url": string;
 };
 
 /** A window's frame in screen points (bottom-left origin, like AppKit). */
@@ -356,6 +359,11 @@ export function wireAppEvents(): void {
   });
 
   onNativeEvent("window.all-closed", () => app._emit("window-all-closed", undefined));
+
+  onNativeEvent("app.open-url", (event: NativeEvent) => {
+    const url = event.url;
+    if (typeof url === "string") app._emit("open-url", url);
+  });
 
   onNativeEvent("window.material", (event: NativeEvent) => {
     const id = event.id as number | undefined;

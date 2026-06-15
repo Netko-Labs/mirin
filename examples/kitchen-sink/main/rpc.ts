@@ -80,6 +80,7 @@ export const router = rpc.router({
   trayAction: rpc.event<{ action: string }>(),
   shortcutFired: rpc.event<{ name: string }>(),
   sidecarTick: rpc.event<{ n: string }>(),
+  deepLink: rpc.event<{ url: string }>(),
 });
 
 export type Router = typeof router;

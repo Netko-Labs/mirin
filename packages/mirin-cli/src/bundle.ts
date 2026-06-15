@@ -39,6 +39,8 @@ export interface BundleOptions {
   icon?: string;
   /** Codesign identity; "-" (default) is ad-hoc. Set to a Developer ID to ship. */
   signIdentity?: string;
+  /** Custom URL schemes -> Info.plist CFBundleURLTypes (deep links). */
+  urlSchemes?: string[];
   /** Production-only resources placed under Contents/Resources. */
   resources?: {
     uiDir?: string; // Vite dist/, copied to Resources/ui (served via app://ui)
@@ -126,14 +128,18 @@ async function writeIcon(iconSrc: string, resources: string): Promise<string | u
   return "icon";
 }
 
-type PlistValue = string | boolean | Record<string, string>;
+type PlistValue = string | boolean | PlistValue[] | { [k: string]: PlistValue };
+
+const xmlEscape = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 function plist(entries: Record<string, PlistValue>): string {
   const render = (v: PlistValue): string => {
     if (typeof v === "boolean") return v ? "<true/>" : "<false/>";
-    if (typeof v === "string") return `<string>${v}</string>`;
+    if (typeof v === "string") return `<string>${xmlEscape(v)}</string>`;
+    if (Array.isArray(v)) return `<array>${v.map(render).join("")}</array>`;
     const inner = Object.entries(v)
-      .map(([k, val]) => `<key>${k}</key><string>${val}</string>`)
+      .map(([k, val]) => `<key>${k}</key>${render(val)}`)
       .join("");
     return `<dict>${inner}</dict>`;
   };
@@ -192,6 +198,13 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     LSEnvironment: { MallocNanoZone: "0" },
   };
   if (iconFile) info.CFBundleIconFile = iconFile;
+  // Deep-link schemes: register this app as the macOS handler for app://-style
+  // URLs (e.g. anko://…). Delivered at runtime via app.on("open-url").
+  if (opts.urlSchemes?.length) {
+    info.CFBundleURLTypes = [
+      { CFBundleURLName: bundleId, CFBundleURLSchemes: opts.urlSchemes },
+    ];
+  }
 
   writeFileSync(join(contents, "Info.plist"), plist(info));
 

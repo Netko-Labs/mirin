@@ -156,11 +156,12 @@ function SidecarSection() {
 function SystemSection() {
   return (
     <section className="card">
-      <h2>Menus · Tray · Shortcuts</h2>
+      <h2>Menus · Tray · Shortcuts · Deep links</h2>
       <div className="result" style={{ marginTop: 0 }}>
         The app menu (File / Edit / View) and a 🍴 menu-bar tray are set up at launch. Try{" "}
         <strong>File → Say Hello</strong> (⌘⇧H), the tray menu, or the global hotkey{" "}
-        <strong>⌘⇧K</strong> — each pushes an event into the log below.
+        <strong>⌘⇧K</strong>. From a terminal, <code>open "mirin-sink://hello"</code> opens a deep
+        link. Each pushes an event into the log below.
       </div>
     </section>
   );
@@ -189,6 +190,7 @@ function useEventLog(): string[] {
       api.trayAction.on(({ action }) => add(`tray: ${action}`)),
       api.shortcutFired.on(({ name }) => add(`shortcut: ${name}`)),
       api.sidecarTick.on(({ n }) => add(`sidecar tick: ${n}`)),
+      api.deepLink.on(({ url }) => add(`deep link: ${url}`)),
     ];
     return () => offs.forEach((off) => off());
   }, []);
