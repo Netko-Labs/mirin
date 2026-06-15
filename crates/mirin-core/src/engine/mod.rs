@@ -243,7 +243,7 @@ pub fn run_core(config: CoreConfig) -> i32 {
     debug_assert_eq!(ret, -1, "cannot execute browser process");
 
     let cache_path = if config.cache_path.is_empty() {
-        default_cache_dir()
+        default_cache_dir(config.dev)
     } else {
         config.cache_path.clone()
     };
@@ -299,9 +299,32 @@ fn load_cef() -> Library {
     loader
 }
 
-fn default_cache_dir() -> String {
+/// Per-app CEF cache dir, keyed on the bundle identifier so distinct mirin apps
+/// (and `mirin dev` vs the installed build of the same app) never share one CEF
+/// user-data-dir. Sharing it causes singleton-lock collisions: only one mirin app
+/// could run at a time, and killing one stranded the other's `SingletonLock`.
+/// The `-dev` suffix keeps a dev run separate from the installed app.
+fn default_cache_dir(dev: bool) -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    format!("{home}/Library/Application Support/mirin/cache")
+    let id = app_bundle_id().unwrap_or_else(|| "app".into());
+    let suffix = if dev { "-dev" } else { "" };
+    format!("{home}/Library/Application Support/mirin/{id}{suffix}/cache")
+}
+
+/// The running app's bundle identifier (e.g. "dev.netko.anko"), sanitized to a
+/// single path segment. `None` if unavailable (e.g. not running from a bundle).
+#[cfg(target_os = "macos")]
+fn app_bundle_id() -> Option<String> {
+    let id = objc2_foundation::NSBundle::mainBundle().bundleIdentifier()?.to_string();
+    if id.is_empty() {
+        return None;
+    }
+    Some(id.replace(['/', '\\', ':'], "_"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn app_bundle_id() -> Option<String> {
+    None
 }
 
 /// Derive the CEF subprocess executable from the app bundle layout:
