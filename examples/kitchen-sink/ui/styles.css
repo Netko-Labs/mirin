@@ -134,3 +134,24 @@ input {
   max-height: 110px;
   overflow: auto;
 }
+
+select {
+  background: #12121c;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+code {
+  background: #12121c;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
+.sidecar {
+  grid-column: 1 / -1;
+}

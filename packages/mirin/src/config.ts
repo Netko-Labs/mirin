@@ -101,8 +101,46 @@ export interface MirinConfig {
    * notary credentials are set) notarized + stapled like the `.app`.
    */
   dmg?: boolean | DmgConfig;
+  /**
+   * External binaries bundled into the `.app` and spawned at runtime with
+   * `app.sidecar(name)`. Maps a logical name to a path (relative to the project
+   * root) or a {@link SidecarSpec}. Each binary is copied into
+   * `Contents/Resources/sidecars/<name>`, codesigned (hardened runtime), and —
+   * when notary credentials are set — notarized with the rest of the app.
+   *
+   * Prefer a binary already on the user's PATH (`Bun.spawn("git", …)`) or a
+   * download-on-first-run when size/licensing matter; bundle only when you need
+   * a pinned version offline.
+   */
+  sidecars?: Record<string, string | SidecarSpec>;
+  /**
+   * Extra Bun Worker entry files (relative to the project root) bundled next to
+   * the main worker. Resolve one at runtime with `resolveWorker(name)` and pass
+   * it to `new Worker(...)` from `node:worker_threads`. These run off the main
+   * thread for CPU/IO offload and must NOT call window/native APIs — only the
+   * app worker owns AppKit/CEF (see docs/architecture.md).
+   */
+  workers?: Record<string, string>;
   windows: Record<string, WindowConfig>;
 }
+
+/** A bundled sidecar binary with optional hardened-runtime entitlements. */
+export interface SidecarSpec {
+  /** Path to the binary, relative to the project root. */
+  bin: string;
+  /**
+   * Extra codesign entitlements for this binary under the hardened runtime.
+   * Most plain CLIs need none. Use `disable-library-validation` for a binary
+   * that loads dylibs not signed by your Team ID, or the JIT entitlements for a
+   * binary that runs its own JIT (another Bun/V8/Node).
+   */
+  entitlements?: SidecarEntitlement[];
+}
+
+export type SidecarEntitlement =
+  | "allow-jit"
+  | "allow-unsigned-executable-memory"
+  | "disable-library-validation";
 
 export interface DmgConfig {
   /** Volume name shown when the DMG is mounted. Default: the app name. */

@@ -8,6 +8,8 @@ import type { Router, EventProc } from "./rpc.ts";
 import type { WindowConfig, WindowMaterial, WindowMaterialOptions } from "./config.ts";
 import { updater } from "./updater.ts";
 import type { Updater } from "./updater.ts";
+import { sidecar as spawnSidecar } from "./sidecar.ts";
+import type { SidecarOptions, SidecarProcess } from "./sidecar.ts";
 
 /** Which native backend a window's `material` resolved to. */
 export type WindowMaterialInfo = {
@@ -311,6 +313,14 @@ class MirinApp extends Emitter<AppEvents> {
 
   get rpc(): RpcEmitters {
     return rpcEmitters((method, payload) => runtime().rpc.broadcast(method, payload));
+  }
+
+  /**
+   * Spawn a bundled sidecar binary (declared in `mirin.config.ts` `sidecars`).
+   * Resolves the in-bundle path and tracks the child so it's killed on quit.
+   */
+  sidecar(name: string, opts?: SidecarOptions): SidecarProcess {
+    return spawnSidecar(name, opts);
   }
 
   quit(): void {

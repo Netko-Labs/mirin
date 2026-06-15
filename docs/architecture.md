@@ -119,7 +119,37 @@ mirin/
 
 Bun workspaces for `packages/*` + `examples/*`; a Cargo workspace for `crates/*`.
 
-## 7. Windows & Linux (forward notes, not MVP)
+## 7. Sidecars & extra workers
+
+The app runs in a single Bun Worker, but it's a full Bun runtime — so app code can
+already `Bun.spawn(...)` and `new Worker(...)`. What it can't do alone is **bundle**
+assets into the signed `.app`, **codesign/notarize** them, and **resolve their paths**
+across dev vs prod. Two opt-in config blocks fill that gap (both macOS, both off by
+default):
+
+**Sidecars** — `sidecars: { name: "path/to/bin" | { bin, entitlements } }`. Each binary
+is copied to `Contents/Resources/sidecars/<name>`, `chmod +x`, and codesigned in the
+inside-out order (after `libmirin_core.dylib`, before the helpers) with the hardened
+runtime + secure timestamp; per-binary `entitlements` are applied only when asked (most
+CLIs need none). Spawn at runtime with `app.sidecar(name, { args, … })` — a thin
+`Bun.spawn` wrapper that resolves the bundled path (`runtime().sidecarDir`) and tracks
+the child so it's killed on quit. Sidecars are separate OS processes and, like the
+Worker, must not touch AppKit/CEF.
+
+**Extra workers** — `workers: { name: "src/foo.worker.ts" }`. Each entry is bundled by
+the CLI to `Contents/Resources/workers/<name>.js` (alongside the main `worker.js`).
+Resolve one with `resolveWorker(name)` and hand it to `new Worker(...)`
+(`node:worker_threads`) for CPU/IO offload. Same threading rule (§2): extra workers
+run off the main thread and **cannot** issue window/native FFI — anything native is
+requested from the app worker. They may `dlopen` the core for pure functions (as the
+updater's codec does), but not UI commands.
+
+Dev (`mirin dev`) stages both under `.mirin/{sidecars,workers}` and points the host at
+them via `MIRIN_SIDECAR_DIR` / `MIRIN_WORKERS_DIR`; prod resolves them in-bundle
+relative to `Contents/Resources`. The host threads both dirs to the Worker through
+`workerData` (see `host.ts`, `runtime.ts`).
+
+## 8. Windows & Linux (forward notes, not MVP)
 
 - The host/Worker/FFI model is platform-independent; only `mirin-core`'s windowing backend and the bundle layout change.
 - Windows: CEF default; `engine: "webview2"` as an app-level opt-in — this implies the engine abstraction in `mirin-core` is a trait from day one, even while CEF is the only macOS implementation.

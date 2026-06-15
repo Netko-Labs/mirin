@@ -18,6 +18,7 @@ export function App() {
           <WindowSection />
           <DialogSection />
           <ClipboardSection />
+          <SidecarSection />
           <SystemSection />
           <EventLog entries={log} />
         </div>
@@ -82,6 +83,76 @@ function ClipboardSection() {
   );
 }
 
+function SidecarSection() {
+  const [text, setText] = useState("mirin sidecar");
+  const [op, setOp] = useState("upper");
+  const [result, setResult] = useState("");
+  const [ticking, setTicking] = useState(false);
+
+  return (
+    <section className="card sidecar">
+      <h2>Sidecar (bundled binary)</h2>
+      <p className="result" style={{ marginTop: 0 }}>
+        A Bun-compiled <code>tool</code> binary bundled into the .app, spawned via{" "}
+        <strong>app.sidecar("tool")</strong> — one-shot, a persistent NDJSON server, and a
+        streaming process you can kill.
+      </p>
+
+      <div className="row">
+        <input value={text} onChange={(e) => setText(e.target.value)} />
+        <select value={op} onChange={(e) => setOp(e.target.value)}>
+          <option value="ping">ping</option>
+          <option value="upper">upper</option>
+          <option value="reverse">reverse</option>
+          <option value="hash">hash</option>
+        </select>
+        <button
+          onClick={async () => setResult(JSON.stringify(await api.sidecarServer({ op, text })))}
+        >
+          Server request
+        </button>
+      </div>
+
+      <div className="row">
+        <button onClick={async () => setResult(`version: ${await api.sidecarVersion(null)}`)}>
+          Version (one-shot)
+        </button>
+        <button onClick={async () => setResult(`echo: ${await api.sidecarEcho(text)}`)}>
+          Echo (one-shot)
+        </button>
+        <button onClick={async () => setResult(`fail: ${JSON.stringify(await api.sidecarFail(null))}`)}>
+          Fail (stderr + exit 3)
+        </button>
+      </div>
+
+      <div className="row">
+        <button
+          onClick={async () => {
+            const pid = await api.sidecarStart(null);
+            setResult(`streaming started (pid ${pid}) — see event log`);
+            setTicking(true);
+          }}
+          disabled={ticking}
+        >
+          Start stream
+        </button>
+        <button
+          onClick={async () => {
+            await api.sidecarStop(null);
+            setResult("streaming stopped (sidecar killed)");
+            setTicking(false);
+          }}
+          disabled={!ticking}
+        >
+          Stop stream
+        </button>
+      </div>
+
+      <div className="result">{result}</div>
+    </section>
+  );
+}
+
 function SystemSection() {
   return (
     <section className="card">
@@ -117,6 +188,7 @@ function useEventLog(): string[] {
       api.menuAction.on(({ action }) => add(`menu: ${action}`)),
       api.trayAction.on(({ action }) => add(`tray: ${action}`)),
       api.shortcutFired.on(({ name }) => add(`shortcut: ${name}`)),
+      api.sidecarTick.on(({ n }) => add(`sidecar tick: ${n}`)),
     ];
     return () => offs.forEach((off) => off());
   }, []);

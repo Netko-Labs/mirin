@@ -12,7 +12,7 @@
  */
 
 import { $ } from "bun";
-import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, readdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 
 const FRAMEWORK = "Chromium Embedded Framework.framework";
@@ -45,7 +45,41 @@ export interface BundleOptions {
     workerJs?: string; // bundled main-process Worker entry -> Resources/worker.js
     manifestJson?: string; // serialized manifest -> Resources/mirin.manifest.json
     versionJson?: string; // serialized version.json -> Resources/version.json (updater)
+    /** Bundled sidecar binaries -> Resources/sidecars/<name> (copied + signed). */
+    sidecars?: SidecarBundle[];
+    /** Compiled extra-worker JS (name -> abs path) -> Resources/workers/<name>.js. */
+    workers?: Record<string, string>;
   };
+}
+
+/** A sidecar binary to bundle: logical name, source path, hardened-runtime entitlements. */
+export interface SidecarBundle {
+  name: string;
+  src: string;
+  entitlements: string[];
+}
+
+/** Short entitlement name -> the full `com.apple.security.cs.*` key. */
+const SIDECAR_ENTITLEMENT_KEYS: Record<string, string> = {
+  "allow-jit": "com.apple.security.cs.allow-jit",
+  "allow-unsigned-executable-memory": "com.apple.security.cs.allow-unsigned-executable-memory",
+  "disable-library-validation": "com.apple.security.cs.disable-library-validation",
+};
+
+function entitlementsPlist(names: string[]): string {
+  const keys = names
+    .map((n) => SIDECAR_ENTITLEMENT_KEYS[n])
+    .filter(Boolean)
+    .map((k) => `  <key>${k}</key><true/>`)
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+${keys}
+</dict>
+</plist>
+`;
 }
 
 /** The 10 standard iconset renditions (point size + @1x/@2x pixel size). */
@@ -182,6 +216,28 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   if (opts.resources?.versionJson != null) {
     writeFileSync(join(resources, "version.json"), opts.resources.versionJson);
   }
+  // Extra Bun Worker bundles -> Resources/workers/<name>.js (resolveWorker()).
+  if (opts.resources?.workers && Object.keys(opts.resources.workers).length) {
+    const workersDir = join(resources, "workers");
+    mkdirSync(workersDir, { recursive: true });
+    for (const [name, src] of Object.entries(opts.resources.workers)) {
+      cpSync(src, join(workersDir, `${name}.js`));
+    }
+  }
+  // Sidecar binaries -> Resources/sidecars/<name> (chmod +x; signed below). Paths
+  // collected here so the codesign loop can sign them inside-out with the app.
+  const sidecarDests: SidecarBundle[] = [];
+  if (opts.resources?.sidecars?.length) {
+    const sidecarsDir = join(resources, "sidecars");
+    mkdirSync(sidecarsDir, { recursive: true });
+    for (const sc of opts.resources.sidecars) {
+      if (!existsSync(sc.src)) throw new Error(`sidecar "${sc.name}" not found: ${sc.src}`);
+      const dest = join(sidecarsDir, sc.name);
+      cpSync(sc.src, dest);
+      chmodSync(dest, 0o755);
+      sidecarDests.push({ name: sc.name, src: dest, entitlements: sc.entitlements });
+    }
+  }
 
   for (const { suffix, id } of HELPER_TYPES) {
     const name = `${appName} Helper${suffix}`;
@@ -249,6 +305,18 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     await sign(cef);
     // 3. our FFI core dylib.
     await sign(join(macos, "libmirin_core.dylib"));
+    // 3b. sidecars: hardened runtime + timestamp; per-binary entitlements only
+    //     when the spec asks (most CLIs need none — over-entitling is a smell).
+    for (const sc of sidecarDests) {
+      if (sc.entitlements.length) {
+        const ent = join(opts.outDir, `_sidecar_${sc.name}.plist`);
+        writeFileSync(ent, entitlementsPlist(sc.entitlements));
+        await $`codesign --force --timestamp --options runtime --entitlements ${ent} --sign ${identity} ${sc.src}`.quiet();
+        rmSync(ent, { force: true });
+      } else {
+        await sign(sc.src);
+      }
+    }
     // 4. each helper: the inner executable, then the .app wrapper (entitlements
     //    on both — the renderer/GPU helpers are what actually JIT).
     for (const { suffix } of HELPER_TYPES) {
@@ -263,6 +331,9 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   } else {
     // Ad-hoc: enough to launch locally; not distributable or notarizable.
     await $`codesign --force --sign ${identity} ${cef}`.quiet();
+    for (const sc of sidecarDests) {
+      await $`codesign --force --sign ${identity} ${sc.src}`.quiet();
+    }
     for (const { suffix } of HELPER_TYPES) {
       await $`codesign --force --sign ${identity} ${join(frameworks, `${appName} Helper${suffix}.app`)}`.quiet();
     }

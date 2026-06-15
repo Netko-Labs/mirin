@@ -9,13 +9,17 @@
  */
 
 import { $ } from "bun";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, existsSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
 import { resolveArtifacts } from "./artifacts.ts";
 import { sweepBuildTemps } from "./temps.ts";
+import { normalizeSidecars, compileWorkers } from "./extras.ts";
 
-const DEV_URL = "http://localhost:5173";
+/** Vite's default port. `mirin dev` probes upward from here for a free one, so a
+ *  second dev session (or anything already on 5173) doesn't collide. */
+const DEV_PORT_BASE = 5173;
 
 export async function dev(projectDir = process.cwd()): Promise<number> {
   const work = join(projectDir, ".mirin");
@@ -40,6 +44,19 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   await $`bun build --compile ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
   await $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(projectDir);
 
+  // Extra assets (dev): compile workers into .mirin/workers and symlink sidecar
+  // binaries into .mirin/sidecars (no copy/sign in dev — they run unsigned locally).
+  const workersDir = join(work, "workers");
+  await compileWorkers(projectDir, config.workers, workersDir, false);
+  const sidecarsDir = join(work, "sidecars");
+  mkdirSync(sidecarsDir, { recursive: true });
+  for (const sc of normalizeSidecars(projectDir, config.sidecars)) {
+    const link = join(sidecarsDir, sc.name);
+    rmSync(link, { force: true });
+    if (existsSync(sc.src)) symlinkSync(sc.src, link);
+    else console.warn(`[mirin dev] sidecar "${sc.name}" not found: ${sc.src}`);
+  }
+
   // --- assemble the dev .app ---
   console.log("[mirin dev] assembling dev bundle…");
   const { app, exe } = await buildAppBundle({
@@ -53,13 +70,21 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     icon: config.icon ? join(projectDir, config.icon) : undefined,
   });
 
-  // --- start Vite ---
-  console.log("[mirin dev] starting Vite dev server…");
-  const vite = Bun.spawn(["bunx", "vite", "--clearScreen", "false"], {
-    cwd: projectDir,
-    stdio: ["ignore", "inherit", "inherit"],
-  });
-  await waitForUrl(DEV_URL, 15_000);
+  // --- start Vite on a free port so concurrent dev sessions don't collide ---
+  // `--port <free> --strictPort` pins Vite to the port we probed (overriding any
+  // port/strictPort in the app's vite.config) and passes the real URL to the app,
+  // so the host and Vite never disagree about which port is in use.
+  const port = await findFreePort(DEV_PORT_BASE);
+  const devUrl = `http://localhost:${port}`;
+  console.log(`[mirin dev] starting Vite dev server on ${devUrl}…`);
+  const vite = Bun.spawn(
+    ["bunx", "vite", "--clearScreen", "false", "--port", String(port), "--strictPort"],
+    {
+      cwd: projectDir,
+      stdio: ["ignore", "inherit", "inherit"],
+    },
+  );
+  await waitForUrl(devUrl, 15_000);
 
   // --- launch the app ---
   console.log(`[mirin dev] launching ${appName}…`);
@@ -69,9 +94,11 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       ...process.env,
       MIRIN_CORE: join(app, "Contents", "MacOS", "libmirin_core.dylib"),
       MIRIN_WORKER: workerJs,
-      MIRIN_DEV_URL: DEV_URL,
+      MIRIN_DEV_URL: devUrl,
       MIRIN_MANIFEST_JSON: JSON.stringify({ windows: config.windows }),
       MIRIN_CONFIG_JSON: "{}",
+      MIRIN_SIDECAR_DIR: sidecarsDir,
+      MIRIN_WORKERS_DIR: workersDir,
     },
     stdio: ["ignore", "inherit", "inherit"],
   });
@@ -86,6 +113,32 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   const code = await appProc.exited;
   vite.kill();
   return code;
+}
+
+/** First free TCP port at or above `start` on loopback. */
+async function findFreePort(start: number): Promise<number> {
+  for (let port = start; port < start + 100; port++) {
+    if (await isPortFree(port)) return port;
+  }
+  throw new Error(`[mirin dev] no free port in ${start}–${start + 99}`);
+}
+
+/** Free only if neither IPv4 nor IPv6 loopback reports the port in use — Vite
+ *  binds `localhost` (often `::1`), so a v4-only probe would miss an IPv6 holder. */
+async function isPortFree(port: number): Promise<boolean> {
+  const [v4, v6] = await Promise.all([portInUse(port, "127.0.0.1"), portInUse(port, "::1")]);
+  return !v4 && !v6;
+}
+
+function portInUse(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    // Only EADDRINUSE means taken; other errors (e.g. EADDRNOTAVAIL when IPv6 is
+    // off) just mean we can't test that family — treat as not-in-use.
+    srv.once("error", (err: NodeJS.ErrnoException) => resolve(err.code === "EADDRINUSE"));
+    srv.once("listening", () => srv.close(() => resolve(false)));
+    srv.listen(port, host);
+  });
 }
 
 async function waitForUrl(url: string, timeoutMs: number): Promise<void> {

@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "mirin dev",
-    "build": "mirin build"
+    "build:sidecar": "bun build --compile sidecar/tool.ts --outfile vendor/tool",
+    "dev": "bun run build:sidecar && mirin dev",
+    "build": "bun run build:sidecar && mirin build"
   },
   "dependencies": {
     "mirinjs": "^0.0.1-alpha.14",

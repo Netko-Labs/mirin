@@ -24,7 +24,8 @@ export { clipboard } from "./clipboard.ts";
 export { globalShortcut } from "./shortcut.ts";
 export { logger, setLogLevel, getLogLevel, Logger } from "./logger.ts";
 export { updater, Updater } from "./updater.ts";
-export { NotAttachedError } from "./runtime.ts";
+export { sidecar } from "./sidecar.ts";
+export { NotAttachedError, resolveWorker } from "./runtime.ts";
 
 export type {
   WindowEvents,
@@ -40,6 +41,7 @@ export type {
 export type { MenuItemTemplate, MenuRole } from "./menu.ts";
 export type { LogLevel } from "./logger.ts";
 export type { UpdaterStatus, UpdateInfo, UpdateProgress, UpdaterEvents } from "./updater.ts";
+export type { SidecarOptions, SidecarProcess } from "./sidecar.ts";
 export type { TrayOptions } from "./tray.ts";
 export type { OpenDialogOptions, SaveDialogOptions, MessageDialogOptions } from "./dialog.ts";
 export type {
@@ -49,6 +51,8 @@ export type {
   WindowMaterialOptions,
   ReleaseConfig,
   DmgConfig,
+  SidecarSpec,
+  SidecarEntitlement,
 } from "./config.ts";
 
 wireAppEvents();

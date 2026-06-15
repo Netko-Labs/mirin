@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
 import { resolveArtifacts } from "./artifacts.ts";
 import { sweepBuildTemps } from "./temps.ts";
+import { normalizeSidecars, compileWorkers } from "./extras.ts";
 
 export interface BuildResult {
   /** Path to the assembled .app. */
@@ -87,6 +88,10 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
   await $`bun build ${mainEntry} --target=bun --minify --outfile ${workerJs}`.cwd(projectDir);
 
+  // Extra assets: resolve sidecar binaries + compile any extra worker entries.
+  const sidecars = normalizeSidecars(projectDir, config.sidecars);
+  const extraWorkers = await compileWorkers(projectDir, config.workers, join(work, "workers"), true);
+
   // 5. assemble + sign
   console.log("[mirin build] assembling .app…");
   rmSync(join(outDir, `${appName}.app`), { recursive: true, force: true });
@@ -111,6 +116,8 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
       workerJs,
       manifestJson: JSON.stringify({ windows: config.windows }),
       versionJson,
+      sidecars,
+      workers: extraWorkers,
     },
   });
 

@@ -5,6 +5,7 @@
  */
 
 import { workerData } from "node:worker_threads";
+import { join } from "node:path";
 import { Core } from "./native.ts";
 import { RpcServer } from "./rpc-server.ts";
 import type { WindowConfig } from "./config.ts";
@@ -22,6 +23,10 @@ export interface Runtime {
   resourcesDir?: string;
   /** Path to libmirin_core (for the updater codec). */
   corePath?: string;
+  /** Dir holding bundled sidecar binaries (for `app.sidecar`). */
+  sidecarDir?: string;
+  /** Dir holding bundled extra-worker JS (for `resolveWorker`). */
+  workersDir?: string;
 }
 
 export class NotAttachedError extends Error {
@@ -84,6 +89,8 @@ export function boot(): void {
     manifest?: { windows?: Record<string, WindowConfig> };
     devUrl?: string;
     resourcesDir?: string;
+    sidecarDir?: string;
+    workersDir?: string;
   };
   const corePath = data.corePath ?? process.env.MIRIN_CORE;
   if (!corePath) return; // not under the host; the API stays detached
@@ -104,6 +111,20 @@ export function boot(): void {
     devUrl: data.devUrl,
     resourcesDir: data.resourcesDir,
     corePath,
+    sidecarDir: data.sidecarDir,
+    workersDir: data.workersDir,
   };
   core.onEvent(dispatch);
+}
+
+/**
+ * Resolve a bundled extra-worker (declared in `mirin.config.ts` `workers`) to an
+ * absolute path, for `new Worker(resolveWorker(name))` from `node:worker_threads`.
+ * Works in `mirin dev` and the built `.app`. Extra workers run off the main
+ * thread and must not call window/native APIs.
+ */
+export function resolveWorker(name: string): string {
+  const dir = current?.workersDir;
+  if (!dir) throw new NotAttachedError("resolveWorker");
+  return join(dir, `${name}.js`);
 }

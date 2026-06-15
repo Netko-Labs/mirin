@@ -24,6 +24,10 @@ const resourcesDir = join(exeDir, "..", "Resources");
 
 const corePath = process.env.MIRIN_CORE ?? join(exeDir, "libmirin_core.dylib");
 const workerPath = process.env.MIRIN_WORKER ?? join(resourcesDir, "worker.js");
+// Bundled-asset dirs for sidecars (Bun.spawn binaries) and extra workers. Dev
+// overrides via env (dev.ts stages them under .mirin); prod resolves in-bundle.
+const sidecarDir = process.env.MIRIN_SIDECAR_DIR ?? join(resourcesDir, "sidecars");
+const workersDir = process.env.MIRIN_WORKERS_DIR ?? join(resourcesDir, "workers");
 
 if (!existsSync(corePath) || !existsSync(workerPath)) {
   console.error(`[mirin host] missing core (${corePath}) or worker (${workerPath})`);
@@ -48,7 +52,14 @@ const coreConfig = JSON.parse(
 const core = new Core(corePath);
 
 const worker = new Worker(workerPath, {
-  workerData: { corePath, manifest, devUrl: process.env.MIRIN_DEV_URL, resourcesDir },
+  workerData: {
+    corePath,
+    manifest,
+    devUrl: process.env.MIRIN_DEV_URL,
+    resourcesDir,
+    sidecarDir,
+    workersDir,
+  },
 });
 worker.on("error", (err) => console.error("[mirin worker]", err));
 

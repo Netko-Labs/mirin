@@ -1,5 +1,6 @@
 import { rpc } from "mirinjs/rpc";
 import { app, dialog, clipboard, menu } from "mirinjs";
+import { runOnce, serverRequest, startTicker, stopTicker } from "./tools.ts";
 
 /** Window controls act on the calling window (ctx.webview === window id). */
 function callerWindow(webview: number) {
@@ -56,10 +57,29 @@ export const router = rpc.router({
     ]);
   }),
 
+  // --- sidecar (bundled binary spawned via app.sidecar) ---
+  // One-shot: spawn with args, read stdout, exit.
+  sidecarVersion: rpc.query(async () => (await runOnce(["--version"])).stdout),
+  sidecarEcho: rpc.query(async (text: string) => (await runOnce(["echo", text])).stdout),
+  // Error path: capture stderr + non-zero exit code.
+  sidecarFail: rpc.query(async () => runOnce(["fail"])),
+  // Persistent NDJSON server: one long-lived sidecar, request/response per call.
+  sidecarServer: rpc.mutation(async ({ op, text }: { op: string; text: string }) =>
+    serverRequest(op, text),
+  ),
+  // Streaming emitter: start `tool count`, forward ticks to the UI; stop kills it.
+  sidecarStart: rpc.mutation(async () => {
+    return startTicker((n) => app.rpc.sidecarTick?.broadcast({ n }));
+  }),
+  sidecarStop: rpc.mutation(async () => {
+    stopTicker();
+  }),
+
   // --- push channels (main -> UI) ---
   menuAction: rpc.event<{ action: string }>(),
   trayAction: rpc.event<{ action: string }>(),
   shortcutFired: rpc.event<{ name: string }>(),
+  sidecarTick: rpc.event<{ n: string }>(),
 });
 
 export type Router = typeof router;
