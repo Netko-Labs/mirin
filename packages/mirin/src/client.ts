@@ -23,6 +23,8 @@ export type ClientFor<R extends Router<any>> =
 interface MirinTransport {
   call(method: string, input: unknown): Promise<unknown>;
   onEvent(method: string, listener: (payload: unknown) => void): () => void;
+  /** Fire-and-forget internal control action (window dragging/controls). */
+  control?(action: string, extra?: Record<string, unknown>): void;
 }
 
 declare global {
@@ -65,3 +67,21 @@ export function client<R extends Router<any>>(): ClientFor<R> {
     },
   });
 }
+
+/**
+ * Window controls for the current webview's window, callable from page code —
+ * for custom title bars (`titleBarStyle: hidden | hiddenInset`) where the app
+ * draws its own min/max/close buttons. On Windows these are the only controls
+ * (no native caption); on macOS the native traffic lights usually serve instead.
+ */
+export const windowControls = {
+  minimize(): void {
+    transport().control?.("window.control", { verb: "minimize" });
+  },
+  maximize(): void {
+    transport().control?.("window.control", { verb: "maximize" });
+  },
+  close(): void {
+    transport().control?.("window.close");
+  },
+};

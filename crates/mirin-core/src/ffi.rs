@@ -99,6 +99,15 @@ pub extern "C" fn mirin_window_set_position(id: u32, x: f64, y: f64) {
     engine::window_set_position(id, x, y);
 }
 
+/// Maybe begin a native window-move for `id`: the preload forwards a left
+/// mousedown's viewport coords (CSS px, top-left) + click count; over a
+/// `-webkit-app-region: drag` area the core starts a move, or toggles maximize on
+/// a double-click (`detail >= 2`). Windows; no-op on macOS.
+#[no_mangle]
+pub extern "C" fn mirin_window_maybe_start_drag(id: u32, x: c_int, y: c_int, detail: c_int) {
+    engine::window_maybe_start_drag(id, x, y, detail);
+}
+
 // ---- menus ----
 
 #[no_mangle]

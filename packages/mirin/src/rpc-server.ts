@@ -18,10 +18,29 @@ interface RequestFrame {
   input: unknown;
 }
 
+/** Internal control frame from the preload bootstrap (window dragging, etc.) —
+ *  a side channel distinct from the app's typed RPC. `x`/`y` are viewport pixels
+ *  (CSS px, top-left) for pointer-driven actions like drag detection. */
+interface ControlFrame {
+  kind: "control";
+  action: string;
+  x?: number;
+  y?: number;
+  verb?: string;
+  /** Click count for pointer actions (2 = double-click → maximize). */
+  detail?: number;
+}
+
+type IncomingFrame = RequestFrame | ControlFrame;
+
+/** Handles an internal control action for the webview that sent it. */
+export type ControlHandler = (frame: ControlFrame, webview: number) => void;
+
 export class RpcServer {
   readonly token = crypto.randomUUID();
   #server?: ReturnType<typeof Bun.serve>;
   #router?: Router<any>;
+  #control?: ControlHandler;
   #sockets = new Set<ServerWebSocket<SocketData>>();
 
   /** Start listening on an ephemeral loopback port; returns the bound port. */
@@ -65,6 +84,11 @@ export class RpcServer {
     this.#router = router;
   }
 
+  /** Register the handler for internal `mirin:*` control actions (e.g. window drag). */
+  setControlHandler(handler: ControlHandler): void {
+    this.#control = handler;
+  }
+
   /** Push an event to every connected webview. */
   broadcast(method: string, payload: unknown): void {
     const frame = JSON.stringify({ kind: "event", method, payload });
@@ -80,10 +104,15 @@ export class RpcServer {
   }
 
   async #onMessage(ws: ServerWebSocket<SocketData>, raw: string | Buffer): Promise<void> {
-    let frame: RequestFrame;
+    let frame: IncomingFrame;
     try {
       frame = JSON.parse(typeof raw === "string" ? raw : raw.toString());
     } catch {
+      return;
+    }
+    // Internal control side channel (window drag, …) from the preload bootstrap.
+    if (frame.kind === "control") {
+      this.#control?.(frame, ws.data.webview);
       return;
     }
     if (frame.kind !== "request") return;

@@ -19,9 +19,12 @@ import { $ } from "bun";
 import { mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
+import { buildWindowsBundle } from "./bundle-win.ts";
 import { resolveArtifacts } from "./artifacts.ts";
 import { sweepBuildTemps } from "./temps.ts";
 import { normalizeSidecars, compileWorkers } from "./extras.ts";
+
+const IS_WINDOWS = process.platform === "win32";
 
 export interface BuildResult {
   /** Path to the assembled .app. */
@@ -83,7 +86,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   // 3 + 4. host + worker (minified)
   console.log("[mirin build] compiling host + bundling main process…");
   const signIdentity = process.env.MIRIN_SIGN_IDENTITY;
-  const hostExe = join(work, "host-release");
+  const hostExe = join(work, IS_WINDOWS ? "host-release.exe" : "host-release");
   const workerJs = join(work, "worker.release.js");
   await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
   await $`bun build ${mainEntry} --target=bun --minify --outfile ${workerJs}`.cwd(projectDir);
@@ -92,38 +95,47 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const sidecars = normalizeSidecars(projectDir, config.sidecars);
   const extraWorkers = await compileWorkers(projectDir, config.workers, join(work, "workers"), true);
 
-  // 5. assemble + sign
-  console.log("[mirin build] assembling .app…");
-  rmSync(join(outDir, `${appName}.app`), { recursive: true, force: true });
+  // 5. assemble (+ sign on macOS)
+  console.log(`[mirin build] assembling ${IS_WINDOWS ? "app folder" : ".app"}…`);
   // version.json embeds the running app's update identity (read by app.updater).
   // Only when `release` is configured — otherwise the app has no updater.
   const versionJson = baseUrl
     ? JSON.stringify({ version, channel, baseUrl, name: appName, identifier: bundleId })
     : undefined;
-  const { app } = await buildAppBundle({
-    appName,
-    bundleId,
-    outDir,
-    hostExe,
-    coreDylib: artifacts.coreDylib,
-    helperBin: artifacts.helperBin,
-    cefPath: artifacts.cefPath,
-    version,
-    icon: config.icon ? join(projectDir, config.icon) : undefined,
-    signIdentity,
-    urlSchemes: config.urlSchemes,
-    resources: {
-      uiDir: join(projectDir, "dist"),
-      workerJs,
-      manifestJson: JSON.stringify({ windows: config.windows }),
-      versionJson,
-      sidecars,
-      workers: extraWorkers,
-    },
-  });
+  const resources = {
+    uiDir: join(projectDir, "dist"),
+    workerJs,
+    manifestJson: JSON.stringify({ windows: config.windows }),
+    versionJson,
+    workers: extraWorkers,
+  };
+  const { app } = IS_WINDOWS
+    ? await buildWindowsBundle({
+        appName,
+        outDir,
+        hostExe,
+        coreDll: artifacts.coreDylib,
+        helperExe: artifacts.helperBin,
+        cefPath: artifacts.cefPath,
+        icon: config.icon ? join(projectDir, config.icon) : undefined,
+        resources: { ...resources, sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })) },
+      })
+    : await buildAppBundle({
+        appName,
+        bundleId,
+        outDir,
+        hostExe,
+        coreDylib: artifacts.coreDylib,
+        helperBin: artifacts.helperBin,
+        cefPath: artifacts.cefPath,
+        version,
+        icon: config.icon ? join(projectDir, config.icon) : undefined,
+        signIdentity,
+        urlSchemes: config.urlSchemes,
+        resources: { ...resources, sidecars },
+      });
 
   console.log(`\n[mirin build] done → ${app}`);
-  console.log(`  open "${app}"`);
   return {
     app,
     appName,

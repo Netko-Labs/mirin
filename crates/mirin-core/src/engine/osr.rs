@@ -195,9 +195,9 @@ wrap_render_handler! {
             let Some(window_id) = browser.and_then(window_for_browser) else {
                 return;
             };
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             paint(window_id, buffer, width, height);
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let _ = (window_id, buffer, width, height);
         }
     }
@@ -224,11 +224,26 @@ fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) {
     unsafe { mac::osr::paint(window_id, buffer, width, height) };
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn view_size(window_id: u32) -> Option<(i32, i32)> {
+    crate::win::osr::view_size(window_id)
+}
+#[cfg(target_os = "windows")]
+fn view_scale(window_id: u32) -> Option<f32> {
+    crate::win::osr::scale(window_id)
+}
+#[cfg(target_os = "windows")]
+fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) {
+    // Safety: CEF's on_paint buffer is valid for width*height*4 BGRA bytes for the
+    // duration of the callback.
+    unsafe { crate::win::osr::paint(window_id, buffer, width, height) };
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn view_size(_window_id: u32) -> Option<(i32, i32)> {
     None
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn view_scale(_window_id: u32) -> Option<f32> {
     None
 }

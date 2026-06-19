@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/mirin-core", "crates/mirin-helper"]
 
 [workspace.package]
-version = "0.0.1-alpha.19"
+version = "0.1.0-alpha.0"
 edition = "2021"
 license = "MIT"
 
@@ -18,6 +18,27 @@ objc2-app-kit = { version = "0.3.2", default-features = false }
 objc2-foundation = "0.3.2"
 objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-core-graphics = { version = "0.3.2", default-features = false }
+# Windows native layer (win/). windows-sys (not the higher-level `windows` crate)
+# so HWND is byte-identical to cef's cef_window_handle_t — no handle conversion at
+# the CEF boundary. Feature set grows per milestone; this covers W1 windowing.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_Ole",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 lto = "thin"

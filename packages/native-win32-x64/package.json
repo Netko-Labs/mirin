@@ -1,23 +1,23 @@
 {
-  "name": "@mirinjs/darwin-arm64",
+  "name": "@mirinjs/win32-x64",
   "version": "0.1.0-alpha.0",
-  "description": "Prebuilt mirin native binaries for macOS arm64 (libmirin_core + helper).",
+  "description": "Prebuilt mirin native binaries for Windows x64 (mirin_core.dll + helper).",
   "license": "MIT",
   "homepage": "https://github.com/Netko-Labs/mirin#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Netko-Labs/mirin.git",
-    "directory": "packages/native-darwin-arm64"
+    "directory": "packages/native-win32-x64"
   },
   "os": [
-    "darwin"
+    "win32"
   ],
   "cpu": [
-    "arm64"
+    "x64"
   ],
   "files": [
-    "libmirin_core.dylib",
-    "mirin-helper",
+    "mirin_core.dll",
+    "mirin-helper.exe",
     "README.md"
   ],
   "publishConfig": {

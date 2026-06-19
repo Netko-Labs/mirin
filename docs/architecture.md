@@ -157,8 +157,65 @@ mirin apps single-instance) and delivers the URL to the AppKit delegate's
 Worker surfaces as `app.on("open-url", (url) => …)` — including the URL the app was
 launched with.
 
-## 8. Windows & Linux (forward notes, not MVP)
+## 8. Windows (implemented) & Linux (forward notes)
 
-- The host/Worker/FFI model is platform-independent; only `mirin-core`'s windowing backend and the bundle layout change.
-- Windows: CEF default; `engine: "webview2"` as an app-level opt-in — this implies the engine abstraction in `mirin-core` is a trait from day one, even while CEF is the only macOS implementation.
-- Linux: CEF only, X11/Wayland via CEF's own handling.
+The host/Worker/FFI model is platform-independent — the FFI surface, CEF handlers,
+`app://` scheme, event queue, and the whole RPC/data plane are shared. Only the
+native layer (`mac/` vs `win/`) and the bundle layout differ. `win/` mirrors `mac/`
+one-concern-per-module (`window`, `menu`, `tray`, `dialog`, `clipboard`, `shortcut`);
+`engine/` routes to the platform module via `#[cfg]` arms.
+
+**Windows is CEF, windowed.** CEF creates and owns a child HWND parented to a
+mirin-owned top-level Win32 window (`WindowInfo::set_as_child`) — not the macOS
+embedded-NSView/OSR model. Consequences:
+
+- **Close lifecycle.** `CloseBrowser(false)` → `do_close` (which marks the window
+  closing) → CEF sends `WM_CLOSE` to the top-level owner → the WndProc lets the
+  *next* `WM_CLOSE` `DestroyWindow`, which tears down the CEF child and fires
+  `on_before_close`. This is-closing handshake is the Windows analogue of macOS's
+  view-detach dance (`win/window.rs`).
+- **Custom title bar** (`titleBarStyle: hidden | hiddenInset`): frameless via
+  `WM_NCCALCSIZE` (client == window; maximized inset), DWM shadow restored with
+  `DwmExtendFrameIntoClientArea`. The webview child consumes mouse input, so
+  dragging can't be hit-tested on the parent — the preload bootstrap forwards each
+  left-mousedown's coords as an internal `control` frame; the core checks them
+  against CEF's `-webkit-app-region` regions and starts a native move via
+  `ReleaseCapture` + `WM_NCLBUTTONDOWN`/`HTCAPTION` (the electrobun/tao approach).
+  Native min/max/close are app-drawn (no native caption); the renderer calls
+  `windowControls.{minimize,maximize,close}()` (`mirin/client`), which sends control
+  frames the runtime maps to FFI window commands. App menu bar is a no-op on Windows
+  (the app puts menus in its custom title bar).
+- **GPU.** Auto-falls-back to software (`--disable-gpu`) in RDP sessions
+  (`SM_REMOTESESSION`). On hybrid iGPU/dGPU laptops the default D3D11 ANGLE backend
+  fails in the GPU process; `engine::angle_backend()` **auto-selects `gl`** when ≥2
+  GPUs are present (`win/gpu.rs` counts display-adapter registry entries) to keep
+  *hardware* acceleration with zero config. `MIRIN_ANGLE=<gl|d3d9|d3d11|vulkan|
+  swiftshader>` overrides; `MIRIN_DISABLE_GPU=1` forces software. Per-Monitor-v2 DPI
+  awareness is set before CEF init for crisp HiDPI.
+- **Transparent / material windows** (`transparent: true`, `material`): like macOS,
+  these render **windowless** (OSR) — a windowed CEF browser is always opaque. CEF
+  paints a premultiplied-BGRA frame (`engine::osr`) that `win/osr.rs` composites with
+  per-pixel alpha into a borderless layered window via `UpdateLayeredWindow`; input is
+  forwarded from the WndProc into CEF. The macOS native vibrancy/Liquid-Glass backdrop
+  has no clean CEF-windowed equivalent — plain per-pixel transparency is the baseline
+  (matching electrobun); a DWM Mica/Acrylic blur backdrop is a future refinement.
+
+**Bundle + distribution.** No `.app`/codesign — a flat app folder: `<App>.exe` (bun
+host) + `mirin_core.dll` + `mirin-helper.exe` + the CEF runtime (libcef.dll, `*.pak`,
+`icudtl.dat`, `locales/`) all beside the exe (so the OS loader resolves libcef), and
+`resources/{ui, worker.js, mirin.manifest.json, version.json}`. `mirin dev`/`build`/
+`release` branch on `process.platform` (`bundle-win.ts`). `mirin release` emits a
+`.zip` installer + a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`;
+the updater swaps the folder via a detached PowerShell relauncher. Consumers install
+the prebuilt `@mirinjs/win32-x64` native package + a CEF release download (no Rust).
+Build prereqs: cmake + ninja (for `cef-dll-sys`'s C++ wrapper) + MSVC.
+
+**Material:** transparent OSR windows take a DWM acrylic blur backdrop via the
+(runtime-resolved) `SetWindowCompositionAttribute`. **GPU:** the default D3D11 ANGLE
+backend fails on some hybrid laptops — `MIRIN_ANGLE=gl` restores hardware accel.
+
+**Known gaps (minor):** the updater's runtime folder-swap is implemented but not yet
+field-tested; Mica (vs acrylic) backdrop; arm64-windows.
+
+**Linux (forward notes):** CEF only, X11/Wayland via CEF's own handling; the same
+`win/`-style split would add a `linux/` module.

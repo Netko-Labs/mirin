@@ -63,3 +63,6 @@ objc2-core-graphics = { workspace = true, features = [
     "CGColorSpace",
     "CGDataProvider",
 ] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys.workspace = true

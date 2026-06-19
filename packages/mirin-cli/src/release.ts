@@ -34,31 +34,41 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     return 1;
   }
 
-  const platform = "darwin";
+  const isWindows = process.platform === "win32";
+  const platform = isWindows ? "win32" : "darwin";
   const arch = process.arch; // "arm64" | "x64"
   const prefix = `${result.channel}-${platform}-${arch}`;
   const safeName = result.appName.replace(/[^A-Za-z0-9._-]/g, "");
   const base = result.baseUrl.replace(/\/$/, "");
+  // The packaged unit: a flat app folder on Windows, an `.app` bundle on macOS.
+  const appArtifact = isWindows ? result.appName : `${result.appName}.app`;
 
   const buildDir = join(projectDir, "build");
   const outDir = join(buildDir, "release");
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
 
-  // Notarize + staple the .app (Developer ID) before packing, when credentials
-  // are present. The .tar.zst / patch updater bundles are made from this signed,
-  // stapled .app, so the updater swaps in an already-notarized app.
-  await notarizeAndStaple(result.app);
+  // Notarize + staple the .app (Developer ID, macOS) before packing, when
+  // credentials are present. The .tar.zst / patch updater bundles are made from
+  // this signed, stapled .app, so the updater swaps in an already-notarized app.
+  if (!isWindows) await notarizeAndStaple(result.app);
 
-  const codec = loadCodec(result.coreDylib);
+  // Load the codec (zstd/bsdiff) from the *bundled* core, not the raw build output:
+  // on Windows mirin_core.dll imports libcef.dll. The DLL loader resolves imports
+  // from PATH (and the loader exe's dir), not the dll's own dir, so prepend the
+  // bundle dir to PATH so libcef.dll is found. (On macOS the framework loads at
+  // runtime, so result.coreDylib works directly.)
+  const codecCore = isWindows ? join(result.app, "mirin_core.dll") : result.coreDylib;
+  if (isWindows) process.env.PATH = `${result.app};${process.env.PATH ?? ""}`;
+  const codec = loadCodec(codecCore);
 
   // Uncompressed tar — the identity + diff/patch basis (BSD tar keeps symlinks).
   const newTar = join(outDir, "_new.tar");
-  await $`tar -cf ${newTar} -C ${buildDir} ${`${result.appName}.app`}`;
+  await $`tar -cf ${newTar} -C ${buildDir} ${appArtifact}`;
   const tarHash = sha256File(newTar);
 
   // Full bundle: zstd(newTar).
-  const bundleName = `${prefix}-${safeName}.app.tar.zst`;
+  const bundleName = `${prefix}-${safeName}${isWindows ? "" : ".app"}.tar.zst`;
   const bundlePath = join(outDir, bundleName);
   console.log(`[mirin release] compressing → ${bundleName}`);
   codec.compress(newTar, bundlePath, 19);
@@ -113,25 +123,34 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   const manifestName = `${prefix}-update.json`;
   await Bun.write(join(outDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  // Distributable installer: a drag-to-Applications .dmg of the same signed,
-  // stapled .app — for first-time installs (the updater uses the .tar.zst/patch).
-  let dmgName: string | undefined;
-  let dmgSize = 0;
-  if (result.dmg !== false) {
-    dmgName = `${prefix}-${safeName}.dmg`;
-    console.log(`[mirin release] building installer → ${dmgName}`);
+  // Distributable installer for first-time installs (the updater uses the
+  // .tar.zst/patch): a drag-to-Applications .dmg on macOS, a .zip of the app
+  // folder on Windows.
+  let installerName: string | undefined;
+  let installerSize = 0;
+  if (isWindows) {
+    installerName = `${prefix}-${safeName}.zip`;
+    console.log(`[mirin release] zipping installer → ${installerName}`);
+    const zipPath = join(outDir, installerName);
+    rmSync(zipPath, { force: true });
+    // bsdtar (Windows `tar`) creates a .zip from the extension with `-a`.
+    await $`tar -a -cf ${zipPath} -C ${buildDir} ${appArtifact}`;
+    installerSize = readFileSync(zipPath).byteLength;
+  } else if (result.dmg !== false) {
+    installerName = `${prefix}-${safeName}.dmg`;
+    console.log(`[mirin release] building installer → ${installerName}`);
     const options: DmgOptions = typeof result.dmg === "object" ? result.dmg : {};
     const dmgPath = await buildDmg({
       app: result.app,
       appName: result.appName,
       outDir,
-      fileName: dmgName,
+      fileName: installerName,
       options,
       projectDir: result.projectDir,
       signIdentity: result.signIdentity,
     });
     await notarizeAndStaple(dmgPath); // no-op without notary credentials
-    dmgSize = readFileSync(dmgPath).byteLength;
+    installerSize = readFileSync(dmgPath).byteLength;
   }
 
   const mb = (n: number) => (n / 1e6).toFixed(1);
@@ -139,7 +158,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   console.log(`  ${manifestName}`);
   console.log(`  ${bundleName} (${mb(bundleSize)} MB)`);
   for (const p of patches) console.log(`  ${p.url} (${mb(p.size)} MB delta from ${p.fromVersion})`);
-  if (dmgName) console.log(`  ${dmgName} (${mb(dmgSize)} MB installer)`);
+  if (installerName) console.log(`  ${installerName} (${mb(installerSize)} MB installer)`);
   console.log(`\nUpload all of build/release/ to: ${result.baseUrl}`);
   if (existsSync(join(outDir, "_new.tar"))) rmSync(join(outDir, "_new.tar"), { force: true });
   return 0;

@@ -12,9 +12,12 @@ thread_local! {
 
 pub fn clipboard_read_text() -> *const c_char {
     #[cfg(target_os = "macos")]
+    let text = crate::mac::clipboard::read_text();
+    #[cfg(target_os = "windows")]
+    let text = crate::win::clipboard::read_text();
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        let text = crate::mac::clipboard::read_text().unwrap_or_default();
-        let cstr = CString::new(text).unwrap_or_default();
+        let cstr = CString::new(text.unwrap_or_default()).unwrap_or_default();
         let ptr = cstr.as_ptr();
         LAST_READ.with(|s| *s.borrow_mut() = Some(cstr));
         return ptr;
@@ -26,6 +29,8 @@ pub fn clipboard_read_text() -> *const c_char {
 pub fn clipboard_write_text(text: String) {
     #[cfg(target_os = "macos")]
     crate::mac::clipboard::write_text(&text);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    crate::win::clipboard::write_text(&text);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = text;
 }

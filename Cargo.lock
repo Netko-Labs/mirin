@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "mirin-core"
-version = "0.0.1-alpha.18"
+version = "0.1.0-alpha.0"
 dependencies = [
  "cef",
  "objc2",
@@ -790,12 +790,13 @@ dependencies = [
  "qbsdiff",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
  "zstd",
 ]
 
 [[package]]
 name = "mirin-helper"
-version = "0.0.1-alpha.18"
+version = "0.1.0-alpha.0"
 dependencies = [
  "cef",
 ]

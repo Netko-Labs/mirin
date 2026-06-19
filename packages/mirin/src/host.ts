@@ -19,10 +19,16 @@ import { dirname, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { Core } from "./native.ts";
 
-const exeDir = dirname(process.execPath); // Contents/MacOS
-const resourcesDir = join(exeDir, "..", "Resources");
+// Bundle layout differs by platform: macOS `.app` puts the host in
+// `Contents/MacOS` with resources in `../Resources`; Windows is a flat app folder
+// where the host exe sits beside `mirin_core.dll` with resources in `resources/`.
+const isWindows = process.platform === "win32";
+const exeDir = dirname(process.execPath);
+const resourcesDir = isWindows ? join(exeDir, "resources") : join(exeDir, "..", "Resources");
 
-const corePath = process.env.MIRIN_CORE ?? join(exeDir, "libmirin_core.dylib");
+const corePath =
+  process.env.MIRIN_CORE ??
+  join(exeDir, isWindows ? "mirin_core.dll" : "libmirin_core.dylib");
 const workerPath = process.env.MIRIN_WORKER ?? join(resourcesDir, "worker.js");
 // Bundled-asset dirs for sidecars (Bun.spawn binaries) and extra workers. Dev
 // overrides via env (dev.ts stages them under .mirin); prod resolves in-bundle.

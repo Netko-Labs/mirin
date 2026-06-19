@@ -13,7 +13,10 @@ import { mkdirSync, rmSync, symlinkSync, existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
+import { buildWindowsBundle } from "./bundle-win.ts";
 import { resolveArtifacts } from "./artifacts.ts";
+
+const IS_WINDOWS = process.platform === "win32";
 import { sweepBuildTemps } from "./temps.ts";
 import { normalizeSidecars, compileWorkers } from "./extras.ts";
 
@@ -39,7 +42,8 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
 
   // --- compile the Bun host + bundle the Worker ---
   console.log("[mirin dev] compiling host + bundling main process…");
-  const hostExe = join(work, "host");
+  // `bun build --compile` emits an `.exe` on Windows; name it so explicitly.
+  const hostExe = join(work, IS_WINDOWS ? "host.exe" : "host");
   const workerJs = join(work, "worker.js");
   await $`bun build --compile ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
   await $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(projectDir);
@@ -57,19 +61,29 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     else console.warn(`[mirin dev] sidecar "${sc.name}" not found: ${sc.src}`);
   }
 
-  // --- assemble the dev .app ---
+  // --- assemble the dev bundle (Windows app folder, or macOS .app) ---
   console.log("[mirin dev] assembling dev bundle…");
-  const { app, exe } = await buildAppBundle({
-    appName,
-    bundleId,
-    outDir: work,
-    hostExe,
-    coreDylib: artifacts.coreDylib,
-    helperBin: artifacts.helperBin,
-    cefPath: artifacts.cefPath,
-    icon: config.icon ? join(projectDir, config.icon) : undefined,
-    urlSchemes: config.urlSchemes,
-  });
+  const { app, exe } = IS_WINDOWS
+    ? await buildWindowsBundle({
+        appName,
+        outDir: work,
+        hostExe,
+        coreDll: artifacts.coreDylib,
+        helperExe: artifacts.helperBin,
+        cefPath: artifacts.cefPath,
+        icon: config.icon ? join(projectDir, config.icon) : undefined,
+      })
+    : await buildAppBundle({
+        appName,
+        bundleId,
+        outDir: work,
+        hostExe,
+        coreDylib: artifacts.coreDylib,
+        helperBin: artifacts.helperBin,
+        cefPath: artifacts.cefPath,
+        icon: config.icon ? join(projectDir, config.icon) : undefined,
+        urlSchemes: config.urlSchemes,
+      });
 
   // --- start Vite on a free port so concurrent dev sessions don't collide ---
   // `--port <free> --strictPort` pins Vite to the port we probed (overriding any
@@ -93,7 +107,9 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     cwd: projectDir,
     env: {
       ...process.env,
-      MIRIN_CORE: join(app, "Contents", "MacOS", "libmirin_core.dylib"),
+      MIRIN_CORE: IS_WINDOWS
+        ? join(app, "mirin_core.dll")
+        : join(app, "Contents", "MacOS", "libmirin_core.dylib"),
       MIRIN_WORKER: workerJs,
       MIRIN_DEV_URL: devUrl,
       MIRIN_MANIFEST_JSON: JSON.stringify({ windows: config.windows }),

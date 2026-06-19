@@ -42,36 +42,24 @@ wrap_task! {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
             let Some(json) = self.spec_json.borrow_mut().take() else { return };
             let Ok(spec) = serde_json::from_str::<DialogSpec>(&json) else { return };
-            #[cfg(target_os = "macos")]
             run(&spec);
-            #[cfg(not(target_os = "macos"))]
-            let _ = spec;
         }
     }
 }
 
-#[cfg(target_os = "macos")]
 fn run(spec: &DialogSpec) {
-    let mtm = objc2::MainThreadMarker::new().expect("dialog on main thread");
     let value = match spec.kind.as_str() {
-        "openFile" => match crate::mac::dialog::open_file(mtm, spec) {
-            Some(paths) => {
-                let items = paths
-                    .iter()
-                    .map(|p| serde_json::Value::String(p.clone()))
-                    .collect();
-                serde_json::Value::Array(items)
-            }
+        "openFile" => match open_file(spec) {
+            Some(paths) => serde_json::Value::Array(
+                paths.into_iter().map(serde_json::Value::String).collect(),
+            ),
             None => serde_json::Value::Null,
         },
-        "saveFile" => match crate::mac::dialog::save_file(mtm, spec) {
+        "saveFile" => match save_file(spec) {
             Some(path) => serde_json::Value::String(path),
             None => serde_json::Value::Null,
         },
-        "message" => {
-            let button = crate::mac::dialog::message(mtm, spec);
-            serde_json::json!({ "button": button })
-        }
+        "message" => serde_json::json!({ "button": message(spec) }),
         _ => serde_json::Value::Null,
     };
 
@@ -81,4 +69,49 @@ fn run(spec: &DialogSpec) {
         "value": value,
     });
     crate::engine::emit_event(&event.to_string());
+}
+
+fn open_file(spec: &DialogSpec) -> Option<Vec<String>> {
+    #[cfg(target_os = "macos")]
+    {
+        let mtm = objc2::MainThreadMarker::new().expect("dialog on main thread");
+        return crate::mac::dialog::open_file(mtm, spec);
+    }
+    #[cfg(target_os = "windows")]
+    return crate::win::dialog::open_file(spec);
+    #[allow(unreachable_code)]
+    {
+        let _ = spec;
+        None
+    }
+}
+
+fn save_file(spec: &DialogSpec) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mtm = objc2::MainThreadMarker::new().expect("dialog on main thread");
+        return crate::mac::dialog::save_file(mtm, spec);
+    }
+    #[cfg(target_os = "windows")]
+    return crate::win::dialog::save_file(spec);
+    #[allow(unreachable_code)]
+    {
+        let _ = spec;
+        None
+    }
+}
+
+fn message(spec: &DialogSpec) -> i64 {
+    #[cfg(target_os = "macos")]
+    {
+        let mtm = objc2::MainThreadMarker::new().expect("dialog on main thread");
+        return crate::mac::dialog::message(mtm, spec);
+    }
+    #[cfg(target_os = "windows")]
+    return crate::win::dialog::message(spec);
+    #[allow(unreachable_code)]
+    {
+        let _ = spec;
+        0
+    }
 }

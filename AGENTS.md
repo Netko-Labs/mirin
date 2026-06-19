@@ -23,6 +23,7 @@ Conventions for working in this repo (humans and coding agents). Adapted from
 ## Rust (mirin-core / mirin-helper)
 
 - One concern per module: `engine/{boot,events,window,handlers,tasks,commands}.rs`, `mac/{app,window,menu,tray,dialog,clipboard,shortcut,util}.rs`, `scheme.rs`, `ffi.rs`.
+- **Platform split.** `win/` mirrors `mac/` one-concern-per-module (`window`, `menu`, `tray`, `dialog`, `clipboard`, `shortcut`) using `windows-sys` (raw, matches cef's HWND base type — convert to cef's `cef::sys::HWND` newtype only at the `set_as_child`/`window_handle` boundary). `engine/` submodules dispatch with `#[cfg(target_os = "macos")]` / `#[cfg(target_os = "windows")]` arms; keep a `#[cfg(not(any(...)))]` fallback so the build stays green on unported targets. Windows is CEF-windowed (child HWND), not OSR — see `docs/architecture.md` §8 for the close handshake and custom-title-bar dragging.
 - **`ffi.rs`** holds the entire `#[no_mangle] extern "C"` surface. FFI functions are thin: parse the C input, call an `engine::` function, return. No business logic in the ABI layer.
 - All AppKit / CEF-UI calls run on the **main (UI) thread**. Commands from the Worker thread post a CEF task (`engine::tasks`) to the UI thread. Never hold the `MirinHandler` mutex across `close_browser` (re-enters `on_before_close`).
 - Events to the Worker go through `engine::events` (the polled queue), never a bun:ffi callback.

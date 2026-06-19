@@ -49,8 +49,8 @@ export async function resolveArtifacts(opts: { release: boolean }): Promise<Arti
     await $`cargo build -p mirin-core -p mirin-helper ${flags}`.cwd(REPO_ROOT);
     const target = join(REPO_ROOT, "target", profile);
     return {
-      coreDylib: join(target, "libmirin_core.dylib"),
-      helperBin: join(target, "mirin-helper"),
+      coreDylib: join(target, coreFileName()),
+      helperBin: join(target, helperFileName()),
       hostEntry: join(REPO_ROOT, "packages", "mirin", "src", "host.ts"),
       cefPath,
     };
@@ -58,17 +58,30 @@ export async function resolveArtifacts(opts: { release: boolean }): Promise<Arti
 
   const nativeDir = resolveNativeDir();
   return {
-    coreDylib: join(nativeDir, "libmirin_core.dylib"),
-    helperBin: join(nativeDir, "mirin-helper"),
+    coreDylib: join(nativeDir, coreFileName()),
+    helperBin: join(nativeDir, helperFileName()),
     hostEntry: resolvePackageFile("mirinjs/host"),
     cefPath,
   };
 }
 
+/** The native core library file name for the host platform (MSVC has no `lib` prefix). */
+function coreFileName(): string {
+  return process.platform === "win32" ? "mirin_core.dll" : "libmirin_core.dylib";
+}
+
+/** The CEF subprocess binary name for the host platform. */
+function helperFileName(): string {
+  return process.platform === "win32" ? "mirin-helper.exe" : "mirin-helper";
+}
+
 function assertSupportedPlatform(): void {
-  if (process.platform !== "darwin" || process.arch !== "arm64") {
+  const supported =
+    (process.platform === "darwin" && process.arch === "arm64") ||
+    (process.platform === "win32" && process.arch === "x64");
+  if (!supported) {
     throw new Error(
-      `mirin alpha supports macOS arm64 only (got ${process.platform}/${process.arch}).`,
+      `mirin alpha supports macOS arm64 and Windows x64 (got ${process.platform}/${process.arch}).`,
     );
   }
 }
@@ -99,10 +112,16 @@ function cliVersion(): string {
   return pkg.version as string;
 }
 
+/** A file/dir that, if present in a CEF dir, means the distribution is unpacked.
+ *  macOS ships the framework bundle; Windows ships a flat dir with libcef.dll. */
+function cefMarker(): string {
+  return process.platform === "win32" ? "libcef.dll" : "Chromium Embedded Framework.framework";
+}
+
 async function ensureCef(): Promise<string> {
   if (IN_REPO) {
     const vendor = join(REPO_ROOT, "vendor", "cef");
-    if (existsSync(join(vendor, "Chromium Embedded Framework.framework"))) return vendor;
+    if (existsSync(join(vendor, cefMarker()))) return vendor;
     console.error(
       "[mirin] vendor/cef missing — run `bun scripts/fetch-cef.ts` in the monorepo first.",
     );
@@ -111,7 +130,7 @@ async function ensureCef(): Promise<string> {
 
   const version = cliVersion();
   const cacheDir = join(homedir(), ".mirinjs", "cef", `${version}-${platformTag()}`);
-  if (existsSync(join(cacheDir, "Chromium Embedded Framework.framework"))) return cacheDir;
+  if (existsSync(join(cacheDir, cefMarker()))) return cacheDir;
 
   mkdirSync(cacheDir, { recursive: true });
   const asset = `cef-${platformTag()}.tar.gz`;

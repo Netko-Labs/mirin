@@ -20,6 +20,8 @@ import { $ } from "bun";
 import { runtime } from "./runtime.ts";
 import { loadCodec } from "./codec.ts";
 
+const IS_WINDOWS = process.platform === "win32";
+
 export type UpdaterStatus =
   | "idle"
   | "checking"
@@ -177,11 +179,15 @@ export class Updater {
       rmSync(keepTar, { force: true });
       renameSync(newTar, keepTar);
       await $`tar -xf ${keepTar} -C ${work}`.quiet();
-      const staged = join(work, `${v.name}.app`);
+      // The packaged unit: a flat app folder on Windows, an `.app` on macOS.
+      const staged = join(work, IS_WINDOWS ? v.name : `${v.name}.app`);
       if (!existsSync(staged)) throw new Error(`extracted bundle not found at ${staged}`);
 
-      const verify = await $`codesign --verify --deep --strict ${staged}`.quiet().nothrow();
-      if (verify.exitCode !== 0) throw new Error("codesign verification failed on the downloaded update");
+      if (!IS_WINDOWS) {
+        const verify = await $`codesign --verify --deep --strict ${staged}`.quiet().nothrow();
+        if (verify.exitCode !== 0)
+          throw new Error("codesign verification failed on the downloaded update");
+      }
 
       // Keep only the newest cached tar.
       for (const f of readdirSync(tarsDir)) {
@@ -202,24 +208,44 @@ export class Updater {
     if (!v || !this.#staged) throw new Error("no staged update — call download() first");
     this.#setStatus("applying");
     try {
-      const runningApp = join(this.#resourcesDir()!, "..", "..");
-      const script = [
-        `APP=${sh(runningApp)}`,
-        `NEW=${sh(this.#staged)}`,
-        `PID=${process.pid}`,
-        `while kill -0 "$PID" 2>/dev/null; do sleep 0.2; done`,
-        `sleep 0.3`,
-        `rm -rf "$APP"`,
-        `mv "$NEW" "$APP"`,
-        `xattr -r -d com.apple.quarantine "$APP" 2>/dev/null || true`,
-        `open "$APP"`,
-      ].join("\n");
-
-      Bun.spawn(["/bin/sh", "-c", script], {
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-      }).unref();
+      // The running app folder: macOS `.app` is Contents/Resources/../.. ; Windows
+      // is the exe dir, i.e. resources/.. . A detached helper waits for this process
+      // to exit (the exe/bundle is locked while running), swaps the folder, relaunches.
+      if (IS_WINDOWS) {
+        const runningApp = join(this.#resourcesDir()!, "..");
+        const exe = join(runningApp, `${this.#version()!.name}.exe`);
+        const ps = [
+          `$ErrorActionPreference='SilentlyContinue'`,
+          `while (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }`,
+          `Start-Sleep -Milliseconds 400`,
+          `Remove-Item -Recurse -Force ${psq(runningApp)}`,
+          `Move-Item -Force ${psq(this.#staged)} ${psq(runningApp)}`,
+          `Start-Process ${psq(exe)}`,
+        ].join("; ");
+        Bun.spawn(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        }).unref();
+      } else {
+        const runningApp = join(this.#resourcesDir()!, "..", "..");
+        const script = [
+          `APP=${sh(runningApp)}`,
+          `NEW=${sh(this.#staged)}`,
+          `PID=${process.pid}`,
+          `while kill -0 "$PID" 2>/dev/null; do sleep 0.2; done`,
+          `sleep 0.3`,
+          `rm -rf "$APP"`,
+          `mv "$NEW" "$APP"`,
+          `xattr -r -d com.apple.quarantine "$APP" 2>/dev/null || true`,
+          `open "$APP"`,
+        ].join("\n");
+        Bun.spawn(["/bin/sh", "-c", script], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        }).unref();
+      }
 
       this.#setStatus("complete");
       runtime().core.quit();
@@ -308,10 +334,15 @@ export class Updater {
   }
 
   #prefix(): string {
-    return `${this.#version()!.channel}-darwin-${process.arch}`;
+    const platform = IS_WINDOWS ? "win32" : "darwin";
+    return `${this.#version()!.channel}-${platform}-${process.arch}`;
   }
 
   #supportDir(v: VersionInfo): string {
+    if (IS_WINDOWS) {
+      const base = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+      return join(base, v.identifier, v.channel);
+    }
     return join(homedir(), "Library", "Application Support", v.identifier, v.channel);
   }
 
@@ -340,6 +371,11 @@ export class Updater {
 /** Single-quote a path for safe interpolation into a /bin/sh script. */
 function sh(p: string): string {
   return `'${p.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Single-quote a path for safe interpolation into a PowerShell command. */
+function psq(p: string): string {
+  return `'${p.replace(/'/g, "''")}'`;
 }
 
 export const updater = new Updater();

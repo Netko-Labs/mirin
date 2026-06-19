@@ -25,6 +25,10 @@ wrap_task! {
             if let Some(json) = self.spec_json.borrow_mut().take() {
                 crate::mac::tray::create(&json);
             }
+            #[cfg(target_os = "windows")]
+            if let Some(json) = self.spec_json.borrow_mut().take() {
+                crate::win::tray::create(&json);
+            }
         }
     }
 }
@@ -38,6 +42,8 @@ wrap_task! {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
             #[cfg(target_os = "macos")]
             crate::mac::tray::destroy(self.id);
+            #[cfg(target_os = "windows")]
+            crate::win::tray::destroy(self.id);
         }
     }
 }

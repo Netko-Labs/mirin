@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 #[cfg(target_os = "macos")]
 use crate::mac;
+#[cfg(target_os = "windows")]
+use crate::win;
 
 pub mod clipboard;
 pub mod codec;
@@ -33,8 +35,14 @@ pub use menu::{popup_menu, set_app_menu};
 pub use shortcut::{shortcut_register, shortcut_unregister};
 pub use tray::{tray_create, tray_destroy};
 
+/// What `load_cef` returns and the caller holds for the process lifetime. On
+/// macOS this is the framework loader (must outlive CEF). On Windows libcef.dll
+/// is resolved by the OS loader (linked via cef-dll-sys's import lib), so there
+/// is nothing to keep alive — the unit type stands in.
 #[cfg(target_os = "macos")]
 type Library = library_loader::LibraryLoader;
+#[cfg(not(target_os = "macos"))]
+type Library = ();
 
 /// Startup options passed to `run_core` (parsed from the FFI `mirin_run` JSON,
 /// or built directly by the m1-smoke test binary).
@@ -226,6 +234,9 @@ pub fn poll_event() -> *const c_char {
 /// not return until the app quits.
 pub fn run_core(config: CoreConfig) -> i32 {
     IS_DEV.store(config.dev, Ordering::Relaxed);
+    // Per-Monitor-v2 DPI awareness must be set before any window/CEF init.
+    #[cfg(target_os = "windows")]
+    win::set_dpi_awareness();
     let _library = load_cef();
 
     let args = cef::args::Args::new();
@@ -293,18 +304,70 @@ pub fn run_core(config: CoreConfig) -> i32 {
     #[cfg(target_os = "macos")]
     let _delegate = mac::setup_app_delegate();
 
+    // Debug hook: quit programmatically after N ms. Lets CI/smoke runs exercise the
+    // full graceful-close path (close_all_browsers → on_before_close →
+    // quit_message_loop → shutdown) without a human clicking the close button.
+    if let Ok(ms) = std::env::var("MIRIN_AUTOQUIT_MS").map(|s| s.parse::<u64>()) {
+        if let Ok(ms) = ms {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                quit();
+            });
+        }
+    }
+
     run_message_loop();
     shutdown();
     0
 }
 
+#[cfg(target_os = "macos")]
 fn load_cef() -> Library {
     let loader = library_loader::LibraryLoader::new(&std::env::current_exe().unwrap(), false);
     assert!(loader.load(), "failed to load Chromium Embedded Framework");
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
-    #[cfg(target_os = "macos")]
     mac::setup_application();
     loader
+}
+
+/// Windows: libcef.dll is bound at load time via cef-dll-sys's import library and
+/// resolved by the OS loader from the host-exe directory (where the dev bundle /
+/// `mirin build` place it). No runtime framework loader exists; we only prime the
+/// API hash so the cef crate's version negotiation matches the linked libcef.
+#[cfg(target_os = "windows")]
+fn load_cef() -> Library {
+    let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
+}
+
+/// Whether to force software rendering (disable the GPU process). Opt-in via
+/// `MIRIN_DISABLE_GPU`, and automatically in Windows remote (RDP) sessions, where
+/// the GPU is virtualized and the GPU process crash-loops. Real-hardware,
+/// local-session users keep hardware acceleration.
+fn should_disable_gpu() -> bool {
+    if std::env::var_os("MIRIN_DISABLE_GPU").is_some() {
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return win::is_remote_session();
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
+/// The ANGLE backend to force via `--use-angle`, or None to keep Chromium's
+/// default. Explicit `MIRIN_ANGLE` wins; otherwise, on Windows, auto-select `gl`
+/// when the default D3D11 backend can't initialize (some hybrid GPUs) — probed
+/// before CEF init, so it's zero-config.
+fn angle_backend() -> Option<String> {
+    if let Some(angle) = std::env::var_os("MIRIN_ANGLE") {
+        return angle.into_string().ok().filter(|s| !s.is_empty());
+    }
+    #[cfg(target_os = "windows")]
+    if win::gpu::prefer_gl() {
+        return Some("gl".to_string());
+    }
+    None
 }
 
 /// Per-app CEF cache dir, keyed on the bundle identifier so distinct mirin apps
@@ -313,10 +376,23 @@ fn load_cef() -> Library {
 /// could run at a time, and killing one stranded the other's `SingletonLock`.
 /// The `-dev` suffix keeps a dev run separate from the installed app.
 fn default_cache_dir(dev: bool) -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let id = app_bundle_id().unwrap_or_else(|| "app".into());
     let suffix = if dev { "-dev" } else { "" };
-    format!("{home}/Library/Application Support/mirin/{id}{suffix}/cache")
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        format!("{home}/Library/Application Support/mirin/{id}{suffix}/cache")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Per-user writable cache under %LOCALAPPDATA% (the Windows analogue of
+        // ~/Library/Application Support). Keyed per-app to avoid CEF singleton-lock
+        // collisions between distinct mirin apps and dev-vs-installed runs.
+        let base = std::env::var("LOCALAPPDATA")
+            .or_else(|_| std::env::var("TEMP"))
+            .unwrap_or_else(|_| "C:\\Temp".into());
+        format!("{base}\\mirin\\{id}{suffix}\\cache")
+    }
 }
 
 /// The running app's bundle identifier (e.g. "dev.netko.anko"), sanitized to a
@@ -337,6 +413,7 @@ fn app_bundle_id() -> Option<String> {
 
 /// Derive the CEF subprocess executable from the app bundle layout:
 /// `<bundle>/Contents/Frameworks/<exe> Helper.app/Contents/MacOS/<exe> Helper`.
+#[cfg(target_os = "macos")]
 fn derive_subprocess_path() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let stem = exe.file_name()?.to_str()?.to_string();
@@ -347,6 +424,15 @@ fn derive_subprocess_path() -> Option<String> {
         .join(format!("{stem} Helper.app"))
         .join("Contents/MacOS")
         .join(format!("{stem} Helper"));
+    Some(helper.to_str()?.to_string())
+}
+
+/// Windows: the CEF subprocess is `mirin-helper.exe`, placed next to the host exe
+/// by the dev bundle / `mirin build`.
+#[cfg(target_os = "windows")]
+fn derive_subprocess_path() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let helper = exe.parent()?.join("mirin-helper.exe");
     Some(helper.to_str()?.to_string())
 }
 
@@ -374,6 +460,18 @@ pub fn create_window(opts: WindowOpts) -> u32 {
 pub fn close_window(id: u32) {
     let mut task = WindowCommandTask::new(id, WindowCommand::Close, RefCell::new(None));
     post_task(ThreadId::UI, Some(&mut task));
+}
+
+/// Initiate the CEF close of the browser owning `window_id` (non-force). Called
+/// from the Windows `WndProc` on `WM_CLOSE`; runs on the UI thread already, so it
+/// closes the matching browser directly rather than posting a task. CEF then drives
+/// `do_close` → `on_before_close`, which destroys the HWND and quits when the last
+/// browser goes.
+#[cfg(target_os = "windows")]
+pub fn request_window_close(window_id: u32) {
+    if let Some(handler) = MirinHandler::instance() {
+        MirinHandler::close_browser_for_window(&handler, window_id);
+    }
 }
 
 pub fn load_url(id: u32, url: String) {
@@ -413,6 +511,20 @@ pub fn window_set_position(id: u32, x: f64, y: f64) {
     post_task(ThreadId::UI, Some(&mut task));
 }
 
+/// Maybe begin a native window-move for `id`: `(x, y)` are the viewport coords of a
+/// left mousedown (CSS px, top-left). The Windows backend starts a move only if the
+/// point is in a draggable title-bar region. macOS drags via its title-bar overlay,
+/// so this is Windows-only.
+pub fn window_maybe_start_drag(id: u32, x: i32, y: i32, detail: i32) {
+    #[cfg(target_os = "windows")]
+    {
+        let mut task = WindowMaybeStartDragTask::new(id, x, y, detail);
+        post_task(ThreadId::UI, Some(&mut task));
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (id, x, y, detail);
+}
+
 /// Change a window's native background material live. `spec_json` is the same
 /// normalized `{ type, tint?, cornerRadius? }` shape as the create option, or
 /// `null`/`{}`/`{"type":"none"}` to remove the material. Only affects OSR
@@ -434,7 +546,6 @@ fn material_opts(m: &WindowMaterial) -> mac::osr::MaterialOpts {
 }
 
 /// Parse a CSS hex color (#RGB, #RRGGBB, #RRGGBBAA) into sRGB rgba in 0..1.
-#[cfg(target_os = "macos")]
 fn parse_hex_rgba(hex: &str) -> Option<[f64; 4]> {
     let h = hex.strip_prefix('#').unwrap_or(hex);
     let byte = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
@@ -540,6 +651,88 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
     );
 }
 
+/// Build the per-window top-level HWND + CEF browser (Windows). UI thread only.
+/// Mirrors the macOS `create_window_on_ui`: opaque windows embed CEF as a child
+/// HWND (`set_as_child`); transparent/material windows render windowless (OSR) and
+/// composite into a layered window so they're see-through.
+#[cfg(target_os = "windows")]
+fn create_window_on_ui(id: u32, opts: WindowOpts) {
+    let title_bar_style = match opts.title_bar_style.as_deref() {
+        Some("hidden") => win::TitleBarStyle::Hidden,
+        Some("hiddenInset") => win::TitleBarStyle::HiddenInset,
+        _ => win::TitleBarStyle::Default,
+    };
+    // A material implies a transparent (windowless/OSR) window — the see-through
+    // backdrop must show through the web content.
+    let transparent = opts.transparent || opts.material.is_some();
+    let params = win::WindowParams {
+        id,
+        title: opts.title.clone(),
+        width: opts.width,
+        height: opts.height,
+        x: opts.x,
+        y: opts.y,
+        title_bar_style,
+        always_on_top: opts.always_on_top,
+        transparent,
+        show: opts.visible,
+    };
+    let (parent, bounds) = win::create_window(&params);
+
+    let mut client = CLIENT.with(|c| c.borrow().clone());
+
+    // Opaque: CEF owns a child HWND under our window. Transparent: windowless OSR,
+    // the parent HWND identifies the monitor and is the layered paint target. Alloy
+    // runtime in both; extra_info carries the RPC endpoint + window id.
+    let parent = cef::sys::HWND(parent as *mut _);
+    let mut window_info = if transparent {
+        osr::mark_window(id);
+        win::osr::install(id, opts.width, opts.height);
+        // A material implies an acrylic blur backdrop behind the web content (the
+        // Windows analogue of macOS vibrancy); a plain transparent window shows the
+        // raw desktop.
+        if let Some(material) = &opts.material {
+            let tint = material.tint.as_deref().and_then(parse_hex_rgba);
+            win::osr::set_material(id, true, tint);
+        }
+        WindowInfo::default().set_as_windowless(parent)
+    } else {
+        WindowInfo::default().set_as_child(parent, &bounds)
+    };
+    window_info.runtime_style = RuntimeStyle::ALLOY;
+
+    let mut extra_info = dictionary_value_create();
+    if let Some(dict) = extra_info.as_mut() {
+        dict.set_int(
+            Some(&CefString::from("rpcPort")),
+            RPC_PORT.load(Ordering::SeqCst) as i32,
+        );
+        let token = RPC_TOKEN.lock().expect("rpc token").clone();
+        dict.set_string(
+            Some(&CefString::from("rpcToken")),
+            Some(&CefString::from(token.as_str())),
+        );
+        dict.set_int(Some(&CefString::from("windowId")), id as i32);
+    }
+
+    // Transparent windows ask CEF for a transparent backing so the page composites
+    // with per-pixel alpha.
+    let browser_settings = BrowserSettings {
+        background_color: if transparent { 0 } else { 0xFF_FF_FF_FF },
+        ..Default::default()
+    };
+
+    let url = CefString::from(opts.url.as_str());
+    browser_host_create_browser(
+        Some(&window_info),
+        client.as_mut(),
+        Some(&url),
+        Some(&browser_settings),
+        extra_info.as_mut(),
+        None,
+    );
+}
+
 // ---- app + handlers ----
 
 wrap_app! {
@@ -579,6 +772,23 @@ wrap_app! {
                          PrivateNetworkAccessForWorkers",
                     )),
                 );
+                // GPU fallback for headless/VM/RDP hosts where the GPU process
+                // crash-loops ("Failed to create shared context for
+                // virtualization"). Opt-in via env so real-hardware users keep
+                // hardware acceleration. (W5: auto-detect instead of env-gating.)
+                if should_disable_gpu() {
+                    command_line.append_switch(Some(&CefString::from("disable-gpu")));
+                    command_line
+                        .append_switch(Some(&CefString::from("disable-gpu-compositing")));
+                } else if let Some(angle) = angle_backend() {
+                    // ANGLE backend (gl | d3d9 | d3d11 | vulkan | swiftshader),
+                    // either forced via MIRIN_ANGLE or auto-selected when the
+                    // default D3D11 backend can't initialize on this machine.
+                    command_line.append_switch_with_value(
+                        Some(&CefString::from("use-angle")),
+                        Some(&CefString::from(angle.as_str())),
+                    );
+                }
             }
         }
 
@@ -616,10 +826,22 @@ wrap_browser_process_handler! {
             emit_event(r#"{"type":"core.ready"}"#);
 
             // m1-smoke (Bun-less) path: open the startup window directly.
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             if let Some(url) = STARTUP_URL.with(|u| u.borrow().clone()) {
                 let id = NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed);
-                create_window_on_ui(id, WindowOpts::startup(url));
+                let mut opts = WindowOpts::startup(url);
+                // Smoke-test hook for the windowless/transparent path.
+                if std::env::var_os("MIRIN_SMOKE_TRANSPARENT").is_some() {
+                    opts.transparent = true;
+                    if std::env::var_os("MIRIN_SMOKE_MATERIAL").is_some() {
+                        opts.material = Some(WindowMaterial {
+                            kind: "acrylic".into(),
+                            tint: None,
+                            corner_radius: None,
+                        });
+                    }
+                }
+                create_window_on_ui(id, opts);
             }
         }
     }
@@ -676,6 +898,27 @@ impl MirinHandler {
             }
         }
 
+        // Windows: CEF created its browser as a child HWND of our top-level window.
+        // Map it back via the HWND's root ancestor, then size the child to the
+        // client area (CEF doesn't auto-fit the parent on creation).
+        #[cfg(target_os = "windows")]
+        if let Some(host) = browser.host() {
+            // For a windowed browser, window_handle() is CEF's child HWND (a
+            // descendant of our window); for a windowless (OSR) one it's the parent
+            // HWND we passed — both resolve to our top-level via the root ancestor.
+            if let Some(window_id) = win::window_id_for_cef_handle(host.window_handle().0 as *mut _) {
+                self.window_ids.insert(browser.identifier(), window_id);
+                if osr::is_osr_window(window_id) {
+                    // Windowless: register for paint/input and prime the view size.
+                    osr::register(window_id, browser.clone());
+                    host.was_resized();
+                } else {
+                    win::resize_browser_to_client(window_id);
+                }
+                emit_event(&format!(r#"{{"type":"window.created","id":{window_id}}}"#));
+            }
+        }
+
         self.browser_list.push(browser);
     }
 
@@ -701,6 +944,16 @@ impl MirinHandler {
                 }
             }
         }
+        // Windows: record that CEF acknowledged this browser's close, so the
+        // window's WndProc lets the next WM_CLOSE actually DestroyWindow — that
+        // tears down the CEF child and fires on_before_close (CEF's documented
+        // set_as_child close contract). No macOS-style view-detach hack needed.
+        #[cfg(target_os = "windows")]
+        if let Some(b) = browser.as_deref() {
+            if let Some(&window_id) = self.window_ids.get(&b.identifier()) {
+                win::mark_window_closing(window_id);
+            }
+        }
         false
     }
 
@@ -714,6 +967,8 @@ impl MirinHandler {
             emit_event(&format!(r#"{{"type":"window.closed","id":{window_id}}}"#));
             #[cfg(target_os = "macos")]
             mac::close_window(window_id);
+            #[cfg(target_os = "windows")]
+            win::close_window(window_id);
         }
 
         if let Some(index) = self
@@ -752,6 +1007,33 @@ impl MirinHandler {
 
     pub fn is_closing(&self) -> bool {
         self.is_closing
+    }
+
+    /// Close the single browser mapped to `window_id` (non-force). Snapshots the
+    /// browser under a short lock, then closes outside it — `close_browser`
+    /// re-enters `on_before_close` (same mutex) synchronously on the UI thread.
+    #[cfg(target_os = "windows")]
+    pub fn close_browser_for_window(this: &Arc<Mutex<Self>>, window_id: u32) {
+        let browser = {
+            let handler = this.lock().expect("failed to lock MirinHandler");
+            handler
+                .window_ids
+                .iter()
+                .find(|(_, &wid)| wid == window_id)
+                .map(|(&ident, _)| ident)
+                .and_then(|ident| {
+                    handler
+                        .browser_list
+                        .iter()
+                        .find(|b| b.identifier() == ident)
+                        .cloned()
+                })
+        };
+        if let Some(browser) = browser {
+            if let Some(host) = browser.host() {
+                host.close_browser(0);
+            }
+        }
     }
 }
 
@@ -823,6 +1105,31 @@ wrap_drag_handler! {
                     })
                     .collect();
                 mac::set_draggable_regions(window_id, regions);
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let Some(browser) = browser else {
+                    return;
+                };
+                let window_id = {
+                    let handler = self.inner.lock().expect("failed to lock MirinHandler");
+                    handler.window_ids.get(&browser.identifier()).copied()
+                };
+                let Some(window_id) = window_id else {
+                    return;
+                };
+                let regions = regions
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|r| win::DragRegion {
+                        x: r.bounds.x as f64,
+                        y: r.bounds.y as f64,
+                        w: r.bounds.width as f64,
+                        h: r.bounds.height as f64,
+                        draggable: r.draggable != 0,
+                    })
+                    .collect();
+                win::set_draggable_regions(window_id, regions);
             }
         }
     }
@@ -927,7 +1234,7 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             if let Some(opts) = self.opts.borrow_mut().take() {
                 create_window_on_ui(self.id, opts);
             }
@@ -970,6 +1277,10 @@ wrap_task! {
                     if let Some(title) = self.arg.borrow().as_ref() {
                         mac::set_window_title(_id, title);
                     }
+                    #[cfg(target_os = "windows")]
+                    if let Some(title) = self.arg.borrow().as_ref() {
+                        win::set_window_title(_id, title);
+                    }
                 }
             }
         }
@@ -994,6 +1305,8 @@ wrap_task! {
         fn execute(&self) {
             #[cfg(target_os = "macos")]
             mac::close_all_windows();
+            #[cfg(target_os = "windows")]
+            win::close_all_windows();
         }
     }
 }
@@ -1023,6 +1336,10 @@ wrap_task! {
             if let Some(verb) = self.verb.borrow_mut().take() {
                 mac::window::control(self.id, &verb);
             }
+            #[cfg(target_os = "windows")]
+            if let Some(verb) = self.verb.borrow_mut().take() {
+                win::control(self.id, &verb);
+            }
         }
     }
 }
@@ -1038,6 +1355,24 @@ wrap_task! {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
             #[cfg(target_os = "macos")]
             mac::window::set_position(self.id, self.x, self.y);
+            #[cfg(target_os = "windows")]
+            win::set_position(self.id, self.x, self.y);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+wrap_task! {
+    struct WindowMaybeStartDragTask {
+        id: u32,
+        x: i32,
+        y: i32,
+        detail: i32,
+    }
+    impl Task {
+        fn execute(&self) {
+            debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            win::maybe_start_drag(self.id, self.x, self.y, self.detail);
         }
     }
 }
@@ -1054,6 +1389,16 @@ wrap_task! {
             if let Some(material) = self.material.borrow_mut().take() {
                 let mtm = objc2::MainThreadMarker::new().expect("UI thread");
                 mac::osr::set_material(mtm, self.id, material.as_ref().map(material_opts));
+            }
+            #[cfg(target_os = "windows")]
+            if let Some(material) = self.material.borrow_mut().take() {
+                match material {
+                    Some(m) if m.kind != "none" && !m.kind.is_empty() => {
+                        let tint = m.tint.as_deref().and_then(parse_hex_rgba);
+                        win::osr::set_material(self.id, true, tint);
+                    }
+                    _ => win::osr::set_material(self.id, false, None),
+                }
             }
         }
     }

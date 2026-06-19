@@ -33,8 +33,24 @@ const BOOTSTRAP: &str = r#"(function(){
   window.mirin={
     webviewId: WEBVIEW,
     call:function(method,input){ var id=nextId++; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; send({kind:"request",id:id,method:method,input:input}); }); },
-    onEvent:function(method,listener){ (listeners[method]=listeners[method]||[]).push(listener); return function(){ var ls=listeners[method]||[]; var i=ls.indexOf(listener); if(i>=0) ls.splice(i,1); }; }
+    onEvent:function(method,listener){ (listeners[method]=listeners[method]||[]).push(listener); return function(){ var ls=listeners[method]||[]; var i=ls.indexOf(listener); if(i>=0) ls.splice(i,1); }; },
+    control:function(action,extra){ var o={kind:"control",action:action}; if(extra){ for(var k in extra) o[k]=extra[k]; } send(o); }
   };
+  // Custom title bar dragging: the webview consumes mouse input, so the native
+  // window proc can't hit-test the title bar. Forward each left mousedown's
+  // viewport coords; native checks them against the `-webkit-app-region` regions
+  // CEF reports (with a top-strip fallback) and starts an OS window-move if it's a
+  // drag area. (CEF doesn't expose -webkit-app-region via getComputedStyle, so we
+  // defer to its authoritative regions rather than guessing in JS.)
+  try {
+    document.addEventListener("mousedown", function(e){
+      if (e.button === 0) {
+        // `detail` is the click count: a double-click (2) over a drag region
+        // toggles maximize instead of starting a drag (native checks the region).
+        send({kind:"control",action:"window.maybeStartDrag",x:Math.round(e.clientX),y:Math.round(e.clientY),detail:e.detail});
+      }
+    }, true);
+  } catch(e) {}
   connect();
 })();"#;
 

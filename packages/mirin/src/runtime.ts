@@ -100,6 +100,24 @@ export function boot(): void {
   const port = rpc.start();
   core.setRpcEndpoint(port, rpc.token);
 
+  // Internal control actions from the preload bootstrap. `window.maybeStartDrag`
+  // forwards a left-mousedown's viewport coords; native checks them against the
+  // window's drag regions and begins an OS window-move if it's a title-bar drag
+  // area (the webview consumes the event, so dragging is driven from the renderer).
+  rpc.setControlHandler((frame, webview) => {
+    switch (frame.action) {
+      case "window.maybeStartDrag":
+        core.windowMaybeStartDrag(webview, frame.x ?? 0, frame.y ?? 0, frame.detail ?? 1);
+        break;
+      case "window.control":
+        if (frame.verb) core.windowControl(webview, frame.verb);
+        break;
+      case "window.close":
+        core.windowClose(webview);
+        break;
+    }
+  });
+
   const manifestWindows: ManifestWindowConfig[] = Object.entries(
     data.manifest?.windows ?? {},
   ).map(([name, cfg]) => ({ name, ...cfg }));

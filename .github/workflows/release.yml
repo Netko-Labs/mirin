@@ -69,3 +69,72 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
           bun scripts/publish-all.ts
+
+  # Windows x64 prebuilt-native package + CEF asset. Publishes ONLY
+  # @mirinjs/win32-x64 (MIRIN_PUBLISH_NATIVE_ONLY=1); the shared packages
+  # (mirinjs/@mirinjs/cli/create-mirinjs) are published by the macOS job above.
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build tools (ninja for cef-dll-sys)
+        run: choco install ninja -y
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(bun -e 'console.log(require("./packages/mirin/package.json").version)')
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG != package version $PKG (run scripts/version.ts)"; exit 1
+          fi
+
+      - name: Fetch CEF
+        run: bun scripts/fetch-cef.ts
+
+      - name: Install deps
+        run: bun install
+
+      - name: Build native (release)
+        run: cargo build --release -p mirin-core -p mirin-helper
+
+      - name: Stage prebuilt native package
+        shell: bash
+        run: |
+          cp target/release/mirin_core.dll packages/native-win32-x64/
+          cp target/release/mirin-helper.exe packages/native-win32-x64/
+
+      - name: Package CEF runtime for the CLI to download
+        shell: bash
+        run: |
+          # The flat Windows runtime the bundler copies (dll/bin/pak/dat +
+          # vk_swiftshader_icd.json + locales/) — not the build-time headers/libs.
+          mkdir cef-dist
+          cp vendor/cef/*.dll vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat cef-dist/
+          cp vendor/cef/vk_swiftshader_icd.json cef-dist/
+          cp -r vendor/cef/locales cef-dist/
+          tar -czf cef-win32-x64.tar.gz -C cef-dist .
+
+      - name: GitHub Release (CEF asset)
+        uses: softprops/action-gh-release@v3
+        with:
+          files: cef-win32-x64.tar.gz
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
+
+      - name: Publish prebuilt-native package
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          MIRIN_PUBLISH_NATIVE_ONLY: "1"
+        shell: bash
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          bun scripts/publish-all.ts

@@ -24,6 +24,7 @@ const symbols = {
   mirin_window_control: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_window_set_material: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_window_set_position: { args: [FFIType.u32, FFIType.f64, FFIType.f64], returns: FFIType.void },
+  mirin_window_maybe_start_drag: { args: [FFIType.u32, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.void },
   mirin_app_quit: { args: [], returns: FFIType.void },
   mirin_app_set_dock_visible: { args: [FFIType.i32], returns: FFIType.void },
   mirin_set_app_menu: { args: [FFIType.ptr], returns: FFIType.void },
@@ -111,6 +112,10 @@ export class Core {
 
   windowSetPosition(id: number, x: number, y: number): void {
     this.#lib.symbols.mirin_window_set_position(id, x, y);
+  }
+
+  windowMaybeStartDrag(id: number, x: number, y: number, detail: number): void {
+    this.#lib.symbols.mirin_window_maybe_start_drag(id, x, y, detail);
   }
 
   quit(): void {

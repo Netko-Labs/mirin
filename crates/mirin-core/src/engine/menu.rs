@@ -34,6 +34,8 @@ wrap_task! {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
             let Some(json) = self.json.borrow_mut().take() else { return };
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let _ = json;
             #[cfg(target_os = "macos")]
             {
                 use crate::mac::menu::MenuItemSpec;
@@ -42,6 +44,15 @@ wrap_task! {
                 match self.kind {
                     MenuKind::App => crate::mac::menu::set_app_menu(mtm, &specs),
                     MenuKind::Popup => crate::mac::menu::popup_menu(mtm, &specs),
+                }
+            }
+            #[cfg(target_os = "windows")]
+            {
+                use crate::win::menu::MenuItemSpec;
+                let Ok(specs) = serde_json::from_str::<Vec<MenuItemSpec>>(&json) else { return };
+                match self.kind {
+                    MenuKind::App => crate::win::menu::set_app_menu(&specs),
+                    MenuKind::Popup => crate::win::menu::popup_menu(&specs),
                 }
             }
         }
