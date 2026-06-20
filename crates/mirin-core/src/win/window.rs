@@ -52,6 +52,58 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     LR_LOADFROMFILE, WM_SETICON,
 };
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+use windows_sys::Win32::System::Threading::CreateMutexW;
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
+
+/// The host exe's file stem (the app name) — the basis for the AppUserModelID and
+/// the single-instance lock. Falls back to "App".
+fn exe_file_stem() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "App".to_string())
+}
+
+/// Try to take the app's single-instance lock (a named mutex). Returns true if
+/// this is the first/only instance, false if another instance already holds it.
+/// The handle is intentionally leaked so the lock lives for the whole process.
+pub fn acquire_single_instance() -> bool {
+    let name: Vec<u16> = format!("Local\\mirin.{}.singleton", exe_file_stem())
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: a standard named-mutex creation; we own or close the returned handle.
+    unsafe {
+        let h = CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
+        if h.is_null() {
+            return true; // can't create the lock — don't block startup
+        }
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            CloseHandle(h);
+            return false;
+        }
+        // First instance: leave the handle open (never CloseHandle) so the OS holds
+        // the named mutex for the whole process lifetime.
+        let _ = h;
+        true
+    }
+}
+
+/// Bring an already-running instance's window to the foreground (best-effort), so a
+/// second launch focuses the existing app instead of doing nothing.
+pub fn activate_existing_instance() {
+    let class = class_name();
+    // SAFETY: FindWindowW by class name; returns null when not found.
+    unsafe {
+        let hwnd = FindWindowW(class.as_ptr(), std::ptr::null());
+        if !hwnd.is_null() {
+            ShowWindow(hwnd, SW_RESTORE);
+            SetForegroundWindow(hwnd);
+        }
+    }
+}
 
 /// Give the process an explicit AppUserModelID so the taskbar groups this app
 /// under its OWN identity and uses its window icon — instead of inheriting the
@@ -60,12 +112,7 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 /// it's stable across versions and unique per app. Call once, early, before any
 /// window is created.
 pub fn set_app_id() {
-    let stem = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "App".to_string());
-    let id: Vec<u16> = format!("mirin.{stem}")
+    let id: Vec<u16> = format!("mirin.{}", exe_file_stem())
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();

@@ -50,6 +50,8 @@ const coreConfig = JSON.parse(
       process.env.MIRIN_DEV_URL ? { dev: true } : { resources_path: resourcesDir },
     ),
 );
+// Opt out of single-instance (the core default) when the app allows multiple.
+if (manifest.singleInstance === false) coreConfig.single_instance = false;
 
 // Load the native core on the main thread FIRST. The Worker also dlopens the
 // same dylib in its boot; doing the main-thread dlopen before spawning the

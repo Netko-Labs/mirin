@@ -146,6 +146,12 @@ export interface MirinConfig {
    */
   urlSchemes?: string[];
   windows: Record<string, WindowConfig>;
+  /**
+   * Single-instance app (default true): a second launch focuses the running
+   * window and exits, instead of opening another window. Set false to allow
+   * multiple instances (each gets its own CEF cache dir).
+   */
+  singleInstance?: boolean;
 }
 
 /** A bundled sidecar binary with optional hardened-runtime entitlements. */

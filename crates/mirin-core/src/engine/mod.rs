@@ -60,6 +60,12 @@ pub struct CoreConfig {
     /// Development run (`mirin dev`): enables web-inspector context-menu items.
     #[serde(default)]
     pub dev: bool,
+    /// Single-instance app: a second launch focuses the running window and exits
+    /// instead of opening another window (which would collide on CEF's cache
+    /// singleton and show a bare Chromium window). Default true; set false to allow
+    /// multiple instances (each gets its own cache dir).
+    #[serde(default = "default_true")]
+    pub single_instance: bool,
 }
 
 /// Per-window creation options (from the Bun Worker via `mirin_window_create`).
@@ -232,7 +238,7 @@ pub fn poll_event() -> *const c_char {
 /// Run the browser process: load CEF, init, message loop, shutdown. Called on
 /// the process main thread (the FFI `mirin_run`, or the m1-smoke binary). Does
 /// not return until the app quits.
-pub fn run_core(config: CoreConfig) -> i32 {
+pub fn run_core(mut config: CoreConfig) -> i32 {
     IS_DEV.store(config.dev, Ordering::Relaxed);
     // Per-Monitor-v2 DPI awareness + an explicit AppUserModelID (so the taskbar
     // shows our icon, not Bun's) must be set before any window/CEF init.
@@ -240,6 +246,23 @@ pub fn run_core(config: CoreConfig) -> i32 {
     {
         win::set_dpi_awareness();
         win::set_app_id();
+        if config.single_instance {
+            if !win::acquire_single_instance() {
+                // A second launch: focus the running window and exit cleanly,
+                // BEFORE CEF init — otherwise the locked cache singleton shows a
+                // bare Chromium window.
+                win::activate_existing_instance();
+                return 0;
+            }
+        } else {
+            // Multiple instances allowed → give this one its own cache dir so it
+            // doesn't collide with another instance's CEF cache singleton.
+            config.cache_path = format!(
+                "{}-{}",
+                config.cache_path.trim_end_matches(['/', '\\']),
+                std::process::id()
+            );
+        }
     }
     let _library = load_cef();
 
