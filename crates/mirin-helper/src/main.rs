@@ -6,6 +6,13 @@
 //! (docs/architecture.md §4), using the rpc port/token/window-id passed per
 //! browser via `extra_info` from the browser process.
 
+// On Windows, link as a GUI-subsystem binary so CEF's helper subprocesses (GPU,
+// renderer, utility, …) never pop a console window. Without this, a GUI-subsystem
+// host (which has no console to inherit) makes Windows allocate a fresh console
+// for EACH spawned helper — a swarm of terminals. CEF passes inherited stdio, so
+// logging still flows where the host points it.
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use cef::{args::Args, *};
 use std::cell::RefCell;
 use std::collections::HashMap;

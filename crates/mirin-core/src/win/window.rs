@@ -38,7 +38,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SetWindowTextW, ShowWindow, CS_HREDRAW, CS_VREDRAW, GA_ROOT, GWL_STYLE, GW_CHILD, HTBOTTOM,
     HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
     HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_ARROW, NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER,
-    SM_CXSCREEN, SM_CXSIZEFRAME, SM_CYSCREEN, SM_CYSIZEFRAME, SM_REMOTESESSION, SWP_FRAMECHANGED,
+    SM_CXSCREEN, SM_CXSIZEFRAME, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYSIZEFRAME,
+    SM_CYVIRTUALSCREEN, SM_REMOTESESSION, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_FRAMECHANGED,
     SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
     SW_RESTORE, SW_SHOW, WA_INACTIVE, WNDCLASSW, WM_ACTIVATE, WM_CHAR, WM_CLOSE,
     WM_DESTROY, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
@@ -183,6 +184,41 @@ fn ensure_class_registered() {
     CLASS_REGISTERED.with(|r| *r.borrow_mut() = true);
 }
 
+/// Center a `w`×`h` window on the primary monitor.
+fn center_on_primary(w: i32, h: i32) -> (i32, i32) {
+    // SAFETY: pure metric queries.
+    let sw = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let sh = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    (((sw - w) / 2).max(0), ((sh - h) / 2).max(0))
+}
+
+/// Keep a window's saved position usable: if `(x, y)` would put it off every
+/// monitor — a stale `-32000` "minimized" marker, or a display that's since been
+/// unplugged — fall back to centering on the primary monitor so it never opens
+/// where the user can't see or grab it.
+fn clamp_on_screen(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
+    // SAFETY: pure metric queries (virtual screen = the union of all monitors).
+    let (vx, vy, vw, vh) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+    // Require a graspable strip of the title bar to fall inside the desktop.
+    const MARGIN: i32 = 48;
+    let on_screen = x + w - MARGIN > vx
+        && x + MARGIN < vx + vw
+        && y >= vy - 8
+        && y + MARGIN < vy + vh;
+    if on_screen {
+        (x, y)
+    } else {
+        center_on_primary(w, h)
+    }
+}
+
 /// Create a mirin-owned top-level window registered under `id`, returning the HWND
 /// (as CEF's `cef_window_handle_t`) and the client-area bounds for
 /// `WindowInfo::set_as_child`. UI thread only.
@@ -225,13 +261,8 @@ pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
     };
 
     let (x, y) = match (params.x, params.y) {
-        (Some(x), Some(y)) => (x as i32, y as i32),
-        _ => {
-            // SAFETY: pure queries.
-            let sw = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-            let sh = unsafe { GetSystemMetrics(SM_CYSCREEN) };
-            (((sw - win_w) / 2).max(0), ((sh - win_h) / 2).max(0))
-        }
+        (Some(x), Some(y)) => clamp_on_screen(x as i32, y as i32, win_w, win_h),
+        _ => center_on_primary(win_w, win_h),
     };
 
     let title = wide(&params.title);
