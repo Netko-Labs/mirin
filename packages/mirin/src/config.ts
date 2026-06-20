@@ -110,6 +110,14 @@ export interface MirinConfig {
    */
   nsis?: boolean | NsisConfig;
   /**
+   * Windows installer via **Inno Setup** — a modern flat wizard
+   * (`WizardStyle=modern`, the installer VS Code ships). Preferred over `nsis`
+   * when both are available; `true`/omitted builds the default installer, an
+   * object customizes it, `false` falls back to NSIS / the portable `.zip`.
+   * Requires `iscc` (Inno Setup 6+) on the build machine.
+   */
+  inno?: boolean | InnoConfig;
+  /**
    * External binaries bundled into the `.app` and spawned at runtime with
    * `app.sidecar(name)`. Maps a logical name to a path (relative to the project
    * root) or a {@link SidecarSpec}. Each binary is copied into
@@ -221,6 +229,13 @@ export interface NsisConfig {
    */
   include?: string;
 }
+
+/**
+ * Inno Setup installer options — the same knobs as {@link NsisConfig}
+ * (perMachine, oneClick, shortcuts, license, publisher, runAfterFinish,
+ * installerIcon, and a raw `include` injected as `.iss` instead of NSIS script).
+ */
+export type InnoConfig = NsisConfig;
 
 export interface ReleaseConfig {
   /** Flat directory URL hosting `{channel}-{platform}-{arch}-*` update files. */

@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { build } from "./build.ts";
 import { buildDmg, notarizeAndStaple, type DmgOptions } from "./dmg.ts";
 import { buildNsisInstaller, hasMakensis } from "./installer-win.ts";
+import { buildInnoInstaller, hasInno } from "./installer-inno.ts";
 import { loadCodec } from "mirinjs/codec";
 
 const sha256File = (path: string) =>
@@ -130,29 +131,42 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   let installerName: string | undefined;
   let installerSize = 0;
   if (isWindows) {
-    // Preferred: a real NSIS installer (Program Files / per-user install, Start
-    // Menu + Desktop shortcuts, uninstaller, Add/Remove Programs). Falls back to a
-    // portable .zip when nsis is disabled or makensis isn't installed.
-    const wantsInstaller = result.nsis !== false;
-    if (wantsInstaller && (await hasMakensis())) {
-      installerName = `${prefix}-${safeName}-setup.exe`;
-      const exePath = await buildNsisInstaller({
-        appDir: result.app,
-        appName: result.appName,
-        exeName: `${result.appName}.exe`,
-        version: result.version,
-        bundleId: result.bundleId,
-        outDir,
-        fileName: installerName,
-        options: typeof result.nsis === "object" ? result.nsis : {},
-        projectDir: result.projectDir,
+    // A real installer (Program Files / per-user install, Start Menu + Desktop
+    // shortcuts, uninstaller, Add/Remove Programs): Inno Setup (modern wizard)
+    // preferred, then NSIS, then a portable .zip if neither toolchain is present.
+    const setupName = `${prefix}-${safeName}-setup.exe`;
+    const installerArgs = {
+      appDir: result.app,
+      appName: result.appName,
+      exeName: `${result.appName}.exe`,
+      version: result.version,
+      bundleId: result.bundleId,
+      outDir,
+      fileName: setupName,
+      projectDir: result.projectDir,
+    };
+    const innoWanted = result.inno !== false;
+    const nsisWanted = result.nsis !== false;
+    let exePath: string | undefined;
+    if (innoWanted && hasInno()) {
+      exePath = await buildInnoInstaller({
+        ...installerArgs,
+        options: typeof result.inno === "object" ? result.inno : {},
       });
+    } else if (nsisWanted && (await hasMakensis())) {
+      exePath = await buildNsisInstaller({
+        ...installerArgs,
+        options: typeof result.nsis === "object" ? result.nsis : {},
+      });
+    }
+    if (exePath) {
+      installerName = setupName;
       installerSize = readFileSync(exePath).byteLength;
     } else {
-      if (wantsInstaller) {
+      if (innoWanted || nsisWanted) {
         console.warn(
-          "[mirin release] makensis (NSIS) not found — shipping the portable .zip. " +
-            "Install NSIS (e.g. `scoop install nsis`) for an installer.",
+          "[mirin release] no installer toolchain found — shipping the portable .zip. " +
+            "Install Inno Setup (`scoop install inno-setup`) or NSIS (`scoop install nsis`).",
         );
       }
       installerName = `${prefix}-${safeName}.zip`;

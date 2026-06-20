@@ -119,6 +119,8 @@ export interface BuildResult {
   dmg: boolean | import("mirinjs").DmgConfig;
   /** NSIS installer config (Windows) — `true`/object/`false`; default `true`. */
   nsis: boolean | import("mirinjs").NsisConfig;
+  /** Inno Setup installer config (Windows) — preferred over NSIS; default `true`. */
+  inno: boolean | import("mirinjs").InnoConfig;
   /** Codesign identity used for the bundle, if any (MIRIN_SIGN_IDENTITY). */
   signIdentity?: string;
 }
@@ -150,6 +152,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const baseUrl: string | undefined = config.release?.baseUrl;
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
   const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
+  const inno: boolean | import("mirinjs").InnoConfig = config.inno ?? true;
 
   console.log(`[mirin build] ${appName} ${version}`);
 
@@ -236,6 +239,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
     projectDir,
     dmg,
     nsis,
+    inno,
     signIdentity,
   };
 }

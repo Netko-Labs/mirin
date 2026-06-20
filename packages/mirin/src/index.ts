@@ -52,6 +52,7 @@ export type {
   ReleaseConfig,
   DmgConfig,
   NsisConfig,
+  InnoConfig,
   SidecarSpec,
   SidecarEntitlement,
 } from "./config.ts";
