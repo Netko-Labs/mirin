@@ -164,20 +164,32 @@ export async function release(projectDir = process.cwd()): Promise<number> {
       installerSize = readFileSync(zipPath).byteLength;
     }
   } else if (result.dmg !== false) {
-    installerName = `${prefix}-${safeName}.dmg`;
-    console.log(`[mirin release] building installer → ${installerName}`);
-    const options: DmgOptions = typeof result.dmg === "object" ? result.dmg : {};
-    const dmgPath = await buildDmg({
-      app: result.app,
-      appName: result.appName,
-      outDir,
-      fileName: installerName,
-      options,
-      projectDir: result.projectDir,
-      signIdentity: result.signIdentity,
-    });
-    await notarizeAndStaple(dmgPath); // no-op without notary credentials
-    installerSize = readFileSync(dmgPath).byteLength;
+    // The DMG is the first-install convenience; the updater bundle + manifest (the
+    // critical artifacts) are already built. Never fail the whole release over a
+    // flaky installer step — warn loudly and ship the rest.
+    const dmgName = `${prefix}-${safeName}.dmg`;
+    console.log(`[mirin release] building installer → ${dmgName}`);
+    try {
+      const options: DmgOptions = typeof result.dmg === "object" ? result.dmg : {};
+      const dmgPath = await buildDmg({
+        app: result.app,
+        appName: result.appName,
+        outDir,
+        fileName: dmgName,
+        options,
+        projectDir: result.projectDir,
+        signIdentity: result.signIdentity,
+      });
+      await notarizeAndStaple(dmgPath); // no-op without notary credentials
+      installerName = dmgName;
+      installerSize = readFileSync(dmgPath).byteLength;
+    } catch (e) {
+      console.warn(
+        `\n[mirin release] ⚠️  DMG build failed: ${e instanceof Error ? e.message : e}\n` +
+          `[mirin release] shipping the updater bundle + manifest WITHOUT a .dmg installer.\n`,
+      );
+      rmSync(join(outDir, dmgName), { force: true });
+    }
   }
 
   const mb = (n: number) => (n / 1e6).toFixed(1);

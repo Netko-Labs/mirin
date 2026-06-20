@@ -93,6 +93,34 @@ export async function notarizeAndStaple(target: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * `hdiutil create` with retries. "Resource busy" is a transient CI flake — a
+ * Spotlight/antivirus/`fseventsd` process touches the staging folder (or a prior
+ * image hasn't fully detached) while hdiutil tries to read it. A short backoff
+ * clears it; only a non-busy error fails immediately.
+ */
+async function hdiutilCreate(
+  vol: string,
+  staging: string,
+  format: string,
+  dmgPath: string,
+): Promise<void> {
+  let stderr = "";
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const res =
+      await $`hdiutil create -volname ${vol} -srcfolder ${staging} -ov -format ${format} ${dmgPath}`
+        .quiet()
+        .nothrow();
+    if (res.exitCode === 0) return;
+    stderr = res.stderr.toString().trim();
+    if (!/busy/i.test(stderr)) break; // not the transient flake — fail now
+    console.warn(`[mirin release] hdiutil create busy (attempt ${attempt}/4); retrying…`);
+    rmSync(dmgPath, { force: true });
+    await Bun.sleep(3000 * attempt);
+  }
+  throw new Error(`hdiutil create failed: ${stderr}`);
+}
+
 /** Does this config ask for a styled Finder window (vs. a plain DMG)? */
 function wantsLayout(o: DmgOptions): boolean {
   return !!(o.background || o.appPosition || o.applicationsPosition || o.windowSize || o.iconSize);
@@ -131,7 +159,7 @@ export async function buildDmg(input: BuildDmgInput): Promise<string> {
       }
     }
     if (!built) {
-      await $`hdiutil create -volname ${vol} -srcfolder ${staging} -ov -format ${format} ${dmgPath}`.quiet();
+      await hdiutilCreate(vol, staging, format, dmgPath);
     }
   } finally {
     rmSync(staging, { recursive: true, force: true });
