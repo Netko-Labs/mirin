@@ -15,7 +15,15 @@
 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { $ } from "bun";
 import { runtime } from "./runtime.ts";
 import { loadCodec } from "./codec.ts";
@@ -214,31 +222,36 @@ export class Updater {
       if (IS_WINDOWS) {
         const runningApp = join(this.#resourcesDir()!, "..");
         const exe = join(runningApp, `${this.#version()!.name}.exe`);
+        const script = join(tmpdir(), `mirin-apply-${this.#version()!.name}.ps1`);
         const ps = [
           `$ErrorActionPreference='SilentlyContinue'`,
-          // Wait for the host process to exit (it locks the exe).
+          // Never let the app dir be this process's cwd (Windows can't delete a cwd).
+          `Set-Location $env:TEMP`,
+          // Wait for the host to exit (it locks the exe), then a beat for CEF's
+          // helper subprocesses to release their file locks (libcef.dll etc.).
           `while (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }`,
-          // Give CEF's helper subprocesses a beat to exit and release their file
-          // locks (libcef.dll etc.) — they go just after the host.
           `Start-Sleep -Milliseconds 700`,
-          // Replace the app folder, retrying while any lingering lock clears
-          // (~10s max). Unlike Unix, Windows can't delete a dir that's still a
-          // process's cwd or holds an open handle — hence the neutral cwd below.
+          // Replace the app folder, retrying ~10s while any lingering lock clears.
           `for ($i=0; $i -lt 50; $i++) { Remove-Item -Recurse -Force ${psq(runningApp)}; if (-not (Test-Path ${psq(runningApp)})) { break }; Start-Sleep -Milliseconds 200 }`,
           `Move-Item -Force ${psq(this.#staged)} ${psq(runningApp)}`,
           `Start-Process -FilePath ${psq(exe)} -WorkingDirectory ${psq(runningApp)}`,
-        ].join("; ");
-        Bun.spawn(
-          ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps],
-          {
-            // Run from a neutral dir, NOT the inherited install dir — otherwise the
-            // app folder is this PowerShell's cwd and Windows refuses to delete it.
-            cwd: tmpdir(),
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "ignore",
-          },
-        ).unref();
+          `Remove-Item -Force ${psq(script)}`, // self-clean
+        ].join("\n");
+        writeFileSync(script, ps, "utf8");
+        // The swap MUST outlive this process. A Bun.spawn child is in our job object
+        // and is killed when we quit — even with unref/detached (verified). So spawn
+        // the swap via WMI Win32_Process.Create: the WMI service launches it, outside
+        // our job, so it survives. `await` the short launcher so the swap process
+        // exists before core.quit() (no race), then quit.
+        const wmiPath = script.replace(/'/g, "''");
+        const wmi =
+          `([wmiclass]'Win32_Process').Create('powershell -NoProfile -NonInteractive ` +
+          `-WindowStyle Hidden -ExecutionPolicy Bypass -File "${wmiPath}"') | Out-Null`;
+        const launcher = Bun.spawn(
+          ["powershell", "-NoProfile", "-NonInteractive", "-Command", wmi],
+          { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+        );
+        await launcher.exited;
       } else {
         const runningApp = join(this.#resourcesDir()!, "..", "..");
         const script = [
