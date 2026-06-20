@@ -51,6 +51,27 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     LoadImageW, SendMessageW, HICON, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTSIZE,
     LR_LOADFROMFILE, WM_SETICON,
 };
+use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+
+/// Give the process an explicit AppUserModelID so the taskbar groups this app
+/// under its OWN identity and uses its window icon — instead of inheriting the
+/// host runtime's (Bun's), which otherwise shows the Bun logo on the taskbar
+/// button even though the window icon is correct. Derived from the exe name so
+/// it's stable across versions and unique per app. Call once, early, before any
+/// window is created.
+pub fn set_app_id() {
+    let stem = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "App".to_string());
+    let id: Vec<u16> = format!("mirin.{stem}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: valid null-terminated wide string; the returned HRESULT is ignorable.
+    unsafe { SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) };
+}
 
 /// Height of the fallback draggable strip (DIP) used before the page reports any
 /// `-webkit-app-region` regions — mirrors the macOS overlay.

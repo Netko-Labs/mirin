@@ -234,9 +234,13 @@ pub fn poll_event() -> *const c_char {
 /// not return until the app quits.
 pub fn run_core(config: CoreConfig) -> i32 {
     IS_DEV.store(config.dev, Ordering::Relaxed);
-    // Per-Monitor-v2 DPI awareness must be set before any window/CEF init.
+    // Per-Monitor-v2 DPI awareness + an explicit AppUserModelID (so the taskbar
+    // shows our icon, not Bun's) must be set before any window/CEF init.
     #[cfg(target_os = "windows")]
-    win::set_dpi_awareness();
+    {
+        win::set_dpi_awareness();
+        win::set_app_id();
+    }
     let _library = load_cef();
 
     let args = cef::args::Args::new();
