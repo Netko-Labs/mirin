@@ -16,15 +16,41 @@
  */
 
 import { $ } from "bun";
-import { mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
 import { buildWindowsBundle } from "./bundle-win.ts";
+import { makeWindowsIcon } from "./icon-win.ts";
 import { resolveArtifacts } from "./artifacts.ts";
 import { sweepBuildTemps } from "./temps.ts";
 import { normalizeSidecars, compileWorkers } from "./extras.ts";
 
 const IS_WINDOWS = process.platform === "win32";
+
+/** A PE FILEVERSION (`x.y.z.w`) from a semver string (pre-release suffix dropped). */
+function winFileVersion(v: string): string {
+  const m = v.match(/^(\d+)\.(\d+)\.(\d+)/);
+  return m ? `${m[1]}.${m[2]}.${m[3]}.0` : "0.0.0.0";
+}
+
+/**
+ * Flip a PE exe from the CONSOLE subsystem (3) to GUI (2) so Windows allocates
+ * **no console window** when it's launched from a shortcut. Bun's
+ * `--windows-hide-console` only hides the console at runtime (a brief flash);
+ * GUI subsystem prevents it entirely — the equivalent of Electrobun's
+ * `exe.subsystem = .Windows`. The optional-header Subsystem field is at
+ * `e_lfanew + 24 (PE sig + COFF) + 68`.
+ */
+function patchPeToGuiSubsystem(exePath: string): void {
+  const buf = readFileSync(exePath);
+  const peOff = buf.readUInt32LE(0x3c);
+  if (buf.readUInt32LE(peOff) !== 0x0000_4550) return; // not "PE\0\0"
+  const subsystemOff = peOff + 92;
+  if (buf.readUInt16LE(subsystemOff) === 3 /* CONSOLE */) {
+    buf.writeUInt16LE(2 /* GUI */, subsystemOff);
+    writeFileSync(exePath, buf);
+  }
+}
 
 export interface BuildResult {
   /** Path to the assembled .app. */
@@ -91,7 +117,27 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const signIdentity = process.env.MIRIN_SIGN_IDENTITY;
   const hostExe = join(work, IS_WINDOWS ? "host-release.exe" : "host-release");
   const workerJs = join(work, "worker.release.js");
-  await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
+  const hostCmd = ["build", "--compile", "--minify", artifacts.hostEntry, "--outfile", hostExe];
+  if (IS_WINDOWS) {
+    // A GUI-subsystem exe (no console window on launch) with an embedded icon +
+    // version metadata — so the Start Menu / Desktop shortcut + taskbar show the
+    // app's icon, not a generic one (Bun ≥1.2 PE flags; mirrors Electrobun's
+    // GUI-subsystem + embedded-icon launcher).
+    const nsisCfg = typeof nsis === "object" ? nsis : {};
+    const winIcon = config.icon
+      ? makeWindowsIcon(join(projectDir, config.icon), join(work, "host-icon.ico"))
+      : undefined;
+    hostCmd.push(
+      "--windows-hide-console",
+      `--windows-title=${appName}`,
+      `--windows-version=${winFileVersion(version)}`,
+      `--windows-publisher=${nsisCfg.publisher ?? appName}`,
+      `--windows-description=${appName}`,
+    );
+    if (winIcon) hostCmd.push(`--windows-icon=${winIcon}`);
+  }
+  await $`bun ${hostCmd}`.cwd(projectDir);
+  if (IS_WINDOWS) patchPeToGuiSubsystem(hostExe);
   await $`bun build ${mainEntry} --target=bun --minify --outfile ${workerJs}`.cwd(projectDir);
 
   // Extra assets: resolve sidecar binaries + compile any extra worker entries.
