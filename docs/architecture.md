@@ -204,9 +204,12 @@ embedded-NSView/OSR model. Consequences:
 host) + `mirin_core.dll` + `mirin-helper.exe` + the CEF runtime (libcef.dll, `*.pak`,
 `icudtl.dat`, `locales/`) all beside the exe (so the OS loader resolves libcef), and
 `resources/{ui, worker.js, mirin.manifest.json, version.json}`. `mirin dev`/`build`/
-`release` branch on `process.platform` (`bundle-win.ts`). `mirin release` emits a
-`.zip` installer + a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`;
-the updater swaps the folder via a detached PowerShell relauncher. Consumers install
+`release` branch on `process.platform` (`bundle-win.ts`). `mirin release` emits an
+**NSIS installer** (`…-setup.exe` — Program Files / per-user install, Start Menu +
+Desktop shortcuts, uninstaller, Add/Remove Programs; customizable via the `nsis`
+config, `installer-win.ts`; needs `makensis`, falls back to a portable `.zip`) +
+a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`; the updater
+swaps the folder via a detached PowerShell relauncher. Consumers install
 the prebuilt `@mirinjs/win32-x64` native package + a CEF release download (no Rust).
 Build prereqs: cmake + ninja (for `cef-dll-sys`'s C++ wrapper) + MSVC.
 

@@ -82,8 +82,13 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
 ### W5 — Distribution — ✅ DONE (updater swap unverified)
 `@mirinjs/win32-x64` prebuilt-native package + CLI optional dep; `artifacts.ts`
 installed-mode + CEF release download (platform-generic). `mirin release` (verified)
-emits `{channel}-win32-{arch}-update.json` + `.tar.zst` updater bundle + `.zip`
-installer (a complete app folder). `updater.ts` Windows arm: `win32` prefix,
+emits `{channel}-win32-{arch}-update.json` + `.tar.zst` updater bundle + a real
+**NSIS installer** (`…-setup.exe`, `installer-win.ts`). Verified end-to-end: silent
+install (`/S /D=`) → 252 files + Add/Remove Programs entry, the installed app
+cold-launches (0 GPU failures), silent uninstall removes the folder + registry key.
+Customizable via the `nsis` config (perMachine/oneClick, shortcuts, license,
+publisher, runAfterFinish, installerIcon, raw `include`); needs `makensis`, else
+falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via choco. `updater.ts` Windows arm: `win32` prefix,
 `%LOCALAPPDATA%` support dir, detached-PowerShell folder swap + relaunch (implemented;
 the runtime swap isn't field-tested). `publish-all.ts` publishes the host-platform
 native package. *Note:* loading the codec dll for compression needs the bundle dir on

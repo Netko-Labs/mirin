@@ -43,6 +43,8 @@ export interface BuildResult {
   projectDir: string;
   /** DMG config from mirin.config.ts (`true`/object/`false`); default `true`. */
   dmg: boolean | import("mirinjs").DmgConfig;
+  /** NSIS installer config (Windows) — `true`/object/`false`; default `true`. */
+  nsis: boolean | import("mirinjs").NsisConfig;
   /** Codesign identity used for the bundle, if any (MIRIN_SIGN_IDENTITY). */
   signIdentity?: string;
 }
@@ -73,6 +75,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const channel: string = config.release?.channel ?? "stable";
   const baseUrl: string | undefined = config.release?.baseUrl;
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
+  const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
 
   console.log(`[mirin build] ${appName} ${version}`);
 
@@ -146,6 +149,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
     coreDylib: artifacts.coreDylib,
     projectDir,
     dmg,
+    nsis,
     signIdentity,
   };
 }

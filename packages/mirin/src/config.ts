@@ -102,6 +102,14 @@ export interface MirinConfig {
    */
   dmg?: boolean | DmgConfig;
   /**
+   * Windows installer (NSIS) produced by `mirin release` alongside the updater
+   * artifacts. `true`/omitted builds a default assisted installer (Program Files
+   * or per-user, Start Menu + Desktop shortcuts, an uninstaller + Add/Remove
+   * Programs entry); an object customizes it; `false` ships only the portable
+   * `.zip`. Requires `makensis` (NSIS) on the build machine.
+   */
+  nsis?: boolean | NsisConfig;
+  /**
    * External binaries bundled into the `.app` and spawned at runtime with
    * `app.sidecar(name)`. Maps a logical name to a path (relative to the project
    * root) or a {@link SidecarSpec}. Each binary is copied into
@@ -174,6 +182,44 @@ export interface DmgConfig {
   appPosition?: { x: number; y: number };
   /** `/Applications` symlink position. Default centered-right. */
   applicationsPosition?: { x: number; y: number };
+}
+
+export interface NsisConfig {
+  /**
+   * Install for all users under Program Files (requires elevation), vs the
+   * default per-user install under `%LOCALAPPDATA%\Programs` (no admin prompt,
+   * and the in-app updater can swap the folder without elevation).
+   */
+  perMachine?: boolean;
+  /**
+   * One-click install (no wizard — just a progress bar, then run), vs the default
+   * assisted wizard (welcome → optional license → directory → install → finish).
+   */
+  oneClick?: boolean;
+  /** Default install directory (absolute, or with NSIS vars like `$PROGRAMFILES64`). */
+  installDir?: string;
+  /** Let the user change the install directory in the assisted wizard. Default true. */
+  allowChangeInstallDir?: boolean;
+  /** Create a Desktop shortcut. Default true. */
+  desktopShortcut?: boolean;
+  /** Create a Start Menu shortcut. Default true. */
+  startMenuShortcut?: boolean;
+  /** License file shown on a wizard page (path relative to the project root; .txt/.rtf). */
+  license?: string;
+  /** Publisher / company name, shown in the Add/Remove Programs entry. */
+  publisher?: string;
+  /** Offer to launch the app on the finish page. Default true. */
+  runAfterFinish?: boolean;
+  /**
+   * Installer + uninstaller `.ico` (path relative to the project root). Defaults to
+   * the app `icon` (rendered to `.ico` like the window icon).
+   */
+  installerIcon?: string;
+  /**
+   * Raw NSIS script injected near the top of the generated script (advanced) — for
+   * custom pages, macros, or `Section` hooks beyond the options above.
+   */
+  include?: string;
 }
 
 export interface ReleaseConfig {

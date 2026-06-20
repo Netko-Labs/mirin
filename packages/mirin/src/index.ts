@@ -51,6 +51,7 @@ export type {
   WindowMaterialOptions,
   ReleaseConfig,
   DmgConfig,
+  NsisConfig,
   SidecarSpec,
   SidecarEntitlement,
 } from "./config.ts";
