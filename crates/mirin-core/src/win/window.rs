@@ -52,6 +52,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     LR_LOADFROMFILE, WM_SETICON,
 };
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    KillTimer, SetTimer, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_TIMER,
+};
+
+/// Timer id used to pump CEF during the OS's modal resize/move loop.
+const RESIZE_PUMP_TIMER: usize = 0x6D72; // 'mr'
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
 use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
@@ -965,6 +971,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 resize_browser_to_client(id);
                 emit_frame_event(id, "resized");
             }
+            0
+        }
+        // The OS modal resize/move loop blocks our CEF message loop, which freezes
+        // the page until release (ugly). Pump CEF on a fast timer for the duration
+        // of the loop so the content resizes live; the WM_SIZE above keeps the CEF
+        // child sized to the client.
+        WM_ENTERSIZEMOVE => {
+            SetTimer(hwnd, RESIZE_PUMP_TIMER, 8, None); // ~120 Hz
+            0
+        }
+        WM_TIMER if wparam == RESIZE_PUMP_TIMER as WPARAM => {
+            cef::do_message_loop_work();
+            0
+        }
+        WM_EXITSIZEMOVE => {
+            KillTimer(hwnd, RESIZE_PUMP_TIMER);
             0
         }
         WM_MOVE => {
