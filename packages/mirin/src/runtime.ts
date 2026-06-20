@@ -107,7 +107,7 @@ export function boot(): void {
   rpc.setControlHandler((frame, webview) => {
     switch (frame.action) {
       case "window.maybeStartDrag":
-        core.windowMaybeStartDrag(webview, frame.x ?? 0, frame.y ?? 0, frame.detail ?? 1);
+        core.windowMaybeStartDrag(webview, frame.x ?? 0, frame.y ?? 0, frame.detail ?? 1, frame.ht ?? 0);
         break;
       case "window.control":
         if (frame.verb) core.windowControl(webview, frame.verb);

@@ -515,14 +515,14 @@ pub fn window_set_position(id: u32, x: f64, y: f64) {
 /// left mousedown (CSS px, top-left). The Windows backend starts a move only if the
 /// point is in a draggable title-bar region. macOS drags via its title-bar overlay,
 /// so this is Windows-only.
-pub fn window_maybe_start_drag(id: u32, x: i32, y: i32, detail: i32) {
+pub fn window_maybe_start_drag(id: u32, x: i32, y: i32, detail: i32, ht: i32) {
     #[cfg(target_os = "windows")]
     {
-        let mut task = WindowMaybeStartDragTask::new(id, x, y, detail);
+        let mut task = WindowMaybeStartDragTask::new(id, x, y, detail, ht);
         post_task(ThreadId::UI, Some(&mut task));
     }
     #[cfg(not(target_os = "windows"))]
-    let _ = (id, x, y, detail);
+    let _ = (id, x, y, detail, ht);
 }
 
 /// Change a window's native background material live. `spec_json` is the same
@@ -1368,11 +1368,12 @@ wrap_task! {
         x: i32,
         y: i32,
         detail: i32,
+        ht: i32,
     }
     impl Task {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
-            win::maybe_start_drag(self.id, self.x, self.y, self.detail);
+            win::maybe_start_drag(self.id, self.x, self.y, self.detail, self.ht);
         }
     }
 }

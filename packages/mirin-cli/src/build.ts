@@ -52,6 +52,54 @@ function patchPeToGuiSubsystem(exePath: string): void {
   }
 }
 
+/**
+ * Stamp a Bun-compiled Windows exe with the app icon + version metadata via
+ * rcedit. Bun's `--windows-icon` is a silent no-op on Windows hosts, so without
+ * this the exe keeps Bun's icon — which the Start Menu / Desktop shortcut, the
+ * taskbar, and Explorer all show. Uses a single largest-size icon: rcedit's
+ * multi-size replacement silently fails on Bun's appended-payload exes, while a
+ * single 256 entry takes and Windows downscales it cleanly for smaller views.
+ * Best-effort — warns (doesn't fail the build) if rcedit isn't installed.
+ */
+async function brandWindowsExe(
+  exe: string,
+  opts: {
+    projectDir: string;
+    work: string;
+    appName: string;
+    version: string;
+    icon?: string;
+    publisher: string;
+  },
+): Promise<void> {
+  if (!Bun.which("rcedit")) {
+    console.warn(
+      "[mirin build] rcedit not found — the Windows exe keeps Bun's default icon. " +
+        "Install it: `scoop install rcedit` (or `choco install rcedit`).",
+    );
+    return;
+  }
+  const args: string[] = [];
+  if (opts.icon) {
+    const ico = makeWindowsIcon(join(opts.projectDir, opts.icon), join(opts.work, "exe-icon.ico"), {
+      onlyLargest: true,
+    });
+    if (ico) args.push("--set-icon", ico);
+  }
+  const fv = winFileVersion(opts.version);
+  args.push(
+    "--set-version-string", "ProductName", opts.appName,
+    "--set-version-string", "FileDescription", opts.appName,
+    "--set-version-string", "CompanyName", opts.publisher,
+    "--set-file-version", fv,
+    "--set-product-version", fv,
+  );
+  const res = await $`rcedit ${exe} ${args}`.nothrow();
+  if (res.exitCode !== 0) {
+    console.warn(`[mirin build] rcedit failed (exit ${res.exitCode}) — exe branding skipped.`);
+  }
+}
+
 export interface BuildResult {
   /** Path to the assembled .app. */
   app: string;
@@ -117,27 +165,19 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const signIdentity = process.env.MIRIN_SIGN_IDENTITY;
   const hostExe = join(work, IS_WINDOWS ? "host-release.exe" : "host-release");
   const workerJs = join(work, "worker.release.js");
-  const hostCmd = ["build", "--compile", "--minify", artifacts.hostEntry, "--outfile", hostExe];
+  await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
   if (IS_WINDOWS) {
-    // A GUI-subsystem exe (no console window on launch) with an embedded icon +
-    // version metadata — so the Start Menu / Desktop shortcut + taskbar show the
-    // app's icon, not a generic one (Bun ≥1.2 PE flags; mirrors Electrobun's
-    // GUI-subsystem + embedded-icon launcher).
+    patchPeToGuiSubsystem(hostExe);
     const nsisCfg = typeof nsis === "object" ? nsis : {};
-    const winIcon = config.icon
-      ? makeWindowsIcon(join(projectDir, config.icon), join(work, "host-icon.ico"))
-      : undefined;
-    hostCmd.push(
-      "--windows-hide-console",
-      `--windows-title=${appName}`,
-      `--windows-version=${winFileVersion(version)}`,
-      `--windows-publisher=${nsisCfg.publisher ?? appName}`,
-      `--windows-description=${appName}`,
-    );
-    if (winIcon) hostCmd.push(`--windows-icon=${winIcon}`);
+    await brandWindowsExe(hostExe, {
+      projectDir,
+      work,
+      appName,
+      version,
+      icon: config.icon,
+      publisher: nsisCfg.publisher ?? appName,
+    });
   }
-  await $`bun ${hostCmd}`.cwd(projectDir);
-  if (IS_WINDOWS) patchPeToGuiSubsystem(hostExe);
   await $`bun build ${mainEntry} --target=bun --minify --outfile ${workerJs}`.cwd(projectDir);
 
   // Extra assets: resolve sidecar binaries + compile any extra worker entries.

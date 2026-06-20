@@ -376,7 +376,15 @@ pub fn set_draggable_regions(id: u32, regions: Vec<DragRegion>) {
 /// region (and no `no-drag` hole), or — before any region is reported — within the
 /// fallback top strip. CEF's reported regions are in the same DIP/web coordinate
 /// space as the page's mouse coords, so they compare directly.
-pub fn maybe_start_drag(id: u32, x: i32, y: i32, detail: i32) {
+pub fn maybe_start_drag(id: u32, x: i32, y: i32, detail: i32, ht: i32) {
+    // A resize edge/corner forwarded from the renderer (`ht` is the Win32 hit-test
+    // code, e.g. HTBOTTOMRIGHT). The CEF child fills the client area, so the parent's
+    // WM_NCHITTEST never sees edge hits — the preload detects edge proximity and
+    // signals us, exactly like the drag. Hand straight to the OS resize loop.
+    if ht != 0 {
+        start_nc_drag(id, ht);
+        return;
+    }
     let (dx, dy) = (x as f64, y as f64);
     let draggable = DRAG_REGIONS.with(|r| {
         let map = r.borrow();
@@ -410,11 +418,14 @@ pub fn maybe_start_drag(id: u32, x: i32, y: i32, detail: i32) {
     if detail >= 2 {
         control(id, "maximize");
     } else {
-        start_window_drag(id);
+        start_nc_drag(id, HTCAPTION as i32);
     }
 }
 
-fn start_window_drag(id: u32) {
+/// Hand off to Windows' built-in non-client drag loop at the current cursor with
+/// hit-test `ht` — `HTCAPTION` moves the window (drag/snap/dbl-click-maximize),
+/// `HTLEFT`/`HTBOTTOMRIGHT`/… resize from that edge/corner.
+fn start_nc_drag(id: u32, ht: i32) {
     let Some(hwnd) = hwnd_for(id) else { return };
     let mut pt = POINT { x: 0, y: 0 };
     // SAFETY: valid out-param + live hwnd; PostMessageW is thread-safe and
@@ -423,7 +434,7 @@ fn start_window_drag(id: u32) {
         GetCursorPos(&mut pt);
         ReleaseCapture();
         let lparam = (pt.x as i16 as u16 as isize) | ((pt.y as i16 as u16 as isize) << 16);
-        PostMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION as WPARAM, lparam);
+        PostMessageW(hwnd, WM_NCLBUTTONDOWN, ht as WPARAM, lparam);
     }
 }
 

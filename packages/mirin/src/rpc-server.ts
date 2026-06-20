@@ -29,6 +29,8 @@ interface ControlFrame {
   verb?: string;
   /** Click count for pointer actions (2 = double-click → maximize). */
   detail?: number;
+  /** Win32 resize hit-test code when the mousedown is on a window edge/corner. */
+  ht?: number;
 }
 
 type IncomingFrame = RequestFrame | ControlFrame;

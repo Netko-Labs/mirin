@@ -50,11 +50,30 @@ const BOOTSTRAP: &str = r#"(function(){
   // drag area. (CEF doesn't expose -webkit-app-region via getComputedStyle, so we
   // defer to its authoritative regions rather than guessing in JS.)
   try {
+    // Window-edge resize: the CEF child fills the client area, so the parent's
+    // native WM_NCHITTEST can't see edge hits. Detect edge proximity here, show the
+    // resize cursor, and forward the Win32 hit-test code so native hands off to the
+    // OS resize loop. HT codes: L10 R11 T12 TL13 TR14 B15 BL16 BR17.
+    var RB = 6;
+    function edgeHt(e){
+      var w=window.innerWidth, h=window.innerHeight, x=e.clientX, y=e.clientY;
+      var l=x<=RB, r=x>=w-RB, t=y<=RB, b=y>=h-RB;
+      if(t&&l)return 13; if(t&&r)return 14; if(b&&l)return 16; if(b&&r)return 17;
+      if(l)return 10; if(r)return 11; if(t)return 12; if(b)return 15;
+      return 0;
+    }
+    var RC={10:"ew-resize",11:"ew-resize",12:"ns-resize",15:"ns-resize",13:"nwse-resize",17:"nwse-resize",14:"nesw-resize",16:"nesw-resize"};
+    var hasCursor=false;
+    document.addEventListener("mousemove", function(e){
+      var ht=edgeHt(e);
+      if(ht){ document.documentElement.style.cursor=RC[ht]; hasCursor=true; }
+      else if(hasCursor){ document.documentElement.style.cursor=""; hasCursor=false; }
+    }, true);
     document.addEventListener("mousedown", function(e){
       if (e.button === 0) {
-        // `detail` is the click count: a double-click (2) over a drag region
-        // toggles maximize instead of starting a drag (native checks the region).
-        send({kind:"control",action:"window.maybeStartDrag",x:Math.round(e.clientX),y:Math.round(e.clientY),detail:e.detail});
+        // `ht` != 0 resizes from that edge/corner; otherwise `detail` (click count)
+        // lets native start a title-bar drag or toggle maximize on a double-click.
+        send({kind:"control",action:"window.maybeStartDrag",x:Math.round(e.clientX),y:Math.round(e.clientY),detail:e.detail,ht:edgeHt(e)});
       }
     }, true);
   } catch(e) {}
