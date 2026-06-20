@@ -18,6 +18,10 @@ export interface Runtime {
   core: Core;
   rpc: RpcServer;
   manifestWindows: ManifestWindowConfig[];
+  /** App bundle id (mirin.config `id`); undefined when detached. */
+  id?: string;
+  /** True under `mirin dev`; false in a packaged build. */
+  isDev: boolean;
   devUrl?: string;
   /** Contents/Resources of the running .app (for the updater). Absent in dev. */
   resourcesDir?: string;
@@ -87,6 +91,7 @@ export function boot(): void {
   const data = (workerData ?? {}) as {
     corePath?: string;
     manifest?: { windows?: Record<string, WindowConfig> };
+    id?: string;
     devUrl?: string;
     resourcesDir?: string;
     sidecarDir?: string;
@@ -126,6 +131,8 @@ export function boot(): void {
     core,
     rpc,
     manifestWindows,
+    id: data.id,
+    isDev: !!data.devUrl,
     devUrl: data.devUrl,
     resourcesDir: data.resourcesDir,
     corePath,

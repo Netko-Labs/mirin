@@ -289,6 +289,25 @@ class MirinApp extends Emitter<AppEvents> {
   /** Auto-updater (macOS). Inert unless the app was built with `release` set. */
   readonly updater: Updater = updater;
 
+  /** This app's bundle id (mirin.config `id`). `undefined` when run detached. */
+  get id(): string | undefined {
+    try {
+      return runtime().id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** True under `mirin dev`; false in a packaged build (and when detached). Use it
+   *  to keep dev and installed data (caches, databases) separate. */
+  get isDev(): boolean {
+    try {
+      return runtime().isDev;
+    } catch {
+      return false;
+    }
+  }
+
   /** macOS Dock-icon controls. Hiding suits resident, hotkey-summoned apps. */
   readonly dock: Dock = {
     hide: () => this.#setDock(false),

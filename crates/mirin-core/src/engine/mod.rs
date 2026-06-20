@@ -60,6 +60,10 @@ pub struct CoreConfig {
     /// Development run (`mirin dev`): enables web-inspector context-menu items.
     #[serde(default)]
     pub dev: bool,
+    /// App bundle identifier (e.g. "dev.netko.anko"). Keys the per-app CEF cache
+    /// dir on Windows (which has no OS bundle id); empty falls back to "app".
+    #[serde(default)]
+    pub identifier: String,
     /// Single-instance app: a second launch focuses the running window and exits
     /// instead of opening another window (which would collide on CEF's cache
     /// singleton and show a bare Chromium window). Default true; set false to allow
@@ -252,9 +256,9 @@ pub fn run_core(mut config: CoreConfig) -> i32 {
     #[cfg(target_os = "windows")]
     {
         win::set_dpi_awareness();
-        win::set_app_id();
+        win::set_app_id(config.dev);
         if config.single_instance {
-            if !win::acquire_single_instance() {
+            if !win::acquire_single_instance(config.dev) {
                 // A second launch: focus the running window and exit cleanly,
                 // BEFORE CEF init — otherwise the locked cache singleton shows a
                 // bare Chromium window.
@@ -288,7 +292,7 @@ pub fn run_core(mut config: CoreConfig) -> i32 {
     debug_assert_eq!(ret, -1, "cannot execute browser process");
 
     let cache_path = if config.cache_path.is_empty() {
-        default_cache_dir(config.dev)
+        default_cache_dir(config.dev, &config.identifier)
     } else {
         config.cache_path.clone()
     };
@@ -409,8 +413,19 @@ fn angle_backend() -> Option<String> {
 /// user-data-dir. Sharing it causes singleton-lock collisions: only one mirin app
 /// could run at a time, and killing one stranded the other's `SingletonLock`.
 /// The `-dev` suffix keeps a dev run separate from the installed app.
-fn default_cache_dir(dev: bool) -> String {
-    let id = app_bundle_id().unwrap_or_else(|| "app".into());
+///
+/// macOS reads the real bundle id from `NSBundle`; Windows has none, so it uses the
+/// `identifier` passed from the app config (else "app" — shared, the pre-fix behavior).
+fn default_cache_dir(dev: bool, identifier: &str) -> String {
+    let id = app_bundle_id()
+        .or_else(|| {
+            let sanitized: String = identifier
+                .chars()
+                .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+                .collect();
+            (!sanitized.is_empty()).then_some(sanitized)
+        })
+        .unwrap_or_else(|| "app".into());
     let suffix = if dev { "-dev" } else { "" };
     #[cfg(target_os = "macos")]
     {

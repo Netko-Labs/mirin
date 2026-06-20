@@ -199,7 +199,11 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const resources = {
     uiDir: join(projectDir, "dist"),
     workerJs,
-    manifestJson: JSON.stringify({ windows: config.windows, singleInstance: config.singleInstance }),
+    manifestJson: JSON.stringify({
+      id: bundleId,
+      windows: config.windows,
+      singleInstance: config.singleInstance,
+    }),
     versionJson,
     workers: extraWorkers,
   };

@@ -72,11 +72,25 @@ fn exe_file_stem() -> String {
         .unwrap_or_else(|| "App".to_string())
 }
 
+/// The app's identity key for the AUMID + single-instance lock. A `mirin dev` run
+/// gets a `-dev` suffix so it doesn't collide with the installed build of the same
+/// app — both have the same exe name (`<App>.exe`), so without this the dev run
+/// would take the installed app's mutex and exit on launch (mirrors the `-dev` CEF
+/// cache dir, which already keeps their user-data separate).
+fn app_key(dev: bool) -> String {
+    let stem = exe_file_stem();
+    if dev {
+        format!("{stem}-dev")
+    } else {
+        stem
+    }
+}
+
 /// Try to take the app's single-instance lock (a named mutex). Returns true if
 /// this is the first/only instance, false if another instance already holds it.
 /// The handle is intentionally leaked so the lock lives for the whole process.
-pub fn acquire_single_instance() -> bool {
-    let name: Vec<u16> = format!("Local\\mirin.{}.singleton", exe_file_stem())
+pub fn acquire_single_instance(dev: bool) -> bool {
+    let name: Vec<u16> = format!("Local\\mirin.{}.singleton", app_key(dev))
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
@@ -117,8 +131,8 @@ pub fn activate_existing_instance() {
 /// button even though the window icon is correct. Derived from the exe name so
 /// it's stable across versions and unique per app. Call once, early, before any
 /// window is created.
-pub fn set_app_id() {
-    let id: Vec<u16> = format!("mirin.{}", exe_file_stem())
+pub fn set_app_id(dev: bool) {
+    let id: Vec<u16> = format!("mirin.{}", app_key(dev))
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();

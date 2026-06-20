@@ -52,6 +52,8 @@ const coreConfig = JSON.parse(
 );
 // Opt out of single-instance (the core default) when the app allows multiple.
 if (manifest.singleInstance === false) coreConfig.single_instance = false;
+// The app's bundle id keys the per-app CEF cache dir (Windows has no OS bundle id).
+if (typeof manifest.id === "string") coreConfig.identifier = manifest.id;
 
 // Load the native core on the main thread FIRST. The Worker also dlopens the
 // same dylib in its boot; doing the main-thread dlopen before spawning the
@@ -63,6 +65,7 @@ const worker = new Worker(workerPath, {
   workerData: {
     corePath,
     manifest,
+    id: typeof manifest.id === "string" ? manifest.id : undefined,
     devUrl: process.env.MIRIN_DEV_URL,
     resourcesDir,
     sidecarDir,
