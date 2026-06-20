@@ -70,6 +70,9 @@ export async function buildInnoInstaller(input: BuildInnoInput): Promise<string>
   L.push(`AppId={{${bundleId}}`);
   L.push(`AppName=${v(appName)}`);
   L.push(`AppVersion=${v(version)}`);
+  // Without this, Inno's display name defaults to "<name> version <x>" (shown in
+  // the wizard title + Add/Remove Programs); pin it to the app name.
+  L.push(`AppVerName=${v(appName)}`);
   L.push(`AppPublisher=${v(publisher)}`);
   L.push("WizardStyle=modern");
   L.push(`DefaultDirName=${installDir}`);

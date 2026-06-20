@@ -147,16 +147,18 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     };
     const innoWanted = result.inno !== false;
     const nsisWanted = result.nsis !== false;
+    const innoOpts = typeof result.inno === "object" ? result.inno : {};
+    const nsisOpts = typeof result.nsis === "object" ? result.nsis : {};
     let exePath: string | undefined;
     if (innoWanted && hasInno()) {
       exePath = await buildInnoInstaller({
         ...installerArgs,
-        options: typeof result.inno === "object" ? result.inno : {},
+        options: { ...innoOpts, publisher: innoOpts.publisher ?? result.publisher },
       });
     } else if (nsisWanted && (await hasMakensis())) {
       exePath = await buildNsisInstaller({
         ...installerArgs,
-        options: typeof result.nsis === "object" ? result.nsis : {},
+        options: { ...nsisOpts, publisher: nsisOpts.publisher ?? result.publisher },
       });
     }
     if (exePath) {

@@ -53,7 +53,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    KillTimer, SetTimer, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_TIMER,
+    KillTimer, SetTimer, MINMAXINFO, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_TIMER,
 };
 
 /// Timer id used to pump CEF during the OS's modal resize/move loop.
@@ -151,6 +151,9 @@ pub struct WindowParams {
     pub title: String,
     pub width: f64,
     pub height: f64,
+    /// Minimum window size enforced via WM_GETMINMAXINFO (0 = no minimum).
+    pub min_width: f64,
+    pub min_height: f64,
     pub x: Option<f64>,
     pub y: Option<f64>,
     pub title_bar_style: TitleBarStyle,
@@ -186,6 +189,9 @@ thread_local! {
     /// Saved (window style, window rect) for windows in borderless fullscreen, so
     /// `control("fullscreen")` can restore them.
     static FULLSCREEN: RefCell<HashMap<u32, (isize, RECT)>> = RefCell::new(HashMap::new());
+    /// Per-window minimum (width, height) in physical px, enforced via
+    /// WM_GETMINMAXINFO. Only present for windows that requested a minimum.
+    static MIN_SIZE: RefCell<HashMap<u32, (i32, i32)>> = RefCell::new(HashMap::new());
     /// Cached app icon HICON (`<exeDir>/icon.ico`): None = not loaded; Some(0) = no
     /// icon present; Some(h) = the loaded icon. Set per window via WM_SETICON.
     static APP_ICON: RefCell<Option<isize>> = const { RefCell::new(None) };
@@ -299,8 +305,10 @@ fn clamp_on_screen(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
 pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
     ensure_class_registered();
 
-    let client_w = params.width as i32;
-    let client_h = params.height as i32;
+    // Clamp the initial size up to the minimum too (a stale/corrupt saved size
+    // shouldn't open below it; WM_GETMINMAXINFO only governs interactive resizing).
+    let client_w = params.width.max(params.min_width) as i32;
+    let client_h = params.height.max(params.min_height) as i32;
     // Transparent windows render windowless into a layered window — borderless, and
     // their size is the content size (no frame). They don't get a custom title bar.
     let custom = !params.transparent && params.title_bar_style.is_custom();
@@ -361,6 +369,13 @@ pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
     assert!(!hwnd.is_null(), "CreateWindowExW failed");
 
     WINDOWS.with(|m| m.borrow_mut().insert(params.id, hwnd as isize));
+
+    if params.min_width > 0.0 || params.min_height > 0.0 {
+        MIN_SIZE.with(|m| {
+            m.borrow_mut()
+                .insert(params.id, (params.min_width as i32, params.min_height as i32));
+        });
+    }
 
     // Window icon (taskbar / Alt-Tab / title), if the bundle shipped one.
     if let Some(icon) = app_icon() {
@@ -718,6 +733,9 @@ pub fn close_window(id: u32) {
     DRAG_REGIONS.with(|r| {
         r.borrow_mut().remove(&id);
     });
+    MIN_SIZE.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
     if let Some(hwnd) = WINDOWS.with(|m| m.borrow_mut().remove(&id)) {
         // SAFETY: hwnd was a live top-level window we created (or already gone).
         unsafe { DestroyWindow(hwnd as HWND) };
@@ -977,6 +995,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         // the page until release (ugly). Pump CEF on a fast timer for the duration
         // of the loop so the content resizes live; the WM_SIZE above keeps the CEF
         // child sized to the client.
+        // Enforce the window's minimum size (so it can't be resized too small).
+        WM_GETMINMAXINFO => {
+            let res = DefWindowProcW(hwnd, msg, wparam, lparam);
+            if let Some(id) = id {
+                if let Some((mw, mh)) = MIN_SIZE.with(|m| m.borrow().get(&id).copied()) {
+                    // SAFETY: lparam is a live MINMAXINFO during WM_GETMINMAXINFO.
+                    let mmi = &mut *(lparam as *mut MINMAXINFO);
+                    mmi.ptMinTrackSize.x = mmi.ptMinTrackSize.x.max(mw);
+                    mmi.ptMinTrackSize.y = mmi.ptMinTrackSize.y.max(mh);
+                }
+            }
+            res
+        }
         WM_ENTERSIZEMOVE => {
             SetTimer(hwnd, RESIZE_PUMP_TIMER, 8, None); // ~120 Hz
             0

@@ -42,6 +42,9 @@ export interface WindowConfig {
   title?: string;
   width?: number;
   height?: number;
+  /** Minimum window size; the OS prevents resizing below it. */
+  minWidth?: number;
+  minHeight?: number;
   /** Screen position (bottom-left origin, points). Centered when absent. */
   x?: number;
   y?: number;
@@ -78,6 +81,12 @@ export interface MirinConfig {
   /** Reverse-DNS app id, e.g. "dev.peje.hello". */
   id: string;
   name: string;
+  /**
+   * Publisher / company name (e.g. "Netko Labs"). Shown in the Windows installer,
+   * the exe's file properties (CompanyName), and Add/Remove Programs. Defaults to
+   * the app `name`.
+   */
+  publisher?: string;
   /** Main-process entry, relative to the project root (runs in the Bun Worker). */
   main: string;
   /**

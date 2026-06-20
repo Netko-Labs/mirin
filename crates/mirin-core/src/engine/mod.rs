@@ -79,6 +79,11 @@ pub struct WindowOpts {
     pub width: f64,
     #[serde(default = "default_height")]
     pub height: f64,
+    /// Minimum window size; the OS won't resize below it (0 = no minimum).
+    #[serde(default)]
+    pub min_width: f64,
+    #[serde(default)]
+    pub min_height: f64,
     /// Screen position (bottom-left origin, points). Centered when absent.
     #[serde(default)]
     pub x: Option<f64>,
@@ -134,6 +139,8 @@ impl WindowOpts {
             title: default_title(),
             width: default_width(),
             height: default_height(),
+            min_width: 0.0,
+            min_height: 0.0,
             x: None,
             y: None,
             url,
@@ -697,6 +704,8 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
         title: opts.title.clone(),
         width: opts.width,
         height: opts.height,
+        min_width: opts.min_width,
+        min_height: opts.min_height,
         x: opts.x,
         y: opts.y,
         title_bar_style,

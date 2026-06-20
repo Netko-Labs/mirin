@@ -121,6 +121,8 @@ export interface BuildResult {
   nsis: boolean | import("mirinjs").NsisConfig;
   /** Inno Setup installer config (Windows) — preferred over NSIS; default `true`. */
   inno: boolean | import("mirinjs").InnoConfig;
+  /** Publisher / company name (config.publisher ?? appName). */
+  publisher: string;
   /** Codesign identity used for the bundle, if any (MIRIN_SIGN_IDENTITY). */
   signIdentity?: string;
 }
@@ -153,6 +155,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
   const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
   const inno: boolean | import("mirinjs").InnoConfig = config.inno ?? true;
+  const publisher: string = config.publisher ?? appName;
 
   console.log(`[mirin build] ${appName} ${version}`);
 
@@ -171,14 +174,13 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
   if (IS_WINDOWS) {
     patchPeToGuiSubsystem(hostExe);
-    const nsisCfg = typeof nsis === "object" ? nsis : {};
     await brandWindowsExe(hostExe, {
       projectDir,
       work,
       appName,
       version,
       icon: config.icon,
-      publisher: nsisCfg.publisher ?? appName,
+      publisher,
     });
   }
   await $`bun build ${mainEntry} --target=bun --minify --outfile ${workerJs}`.cwd(projectDir);
@@ -240,6 +242,7 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
     dmg,
     nsis,
     inno,
+    publisher,
     signIdentity,
   };
 }
