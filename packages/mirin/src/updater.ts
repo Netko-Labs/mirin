@@ -221,8 +221,11 @@ export class Updater {
       // to exit (the exe/bundle is locked while running), swaps the folder, relaunches.
       if (IS_WINDOWS) {
         const runningApp = join(this.#resourcesDir()!, "..");
-        const exe = join(runningApp, `${this.#version()!.name}.exe`);
-        const script = join(tmpdir(), `mirin-apply-${this.#version()!.name}.ps1`);
+        const name = this.#version()!.name;
+        const exe = join(runningApp, `${name}.exe`);
+        const script = join(tmpdir(), `mirin-apply-${name}.ps1`);
+        const applyVbs = join(tmpdir(), `mirin-apply-${name}.vbs`);
+        const launchVbs = join(tmpdir(), `mirin-launch-${name}.vbs`);
         const ps = [
           `$ErrorActionPreference='SilentlyContinue'`,
           // Never let the app dir be this process's cwd (Windows can't delete a cwd).
@@ -235,22 +238,41 @@ export class Updater {
           `for ($i=0; $i -lt 50; $i++) { Remove-Item -Recurse -Force ${psq(runningApp)}; if (-not (Test-Path ${psq(runningApp)})) { break }; Start-Sleep -Milliseconds 200 }`,
           `Move-Item -Force ${psq(this.#staged)} ${psq(runningApp)}`,
           `Start-Process -FilePath ${psq(exe)} -WorkingDirectory ${psq(runningApp)}`,
-          `Remove-Item -Force ${psq(script)}`, // self-clean
+          // self-clean the temp launch scripts (this .ps1 + the two .vbs shims)
+          `Remove-Item -Force ${psq(script)},${psq(applyVbs)},${psq(launchVbs)}`,
         ].join("\n");
         writeFileSync(script, ps, "utf8");
-        // The swap MUST outlive this process. A Bun.spawn child is in our job object
-        // and is killed when we quit — even with unref/detached (verified). So spawn
-        // the swap via WMI Win32_Process.Create: the WMI service launches it, outside
-        // our job, so it survives. `await` the short launcher so the swap process
-        // exists before core.quit() (no race), then quit.
-        const wmiPath = script.replace(/'/g, "''");
-        const wmi =
-          `([wmiclass]'Win32_Process').Create('powershell -NoProfile -NonInteractive ` +
-          `-WindowStyle Hidden -ExecutionPolicy Bypass -File "${wmiPath}"') | Out-Null`;
-        const launcher = Bun.spawn(
-          ["powershell", "-NoProfile", "-NonInteractive", "-Command", wmi],
-          { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+
+        // No terminal window may appear during the update. powershell.exe is a
+        // console-subsystem program: launching it directly (even with
+        // -WindowStyle Hidden) flashes a console, because the OS allocates the
+        // console before powershell can hide it. wscript.exe is a GUI-subsystem
+        // host with no console; its Shell.Run(cmd, 0) starts powershell with
+        // SW_HIDE in the initial STARTUPINFO, so no window is ever shown.
+        writeFileSync(
+          applyVbs,
+          `CreateObject("WScript.Shell").Run "powershell -NoProfile -NonInteractive ` +
+            `-ExecutionPolicy Bypass -WindowStyle Hidden -File ""${script}""", 0, False\n`,
+          "utf8",
         );
+
+        // The swap MUST outlive this process. A Bun.spawn child is in our job
+        // object and is killed when we quit — even with unref/detached (verified).
+        // WMI's Win32_Process.Create has the WMI service spawn it, outside our job,
+        // so it survives. Issue that WMI call from a console-less wscript host too,
+        // so the launcher itself never flashes a window. `await` the short launcher
+        // so the swap process exists before core.quit() (no race), then quit.
+        writeFileSync(
+          launchVbs,
+          `GetObject("winmgmts:Win32_Process").Create ` +
+            `"wscript.exe //B //Nologo ""${applyVbs}""", Null, Null, pid\n`,
+          "utf8",
+        );
+        const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
         await launcher.exited;
       } else {
         const runningApp = join(this.#resourcesDir()!, "..", "..");
