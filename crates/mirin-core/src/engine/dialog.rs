@@ -50,9 +50,9 @@ wrap_task! {
 fn run(spec: &DialogSpec) {
     let value = match spec.kind.as_str() {
         "openFile" => match open_file(spec) {
-            Some(paths) => serde_json::Value::Array(
-                paths.into_iter().map(serde_json::Value::String).collect(),
-            ),
+            Some(paths) => {
+                serde_json::Value::Array(paths.into_iter().map(serde_json::Value::String).collect())
+            }
             None => serde_json::Value::Null,
         },
         "saveFile" => match save_file(spec) {

@@ -139,7 +139,12 @@ pub fn destroy(id: u32) {
 
 /// Tray callback: lParam's low word is the mouse message; a left/right click shows
 /// the context menu (if any) or emits `tray.click`.
-unsafe extern "system" fn tray_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn tray_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     if msg == TRAY_CALLBACK {
         let mouse = (lparam & 0xFFFF) as u32;
         if mouse == WM_RBUTTONUP || mouse == WM_LBUTTONUP {

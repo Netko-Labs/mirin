@@ -31,35 +31,36 @@ use windows_sys::Win32::UI::HiDpi::{
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetFocus, VK_CONTROL, VK_MENU, VK_SHIFT,
 };
+use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetCursorPos,
-    GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect, IsZoomed, LoadCursorW,
-    MoveWindow, PostMessageW, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, CS_HREDRAW, CS_VREDRAW, GA_ROOT, GWL_STYLE, GW_CHILD, HTBOTTOM,
-    HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
-    HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_ARROW, NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER,
-    SM_CXSCREEN, SM_CXSIZEFRAME, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYSIZEFRAME,
-    SM_CYVIRTUALSCREEN, SM_REMOTESESSION, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_FRAMECHANGED,
-    SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
-    SW_RESTORE, SW_SHOW, WA_INACTIVE, WNDCLASSW, WM_ACTIVATE, WM_CHAR, WM_CLOSE,
-    WM_DESTROY, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDOWN,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_CLIPCHILDREN, WS_EX_LAYERED,
-    WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect,
+    GetCursorPos, GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect, IsZoomed,
+    LoadCursorW, MoveWindow, PostMessageW, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, SetWindowTextW, ShowWindow, CS_HREDRAW, CS_VREDRAW, GA_ROOT, GWL_STYLE, GW_CHILD,
+    HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT,
+    HTTOPRIGHT, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_ARROW, NCCALCSIZE_PARAMS,
+    SM_CXPADDEDBORDER, SM_CXSCREEN, SM_CXSIZEFRAME, SM_CXVIRTUALSCREEN, SM_CYSCREEN,
+    SM_CYSIZEFRAME, SM_CYVIRTUALSCREEN, SM_REMOTESESSION, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+    SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, WA_INACTIVE, WM_ACTIVATE, WM_CHAR, WM_CLOSE,
+    WM_DESTROY, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCCALCSIZE,
+    WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN,
+    WM_SYSKEYUP, WNDCLASSW, WS_CLIPCHILDREN, WS_EX_LAYERED, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
+    WS_POPUP,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    KillTimer, SetTimer, MINMAXINFO, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_TIMER,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     LoadImageW, SendMessageW, HICON, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTSIZE,
     LR_LOADFROMFILE, WM_SETICON,
 };
-use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    KillTimer, SetTimer, MINMAXINFO, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_TIMER,
-};
 
 /// Timer id used to pump CEF during the OS's modal resize/move loop.
 const RESIZE_PUMP_TIMER: usize = 0x6D72; // 'mr'
-use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
 
 /// The host exe's file stem (the app name) — the basis for the AppUserModelID and
@@ -302,10 +303,8 @@ fn clamp_on_screen(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
     };
     // Require a graspable strip of the title bar to fall inside the desktop.
     const MARGIN: i32 = 48;
-    let on_screen = x + w - MARGIN > vx
-        && x + MARGIN < vx + vw
-        && y >= vy - 8
-        && y + MARGIN < vy + vh;
+    let on_screen =
+        x + w - MARGIN > vx && x + MARGIN < vx + vw && y >= vy - 8 && y + MARGIN < vy + vh;
     if on_screen {
         (x, y)
     } else {
@@ -335,7 +334,11 @@ pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
         // removed visually via WM_NCCALCSIZE.
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN
     };
-    let mut ex_style = if params.always_on_top { WS_EX_TOPMOST } else { 0 };
+    let mut ex_style = if params.always_on_top {
+        WS_EX_TOPMOST
+    } else {
+        0
+    };
     if params.transparent {
         ex_style |= WS_EX_LAYERED;
     }
@@ -386,8 +389,10 @@ pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
 
     if params.min_width > 0.0 || params.min_height > 0.0 {
         MIN_SIZE.with(|m| {
-            m.borrow_mut()
-                .insert(params.id, (params.min_width as i32, params.min_height as i32));
+            m.borrow_mut().insert(
+                params.id,
+                (params.min_width as i32, params.min_height as i32),
+            );
         });
     }
 
@@ -647,7 +652,15 @@ unsafe fn center_window(hwnd: HWND) {
     let work = monitor_rect(hwnd);
     let x = work.left + ((work.right - work.left) - w) / 2;
     let y = work.top + ((work.bottom - work.top) - h) / 2;
-    SetWindowPos(hwnd, std::ptr::null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    SetWindowPos(
+        hwnd,
+        std::ptr::null_mut(),
+        x,
+        y,
+        0,
+        0,
+        SWP_NOSIZE | SWP_NOZORDER,
+    );
 }
 
 unsafe fn set_topmost(hwnd: HWND, on: bool) {
@@ -759,7 +772,12 @@ pub fn close_window(id: u32) {
 /// The engine id for a top-level HWND, if it's one of ours.
 pub fn window_id_for_hwnd(hwnd: HWND) -> Option<u32> {
     let key = hwnd as isize;
-    WINDOWS.with(|m| m.borrow().iter().find(|(_, &h)| h == key).map(|(&id, _)| id))
+    WINDOWS.with(|m| {
+        m.borrow()
+            .iter()
+            .find(|(_, &h)| h == key)
+            .map(|(&id, _)| id)
+    })
 }
 
 /// The engine id owning a CEF browser handle: CEF's browser HWND is a descendant
@@ -769,7 +787,9 @@ pub fn window_id_for_cef_handle(handle: *mut c_void) -> Option<u32> {
         return None;
     }
     // SAFETY: `handle` is a live CEF child HWND; GA_ROOT returns its top-level owner.
-    let root = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetAncestor(handle as HWND, GA_ROOT) };
+    let root = unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::GetAncestor(handle as HWND, GA_ROOT)
+    };
     window_id_for_hwnd(root)
 }
 
@@ -974,7 +994,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 
     // Windowless (transparent) windows: forward input into CEF (no child window).
     if let Some(id) = id {
-        if crate::engine::osr::is_osr_window(id) && forward_osr_input(id, hwnd, msg, wparam, lparam) {
+        if crate::engine::osr::is_osr_window(id) && forward_osr_input(id, hwnd, msg, wparam, lparam)
+        {
             return 0;
         }
     }

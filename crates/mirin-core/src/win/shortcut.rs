@@ -128,17 +128,17 @@ fn vk_for(key: &str) -> Option<u32> {
         }
     }
     let vk = match key {
-        "=" => 0xBB,         // VK_OEM_PLUS
-        "-" => 0xBD,         // VK_OEM_MINUS
-        "," => 0xBC,         // VK_OEM_COMMA
-        "." => 0xBE,         // VK_OEM_PERIOD
-        ";" => 0xBA,         // VK_OEM_1
-        "/" => 0xBF,         // VK_OEM_2
-        "`" => 0xC0,         // VK_OEM_3
-        "[" => 0xDB,         // VK_OEM_4
-        "\\" => 0xDC,        // VK_OEM_5
-        "]" => 0xDD,         // VK_OEM_6
-        "'" => 0xDE,         // VK_OEM_7
+        "=" => 0xBB,  // VK_OEM_PLUS
+        "-" => 0xBD,  // VK_OEM_MINUS
+        "," => 0xBC,  // VK_OEM_COMMA
+        "." => 0xBE,  // VK_OEM_PERIOD
+        ";" => 0xBA,  // VK_OEM_1
+        "/" => 0xBF,  // VK_OEM_2
+        "`" => 0xC0,  // VK_OEM_3
+        "[" => 0xDB,  // VK_OEM_4
+        "\\" => 0xDC, // VK_OEM_5
+        "]" => 0xDD,  // VK_OEM_6
+        "'" => 0xDE,  // VK_OEM_7
         "return" | "enter" => 0x0D,
         "tab" => 0x09,
         "space" => 0x20,

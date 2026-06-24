@@ -78,22 +78,27 @@ const WCA_ACCENT_POLICY: u32 = 19;
 const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
 const ACCENT_DISABLED: u32 = 0;
 
-type SetWindowCompositionAttributeFn =
-    unsafe extern "system" fn(HWND, *mut WinCompAttrData) -> i32;
+type SetWindowCompositionAttributeFn = unsafe extern "system" fn(HWND, *mut WinCompAttrData) -> i32;
 
 /// `SetWindowCompositionAttribute` is exported by user32.dll but not in its import
 /// library (undocumented), so resolve it at runtime via GetProcAddress.
 fn set_window_composition_attribute() -> Option<SetWindowCompositionAttributeFn> {
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-    let module_name: Vec<u16> = "user32.dll".encode_utf16().chain(std::iter::once(0)).collect();
+    let module_name: Vec<u16> = "user32.dll"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     // SAFETY: user32 is always loaded; GetProcAddress with a literal name.
     unsafe {
         let user32 = GetModuleHandleW(module_name.as_ptr());
         if user32.is_null() {
             return None;
         }
-        GetProcAddress(user32, c"SetWindowCompositionAttribute".as_ptr() as *const u8)
-            .map(|p| std::mem::transmute::<_, SetWindowCompositionAttributeFn>(p))
+        GetProcAddress(
+            user32,
+            c"SetWindowCompositionAttribute".as_ptr() as *const u8,
+        )
+        .map(|p| std::mem::transmute::<_, SetWindowCompositionAttributeFn>(p))
     }
 }
 
@@ -160,8 +165,8 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
     let mem_dc = CreateCompatibleDC(screen_dc);
 
     let mut bmi: BITMAPINFO = std::mem::zeroed();
-    bmi.bmiHeader.biSize = std::mem::size_of::<windows_sys::Win32::Graphics::Gdi::BITMAPINFOHEADER>()
-        as u32;
+    bmi.bmiHeader.biSize =
+        std::mem::size_of::<windows_sys::Win32::Graphics::Gdi::BITMAPINFOHEADER>() as u32;
     bmi.bmiHeader.biWidth = width;
     bmi.bmiHeader.biHeight = -height; // top-down to match CEF's buffer
     bmi.bmiHeader.biPlanes = 1;
@@ -169,7 +174,14 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
     bmi.bmiHeader.biCompression = BI_RGB as u32;
 
     let mut bits: *mut c_void = std::ptr::null_mut();
-    let dib = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
+    let dib = CreateDIBSection(
+        mem_dc,
+        &bmi,
+        DIB_RGB_COLORS,
+        &mut bits,
+        std::ptr::null_mut(),
+        0,
+    );
 
     if !dib.is_null() && !bits.is_null() {
         let len = (width * height * 4) as usize;
@@ -200,15 +212,7 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
         UpdateLayeredWindow(
-            hwnd,
-            screen_dc,
-            &mut pos,
-            &mut size,
-            mem_dc,
-            &mut src,
-            0,
-            &blend,
-            ULW_ALPHA,
+            hwnd, screen_dc, &mut pos, &mut size, mem_dc, &mut src, 0, &blend, ULW_ALPHA,
         );
 
         SelectObject(mem_dc, old);

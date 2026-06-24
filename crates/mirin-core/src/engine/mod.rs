@@ -422,7 +422,13 @@ fn default_cache_dir(dev: bool, identifier: &str) -> String {
         .or_else(|| {
             let sanitized: String = identifier
                 .chars()
-                .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+                .map(|c| {
+                    if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect();
             (!sanitized.is_empty()).then_some(sanitized)
         })
@@ -449,7 +455,9 @@ fn default_cache_dir(dev: bool, identifier: &str) -> String {
 /// single path segment. `None` if unavailable (e.g. not running from a bundle).
 #[cfg(target_os = "macos")]
 fn app_bundle_id() -> Option<String> {
-    let id = objc2_foundation::NSBundle::mainBundle().bundleIdentifier()?.to_string();
+    let id = objc2_foundation::NSBundle::mainBundle()
+        .bundleIdentifier()?
+        .to_string();
     if id.is_empty() {
         return None;
     }
@@ -958,7 +966,8 @@ impl MirinHandler {
             // For a windowed browser, window_handle() is CEF's child HWND (a
             // descendant of our window); for a windowless (OSR) one it's the parent
             // HWND we passed — both resolve to our top-level via the root ancestor.
-            if let Some(window_id) = win::window_id_for_cef_handle(host.window_handle().0 as *mut _) {
+            if let Some(window_id) = win::window_id_for_cef_handle(host.window_handle().0 as *mut _)
+            {
                 self.window_ids.insert(browser.identifier(), window_id);
                 if osr::is_osr_window(window_id) {
                     // Windowless: register for paint/input and prime the view size.

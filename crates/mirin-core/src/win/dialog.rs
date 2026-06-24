@@ -7,8 +7,8 @@ use crate::engine::dialog::DialogSpec;
 
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::UI::Controls::Dialogs::{
-    GetOpenFileNameW, GetSaveFileNameW, OPENFILENAMEW, OFN_ALLOWMULTISELECT, OFN_EXPLORER,
-    OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
+    GetOpenFileNameW, GetSaveFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST,
+    OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
 use windows_sys::Win32::UI::Shell::{
     SHBrowseForFolderW, SHGetPathFromIDListW, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
@@ -48,7 +48,14 @@ pub fn message(spec: &DialogSpec) -> i64 {
     let text_w = wide(&text);
     let title_w = wide(spec.title.as_deref().unwrap_or(""));
     // SAFETY: foreground owner + NUL-terminated wide strings that outlive the call.
-    let result = unsafe { MessageBoxW(GetForegroundWindow(), text_w.as_ptr(), title_w.as_ptr(), style) };
+    let result = unsafe {
+        MessageBoxW(
+            GetForegroundWindow(),
+            text_w.as_ptr(),
+            title_w.as_ptr(),
+            style,
+        )
+    };
 
     match result {
         IDOK | IDYES => 0,
