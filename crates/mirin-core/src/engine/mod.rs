@@ -249,6 +249,9 @@ pub fn poll_event() -> *const c_char {
 /// Run the browser process: load CEF, init, message loop, shutdown. Called on
 /// the process main thread (the FFI `mirin_run`, or the m1-smoke binary). Does
 /// not return until the app quits.
+// `config` is mutated only under `#[cfg(windows)]` (per-instance cache path); on
+// other targets the `mut` is correctly unused.
+#[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
 pub fn run_core(mut config: CoreConfig) -> i32 {
     IS_DEV.store(config.dev, Ordering::Relaxed);
     // Per-Monitor-v2 DPI awareness + an explicit AppUserModelID (so the taskbar
@@ -345,13 +348,11 @@ pub fn run_core(mut config: CoreConfig) -> i32 {
     // Debug hook: quit programmatically after N ms. Lets CI/smoke runs exercise the
     // full graceful-close path (close_all_browsers → on_before_close →
     // quit_message_loop → shutdown) without a human clicking the close button.
-    if let Ok(ms) = std::env::var("MIRIN_AUTOQUIT_MS").map(|s| s.parse::<u64>()) {
-        if let Ok(ms) = ms {
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(ms));
-                quit();
-            });
-        }
+    if let Ok(Ok(ms)) = std::env::var("MIRIN_AUTOQUIT_MS").map(|s| s.parse::<u64>()) {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            quit();
+        });
     }
 
     run_message_loop();
