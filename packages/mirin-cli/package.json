@@ -1,6 +1,6 @@
 {
   "name": "@mirinjs/cli",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "description": "CLI for mirin apps: dev, build, init.",
   "type": "module",
   "license": "MIT",
@@ -27,12 +27,12 @@
     "bun": ">=1.2.0"
   },
   "dependencies": {
-    "create-mirinjs": "0.1.0-alpha.9",
-    "mirinjs": "0.1.0-alpha.9"
+    "create-mirinjs": "0.1.0-alpha.10",
+    "mirinjs": "0.1.0-alpha.10"
   },
   "optionalDependencies": {
-    "@mirinjs/darwin-arm64": "0.1.0-alpha.9",
-    "@mirinjs/win32-x64": "0.1.0-alpha.9"
+    "@mirinjs/darwin-arm64": "0.1.0-alpha.10",
+    "@mirinjs/win32-x64": "0.1.0-alpha.10"
   },
   "publishConfig": {
     "access": "public"
