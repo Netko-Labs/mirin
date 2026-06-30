@@ -702,6 +702,19 @@ pub unsafe fn make_view_autoresizing(view: *mut std::ffi::c_void) {
     const NS_VIEW_HEIGHT_SIZABLE: u64 = 16;
     let view = view as *mut AnyObject;
     if let Some(view) = view.as_ref() {
+        // Snap the view to its parent's current bounds before enabling autoresize.
+        // CEF sizes the browser view to the bounds we passed at creation, but a
+        // resize that landed before this runs — e.g. a programmatic `maximize()`
+        // fired right after the window opened, while CEF was still creating the
+        // browser — would otherwise leave the view anchored at its old, smaller
+        // frame, exposing the window background as a gap (typically along the top).
+        // Snapping to the superview's current bounds corrects any such race; the
+        // mask then keeps the view filled for every later resize.
+        let superview: *mut AnyObject = msg_send![view, superview];
+        if let Some(superview) = superview.as_ref() {
+            let bounds: NSRect = msg_send![superview, bounds];
+            let _: () = msg_send![view, setFrame: bounds];
+        }
         let _: () =
             msg_send![view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
     }
