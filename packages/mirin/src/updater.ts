@@ -29,6 +29,8 @@ import { runtime } from "./runtime.ts";
 import { loadCodec } from "./codec.ts";
 
 const IS_WINDOWS = process.platform === "win32";
+const IS_LINUX = process.platform === "linux";
+const IS_MAC = process.platform === "darwin";
 
 export type UpdaterStatus =
   | "idle"
@@ -118,7 +120,7 @@ export class Updater {
     if (!v) return null;
     this.#setStatus("checking");
     try {
-      const url = `${v.baseUrl.replace(/\/$/, "")}/${this.#prefix()}-update.json?t=${Date.now()}`;
+      const url = `${this.#baseUrl(v)}/${this.#prefix()}-update.json?t=${Date.now()}`;
       const res = await fetch(url, { redirect: "follow" });
       if (!res.ok) throw new Error(`manifest ${res.status}`);
       const m = (await res.json()) as Manifest;
@@ -156,7 +158,7 @@ export class Updater {
       rmSync(work, { recursive: true, force: true });
       mkdirSync(work, { recursive: true });
 
-      const base = v.baseUrl.replace(/\/$/, "");
+      const base = this.#baseUrl(v);
       const newTar = join(work, "new.tar");
       const cachedTar = join(tarsDir, `${v.version}.tar`);
       const patch = m.patches?.find((p) => p.fromVersion === v.version);
@@ -187,11 +189,12 @@ export class Updater {
       rmSync(keepTar, { force: true });
       renameSync(newTar, keepTar);
       await $`tar -xf ${keepTar} -C ${work}`.quiet();
-      // The packaged unit: a flat app folder on Windows, an `.app` on macOS.
-      const staged = join(work, IS_WINDOWS ? v.name : `${v.name}.app`);
+      // The packaged unit: a flat app folder on Windows/Linux, an `.app` on macOS.
+      const staged = join(work, IS_WINDOWS || IS_LINUX ? v.name : `${v.name}.app`);
       if (!existsSync(staged)) throw new Error(`extracted bundle not found at ${staged}`);
 
-      if (!IS_WINDOWS) {
+      // codesign is macOS-only; Windows and Linux have no equivalent step here.
+      if (IS_MAC) {
         const verify = await $`codesign --verify --deep --strict ${staged}`.quiet().nothrow();
         if (verify.exitCode !== 0)
           throw new Error("codesign verification failed on the downloaded update");
@@ -217,8 +220,9 @@ export class Updater {
     this.#setStatus("applying");
     try {
       // The running app folder: macOS `.app` is Contents/Resources/../.. ; Windows
-      // is the exe dir, i.e. resources/.. . A detached helper waits for this process
-      // to exit (the exe/bundle is locked while running), swaps the folder, relaunches.
+      // and Linux are the exe dir, i.e. resources/.. . A detached helper waits for
+      // this process to exit (the exe/bundle is locked while running), swaps the
+      // folder, relaunches.
       if (IS_WINDOWS) {
         const runningApp = join(this.#resourcesDir()!, "..");
         const name = this.#version()!.name;
@@ -274,6 +278,31 @@ export class Updater {
           stderr: "ignore",
         });
         await launcher.exited;
+      } else if (IS_LINUX) {
+        // Linux is a flat layout like Windows: the app folder is resources/.. (the
+        // exe dir), not ../.. (that's the macOS `.app`). The relaunch binary is the
+        // host executable, named after the app. A detached, new-session helper waits
+        // for the host to exit, swaps the folder, and relaunches from it.
+        const runningApp = join(this.#resourcesDir()!, "..");
+        const name = this.#version()!.name;
+        const bin = join(runningApp, name);
+        const script = [
+          `APP=${sh(runningApp)}`,
+          `NEW=${sh(this.#staged)}`,
+          `BIN=${sh(bin)}`,
+          `PID=${process.pid}`,
+          `while kill -0 "$PID" 2>/dev/null; do sleep 0.2; done`,
+          `sleep 0.3`,
+          `rm -rf "$APP"`,
+          `mv "$NEW" "$APP"`,
+          `chmod +x "$BIN" 2>/dev/null || true`,
+          `setsid "$BIN" >/dev/null 2>&1 < /dev/null &`,
+        ].join("\n");
+        Bun.spawn(["/bin/sh", "-c", script], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        }).unref();
       } else {
         const runningApp = join(this.#resourcesDir()!, "..", "..");
         const script = [
@@ -381,13 +410,24 @@ export class Updater {
   }
 
   #prefix(): string {
-    const platform = IS_WINDOWS ? "win32" : "darwin";
+    const platform = IS_WINDOWS ? "win32" : IS_LINUX ? "linux" : "darwin";
     return `${this.#version()!.channel}-${platform}-${process.arch}`;
+  }
+
+  /** The release host to poll. `MIRIN_UPDATE_BASE_URL` overrides the embedded
+   *  `baseUrl` (for local end-to-end testing against a throwaway server). */
+  #baseUrl(v: VersionInfo): string {
+    return (process.env.MIRIN_UPDATE_BASE_URL ?? v.baseUrl).replace(/\/$/, "");
   }
 
   #supportDir(v: VersionInfo): string {
     if (IS_WINDOWS) {
       const base = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+      return join(base, v.identifier, v.channel);
+    }
+    if (IS_LINUX) {
+      // XDG base dir spec: $XDG_DATA_HOME, defaulting to ~/.local/share.
+      const base = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
       return join(base, v.identifier, v.channel);
     }
     return join(homedir(), "Library", "Application Support", v.identifier, v.channel);
