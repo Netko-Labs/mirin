@@ -60,9 +60,15 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   // Load the codec (zstd/bsdiff) from the *bundled* core, not the raw build output:
   // on Windows mirin_core.dll imports libcef.dll. The DLL loader resolves imports
   // from PATH (and the loader exe's dir), not the dll's own dir, so prepend the
-  // bundle dir to PATH so libcef.dll is found. (On macOS the framework loads at
-  // runtime, so result.coreDylib works directly.)
-  const codecCore = isWindows ? join(result.app, "mirin_core.dll") : result.coreDylib;
+  // bundle dir to PATH so libcef.dll is found. On Linux libmirin_core.so has a
+  // NEEDED libcef.so (RUNPATH $ORIGIN), so load the *bundled* .so where libcef.so
+  // sits beside it — the raw native package has no libcef.so and dlopen fails.
+  // (On macOS the framework loads at runtime, so result.coreDylib works directly.)
+  const codecCore = isWindows
+    ? join(result.app, "mirin_core.dll")
+    : isLinux
+      ? join(result.app, "libmirin_core.so")
+      : result.coreDylib;
   if (isWindows) process.env.PATH = `${result.app};${process.env.PATH ?? ""}`;
   const codec = loadCodec(codecCore);
 
