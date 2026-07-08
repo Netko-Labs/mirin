@@ -157,13 +157,13 @@ mirin apps single-instance) and delivers the URL to the AppKit delegate's
 Worker surfaces as `app.on("open-url", (url) => …)` — including the URL the app was
 launched with.
 
-## 8. Windows (implemented) & Linux (forward notes)
+## 8. Windows & Linux (implemented)
 
 The host/Worker/FFI model is platform-independent — the FFI surface, CEF handlers,
 `app://` scheme, event queue, and the whole RPC/data plane are shared. Only the
-native layer (`mac/` vs `win/`) and the bundle layout differ. `win/` mirrors `mac/`
-one-concern-per-module (`window`, `menu`, `tray`, `dialog`, `clipboard`, `shortcut`);
-`engine/` routes to the platform module via `#[cfg]` arms.
+native layer (`mac/` vs `win/` vs `linux/`) and the bundle layout differ. `win/` and
+`linux/` mirror `mac/` one-concern-per-module (`window`, `menu`, `tray`, `dialog`,
+`clipboard`, `shortcut`); `engine/` routes to the platform module via `#[cfg]` arms.
 
 **Windows is CEF, windowed.** CEF creates and owns a child HWND parented to a
 mirin-owned top-level Win32 window (`WindowInfo::set_as_child`) — not the macOS
@@ -220,5 +220,56 @@ backend fails on some hybrid laptops — `MIRIN_ANGLE=gl` restores hardware acce
 **Known gaps (minor):** the updater's runtime folder-swap is implemented but not yet
 field-tested; Mica (vs acrylic) backdrop; arm64-windows.
 
-**Linux (forward notes):** CEF only, X11/Wayland via CEF's own handling; the same
-`win/`-style split would add a `linux/` module.
+**Linux is CEF, X11 (Ozone), via CEF Views.** mirin forces `--ozone-platform=x11`
+(env override `MIRIN_OZONE`); on a Wayland session the app runs under **XWayland**.
+This mirrors Electrobun and replaces an earlier Wayland-native / OSR design that was
+dropped — cosmic-comp draws server-side decorations with no CEF client-side-decoration
+lever (so a borderless custom title bar was impossible on native Wayland), and the OSR
+fallback was laggy with HiDPI scaling bugs. That OSR code was **deleted** — OSR is now
+mac/Windows only. Unlike Windows' child-HWND model or macOS' embedded NSView, the Linux
+port **owns no native toolkit window**:
+
+- **Windowing (CEF Views).** The primary window uses CEF's Views framework:
+  `window_create_top_level` owns a real X11 toplevel hosting a `BrowserView`
+  (`browser_view_create`), driven through the Views delegates in `linux/window.rs`.
+  The mirin `window_id` is stamped on the BrowserView's `View::id` and read back in the
+  shared `on_after_created` to map Browser → window. Frameless windows get a fill
+  layout (`set_to_fill_layout`) so the view tracks resize; `can_resize`/`can_maximize`/
+  `can_minimize` return true (else the WM sets fixed size hints).
+- **Window management (Xlib).** Move/resize/live-resize, maximize/fullscreen/
+  always-on-top, and the taskbar icon are driven via **Xlib** against the CEF window's
+  XID (`Window::window_handle`), using the `x11-dl` crate (dlopens `libX11` — **no
+  build-time X11 dev libs**). Move/resize use `_NET_WM_MOVERESIZE` (triggered from the
+  preload's Win32-style hit-test on mousedown); before a resize mirin **deletes
+  Chromium's `_NET_WM_SYNC_REQUEST_COUNTER`** so the compositor resizes live instead of
+  blocking on Chromium's per-frame ack (which stalls under XWayland/cosmic). Maximize/
+  fullscreen/always-on-top go through `_NET_WM_STATE`.
+- **Custom title bar** (`titleBarStyle: hidden | hiddenInset`): `WindowDelegate::
+  is_frameless` returns true → a truly borderless, GPU-rendered X11 window. The app
+  draws its own header + min/max/close (no native caption, same as Windows), wired via
+  `windowControls.{minimize,maximize,close}` (`mirin/client`) → control verbs.
+- **Taskbar / window icon + app identity.** cosmic's dock keys off an X11 window's
+  `WM_CLASS` and then an icon. A CEF Alloy Views window ships with neither, and Chromium
+  clobbers them at realization, so mirin sets **`WM_CLASS`** (`XSetClassHint`; res_class
+  = bundle id, res_name = its short name) and **`_NET_WM_ICON`** (a config PNG decoded
+  in-core with the `png` crate to ARGB cardinals; 128×128 to stay under X11's max
+  request size) and **re-asserts** both on delayed ticks (50/300/900 ms). A matching
+  `.desktop` (`StartupWMClass`) is also generated — cosmic's reliable icon path.
+- **GPU.** Forces `--ignore-gpu-blocklist --enable-gpu-rasterization
+  --disable-gpu-sandbox` — without these the GPU process couldn't reach `/dev/dri`
+  under the userns sandbox (no setuid chrome-sandbox) and Chromium fell back to
+  software/SwiftShader. Now hardware-accelerated (amdgpu/Mesa verified);
+  `MIRIN_DISABLE_GPU=1` still forces software.
+- **Init config.** `CoreConfig` gained `icon_path` (resolved app-icon PNG for
+  `_NET_WM_ICON`) and reuses `identifier` (bundle id → `WM_CLASS`); both are resolved
+  host-side and ignored on macOS/Windows (which take icon + identity from the OS
+  bundle).
+- **Bundle + distribution.** No `.app`/codesign — a flat app folder like Windows:
+  `<App>` (bun host) + `libmirin_core.so` + `mirin-helper` + the CEF runtime (libcef.so,
+  `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`), all beside the host
+  with an `$ORIGIN` rpath so `libcef.so` resolves without `LD_LIBRARY_PATH`, plus
+  `resources/{ui, worker.js, mirin.manifest.json, version.json, icon.png}`. `mirin dev`/
+  `build`/`release` branch on `process.platform` (`bundle-linux.ts`). Packaging
+  (AppImage / `.deb` / `.rpm`) is landing this release — see `docs/linux-port.md` §L5.
+
+Full status and rationale: `docs/linux-port.md`.
