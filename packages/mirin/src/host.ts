@@ -20,15 +20,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { Core } from "./native.ts";
 
 // Bundle layout differs by platform: macOS `.app` puts the host in
-// `Contents/MacOS` with resources in `../Resources`; Windows is a flat app folder
-// where the host exe sits beside `mirin_core.dll` with resources in `resources/`.
+// `Contents/MacOS` with resources in `../Resources`; Windows and Linux are flat app
+// folders where the host binary sits beside the core lib (`mirin_core.dll` /
+// `libmirin_core.so`) with resources in `resources/`.
 const isWindows = process.platform === "win32";
+const isMac = process.platform === "darwin";
 const exeDir = dirname(process.execPath);
-const resourcesDir = isWindows ? join(exeDir, "resources") : join(exeDir, "..", "Resources");
+const resourcesDir = isMac ? join(exeDir, "..", "Resources") : join(exeDir, "resources");
 
-const corePath =
-  process.env.MIRIN_CORE ??
-  join(exeDir, isWindows ? "mirin_core.dll" : "libmirin_core.dylib");
+const coreFileName = isWindows
+  ? "mirin_core.dll"
+  : isMac
+    ? "libmirin_core.dylib"
+    : "libmirin_core.so";
+const corePath = process.env.MIRIN_CORE ?? join(exeDir, coreFileName);
 const workerPath = process.env.MIRIN_WORKER ?? join(resourcesDir, "worker.js");
 // Bundled-asset dirs for sidecars (Bun.spawn binaries) and extra workers. Dev
 // overrides via env (dev.ts stages them under .mirin); prod resolves in-bundle.
@@ -54,6 +59,13 @@ const coreConfig = JSON.parse(
 if (manifest.singleInstance === false) coreConfig.single_instance = false;
 // The app's bundle id keys the per-app CEF cache dir (Windows has no OS bundle id).
 if (typeof manifest.id === "string") coreConfig.identifier = manifest.id;
+// Linux prod: the CLI stages the resolved app icon at resources/icon.png; the core
+// stamps it onto each window as `_NET_WM_ICON` (taskbar/dock). Dev supplies this via
+// MIRIN_CONFIG_JSON instead. macOS/Windows take the icon from the bundle.
+if (process.platform === "linux" && !coreConfig.icon_path) {
+  const iconPng = join(resourcesDir, "icon.png");
+  if (existsSync(iconPng)) coreConfig.icon_path = iconPng;
+}
 
 // Load the native core on the main thread FIRST. The Worker also dlopens the
 // same dylib in its boot; doing the main-thread dlopen before spawning the

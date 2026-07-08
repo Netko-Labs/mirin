@@ -90,9 +90,11 @@ export interface MirinConfig {
   /** Main-process entry, relative to the project root (runs in the Bun Worker). */
   main: string;
   /**
-   * App icon, relative to the project root (macOS). Accepts a `.icns`, a
-   * `.iconset` directory, or a single square `.png` (≥512px) that mirin renders
-   * into an `.icns`. Embedded in the bundle for the Dock and Finder.
+   * App icon, relative to the project root. Accepts a `.icns`, a `.iconset`
+   * directory, or a single square `.png` (≥512px). macOS renders it into an
+   * `.icns` embedded in the bundle for the Dock and Finder; Linux resolves a PNG
+   * and sets it as the window's `_NET_WM_ICON` (taskbar/dock); Windows uses the
+   * `.ico` for the exe and window.
    */
   icon?: string;
   /**
@@ -126,6 +128,15 @@ export interface MirinConfig {
    * Requires `iscc` (Inno Setup 6+) on the build machine.
    */
   inno?: boolean | InnoConfig;
+  /**
+   * Linux distributable packages produced by `mirin release` (and by `mirin build`
+   * when packaging is requested): an **AppImage** (single-file, run-anywhere), a
+   * **.deb** (Debian/Ubuntu), and an **.rpm** (Fedora/RHEL/openSUSE). `true`/omitted
+   * builds all three with sensible defaults; an object customizes them (which
+   * `formats`, maintainer, runtime `depends`, …); `false` disables Linux packaging.
+   * Requires `fpm` (deb + rpm) and `appimagetool` (AppImage) on the build machine.
+   */
+  linux?: boolean | LinuxConfig;
   /**
    * External binaries bundled into the `.app` and spawned at runtime with
    * `app.sidecar(name)`. Maps a logical name to a path (relative to the project
@@ -251,6 +262,45 @@ export interface NsisConfig {
  * installerIcon, and a raw `include` injected as `.iss` instead of NSIS script).
  */
 export type InnoConfig = NsisConfig;
+
+/** A Linux distributable package format `mirin` can emit. */
+export type LinuxPackageFormat = "appimage" | "deb" | "rpm";
+
+/**
+ * Linux packaging options. Every format ships the same relocatable app payload
+ * (host binary + libcef.so + the CEF runtime + `resources/`) under a single
+ * prefix, with a launcher and a freedesktop `.desktop` entry + hicolor icon.
+ */
+export interface LinuxConfig {
+  /** Which package formats to emit. Default: all three (`appimage`, `deb`, `rpm`). */
+  formats?: LinuxPackageFormat[];
+  /**
+   * The `/usr/bin` launcher command name and the deb/rpm package name. Defaults to
+   * the last dot-segment of the app `id` (e.g. `dev.netko.anko` → `anko`),
+   * lowercased and sanitized to a valid package name.
+   */
+  binName?: string;
+  /** Package maintainer for deb/rpm (`"Name <email>"`). Defaults to `publisher`. */
+  maintainer?: string;
+  /** One-line package description / `.desktop` `Comment`. Defaults to the app name. */
+  description?: string;
+  /** License identifier for deb/rpm metadata (e.g. `"MIT"`). Omitted when unset. */
+  license?: string;
+  /** Homepage URL for deb/rpm metadata. Omitted when unset. */
+  homepage?: string;
+  /** Freedesktop `.desktop` category (e.g. `"Development"`). Default `"Utility"`. */
+  category?: string;
+  /**
+   * Debian runtime dependency package names, replacing the built-in CEF/GTK
+   * defaults (`libgtk-3-0`, `libnss3`, `libasound2`, …). Advanced.
+   */
+  debDepends?: string[];
+  /**
+   * RPM runtime dependency package names, replacing the built-in CEF/GTK defaults
+   * (`gtk3`, `nss`, `alsa-lib`, …). Advanced.
+   */
+  rpmDepends?: string[];
+}
 
 export interface ReleaseConfig {
   /** Flat directory URL hosting `{channel}-{platform}-{arch}-*` update files. */

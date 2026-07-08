@@ -53,6 +53,8 @@ export type {
   DmgConfig,
   NsisConfig,
   InnoConfig,
+  LinuxConfig,
+  LinuxPackageFormat,
   SidecarSpec,
   SidecarEntitlement,
 } from "./config.ts";

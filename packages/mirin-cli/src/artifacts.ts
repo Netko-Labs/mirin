@@ -67,7 +67,9 @@ export async function resolveArtifacts(opts: { release: boolean }): Promise<Arti
 
 /** The native core library file name for the host platform (MSVC has no `lib` prefix). */
 function coreFileName(): string {
-  return process.platform === "win32" ? "mirin_core.dll" : "libmirin_core.dylib";
+  if (process.platform === "win32") return "mirin_core.dll";
+  if (process.platform === "linux") return "libmirin_core.so";
+  return "libmirin_core.dylib";
 }
 
 /** The CEF subprocess binary name for the host platform. */
@@ -78,10 +80,12 @@ function helperFileName(): string {
 function assertSupportedPlatform(): void {
   const supported =
     (process.platform === "darwin" && process.arch === "arm64") ||
-    (process.platform === "win32" && process.arch === "x64");
+    (process.platform === "win32" && process.arch === "x64") ||
+    (process.platform === "linux" && process.arch === "x64");
   if (!supported) {
     throw new Error(
-      `mirin alpha supports macOS arm64 and Windows x64 (got ${process.platform}/${process.arch}).`,
+      `mirin alpha supports macOS arm64, Windows x64, and Linux x64 ` +
+        `(got ${process.platform}/${process.arch}).`,
     );
   }
 }
@@ -113,9 +117,12 @@ function cliVersion(): string {
 }
 
 /** A file/dir that, if present in a CEF dir, means the distribution is unpacked.
- *  macOS ships the framework bundle; Windows ships a flat dir with libcef.dll. */
+ *  macOS ships the framework bundle; Windows ships a flat dir with libcef.dll;
+ *  Linux ships a flat dir with libcef.so. */
 function cefMarker(): string {
-  return process.platform === "win32" ? "libcef.dll" : "Chromium Embedded Framework.framework";
+  if (process.platform === "win32") return "libcef.dll";
+  if (process.platform === "linux") return "libcef.so";
+  return "Chromium Embedded Framework.framework";
 }
 
 async function ensureCef(): Promise<string> {

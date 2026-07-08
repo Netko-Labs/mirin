@@ -9,14 +9,22 @@
  */
 
 import { $ } from "bun";
-import { mkdirSync, rmSync, symlinkSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, existsSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
 import { buildWindowsBundle } from "./bundle-win.ts";
+import {
+  buildLinuxBundle,
+  resolveLinuxIconPng,
+  resolveLinuxDesktopIconPng,
+  desktopEntry,
+} from "./bundle-linux.ts";
+import { homedir } from "node:os";
 import { resolveArtifacts } from "./artifacts.ts";
 
 const IS_WINDOWS = process.platform === "win32";
+const IS_LINUX = process.platform === "linux";
 import { sweepBuildTemps } from "./temps.ts";
 import { normalizeSidecars, compileWorkers } from "./extras.ts";
 
@@ -36,6 +44,11 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   const appName: string = config.name ?? "Mirin App";
   const bundleId: string = config.id ?? "dev.mirin.app";
   const mainEntry = join(projectDir, config.main ?? "main/main.ts");
+  const iconSrc = config.icon ? join(projectDir, config.icon) : undefined;
+  // Linux: resolve the app icon to a concrete PNG the core stamps onto the window
+  // as `_NET_WM_ICON` (cosmic dock/taskbar). Passed straight through in dev — no
+  // bundling; the file is read from the project at window-create time.
+  const linuxIconPng = IS_LINUX && iconSrc ? resolveLinuxIconPng(iconSrc) : undefined;
 
   // --- native artifacts ---
   const artifacts = await resolveArtifacts({ release: false });
@@ -61,7 +74,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     else console.warn(`[mirin dev] sidecar "${sc.name}" not found: ${sc.src}`);
   }
 
-  // --- assemble the dev bundle (Windows app folder, or macOS .app) ---
+  // --- assemble the dev bundle (Windows/Linux app folder, or macOS .app) ---
   console.log("[mirin dev] assembling dev bundle…");
   const { app, exe } = IS_WINDOWS
     ? await buildWindowsBundle({
@@ -71,7 +84,17 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
         coreDll: artifacts.coreDylib,
         helperExe: artifacts.helperBin,
         cefPath: artifacts.cefPath,
-        icon: config.icon ? join(projectDir, config.icon) : undefined,
+        icon: iconSrc,
+      })
+    : IS_LINUX
+    ? await buildLinuxBundle({
+        appName,
+        outDir: work,
+        hostExe,
+        coreDll: artifacts.coreDylib,
+        helperExe: artifacts.helperBin,
+        cefPath: artifacts.cefPath,
+        icon: iconSrc,
       })
     : await buildAppBundle({
         appName,
@@ -81,19 +104,41 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
         coreDylib: artifacts.coreDylib,
         helperBin: artifacts.helperBin,
         cefPath: artifacts.cefPath,
-        icon: config.icon ? join(projectDir, config.icon) : undefined,
+        icon: iconSrc,
         urlSchemes: config.urlSchemes,
       });
+
+  // Linux: install a dev `.desktop` entry so cosmic's dock can resolve the app's
+  // icon. cosmic matches a running X11 window's `WM_CLASS` (which the core sets to
+  // the bundle id) against `StartupWMClass`, then shows that entry's `Icon`. Written
+  // to the per-user applications dir; harmless on other DEs.
+  if (IS_LINUX && iconSrc) {
+    const desktopIcon = resolveLinuxDesktopIconPng(iconSrc);
+    if (desktopIcon) {
+      const appsDir = join(homedir(), ".local", "share", "applications");
+      mkdirSync(appsDir, { recursive: true });
+      writeFileSync(
+        join(appsDir, `${bundleId}.desktop`),
+        desktopEntry({ name: appName, exec: exe, iconPng: desktopIcon, wmClass: bundleId }),
+      );
+    }
+  }
 
   // --- start Vite on a free port so concurrent dev sessions don't collide ---
   // `--port <free> --strictPort` pins Vite to the port we probed (overriding any
   // port/strictPort in the app's vite.config) and passes the real URL to the app,
   // so the host and Vite never disagree about which port is in use.
+  //
+  // Bind + address on 127.0.0.1 (IPv4), NOT "localhost": on hosts where Vite binds
+  // IPv6-only (`[::1]`) while Chromium resolves `localhost` to IPv4 (common on
+  // Linux), the webview's page load is refused and the window stays blank. Pinning
+  // both sides to 127.0.0.1 avoids the family mismatch (and matches the loopback
+  // RPC server). `--host 127.0.0.1` forces Vite's bind.
   const port = await findFreePort(DEV_PORT_BASE);
-  const devUrl = `http://localhost:${port}`;
+  const devUrl = `http://127.0.0.1:${port}`;
   console.log(`[mirin dev] starting Vite dev server on ${devUrl}…`);
   const vite = Bun.spawn(
-    ["bunx", "vite", "--clearScreen", "false", "--port", String(port), "--strictPort"],
+    ["bunx", "vite", "--clearScreen", "false", "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
     {
       cwd: projectDir,
       stdio: ["ignore", "inherit", "inherit"],
@@ -109,13 +154,24 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       ...process.env,
       MIRIN_CORE: IS_WINDOWS
         ? join(app, "mirin_core.dll")
+        : IS_LINUX
+        ? join(app, "libmirin_core.so")
         : join(app, "Contents", "MacOS", "libmirin_core.dylib"),
+      // Linux: the flat app dir holds libcef.so + libmirin_core.so; put it on the
+      // loader path so the host's dlopen and libmirin_core's NEEDED libcef.so (and
+      // the spawned mirin-helper) all resolve. (macOS uses the framework loader;
+      // Windows the exe-dir search — neither needs this.)
+      ...(IS_LINUX ? { LD_LIBRARY_PATH: `${app}${process.env.LD_LIBRARY_PATH ? ":" + process.env.LD_LIBRARY_PATH : ""}` } : {}),
       MIRIN_WORKER: workerJs,
       MIRIN_DEV_URL: devUrl,
       MIRIN_MANIFEST_JSON: JSON.stringify({ id: bundleId, windows: config.windows }),
       // dev: true → enables inspect-element AND gives this run its own `-dev`
       // CEF cache dir, so `mirin dev` can run alongside the installed app.
-      MIRIN_CONFIG_JSON: JSON.stringify({ dev: true }),
+      // `icon_path` (Linux) → the window's `_NET_WM_ICON` (cosmic dock/taskbar).
+      MIRIN_CONFIG_JSON: JSON.stringify({
+        dev: true,
+        ...(linuxIconPng ? { icon_path: linuxIconPng } : {}),
+      }),
       MIRIN_SIDECAR_DIR: sidecarsDir,
       MIRIN_WORKERS_DIR: workersDir,
     },

@@ -18,12 +18,13 @@
 
 import { $ } from "bun";
 import { mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { build } from "./build.ts";
 import { buildDmg, notarizeAndStaple, type DmgOptions } from "./dmg.ts";
 import { buildNsisInstaller, hasMakensis } from "./installer-win.ts";
 import { buildInnoInstaller, hasInno } from "./installer-inno.ts";
+import { buildLinuxPackages, resolveLinuxFormats } from "./package-linux.ts";
 import { loadCodec } from "mirinjs/codec";
 
 const sha256File = (path: string) =>
@@ -37,13 +38,14 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   }
 
   const isWindows = process.platform === "win32";
-  const platform = isWindows ? "win32" : "darwin";
+  const isLinux = process.platform === "linux";
+  const platform = isWindows ? "win32" : isLinux ? "linux" : "darwin";
   const arch = process.arch; // "arm64" | "x64"
   const prefix = `${result.channel}-${platform}-${arch}`;
   const safeName = result.appName.replace(/[^A-Za-z0-9._-]/g, "");
   const base = result.baseUrl.replace(/\/$/, "");
-  // The packaged unit: a flat app folder on Windows, an `.app` bundle on macOS.
-  const appArtifact = isWindows ? result.appName : `${result.appName}.app`;
+  // The packaged unit: a flat app folder on Windows/Linux, an `.app` bundle on macOS.
+  const appArtifact = isWindows || isLinux ? result.appName : `${result.appName}.app`;
 
   const buildDir = join(projectDir, "build");
   const outDir = join(buildDir, "release");
@@ -53,7 +55,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   // Notarize + staple the .app (Developer ID, macOS) before packing, when
   // credentials are present. The .tar.zst / patch updater bundles are made from
   // this signed, stapled .app, so the updater swaps in an already-notarized app.
-  if (!isWindows) await notarizeAndStaple(result.app);
+  if (!isWindows && !isLinux) await notarizeAndStaple(result.app);
 
   // Load the codec (zstd/bsdiff) from the *bundled* core, not the raw build output:
   // on Windows mirin_core.dll imports libcef.dll. The DLL loader resolves imports
@@ -178,6 +180,42 @@ export async function release(projectDir = process.cwd()): Promise<number> {
       // bsdtar (Windows `tar`) creates a .zip from the extension with `-a`.
       await $`tar -a -cf ${zipPath} -C ${buildDir} ${appArtifact}`;
       installerSize = readFileSync(zipPath).byteLength;
+    }
+  } else if (isLinux) {
+    // Linux: the first-install convenience is a set of distributable packages
+    // (AppImage + .deb + .rpm), the analog of the macOS .dmg / Windows installer.
+    // Never fail the whole release over a packaging step — warn and ship the rest.
+    if (result.linux !== false) {
+      try {
+        const formats = resolveLinuxFormats(result.linux);
+        console.log(`[mirin release] building Linux packages (${formats.join(", ")})…`);
+        const pkgs = await buildLinuxPackages({
+          appDir: result.app,
+          appName: result.appName,
+          bundleId: result.bundleId,
+          version: result.version,
+          publisher: result.publisher,
+          outDir,
+          projectDir: result.projectDir,
+          icon: result.icon,
+          options: typeof result.linux === "object" ? result.linux : {},
+          formats,
+        });
+        // The AppImage doubles as the primary "installer" line in the summary.
+        const appImage = pkgs.find((p) => p.format === "appimage") ?? pkgs[0];
+        if (appImage) {
+          installerName = basename(appImage.path);
+          installerSize = appImage.size;
+        }
+        for (const p of pkgs) {
+          if (p !== appImage) console.log(`  ${basename(p.path)} (${(p.size / 1e6).toFixed(1)} MB)`);
+        }
+      } catch (e) {
+        console.warn(
+          `\n[mirin release] ⚠️  Linux packaging failed: ${e instanceof Error ? e.message : e}\n` +
+            `[mirin release] shipping the updater bundle + manifest WITHOUT packages.\n`,
+        );
+      }
     }
   } else if (result.dmg !== false) {
     // The DMG is the first-install convenience; the updater bundle + manifest (the

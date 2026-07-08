@@ -8,16 +8,53 @@ import { dev } from "./dev.ts";
 import { build } from "./build.ts";
 import { release } from "./release.ts";
 import { scaffold } from "create-mirinjs";
+import type { LinuxPackageFormat } from "mirinjs";
 
-const [command, arg] = Bun.argv.slice(2);
+/** Minimal flag parser: `--k=v`, `--k v`, and boolean `--k`; the rest are positionals. */
+function parseArgs(argv: string[]): { positionals: string[]; opts: Record<string, string | boolean> } {
+  const opts: Record<string, string | boolean> = {};
+  const positionals: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === undefined) continue;
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      if (eq >= 0) {
+        opts[a.slice(2, eq)] = a.slice(eq + 1);
+      } else {
+        const key = a.slice(2);
+        const next = argv[i + 1];
+        if (next !== undefined && !next.startsWith("--")) {
+          opts[key] = next;
+          i++;
+        } else {
+          opts[key] = true;
+        }
+      }
+    } else {
+      positionals.push(a);
+    }
+  }
+  return { positionals, opts };
+}
+
+const [command, ...rest] = Bun.argv.slice(2);
+const { positionals, opts } = parseArgs(rest);
+const arg = positionals[0];
 
 const USAGE = `mirin — build desktop apps with Bun + Chromium
 
 Usage:
   mirin dev          run the app against the Vite dev server (HMR + typed RPC)
-  mirin build        package a standalone, signed .app (output: ./build)
+  mirin build        package a standalone app (output: ./build)
   mirin release      build + emit update artifacts (output: ./build/release)
   mirin init [dir]   scaffold a new app
+
+Options (build):
+  --version <v>              override the app version (else package.json)
+  --linux                    also emit Linux packages (AppImage + .deb + .rpm)
+  --linux-target <a,b,…>     restrict Linux packaging to these formats
+                             (appimage,deb,rpm) — implies --linux
 `;
 
 switch (command) {
@@ -26,7 +63,13 @@ switch (command) {
     break;
   }
   case "build": {
-    await build();
+    const version = typeof opts.version === "string" ? opts.version : undefined;
+    const target = typeof opts["linux-target"] === "string" ? opts["linux-target"] : undefined;
+    const linuxFormats = target
+      ? (target.split(",").map((s) => s.trim()).filter(Boolean) as LinuxPackageFormat[])
+      : undefined;
+    const packageLinux = opts.linux === true || linuxFormats != null;
+    await build(process.cwd(), { version, packageLinux, linuxFormats });
     process.exit(0);
     break;
   }

@@ -20,6 +20,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use crate::mac;
 #[cfg(target_os = "windows")]
 use crate::win;
+#[cfg(target_os = "linux")]
+use crate::linux;
 
 pub mod clipboard;
 pub mod codec;
@@ -55,6 +57,12 @@ pub struct CoreConfig {
     pub subprocess_path: String,
     /// If set, serve `app://` from this dir (production builds; empty in dev).
     pub resources_path: String,
+    /// If set, a concrete square PNG used as the app icon. On Linux it becomes the
+    /// window's `_NET_WM_ICON` (taskbar/dock); macOS/Windows take the icon from the
+    /// bundle, so it's ignored there. The host resolves the app config's `icon`
+    /// (`.png`/`.iconset`) to a usable PNG before passing it.
+    #[serde(default)]
+    pub icon_path: String,
     /// If set, open a window with this URL at startup (Bun-less m1-smoke test).
     pub startup_url: Option<String>,
     /// Development run (`mirin dev`): enables web-inspector context-menu items.
@@ -309,6 +317,8 @@ pub fn run_core(mut config: CoreConfig) -> i32 {
 
     STARTUP_URL.with(|u| *u.borrow_mut() = config.startup_url.clone());
     RESOURCES_PATH.with(|p| *p.borrow_mut() = config.resources_path.clone());
+    ICON_PATH.with(|p| *p.borrow_mut() = config.icon_path.clone());
+    IDENTIFIER.with(|p| *p.borrow_mut() = config.identifier.clone());
 
     let mut app = MirinApp::new(RefCell::new(None));
     let mut settings = Settings {
@@ -369,11 +379,12 @@ fn load_cef() -> Library {
     loader
 }
 
-/// Windows: libcef.dll is bound at load time via cef-dll-sys's import library and
-/// resolved by the OS loader from the host-exe directory (where the dev bundle /
-/// `mirin build` place it). No runtime framework loader exists; we only prime the
-/// API hash so the cef crate's version negotiation matches the linked libcef.
-#[cfg(target_os = "windows")]
+/// Windows/Linux: libcef is bound at load time via cef-dll-sys's import library and
+/// resolved by the OS loader from the host-exe directory (Windows) or the library
+/// search path / rpath (Linux `libcef.so`), where the dev bundle / `mirin build`
+/// place it. No runtime framework loader exists; we only prime the API hash so the
+/// cef crate's version negotiation matches the linked libcef.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn load_cef() -> Library {
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 }
@@ -449,6 +460,18 @@ fn default_cache_dir(dev: bool, identifier: &str) -> String {
             .unwrap_or_else(|_| "C:\\Temp".into());
         format!("{base}\\mirin\\{id}{suffix}\\cache")
     }
+    #[cfg(target_os = "linux")]
+    {
+        // Per-user writable cache under $XDG_CACHE_HOME (default ~/.cache) — the
+        // freedesktop analogue of ~/Library/Application Support. Keyed per-app to
+        // avoid CEF singleton-lock collisions between distinct mirin apps and
+        // dev-vs-installed runs.
+        let base = std::env::var("XDG_CACHE_HOME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            format!("{home}/.cache")
+        });
+        format!("{base}/mirin/{id}{suffix}/cache")
+    }
 }
 
 /// The running app's bundle identifier (e.g. "dev.netko.anko"), sanitized to a
@@ -494,6 +517,15 @@ fn derive_subprocess_path() -> Option<String> {
     Some(helper.to_str()?.to_string())
 }
 
+/// Linux: the CEF subprocess is `mirin-helper`, placed next to the host binary by
+/// the dev bundle / `mirin build`.
+#[cfg(target_os = "linux")]
+fn derive_subprocess_path() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let helper = exe.parent()?.join("mirin-helper");
+    Some(helper.to_str()?.to_string())
+}
+
 // ---- commands (callable from the Bun Worker thread; post to the UI thread) ----
 
 thread_local! {
@@ -504,6 +536,32 @@ thread_local! {
     static STARTUP_URL: RefCell<Option<String>> = const { RefCell::new(None) };
     /// Resources dir for the app:// scheme, read at context init.
     static RESOURCES_PATH: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Concrete app-icon PNG path, read at context init (Linux `_NET_WM_ICON`).
+    static ICON_PATH: RefCell<String> = const { RefCell::new(String::new()) };
+    /// App bundle id (e.g. "dev.netko.anko"), read at context init. Linux derives
+    /// the window `WM_CLASS` from it so cosmic can identify/group the app.
+    static IDENTIFIER: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// The app-icon PNG path from the init config (empty if none). Read on the UI
+/// thread when creating a window to set the Linux taskbar/dock icon.
+#[cfg(target_os = "linux")]
+pub fn icon_path() -> String {
+    ICON_PATH.with(|p| p.borrow().clone())
+}
+
+/// The window `WM_CLASS` (`res_name`, `res_class`) derived from the app's bundle
+/// id — `res_class` is the id itself (the reverse-DNS app-id cosmic matches to a
+/// desktop entry), `res_name` its lowercased last segment (e.g. "anko"). `None`
+/// when no id is configured. Read on the UI thread when creating a window.
+#[cfg(target_os = "linux")]
+pub fn wm_class() -> Option<(String, String)> {
+    let id = IDENTIFIER.with(|p| p.borrow().clone());
+    if id.is_empty() {
+        return None;
+    }
+    let res_name = id.rsplit('.').next().unwrap_or(&id).to_lowercase();
+    Some((res_name, id))
 }
 
 /// Allocate a window id and request creation on the UI thread. Returns the id
@@ -574,12 +632,12 @@ pub fn window_set_position(id: u32, x: f64, y: f64) {
 /// point is in a draggable title-bar region. macOS drags via its title-bar overlay,
 /// so this is Windows-only.
 pub fn window_maybe_start_drag(id: u32, x: i32, y: i32, detail: i32, ht: i32) {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let mut task = WindowMaybeStartDragTask::new(id, x, y, detail, ht);
         post_task(ThreadId::UI, Some(&mut task));
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     let _ = (id, x, y, detail, ht);
 }
 
@@ -604,6 +662,8 @@ fn material_opts(m: &WindowMaterial) -> mac::osr::MaterialOpts {
 }
 
 /// Parse a CSS hex color (#RGB, #RRGGBB, #RRGGBBAA) into sRGB rgba in 0..1.
+/// Only the mac/win material (OSR) paths consume this; Linux has no material yet.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn parse_hex_rgba(hex: &str) -> Option<[f64; 4]> {
     let h = hex.strip_prefix('#').unwrap_or(hex);
     let byte = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
@@ -793,6 +853,76 @@ fn create_window_on_ui(id: u32, opts: WindowOpts) {
     );
 }
 
+/// Linux (X11/Ozone): create the window via the CEF **Views** framework. The Linux
+/// port doesn't own a native toolkit window — CEF owns a real X11 toplevel
+/// (`window_create_top_level`) hosting a `BrowserView` (`browser_view_create`) —
+/// see `linux/window.rs`. The BrowserView is tagged with the window id so
+/// `on_after_created` can map the Browser back to its window; the shared
+/// LifeSpanHandler + RPC extra_info are identical to the other platforms.
+#[cfg(target_os = "linux")]
+fn create_window_on_ui(id: u32, opts: WindowOpts) {
+    let mut client = CLIENT.with(|c| c.borrow().clone());
+
+    let mut extra_info = dictionary_value_create();
+    if let Some(dict) = extra_info.as_mut() {
+        dict.set_int(
+            Some(&CefString::from("rpcPort")),
+            RPC_PORT.load(Ordering::SeqCst) as i32,
+        );
+        let token = RPC_TOKEN.lock().expect("rpc token").clone();
+        dict.set_string(
+            Some(&CefString::from("rpcToken")),
+            Some(&CefString::from(token.as_str())),
+        );
+        dict.set_int(Some(&CefString::from("windowId")), id as i32);
+    }
+
+    let url = CefString::from(opts.url.as_str());
+
+    // On X11 (the default, incl. XWayland — Electrobun's approach) a *windowed* CEF
+    // Views browser is truly borderless via the WM's frameless hints (`is_frameless`),
+    // GPU-rendered, with native input/IME/HiDPI. So all windows — frameless included —
+    // use the Views path. (`transparent: true` is not yet supported on Linux: a
+    // windowed browser is always opaque; it would need OSR, which we dropped.)
+    let browser_settings = BrowserSettings {
+        background_color: 0xFF_FF_FF_FF,
+        ..Default::default()
+    };
+
+    // Create the BrowserView, then tag it with the window id.
+    let mut bv_delegate = linux::MirinBrowserViewDelegate::new();
+    let browser_view = browser_view_create(
+        client.as_mut(),
+        Some(&url),
+        Some(&browser_settings),
+        extra_info.as_mut(),
+        None,
+        Some(&mut bv_delegate),
+    );
+    if let Some(bv) = browser_view.as_ref() {
+        linux::tag_browser_view(bv, id);
+    }
+
+    // Custom title bar: "hidden"/"hiddenInset" → a frameless Views window the app
+    // decorates itself (macOS's traffic-light inset has no X11 analogue, so both
+    // map to plain frameless). Absent → standard native decorations.
+    let frameless = matches!(opts.title_bar_style.as_deref(), Some("hidden") | Some("hiddenInset"));
+
+    // Create the top-level Window; it attaches the browser view and shows itself.
+    let mut win_delegate = linux::MirinWindowDelegate::new(
+        RefCell::new(browser_view),
+        opts.title.clone(),
+        opts.width as i32,
+        opts.height as i32,
+        opts.visible,
+        opts.always_on_top,
+        frameless,
+    );
+    if let Some(window) = window_create_top_level(Some(&mut win_delegate)) {
+        linux::register_window(id, window);
+    }
+}
+
 // ---- app + handlers ----
 
 wrap_app! {
@@ -849,6 +979,39 @@ wrap_app! {
                         Some(&CefString::from(angle.as_str())),
                     );
                 }
+                // Linux forces CEF's Ozone X11 backend (docs/linux-port.md); on a
+                // Wayland session this runs under XWayland. Passed to every child
+                // process by CEF. `MIRIN_OZONE` overrides (e.g. to experiment with
+                // native Wayland).
+                #[cfg(target_os = "linux")]
+                {
+                    // Default to X11 (Electrobun's approach): under XWayland a *windowed*
+                    // CEF Views browser can be truly borderless via the WM's frameless
+                    // hints (`is_frameless`), with GPU rendering and native input/IME/
+                    // HiDPI — none of which the native-Wayland path could do without OSR,
+                    // which was laggy and had HiDPI scaling bugs, so it was dropped.
+                    // See docs/linux-port.md.
+                    let ozone = std::env::var("MIRIN_OZONE").ok();
+                    let platform = ozone.as_deref().filter(|s| !s.is_empty()).unwrap_or("x11");
+                    command_line.append_switch_with_value(
+                        Some(&CefString::from("ozone-platform")),
+                        Some(&CefString::from(platform)),
+                    );
+                    // Force hardware GPU. Chromium blocklists many Linux GPUs (esp.
+                    // AMD/Intel iGPUs under XWayland) and falls back to software
+                    // (SwiftShader) — which makes windowed rendering, and interactive
+                    // resize especially, lag badly. Ignore the blocklist + enable GPU
+                    // rasterization so the GPU process comes up. (MIRIN_DISABLE_GPU
+                    // still forces software; see should_disable_gpu.)
+                    command_line.append_switch(Some(&CefString::from("ignore-gpu-blocklist")));
+                    command_line.append_switch(Some(&CefString::from("enable-gpu-rasterization")));
+                    // The GPU process runs sandboxed, but mirin ships no setuid
+                    // chrome-sandbox (it relies on the userns sandbox), under which the
+                    // GPU process often can't reach /dev/dri and dies → software
+                    // fallback. Dropping just the GPU sandbox lets it use the GPU while
+                    // the renderer/other processes stay sandboxed.
+                    command_line.append_switch(Some(&CefString::from("disable-gpu-sandbox")));
+                }
             }
         }
 
@@ -886,7 +1049,7 @@ wrap_browser_process_handler! {
             emit_event(r#"{"type":"core.ready"}"#);
 
             // m1-smoke (Bun-less) path: open the startup window directly.
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             if let Some(url) = STARTUP_URL.with(|u| u.borrow().clone()) {
                 let id = NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed);
                 let mut opts = WindowOpts::startup(url);
@@ -980,6 +1143,17 @@ impl MirinHandler {
             }
         }
 
+        // Linux (Views): the browser lives in a BrowserView tagged with the window id
+        // (create_window_on_ui). Map it back via that tag.
+        #[cfg(target_os = "linux")]
+        {
+            let mut b = browser.clone();
+            if let Some(window_id) = linux::window_id_for_browser(&mut b) {
+                self.window_ids.insert(browser.identifier(), window_id);
+                emit_event(&format!(r#"{{"type":"window.created","id":{window_id}}}"#));
+            }
+        }
+
         self.browser_list.push(browser);
     }
 
@@ -988,6 +1162,12 @@ impl MirinHandler {
         if self.browser_list.len() == 1 {
             self.is_closing = true;
         }
+        // Linux (CEF Views): no embedded view to detach and no top-level
+        // native window to mark-closing — returning false lets CEF destroy the
+        // browser and fire on_before_close (which closes the Views window). The
+        // Window's own close came through can_close → try_close_browser.
+        #[cfg(target_os = "linux")]
+        let _ = &browser;
         // Detach CEF's view from our content view: with the host view torn down,
         // returning false makes CEF destroy the browser and fire on_before_close.
         // Windowless (OSR) browsers have no embedded child view, so they close
@@ -1030,6 +1210,8 @@ impl MirinHandler {
             mac::close_window(window_id);
             #[cfg(target_os = "windows")]
             win::close_window(window_id);
+            #[cfg(target_os = "linux")]
+            linux::close_window(window_id);
         }
 
         if let Some(index) = self
@@ -1192,6 +1374,36 @@ wrap_drag_handler! {
                     .collect();
                 win::set_draggable_regions(window_id, regions);
             }
+            // Linux (X11 Views): a frameless window has no WM caption, so mirin drives
+            // the drag itself (`_NET_WM_MOVERESIZE`) — store the regions so a title-bar
+            // press can be told from a content click (window.rs::maybe_start_drag).
+            #[cfg(target_os = "linux")]
+            {
+                let Some(browser) = browser else {
+                    return;
+                };
+                let window_id = {
+                    let handler = self.inner.lock().expect("failed to lock MirinHandler");
+                    handler.window_ids.get(&browser.identifier()).copied()
+                };
+                let Some(window_id) = window_id else {
+                    return;
+                };
+                let regions = regions
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|r| {
+                        (
+                            r.bounds.x,
+                            r.bounds.y,
+                            r.bounds.width,
+                            r.bounds.height,
+                            r.draggable != 0,
+                        )
+                    })
+                    .collect();
+                linux::set_draggable_regions(window_id, regions);
+            }
         }
     }
 }
@@ -1295,7 +1507,7 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             if let Some(opts) = self.opts.borrow_mut().take() {
                 create_window_on_ui(self.id, opts);
             }
@@ -1342,6 +1554,10 @@ wrap_task! {
                     if let Some(title) = self.arg.borrow().as_ref() {
                         win::set_window_title(_id, title);
                     }
+                    #[cfg(target_os = "linux")]
+                    if let Some(title) = self.arg.borrow().as_ref() {
+                        linux::set_window_title(_id, title);
+                    }
                 }
             }
         }
@@ -1368,6 +1584,8 @@ wrap_task! {
             mac::close_all_windows();
             #[cfg(target_os = "windows")]
             win::close_all_windows();
+            #[cfg(target_os = "linux")]
+            linux::close_all_windows();
         }
     }
 }
@@ -1401,6 +1619,10 @@ wrap_task! {
             if let Some(verb) = self.verb.borrow_mut().take() {
                 win::control(self.id, &verb);
             }
+            #[cfg(target_os = "linux")]
+            if let Some(verb) = self.verb.borrow_mut().take() {
+                linux::control(self.id, &verb);
+            }
         }
     }
 }
@@ -1418,11 +1640,13 @@ wrap_task! {
             mac::window::set_position(self.id, self.x, self.y);
             #[cfg(target_os = "windows")]
             win::set_position(self.id, self.x, self.y);
+            #[cfg(target_os = "linux")]
+            linux::set_position(self.id, self.x, self.y);
         }
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 wrap_task! {
     struct WindowMaybeStartDragTask {
         id: u32,
@@ -1434,7 +1658,10 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            #[cfg(target_os = "windows")]
             win::maybe_start_drag(self.id, self.x, self.y, self.detail, self.ht);
+            #[cfg(target_os = "linux")]
+            linux::maybe_start_drag(self.id, self.x, self.y, self.detail, self.ht);
         }
     }
 }

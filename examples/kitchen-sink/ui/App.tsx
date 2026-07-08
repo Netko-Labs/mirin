@@ -6,7 +6,20 @@ export function App() {
 
   return (
     <>
-      <div className="titlebar">mirin · Kitchen Sink</div>
+      <div className="titlebar">
+        <span className="titlebar-title">mirin · Kitchen Sink</span>
+        <div className="titlebar-controls">
+          <button title="Minimize" onClick={() => api.minimize(null)}>
+            &#x2013;
+          </button>
+          <button title="Maximize" onClick={() => api.maximize(null)}>
+            &#x25A1;
+          </button>
+          <button title="Close" className="close" onClick={() => api.close(null)}>
+            &#x2715;
+          </button>
+        </div>
+      </div>
       <div className="content" onContextMenu={(e) => (e.preventDefault(), api.showContextMenu(null))}>
         <h1>Native feature tour</h1>
         <p className="sub">

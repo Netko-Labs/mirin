@@ -31,6 +31,12 @@ export const router = rpc.router({
   minimize: rpc.mutation(async (_: null, ctx) => {
     await callerWindow(ctx.webview)?.minimize();
   }),
+  maximize: rpc.mutation(async (_: null, ctx) => {
+    await callerWindow(ctx.webview)?.maximize();
+  }),
+  close: rpc.mutation(async (_: null, ctx) => {
+    await callerWindow(ctx.webview)?.close();
+  }),
   toggleFullscreen: rpc.mutation(async (_: null, ctx) => {
     await callerWindow(ctx.webview)?.toggleFullscreen();
   }),

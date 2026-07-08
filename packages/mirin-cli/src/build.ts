@@ -20,12 +20,15 @@ import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node
 import { join } from "node:path";
 import { buildAppBundle } from "./bundle.ts";
 import { buildWindowsBundle } from "./bundle-win.ts";
+import { buildLinuxBundle } from "./bundle-linux.ts";
+import { buildLinuxPackages, resolveLinuxFormats } from "./package-linux.ts";
 import { makeWindowsIcon } from "./icon-win.ts";
 import { resolveArtifacts } from "./artifacts.ts";
 import { sweepBuildTemps } from "./temps.ts";
 import { normalizeSidecars, compileWorkers } from "./extras.ts";
 
 const IS_WINDOWS = process.platform === "win32";
+const IS_LINUX = process.platform === "linux";
 
 /** A PE FILEVERSION (`x.y.z.w`) from a semver string (pre-release suffix dropped). */
 function winFileVersion(v: string): string {
@@ -121,14 +124,23 @@ export interface BuildResult {
   nsis: boolean | import("mirinjs").NsisConfig;
   /** Inno Setup installer config (Windows) — preferred over NSIS; default `true`. */
   inno: boolean | import("mirinjs").InnoConfig;
+  /** Linux packaging config (`mirin.config.ts` `linux`) — `true`/object/`false`; default `true`. */
+  linux: boolean | import("mirinjs").LinuxConfig;
   /** Publisher / company name (config.publisher ?? appName). */
   publisher: string;
+  /** Absolute path to the app icon source (config.icon), if set — for Linux packaging. */
+  icon?: string;
   /** Codesign identity used for the bundle, if any (MIRIN_SIGN_IDENTITY). */
   signIdentity?: string;
 }
 
-/** Read the project's package.json version (the single source of app version). */
+/**
+ * The app version: `$MIRIN_APP_VERSION` (release-pipeline override) wins, otherwise
+ * the project's package.json `version` (the single source of truth).
+ */
 function appVersion(projectDir: string): string {
+  const override = process.env.MIRIN_APP_VERSION;
+  if (override) return override;
   const pkgPath = join(projectDir, "package.json");
   if (!existsSync(pkgPath)) return "0.0.0";
   try {
@@ -138,7 +150,19 @@ function appVersion(projectDir: string): string {
   }
 }
 
-export async function build(projectDir = process.cwd()): Promise<BuildResult> {
+export interface BuildOptions {
+  /** Override the app version (else `$MIRIN_APP_VERSION` / package.json). */
+  version?: string;
+  /** On Linux, also emit distributable packages (AppImage/deb/rpm) after assembling. */
+  packageLinux?: boolean;
+  /** Restrict Linux packaging to these formats (else config.linux.formats / all). */
+  linuxFormats?: import("mirinjs").LinuxPackageFormat[];
+}
+
+export async function build(
+  projectDir = process.cwd(),
+  opts: BuildOptions = {},
+): Promise<BuildResult> {
   const outDir = join(projectDir, "build");
   const work = join(projectDir, ".mirin");
   mkdirSync(outDir, { recursive: true });
@@ -149,12 +173,13 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const appName: string = config.name ?? "Mirin App";
   const bundleId: string = config.id ?? "dev.mirin.app";
   const mainEntry = join(projectDir, config.main ?? "main/main.ts");
-  const version = appVersion(projectDir);
+  const version = opts.version ?? appVersion(projectDir);
   const channel: string = config.release?.channel ?? "stable";
   const baseUrl: string | undefined = config.release?.baseUrl;
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
   const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
   const inno: boolean | import("mirinjs").InnoConfig = config.inno ?? true;
+  const linux: boolean | import("mirinjs").LinuxConfig = config.linux ?? true;
   const publisher: string = config.publisher ?? appName;
 
   console.log(`[mirin build] ${appName} ${version}`);
@@ -190,7 +215,8 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
   const extraWorkers = await compileWorkers(projectDir, config.workers, join(work, "workers"), true);
 
   // 5. assemble (+ sign on macOS)
-  console.log(`[mirin build] assembling ${IS_WINDOWS ? "app folder" : ".app"}…`);
+  const artifactKind = IS_WINDOWS ? "app folder" : IS_LINUX ? "app folder" : ".app";
+  console.log(`[mirin build] assembling ${artifactKind}…`);
   // version.json embeds the running app's update identity (read by app.updater).
   // Only when `release` is configured — otherwise the app has no updater.
   const versionJson = baseUrl
@@ -218,6 +244,17 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
         icon: config.icon ? join(projectDir, config.icon) : undefined,
         resources: { ...resources, sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })) },
       })
+    : IS_LINUX
+    ? await buildLinuxBundle({
+        appName,
+        outDir,
+        hostExe,
+        coreDll: artifacts.coreDylib,
+        helperExe: artifacts.helperBin,
+        cefPath: artifacts.cefPath,
+        icon: config.icon ? join(projectDir, config.icon) : undefined,
+        resources: { ...resources, sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })) },
+      })
     : await buildAppBundle({
         appName,
         bundleId,
@@ -234,6 +271,29 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
       });
 
   console.log(`\n[mirin build] done → ${app}`);
+
+  // Linux: optionally emit distributable packages (AppImage/deb/rpm) straight from
+  // `mirin build`. `mirin release` does its own packaging into build/release, so it
+  // never sets `packageLinux` — this path only runs for a direct build request.
+  if (IS_LINUX && opts.packageLinux && linux !== false) {
+    const formats = resolveLinuxFormats(linux, opts.linuxFormats);
+    console.log(`[mirin build] packaging Linux artifacts (${formats.join(", ")})…`);
+    const pkgs = await buildLinuxPackages({
+      appDir: app,
+      appName,
+      bundleId,
+      version,
+      publisher,
+      outDir,
+      projectDir,
+      icon: config.icon ? join(projectDir, config.icon) : undefined,
+      options: typeof linux === "object" ? linux : {},
+      formats,
+    });
+    const mb = (n: number) => (n / 1e6).toFixed(1);
+    for (const p of pkgs) console.log(`  ${p.path} (${mb(p.size)} MB)`);
+  }
+
   return {
     app,
     appName,
@@ -246,7 +306,9 @@ export async function build(projectDir = process.cwd()): Promise<BuildResult> {
     dmg,
     nsis,
     inno,
+    linux,
     publisher,
+    icon: config.icon ? join(projectDir, config.icon) : undefined,
     signIdentity,
   };
 }

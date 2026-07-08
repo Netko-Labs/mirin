@@ -66,3 +66,12 @@ objc2-core-graphics = { workspace = true, features = [
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys.workspace = true
+
+# Linux runs CEF on X11 (Ozone X11, incl. XWayland — Electrobun's approach). A
+# frameless Views window has no WM move/resize/caption, so mirin drives those with
+# `_NET_WM_MOVERESIZE` / window state via Xlib (x11-dl dlopens libX11 — no build-time
+# X11 dev libs needed), against the CEF window's XID (`Window::window_handle`).
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl = "2"
+# Decode the app-icon PNG to ARGB for the window's `_NET_WM_ICON` (taskbar/dock).
+png = "0.17"

@@ -2,3 +2,11 @@
 # CEF binary distribution location (populated by scripts/fetch-cef.ts / export-cef-dir).
 # cef-dll-sys's build.rs reads this; without it, it re-downloads CEF per target dir.
 CEF_PATH = { value = "vendor/cef", force = false, relative = true }
+
+# Linux (Wayland port, docs/linux-port.md): bake an $ORIGIN rpath into
+# libmirin_core.so, mirin-helper, and m1-smoke so they resolve libcef.so (and each
+# other) from their own directory — the flat app layout the dev/standalone bundles
+# use. Without this, a standalone binary can't find libcef.so with no
+# LD_LIBRARY_PATH (macOS uses the framework loader; Windows the exe-dir search).
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]

@@ -25,7 +25,6 @@ body {
   height: 38px;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 10px;
   font-size: 13px;
   font-weight: 600;
@@ -33,6 +32,45 @@ body {
   border-bottom: 1px solid var(--border);
   user-select: none;
   -webkit-app-region: drag;
+}
+
+/* Centered title, controls pinned to the right. */
+.titlebar-title {
+  flex: 1;
+  text-align: center;
+  padding-left: 96px; /* balance the control cluster so the title stays centered */
+}
+
+.titlebar-controls {
+  display: flex;
+  gap: 2px;
+  padding-right: 6px;
+}
+
+.titlebar-controls button {
+  -webkit-app-region: no-drag;
+  width: 30px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.titlebar-controls button:hover {
+  background: var(--border);
+  color: #fff;
+}
+
+.titlebar-controls button.close:hover {
+  background: #e81123;
+  color: #fff;
 }
 
 .titlebar button {
