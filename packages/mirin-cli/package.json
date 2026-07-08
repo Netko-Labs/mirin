@@ -32,7 +32,8 @@
   },
   "optionalDependencies": {
     "@mirinjs/darwin-arm64": "0.1.0-alpha.11",
-    "@mirinjs/win32-x64": "0.1.0-alpha.11"
+    "@mirinjs/win32-x64": "0.1.0-alpha.11",
+    "@mirinjs/linux-x64": "0.1.0-alpha.11"
   },
   "publishConfig": {
     "access": "public"

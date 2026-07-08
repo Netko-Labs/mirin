@@ -1,0 +1,26 @@
+{
+  "name": "@mirinjs/linux-x64",
+  "version": "0.1.0-alpha.11",
+  "description": "Prebuilt mirin native binaries for Linux x64 (libmirin_core.so + helper).",
+  "license": "MIT",
+  "homepage": "https://github.com/Netko-Labs/mirin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netko-Labs/mirin.git",
+    "directory": "packages/native-linux-x64"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "libmirin_core.so",
+    "mirin-helper",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

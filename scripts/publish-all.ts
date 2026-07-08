@@ -22,7 +22,12 @@ const ROOT = join(import.meta.dir, "..");
 
 // The prebuilt-native package for the host platform (one per OS/arch runner).
 const NATIVE_PKG = `native-${process.platform}-${process.arch}`;
-const NATIVE_CORE = process.platform === "win32" ? "mirin_core.dll" : "libmirin_core.dylib";
+const NATIVE_CORE =
+  process.platform === "win32"
+    ? "mirin_core.dll"
+    : process.platform === "linux"
+      ? "libmirin_core.so"
+      : "libmirin_core.dylib";
 
 // The shared packages (runtime + CLI + scaffolder) are platform-agnostic and must
 // be published exactly once. The primary release runner (macOS) publishes them with

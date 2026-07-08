@@ -138,3 +138,72 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
           bun scripts/publish-all.ts
+
+  # Linux x64 prebuilt-native package + CEF asset. Publishes ONLY
+  # @mirinjs/linux-x64 (MIRIN_PUBLISH_NATIVE_ONLY=1); the shared packages
+  # (mirinjs/@mirinjs/cli/create-mirinjs) are published by the macOS job above.
+  release-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build tools
+        # ninja for cef-dll-sys (builds libcef_dll_wrapper via cmake/ninja).
+        # libgtk-3-dev provides the glib/gtk/gdk/cairo/pango dev headers CEF's
+        # C++ build resolves against on Linux.
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev
+
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(bun -e 'console.log(require("./packages/mirin/package.json").version)')
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG != package version $PKG (run scripts/version.ts)"; exit 1
+          fi
+
+      - name: Fetch CEF
+        run: bun scripts/fetch-cef.ts
+
+      - name: Install deps
+        run: bun install
+
+      - name: Build native (release)
+        run: cargo build --release -p mirin-core -p mirin-helper
+
+      - name: Stage prebuilt native package
+        run: |
+          cp target/release/libmirin_core.so packages/native-linux-x64/
+          cp target/release/mirin-helper packages/native-linux-x64/
+
+      - name: Package CEF runtime for the CLI to download
+        run: |
+          # The flat Linux runtime the bundler copies (so/bin/pak/dat +
+          # vk_swiftshader_icd.json + libvulkan.so.1 + chrome-sandbox + locales/)
+          # — not the build-time headers/libs (include/, cmake/, libcef_dll/).
+          mkdir cef-dist
+          cp vendor/cef/*.so vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat cef-dist/
+          cp vendor/cef/vk_swiftshader_icd.json vendor/cef/libvulkan.so.1 vendor/cef/chrome-sandbox cef-dist/
+          cp -r vendor/cef/locales cef-dist/
+          tar -czf cef-linux-x64.tar.gz -C cef-dist .
+
+      - name: GitHub Release (CEF asset)
+        uses: softprops/action-gh-release@v3
+        with:
+          files: cef-linux-x64.tar.gz
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
+
+      - name: Publish prebuilt-native package
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          MIRIN_PUBLISH_NATIVE_ONLY: "1"
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          bun scripts/publish-all.ts

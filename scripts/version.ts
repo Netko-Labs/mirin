@@ -17,7 +17,7 @@ if (!version || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
 }
 
 const ROOT = join(import.meta.dir, "..");
-const PACKAGES = ["mirin", "mirin-cli", "native-darwin-arm64", "native-win32-x64", "create-mirin"];
+const PACKAGES = ["mirin", "mirin-cli", "native-darwin-arm64", "native-win32-x64", "native-linux-x64", "create-mirin"];
 
 for (const dir of PACKAGES) {
   const file = join(ROOT, "packages", dir, "package.json");
