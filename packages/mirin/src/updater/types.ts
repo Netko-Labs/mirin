@@ -1,0 +1,62 @@
+export type UpdaterStatus =
+  | "idle"
+  | "checking"
+  | "update-available"
+  | "downloading"
+  | "applying"
+  | "complete"
+  | "error";
+
+/** The running app's embedded identity (Resources/version.json). */
+export interface VersionInfo {
+  version: string;
+  channel: string;
+  baseUrl: string;
+  name: string;
+  identifier: string;
+}
+
+export interface UpdateArtifact {
+  url: string;
+  sha256: string;
+  size?: number;
+}
+
+export interface UpdatePatch extends UpdateArtifact {
+  fromVersion: string;
+}
+
+/** The published-release manifest ({prefix}-update.json). */
+export interface Manifest {
+  version: string;
+  channel: string;
+  platform: string;
+  arch: string;
+  /** SHA-256 of the uncompressed bundle tar (update identity + integrity). */
+  tarHash: string;
+  bundle: UpdateArtifact;
+  patches?: UpdatePatch[];
+}
+
+/** A published release the running app can update to. */
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  channel: string;
+}
+
+export interface UpdateProgress {
+  received: number;
+  total: number;
+  /** 0..1 (0 when total is unknown). */
+  fraction: number;
+}
+
+export type UpdaterEvents = {
+  status: { status: UpdaterStatus };
+  progress: UpdateProgress;
+  "update-available": UpdateInfo;
+  error: { message: string };
+};
+
+export type Listener<P> = (payload: P) => void;

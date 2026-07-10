@@ -12,11 +12,13 @@ A mirin project has two entry points:
 
 ```ts
 // mirin.config.ts
-import { defineConfig } from "mirin/config";
+import { defineConfig } from "mirinjs/config";
 
 export default defineConfig({
   id: "dev.peje.hello",
   name: "Hello",
+  // Production bundles keep only these CEF locale packs. Omit `cef` to ship all.
+  cef: { locales: ["en-US"] },
 
   windows: {
     main: {
@@ -36,7 +38,7 @@ export default defineConfig({
 
 ```ts
 // src/main.ts
-import { app } from "mirin";
+import { app } from "mirinjs";
 import { router } from "./rpc";
 
 app.serve(router);
@@ -51,6 +53,11 @@ app.on("window-all-closed", () => {
 ```
 
 Declared windows with no `open` field open automatically at launch, before `ready` fires. `defineConfig` is an identity function that exists for typing/intellisense; the manifest must remain serializable data.
+
+`cef.locales` is an optional production-package allowlist using BCP 47 tags.
+Keeping only the languages an app ships can remove tens of megabytes from CEF
+and every updater, installer, and Linux package derived from it. Development
+bundles retain the complete downloaded runtime.
 
 `app://` is mirin's bundled-asset scheme, served from the app bundle through a CEF scheme handler (dev mode points it at the working tree).
 
@@ -117,7 +124,7 @@ One router definition; both sides infer from it. No channel strings, no `any`. T
 
 ```ts
 // src/rpc.ts — imported by BOTH main process and UI code
-import { rpc } from "mirin/rpc";
+import { rpc } from "mirinjs/rpc";
 
 export const router = rpc.router({
   // request/response (UI → main)
@@ -141,7 +148,7 @@ In the webview (any frontend stack — plain browser JS over `window.mirin`):
 
 ```ts
 // ui/api.ts
-import { client } from "mirin/client";
+import { client } from "mirinjs/client";
 import type { Router } from "../src/rpc";
 
 export const api = client<Router>();
@@ -159,19 +166,37 @@ app.rpc.progress.broadcast({ pct: 80 });
 
 Implementation notes (see architecture.md §4): JSON frames over a token-authenticated localhost WebSocket; handlers run in the Bun Worker.
 
-## 4. What's deliberately NOT in the MVP API
+## 4. Shipped feature families
 
-Menus, tray, dialogs, clipboard, shortcuts, multi-webview-per-window (BrowserView equivalent), user preload scripts, session/cookie control, updater. Each gets designed as a manifest-first section (`menus: {…}`, `tray: {…}`) when its milestone arrives — the pattern above is the template.
+The original MVP left native shell APIs out. They now exist as focused modules
+off the main-process API:
+
+- `menu.setApplicationMenu(template)` / `menu.popup(template)` for app and context menus.
+- `new Tray({ title, tooltip, menu, onClick })`.
+- `dialog.openFile()` / `dialog.saveFile()` / `dialog.message()`.
+- `clipboard.readText()` / `clipboard.writeText(text)`.
+- `globalShortcut.register(accelerator, fn)`.
+- `WindowHandle` controls: minimize, maximize, restore, fullscreen, focus, show,
+  hide, center, always-on-top, position, material changes.
+- macOS `app.dock.hide()` / `app.dock.show()`.
+- `app.sidecar(name, opts)` and `resolveWorker(name)` for bundled sidecars and
+  extra workers declared in `mirin.config.ts`; config names are safe filename
+  segments and source paths are project-relative.
+- `app.updater` for packaged apps built with `release.baseUrl`.
+
+Still future: multi-webview-per-window (BrowserView equivalent), user preload
+scripts, session/cookie controls, payload encryption or a CEF IPC replacement for
+the localhost RPC data plane, and a Windows WebView2 backend option.
 
 ## 5. Package layout (developer's view)
 
 | Import | Runs in | Contents |
 |---|---|---|
-| `mirin` | Bun main process | `app` singleton, window handles, lifecycle |
-| `mirin/config` | manifest (build-time) | `defineConfig` + manifest types |
-| `mirin/rpc` | shared (types + handlers) | `rpc.router/query/mutation/event` |
-| `mirin/client` | webview (browser) | `client<Router>()`, `window.mirin` typings |
-| `mirin-cli` (`bunx mirin`) | dev machine | `init`, `dev`, later `build` |
+| `mirinjs` | Bun main process | `app` singleton, window handles, lifecycle, shell APIs |
+| `mirinjs/config` | manifest (build-time) | `defineConfig` + manifest types |
+| `mirinjs/rpc` | shared (types + handlers) | `rpc.router/query/mutation/event` |
+| `mirinjs/client` | webview (browser) | `client<Router>()`, `window.mirin` typings, `windowControls` |
+| `@mirinjs/cli` (`mirin`) | dev machine | `init`, `dev`, `build`, `release` |
 
 ## 6. Resolved & open items
 

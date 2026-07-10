@@ -1,16 +1,26 @@
 {
   "name": "mirin-monorepo",
   "private": true,
-  "workspaces": ["packages/*", "examples/*"],
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
   "scripts": {
+    "fmt-lint": "biome check .",
+    "fmt-lint:ci": "biome ci . --diagnostic-level=error",
+    "fmt-lint:strict": "biome ci . --error-on-warnings",
+    "fmt-lint:fix": "biome check --fix .",
+    "test": "bun test packages/mirin/test packages/mirin-cli/test scripts/test",
     "typecheck": "tsc --noEmit -p packages/mirin && tsc --noEmit -p packages/create-mirin && tsc --noEmit -p packages/mirin-cli && tsc --noEmit -p examples/hello-react && tsc --noEmit -p examples/kitchen-sink && tsc --noEmit -p examples/spotlight && tsc --noEmit -p examples/liquid-glass && tsc --noEmit -p examples/updater",
     "check:rust": "cargo check --workspace",
     "fetch-cef": "bun scripts/fetch-cef.ts",
     "dev-bundle": "bun scripts/dev-bundle.ts"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.2.4",
     "typescript": "^5.8.0",
     "@types/bun": "^1.2.0",
     "@mirinjs/cli": "workspace:*"
-  }
+  },
+  "packageManager": "bun@1.3.14"
 }

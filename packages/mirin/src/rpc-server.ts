@@ -4,8 +4,8 @@
  * app's router here, in the Bun Worker; events push back to webviews.
  */
 
-import type { Router, RpcContext } from "./rpc.ts";
 import type { ServerWebSocket } from "bun";
+import type { Router, RpcContext } from "./rpc.ts";
 
 interface SocketData {
   webview: number;
@@ -41,6 +41,7 @@ export type ControlHandler = (frame: ControlFrame, webview: number) => void;
 export class RpcServer {
   readonly token = crypto.randomUUID();
   #server?: ReturnType<typeof Bun.serve>;
+  // Type-level `any` keeps the server able to store any concrete app router.
   #router?: Router<any>;
   #control?: ControlHandler;
   #sockets = new Set<ServerWebSocket<SocketData>>();
@@ -82,6 +83,17 @@ export class RpcServer {
     return port;
   }
 
+  /** Stop accepting connections and close active webview sockets. */
+  async stop(): Promise<void> {
+    const server = this.#server;
+    if (!server) return;
+
+    this.#server = undefined;
+    this.#sockets.clear();
+    await server.stop(true);
+  }
+
+  /** Type-level `any` keeps the caller's concrete router shape. */
   setRouter(router: Router<any>): void {
     this.#router = router;
   }

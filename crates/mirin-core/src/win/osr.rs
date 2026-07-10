@@ -1,5 +1,5 @@
 //! Off-screen (windowless) rendering target for transparent windows — the Windows
-//! analogue of `mac/osr.rs`. A windowed CEF browser is always opaque, so
+//! analogue of `mac/osr/mod.rs`. A windowed CEF browser is always opaque, so
 //! transparent / material windows render windowless: CEF paints a premultiplied
 //! BGRA frame (`engine::osr` → `paint`) that we composite, with per-pixel alpha,
 //! into a layered top-level window via `UpdateLayeredWindow` (the electrobun
@@ -160,6 +160,9 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
     let Some(hwnd) = hwnd_for(window_id) else {
         return;
     };
+    let Some(len) = pixel_buffer_len(width, height) else {
+        return;
+    };
 
     let screen_dc = GetDC(std::ptr::null_mut());
     let mem_dc = CreateCompatibleDC(screen_dc);
@@ -184,7 +187,6 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
     );
 
     if !dib.is_null() && !bits.is_null() {
-        let len = (width * height * 4) as usize;
         std::ptr::copy_nonoverlapping(buffer, bits as *mut u8, len);
 
         let old = SelectObject(mem_dc, dib);
@@ -221,4 +223,11 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
 
     DeleteDC(mem_dc);
     ReleaseDC(std::ptr::null_mut(), screen_dc);
+}
+
+fn pixel_buffer_len(width: i32, height: i32) -> Option<usize> {
+    usize::try_from(width)
+        .ok()?
+        .checked_mul(usize::try_from(height).ok()?)?
+        .checked_mul(4)
 }

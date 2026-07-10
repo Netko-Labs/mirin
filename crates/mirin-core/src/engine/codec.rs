@@ -8,7 +8,8 @@
 
 use qbsdiff::{Bsdiff, Bspatch};
 use std::fs::File;
-use std::io::{self, BufWriter, Read};
+use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::thread;
 
 fn read_all(path: &str) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
@@ -16,11 +17,24 @@ fn read_all(path: &str) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Compress `src` → `dst` with zstd at `level` (e.g. 19).
+/// Compress `src` → `dst` with zstd at `level` using the available CPU cores.
 pub fn zstd_compress_file(src: &str, dst: &str, level: i32) -> io::Result<()> {
     let input = File::open(src)?;
-    let output = File::create(dst)?;
-    zstd::stream::copy_encode(input, output, level)?;
+    let input_len = input.metadata()?.len();
+    let output = BufWriter::new(File::create(dst)?);
+    let mut encoder = zstd::stream::write::Encoder::new(output, level)?;
+
+    // Keep one core for I/O and the calling runtime. The cap bounds zstd's
+    // per-worker memory use on large CI runners while still scaling release builds.
+    let workers = thread::available_parallelism()
+        .map(|count| count.get().saturating_sub(1).clamp(1, 8) as u32)
+        .unwrap_or(1);
+    encoder.multithread(workers)?;
+    encoder.set_pledged_src_size(Some(input_len))?;
+
+    io::copy(&mut BufReader::new(input), &mut encoder)?;
+    let mut output = encoder.finish()?;
+    output.flush()?;
     Ok(())
 }
 

@@ -9,11 +9,15 @@
 use crate::engine::{self, CoreConfig, WindowOpts};
 use std::ffi::{c_char, c_int, CStr};
 
-fn cstr<'a>(ptr: *const c_char) -> &'a str {
+fn cstr(ptr: *const c_char) -> String {
     if ptr.is_null() {
-        return "";
+        return String::new();
     }
-    unsafe { CStr::from_ptr(ptr) }.to_str().unwrap_or("")
+    // SAFETY: bun:ffi passes a live, NUL-terminated buffer for the duration of
+    // each synchronous call. Copying prevents a raw-pointer lifetime escaping.
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 // ---- lifecycle ----
@@ -21,7 +25,7 @@ fn cstr<'a>(ptr: *const c_char) -> &'a str {
 /// Host entry point — call on the process main thread. Does not return until quit.
 #[no_mangle]
 pub extern "C" fn mirin_run(config_json: *const c_char) -> c_int {
-    let config: CoreConfig = serde_json::from_str(cstr(config_json)).unwrap_or_default();
+    let config: CoreConfig = serde_json::from_str(&cstr(config_json)).unwrap_or_default();
     engine::run_core(config)
 }
 
@@ -34,7 +38,7 @@ pub extern "C" fn mirin_poll_event() -> *const c_char {
 
 #[no_mangle]
 pub extern "C" fn mirin_set_rpc_endpoint(port: u16, token: *const c_char) {
-    engine::set_rpc_endpoint(port, cstr(token).to_string());
+    engine::set_rpc_endpoint(port, cstr(token));
 }
 
 #[no_mangle]
@@ -58,7 +62,7 @@ pub extern "C" fn mirin_app_set_dock_visible(visible: c_int) {
 /// Create a window from JSON opts; returns the window id synchronously.
 #[no_mangle]
 pub extern "C" fn mirin_window_create(opts_json: *const c_char) -> u32 {
-    match serde_json::from_str::<WindowOpts>(cstr(opts_json)) {
+    match serde_json::from_str::<WindowOpts>(&cstr(opts_json)) {
         Ok(opts) => engine::create_window(opts),
         Err(_) => 0,
     }
@@ -71,26 +75,26 @@ pub extern "C" fn mirin_window_close(id: u32) {
 
 #[no_mangle]
 pub extern "C" fn mirin_window_load_url(id: u32, url: *const c_char) {
-    engine::load_url(id, cstr(url).to_string());
+    engine::load_url(id, cstr(url));
 }
 
 #[no_mangle]
 pub extern "C" fn mirin_window_set_title(id: u32, title: *const c_char) {
-    engine::set_title(id, cstr(title).to_string());
+    engine::set_title(id, cstr(title));
 }
 
 /// Window control verbs: "minimize" | "maximize" | "restore" | "fullscreen" |
 /// "focus" | "show" | "hide" | "center" | "alwaysOnTop:on" | "alwaysOnTop:off".
 #[no_mangle]
 pub extern "C" fn mirin_window_control(id: u32, verb: *const c_char) {
-    engine::window_control(id, cstr(verb).to_string());
+    engine::window_control(id, cstr(verb));
 }
 
 /// Change a window's native background material live (OSR windows only). JSON is
 /// `{ type, tint?, cornerRadius? }`, or `null`/`{"type":"none"}` to remove it.
 #[no_mangle]
 pub extern "C" fn mirin_window_set_material(id: u32, spec_json: *const c_char) {
-    engine::set_material(id, cstr(spec_json).to_string());
+    engine::set_material(id, cstr(spec_json));
 }
 
 /// Move a window's bottom-left origin to screen point (x, y), in points.
@@ -119,12 +123,12 @@ pub extern "C" fn mirin_window_maybe_start_drag(
 
 #[no_mangle]
 pub extern "C" fn mirin_set_app_menu(template_json: *const c_char) {
-    engine::set_app_menu(cstr(template_json).to_string());
+    engine::set_app_menu(cstr(template_json));
 }
 
 #[no_mangle]
 pub extern "C" fn mirin_popup_menu(template_json: *const c_char) {
-    engine::popup_menu(cstr(template_json).to_string());
+    engine::popup_menu(cstr(template_json));
 }
 
 // ---- tray ----
@@ -132,7 +136,7 @@ pub extern "C" fn mirin_popup_menu(template_json: *const c_char) {
 /// Create/replace a tray item from JSON `{ id, title?, tooltip?, menu? }`.
 #[no_mangle]
 pub extern "C" fn mirin_tray_create(spec_json: *const c_char) {
-    engine::tray_create(cstr(spec_json).to_string());
+    engine::tray_create(cstr(spec_json));
 }
 
 #[no_mangle]
@@ -146,7 +150,7 @@ pub extern "C" fn mirin_tray_destroy(id: u32) {
 /// Returns 1 on success.
 #[no_mangle]
 pub extern "C" fn mirin_shortcut_register(id: u32, accelerator: *const c_char) -> c_int {
-    engine::shortcut_register(id, cstr(accelerator).to_string()) as c_int
+    engine::shortcut_register(id, cstr(accelerator)) as c_int
 }
 
 #[no_mangle]
@@ -164,7 +168,7 @@ pub extern "C" fn mirin_clipboard_read_text() -> *const c_char {
 
 #[no_mangle]
 pub extern "C" fn mirin_clipboard_write_text(text: *const c_char) {
-    engine::clipboard_write_text(cstr(text).to_string());
+    engine::clipboard_write_text(cstr(text));
 }
 
 // ---- dialogs ----
@@ -173,7 +177,7 @@ pub extern "C" fn mirin_clipboard_write_text(text: *const c_char) {
 /// delivered asynchronously as a `dialog.result` event carrying `requestId`.
 #[no_mangle]
 pub extern "C" fn mirin_dialog_show(spec_json: *const c_char) {
-    engine::dialog_show(cstr(spec_json).to_string());
+    engine::dialog_show(cstr(spec_json));
 }
 
 // ---- updater codec (zstd + bsdiff; file-path; 0 = ok, non-zero = error) ----
@@ -184,7 +188,7 @@ pub extern "C" fn mirin_zstd_compress_file(
     dst: *const c_char,
     level: c_int,
 ) -> c_int {
-    match engine::codec::zstd_compress_file(cstr(src), cstr(dst), level) {
+    match engine::codec::zstd_compress_file(&cstr(src), &cstr(dst), level) {
         Ok(()) => 0,
         Err(_) => 1,
     }
@@ -192,7 +196,7 @@ pub extern "C" fn mirin_zstd_compress_file(
 
 #[no_mangle]
 pub extern "C" fn mirin_zstd_decompress_file(src: *const c_char, dst: *const c_char) -> c_int {
-    match engine::codec::zstd_decompress_file(cstr(src), cstr(dst)) {
+    match engine::codec::zstd_decompress_file(&cstr(src), &cstr(dst)) {
         Ok(()) => 0,
         Err(_) => 1,
     }
@@ -204,7 +208,7 @@ pub extern "C" fn mirin_bsdiff_file(
     new: *const c_char,
     patch: *const c_char,
 ) -> c_int {
-    match engine::codec::bsdiff_file(cstr(old), cstr(new), cstr(patch)) {
+    match engine::codec::bsdiff_file(&cstr(old), &cstr(new), &cstr(patch)) {
         Ok(()) => 0,
         Err(_) => 1,
     }
@@ -216,7 +220,7 @@ pub extern "C" fn mirin_bspatch_file(
     patch: *const c_char,
     new: *const c_char,
 ) -> c_int {
-    match engine::codec::bspatch_file(cstr(old), cstr(patch), cstr(new)) {
+    match engine::codec::bspatch_file(&cstr(old), &cstr(patch), &cstr(new)) {
         Ok(()) => 0,
         Err(_) => 1,
     }

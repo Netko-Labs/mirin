@@ -15,10 +15,10 @@
  * stapled so a fresh download opens without a Gatekeeper prompt.
  */
 
-import { $ } from "bun";
-import { cpSync, mkdirSync, rmSync, symlinkSync, existsSync } from "node:fs";
-import { join, basename, isAbsolute } from "node:path";
+import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
+import { $ } from "bun";
 
 export interface DmgOptions {
   volumeName?: string;
@@ -148,12 +148,20 @@ export async function buildDmg(input: BuildDmgInput): Promise<string> {
     let built = false;
     if (wantsLayout(options)) {
       try {
-        await buildLaidOutDmg({ staging, vol, format, dmgPath, options, projectDir, appFile: basename(app) });
+        await buildLaidOutDmg({
+          staging,
+          vol,
+          format,
+          dmgPath,
+          options,
+          projectDir,
+          appFile: basename(app),
+        });
         built = true;
       } catch (e) {
         console.warn(
           `[mirin release] DMG layout failed (${e instanceof Error ? e.message : e}); ` +
-            `falling back to a plain DMG.`,
+            "falling back to a plain DMG.",
         );
         rmSync(dmgPath, { force: true });
       }
@@ -190,9 +198,14 @@ async function buildLaidOutDmg(args: {
   const { staging, vol, format, dmgPath, options, projectDir, appFile } = args;
   const win = options.windowSize ?? { width: 640, height: 400 };
   const iconSize = options.iconSize ?? 128;
-  const appPos = options.appPosition ?? { x: Math.round(win.width * 0.25), y: Math.round(win.height * 0.5) };
-  const appsPos =
-    options.applicationsPosition ?? { x: Math.round(win.width * 0.75), y: Math.round(win.height * 0.5) };
+  const appPos = options.appPosition ?? {
+    x: Math.round(win.width * 0.25),
+    y: Math.round(win.height * 0.5),
+  };
+  const appsPos = options.applicationsPosition ?? {
+    x: Math.round(win.width * 0.75),
+    y: Math.round(win.height * 0.5),
+  };
 
   // Stage a background image (if any) under a hidden folder Finder can reference.
   let bgFile: string | undefined;
@@ -214,8 +227,7 @@ async function buildLaidOutDmg(args: {
   await $`hdiutil create -volname ${vol} -srcfolder ${staging} -fs HFS+ -format UDRW -ov ${rw}`.quiet();
 
   // Attach without auto-opening a Finder window; parse the real mountpoint.
-  const attach =
-    await $`hdiutil attach ${rw} -readwrite -noverify -noautoopen`.text();
+  const attach = await $`hdiutil attach ${rw} -readwrite -noverify -noautoopen`.text();
   const mount = attach
     .split("\n")
     .map((l) => l.trim())

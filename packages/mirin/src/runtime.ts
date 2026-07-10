@@ -1,14 +1,14 @@
 /**
  * Worker-side runtime: loads libmirin_core, starts the RPC server, and pumps
  * native events to feature modules. Infrastructure only — the developer-facing
- * API lives in app.ts and the feature modules, which subscribe here.
+ * API lives in app/index.ts and the feature modules, which subscribe here.
  */
 
-import { workerData } from "node:worker_threads";
 import { join } from "node:path";
+import { workerData } from "node:worker_threads";
+import type { WindowConfig } from "./config/index.ts";
 import { Core } from "./native.ts";
 import { RpcServer } from "./rpc-server.ts";
-import type { WindowConfig } from "./config.ts";
 
 export interface ManifestWindowConfig extends WindowConfig {
   name: string;
@@ -71,9 +71,14 @@ const listeners = new Map<string, Set<NativeListener>>();
 /** Subscribe to a native event type (e.g. "menu.click"). Safe before boot. */
 export function onNativeEvent(type: string, listener: NativeListener): () => void {
   let set = listeners.get(type);
-  if (!set) listeners.set(type, (set = new Set()));
+  if (!set) {
+    set = new Set();
+    listeners.set(type, set);
+  }
   set.add(listener);
-  return () => set!.delete(listener);
+  return () => {
+    set.delete(listener);
+  };
 }
 
 function dispatch(raw: string): void {
@@ -83,7 +88,7 @@ function dispatch(raw: string): void {
   } catch {
     return;
   }
-  listeners.get(event.type)?.forEach((fn) => fn(event));
+  for (const fn of listeners.get(event.type) ?? []) fn(event);
 }
 
 /** Boot the runtime from the Worker's workerData. No-op when run detached. */
@@ -112,7 +117,13 @@ export function boot(): void {
   rpc.setControlHandler((frame, webview) => {
     switch (frame.action) {
       case "window.maybeStartDrag":
-        core.windowMaybeStartDrag(webview, frame.x ?? 0, frame.y ?? 0, frame.detail ?? 1, frame.ht ?? 0);
+        core.windowMaybeStartDrag(
+          webview,
+          frame.x ?? 0,
+          frame.y ?? 0,
+          frame.detail ?? 1,
+          frame.ht ?? 0,
+        );
         break;
       case "window.control":
         if (frame.verb) core.windowControl(webview, frame.verb);
@@ -123,9 +134,9 @@ export function boot(): void {
     }
   });
 
-  const manifestWindows: ManifestWindowConfig[] = Object.entries(
-    data.manifest?.windows ?? {},
-  ).map(([name, cfg]) => ({ name, ...cfg }));
+  const manifestWindows: ManifestWindowConfig[] = Object.entries(data.manifest?.windows ?? {}).map(
+    ([name, cfg]) => ({ name, ...cfg }),
+  );
 
   current = {
     core,

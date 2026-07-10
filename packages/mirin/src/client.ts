@@ -7,18 +7,18 @@
 
 import type { EventProc, MutationProc, QueryProc, Router } from "./rpc.ts";
 
-export type ClientFor<R extends Router<any>> =
-  R extends Router<infer T>
-    ? {
-        [K in keyof T]: T[K] extends QueryProc<infer I, infer O>
+// Type-level `any` preserves the app router's concrete procedure inference for UI callers.
+export type ClientFor<R extends Router<any>> = R extends Router<infer T>
+  ? {
+      [K in keyof T]: T[K] extends QueryProc<infer I, infer O>
+        ? (input: I) => Promise<Awaited<O>>
+        : T[K] extends MutationProc<infer I, infer O>
           ? (input: I) => Promise<Awaited<O>>
-          : T[K] extends MutationProc<infer I, infer O>
-            ? (input: I) => Promise<Awaited<O>>
-            : T[K] extends EventProc<infer P>
-              ? { on(listener: (payload: P) => void): () => void }
-              : never;
-      }
-    : never;
+          : T[K] extends EventProc<infer P>
+            ? { on(listener: (payload: P) => void): () => void }
+            : never;
+    }
+  : never;
 
 interface MirinTransport {
   call(method: string, input: unknown): Promise<unknown>;
@@ -49,6 +49,7 @@ function transport(): MirinTransport {
  * Create the typed client for the app's router. Pass the Router *type* only —
  * never import the router value (and its handlers) into UI code.
  */
+// Type-level `any` keeps `client<AppRouter>()` inference intact.
 export function client<R extends Router<any>>(): ClientFor<R> {
   const eventCache = new Map<string, { on(l: (p: unknown) => void): () => void }>();
 

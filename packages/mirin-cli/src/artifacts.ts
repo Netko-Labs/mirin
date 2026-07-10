@@ -9,13 +9,22 @@
  *    entry from the `mirin` package, and a CEF framework downloaded once from
  *    the matching GitHub Release into `~/.mirinjs/cef/<version>`. No Rust needed.
  *
- * Alpha supports macOS arm64 only.
+ * Alpha supports macOS arm64, Windows x64, and Linux x64.
  */
 
-import { $ } from "bun";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { $ } from "bun";
 
 const REPO_SLUG = "Netko-Labs/mirin";
 
@@ -84,7 +93,7 @@ function assertSupportedPlatform(): void {
     (process.platform === "linux" && process.arch === "x64");
   if (!supported) {
     throw new Error(
-      `mirin alpha supports macOS arm64, Windows x64, and Linux x64 ` +
+      "mirin alpha supports macOS arm64, Windows x64, and Linux x64 " +
         `(got ${process.platform}/${process.arch}).`,
     );
   }
@@ -101,7 +110,7 @@ function resolveNativeDir(): string {
   } catch {
     throw new Error(
       `mirin: prebuilt native package "${pkg}" is not installed. Run \`bun install\` ` +
-        `(it is an optional dependency of @mirinjs/cli for your platform).`,
+        "(it is an optional dependency of @mirinjs/cli for your platform).",
     );
   }
 }
@@ -136,10 +145,11 @@ async function ensureCef(): Promise<string> {
   }
 
   const version = cliVersion();
-  const cacheDir = join(homedir(), ".mirinjs", "cef", `${version}-${platformTag()}`);
+  const cacheRoot = join(homedir(), ".mirinjs", "cef");
+  const cacheDir = join(cacheRoot, `${version}-${platformTag()}`);
   if (existsSync(join(cacheDir, cefMarker()))) return cacheDir;
 
-  mkdirSync(cacheDir, { recursive: true });
+  mkdirSync(cacheRoot, { recursive: true });
   const asset = `cef-${platformTag()}.tar.gz`;
   const url = `https://github.com/${REPO_SLUG}/releases/download/v${version}/${asset}`;
   console.log(`[mirin] downloading CEF for ${platformTag()} (one-time, ~hundreds of MB)…`);
@@ -147,14 +157,113 @@ async function ensureCef(): Promise<string> {
   // Download with curl, not `Bun.write(file, await fetch(url))`: the latter
   // pins a core at 100% CPU and never completes on large gzip responses
   // (the streaming write path). curl is fast and ubiquitous.
-  const archive = join(tmpdir(), asset);
+  const downloadDir = mkdtempSync(join(tmpdir(), "mirin-cef-download-"));
+  const stagingDir = mkdtempSync(join(cacheRoot, ".staging-"));
+  const archive = join(downloadDir, asset);
+  const checksum = `${archive}.sha256`;
+  const checksumUrl = `${url}.sha256`;
+  const httpsOnly = "=https";
   try {
-    await $`curl -fSL --retry 3 -o ${archive} ${url}`;
-    await $`tar -xzf ${archive} -C ${cacheDir}`;
+    await $`curl --fail --show-error --location --retry 3 --proto ${httpsOnly} --proto-redir ${httpsOnly} -o ${checksum} ${checksumUrl}`;
+    await $`curl --fail --show-error --location --retry 3 --proto ${httpsOnly} --proto-redir ${httpsOnly} -o ${archive} ${url}`;
+    await verifyFileSha256(archive, readFileSync(checksum, "utf8"));
+    const listing = await $`tar -tzf ${archive}`.quiet().text();
+    validateArchiveEntries(listing);
+    await $`tar -xzf ${archive} -C ${stagingDir}`;
+    validateExtractedSymlinks(stagingDir);
+    if (!existsSync(join(stagingDir, cefMarker()))) {
+      throw new Error(`CEF archive is missing ${cefMarker()}`);
+    }
+
+    // Another process may have populated the cache while this one downloaded.
+    if (existsSync(join(cacheDir, cefMarker()))) return cacheDir;
+    rmSync(cacheDir, { recursive: true, force: true });
+    renameSync(stagingDir, cacheDir);
   } catch (err) {
-    rmSync(archive, { force: true });
     throw new Error(`mirin: failed to download CEF from ${url} (${err}).`);
+  } finally {
+    rmSync(downloadDir, { recursive: true, force: true });
+    rmSync(stagingDir, { recursive: true, force: true });
   }
-  rmSync(archive, { force: true });
   return cacheDir;
+}
+
+/** Reject absolute paths and parent traversal before a downloaded tar is extracted. */
+export function validateArchiveEntries(listing: string): void {
+  for (const rawEntry of listing.split(/\r?\n/)) {
+    if (rawEntry.length === 0) continue;
+    const entry = archivePath(rawEntry);
+    if (entry == null) throw new Error(`unsafe CEF archive entry: ${rawEntry}`);
+  }
+}
+
+/** Verify a downloaded release asset before parsing or extracting it. */
+export async function verifyFileSha256(path: string, checksum: string): Promise<void> {
+  const expected = checksum.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(expected)) {
+    throw new Error("invalid CEF SHA-256 checksum");
+  }
+
+  const hasher = new Bun.CryptoHasher("sha256");
+  for await (const chunk of Bun.file(path).stream()) {
+    hasher.update(chunk);
+  }
+  const actual = hasher.digest("hex");
+  if (actual !== expected) {
+    throw new Error(`CEF SHA-256 mismatch (expected ${expected}, got ${actual})`);
+  }
+}
+
+/** Reject extracted symlinks whose lexical target escapes the staging directory. */
+export function validateExtractedSymlinks(root: string): void {
+  const absoluteRoot = resolve(root);
+  const pending = [absoluteRoot];
+
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    if (!directory) continue;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        const target = readlinkSync(path);
+        const resolvedTarget = resolve(dirname(path), target);
+        const fromRoot = relative(absoluteRoot, resolvedTarget);
+        if (
+          isAbsolute(target) ||
+          fromRoot === ".." ||
+          fromRoot.startsWith(`..${sep}`) ||
+          isAbsolute(fromRoot)
+        ) {
+          throw new Error(`CEF archive symlink escapes its cache: ${path} -> ${target}`);
+        }
+      } else if (entry.isDirectory()) {
+        pending.push(path);
+      }
+    }
+  }
+}
+
+function archivePath(raw: string): string | null {
+  let path = raw.replaceAll("\\", "/");
+  while (path.startsWith("./")) path = path.slice(2);
+  if (path.length === 0 || path === ".") return "";
+  if (path.startsWith("/") || /^[A-Za-z]:/.test(path) || hasControlCharacter(path)) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (part.length === 0 || part === ".") continue;
+    if (part === "..") return null;
+    parts.push(part);
+  }
+  return parts.length > 0 ? parts.join("/") : "";
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
 }

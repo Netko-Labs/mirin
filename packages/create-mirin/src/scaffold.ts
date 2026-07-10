@@ -6,8 +6,8 @@
 import {
   cpSync,
   existsSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   statSync,
   writeFileSync,
@@ -37,17 +37,20 @@ export function scaffold(targetDir: string, options: ScaffoldOptions = {}): stri
   const ignore = join(targetDir, "_gitignore");
   if (existsSync(ignore)) renameSync(ignore, join(targetDir, ".gitignore"));
 
-  const replacements: Record<string, string> = {
-    __APP_NAME__: appName,
-    __APP_ID__: appId,
-    __MIRIN_VERSION__: version,
-  };
+  const replacements = [
+    ["__APP_NAME__", appName],
+    ["__APP_ID__", appId],
+    ["__MIRIN_VERSION__", version],
+  ] as const;
   for (const file of walk(targetDir)) applyReplacements(file, replacements);
 
   return appName;
 }
 
-function applyReplacements(file: string, replacements: Record<string, string>): void {
+function applyReplacements(
+  file: string,
+  replacements: readonly (readonly [string, string])[],
+): void {
   let text: string;
   try {
     text = readFileSync(file, "utf8");
@@ -55,7 +58,7 @@ function applyReplacements(file: string, replacements: Record<string, string>): 
     return; // skip binary/unreadable files
   }
   let changed = text;
-  for (const [from, to] of Object.entries(replacements)) {
+  for (const [from, to] of replacements) {
     changed = changed.split(from).join(to);
   }
   if (changed !== text) writeFileSync(file, changed);

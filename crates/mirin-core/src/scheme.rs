@@ -138,6 +138,8 @@ wrap_resource_handler! {
                 *out = 0;
                 return 0; // EOF
             }
+            // SAFETY: `data_out` was checked non-null, CEF provides at least
+            // `bytes_to_read` writable bytes, and `n` is bounded by both buffers.
             unsafe {
                 std::ptr::copy_nonoverlapping(self.body.as_ptr().add(pos), data_out, n);
             }

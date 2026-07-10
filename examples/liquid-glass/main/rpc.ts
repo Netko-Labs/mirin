@@ -1,6 +1,6 @@
-import { rpc } from "mirinjs/rpc";
 import { app } from "mirinjs";
 import type { WindowMaterial, WindowMaterialOptions } from "mirinjs/config";
+import { rpc } from "mirinjs/rpc";
 
 /** The material the UI most recently asked for (echoed back on connect). */
 let current: WindowMaterial | WindowMaterialOptions | null = {

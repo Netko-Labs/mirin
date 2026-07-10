@@ -1,5 +1,5 @@
+import { app, clipboard, dialog, menu } from "mirinjs";
 import { rpc } from "mirinjs/rpc";
-import { app, dialog, clipboard, menu } from "mirinjs";
 import { runOnce, serverRequest, startTicker, stopTicker } from "./tools.ts";
 
 /** Window controls act on the calling window (ctx.webview === window id). */

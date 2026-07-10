@@ -1,4 +1,4 @@
-import { app, menu, Tray, globalShortcut } from "mirinjs";
+import { app, globalShortcut, menu, Tray } from "mirinjs";
 import { router } from "./rpc.ts";
 
 const mirin = app.serve(router);

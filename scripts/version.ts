@@ -7,21 +7,41 @@
  *   git commit -am "v0.0.1-alpha.1" && git tag v0.0.1-alpha.1 && git push --tags
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { distTagForVersion } from "./lib/dist-tag.ts";
 
 const version = Bun.argv[2];
-if (!version || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
+if (!isSupportedVersion(version)) {
   console.error("usage: bun scripts/version.ts <semver>  (e.g. 0.0.1-alpha.1)");
   process.exit(1);
 }
 
+function isSupportedVersion(value: string | undefined): value is string {
+  if (!value) return false;
+  try {
+    distTagForVersion(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const ROOT = join(import.meta.dir, "..");
-const PACKAGES = ["mirin", "mirin-cli", "native-darwin-arm64", "native-win32-x64", "native-linux-x64", "create-mirin"];
+const PACKAGES = [
+  "mirin",
+  "mirin-cli",
+  "native-darwin-arm64",
+  "native-win32-x64",
+  "native-linux-x64",
+  "create-mirin",
+];
+const previousVersions = new Set<string>();
 
 for (const dir of PACKAGES) {
   const file = join(ROOT, "packages", dir, "package.json");
   const pkg = JSON.parse(readFileSync(file, "utf8"));
+  if (typeof pkg.version === "string") previousVersions.add(pkg.version);
   pkg.version = version;
   writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
   console.log(`packages/${dir} → ${version}`);
@@ -30,7 +50,7 @@ for (const dir of PACKAGES) {
 // Cargo workspace version (single source for both crates).
 const cargoPath = join(ROOT, "Cargo.toml");
 const cargo = readFileSync(cargoPath, "utf8").replace(
-  /(\[workspace\.package\][^\[]*?version\s*=\s*)"[^"]+"/,
+  /(\[workspace\.package\][^[]*?version\s*=\s*)"[^"]+"/,
   `$1"${version}"`,
 );
 writeFileSync(cargoPath, cargo);
@@ -72,4 +92,19 @@ function syncDeps(baseDir: string, label: string, range: string) {
 syncDeps(join(ROOT, "packages"), "packages", version);
 syncDeps(join(ROOT, "examples"), "examples", `^${version}`);
 
-console.log(`\nNext: git commit -am "v${version}" && git tag v${version} && git push --follow-tags`);
+// Bun currently leaves workspace package versions stale when only manifests
+// change. Keep exact previous-version values synchronized without touching
+// registry dependency resolutions elsewhere in the generated lockfile.
+const bunLockPath = join(ROOT, "bun.lock");
+let bunLock = readFileSync(bunLockPath, "utf8");
+Bun.JSONC.parse(bunLock);
+for (const previous of previousVersions) {
+  bunLock = bunLock.replaceAll(`"${previous}"`, `"${version}"`);
+}
+Bun.JSONC.parse(bunLock);
+writeFileSync(bunLockPath, bunLock);
+console.log(`bun.lock workspace versions → ${version}`);
+
+console.log(
+  `\nNext: git commit -am "v${version}" && git tag v${version} && git push --follow-tags`,
+);

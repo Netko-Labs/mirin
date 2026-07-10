@@ -16,8 +16,8 @@ try {
   console.log(`  cd ${target}`);
   console.log("  bun install");
   console.log("  bun run dev     # launches a native window with HMR + typed RPC");
-  console.log("  bun run build   # packages a standalone .app\n");
-  console.log("Requires macOS arm64, Bun, and the Xcode command-line tools.");
+  console.log("  bun run build   # packages a standalone app\n");
+  console.log("Requires Bun on macOS arm64, Windows x64, or Linux x64.");
 } catch (err) {
   console.error(`create-mirinjs: ${err instanceof Error ? err.message : err}`);
   process.exit(1);

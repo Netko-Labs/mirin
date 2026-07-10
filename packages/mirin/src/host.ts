@@ -14,9 +14,9 @@
  *     their `app://` URLs served from Contents/Resources.
  */
 
-import { Worker } from "node:worker_threads";
-import { dirname, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { Core } from "./native.ts";
 
 // Bundle layout differs by platform: macOS `.app` puts the host in
@@ -45,15 +45,11 @@ if (!existsSync(corePath) || !existsSync(workerPath)) {
   process.exit(1);
 }
 
-const manifest = JSON.parse(
-  process.env.MIRIN_MANIFEST_JSON ?? readManifestFromBundle() ?? "{}",
-);
+const manifest = JSON.parse(process.env.MIRIN_MANIFEST_JSON ?? readManifestFromBundle() ?? "{}");
 
 const coreConfig = JSON.parse(
   process.env.MIRIN_CONFIG_JSON ??
-    JSON.stringify(
-      process.env.MIRIN_DEV_URL ? { dev: true } : { resources_path: resourcesDir },
-    ),
+    JSON.stringify(process.env.MIRIN_DEV_URL ? { dev: true } : { resources_path: resourcesDir }),
 );
 // Opt out of single-instance (the core default) when the app allows multiple.
 if (manifest.singleInstance === false) coreConfig.single_instance = false;

@@ -10,11 +10,11 @@
  * back to NSIS / the portable `.zip` when it's absent.
  */
 
-import { $ } from "bun";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
-import { join, isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { $ } from "bun";
 import type { InnoConfig } from "mirinjs";
-import { makeWindowsIcon } from "./icon-win.ts";
+import { makeWindowsIcon } from "./icons/windows/index.ts";
 
 export interface BuildInnoInput {
   appDir: string; // the assembled app folder (build/<App>)
@@ -39,7 +39,8 @@ const v = (s: string) => s.replace(/\{/g, "{{");
 
 /** Build the installer with `iscc`, returning the setup.exe path. */
 export async function buildInnoInstaller(input: BuildInnoInput): Promise<string> {
-  const { appDir, appName, exeName, version, bundleId, outDir, fileName, options, projectDir } = input;
+  const { appDir, appName, exeName, version, bundleId, outDir, fileName, options, projectDir } =
+    input;
   const out = join(outDir, fileName);
   rmSync(out, { force: true });
   if (!fileName.endsWith(".exe")) throw new Error("inno: fileName must end with .exe");
@@ -53,7 +54,8 @@ export async function buildInnoInstaller(input: BuildInnoInput): Promise<string>
   const changeDir = options.allowChangeInstallDir !== false && !minimal;
   const publisher = options.publisher ?? appName;
   const installDir =
-    options.installDir ?? (perMachine ? "{autopf}\\" + appName : "{localappdata}\\Programs\\" + appName);
+    options.installDir ??
+    (perMachine ? "{autopf}\\" + appName : "{localappdata}\\Programs\\" + appName);
 
   // Setup icon: an explicit .ico, else the app's bundled icon.ico.
   let icon: string | undefined;
@@ -80,7 +82,10 @@ export async function buildInnoInstaller(input: BuildInnoInput): Promise<string>
   L.push(`PrivilegesRequired=${perMachine ? "admin" : "lowest"}`);
   L.push(`OutputDir=${outDir}`);
   L.push(`OutputBaseFilename=${baseName}`);
-  L.push("Compression=lzma2/max");
+  // CEF is the bulk of the installer. Normal compression plus two independent
+  // LZMA2 blocks is substantially faster on CI with a modest size tradeoff.
+  L.push("Compression=lzma2/normal");
+  L.push("LZMANumBlockThreads=2");
   L.push("SolidCompression=yes");
   L.push("ArchitecturesAllowed=x64compatible");
   L.push("ArchitecturesInstallIn64BitMode=x64compatible");
@@ -96,17 +101,23 @@ export async function buildInnoInstaller(input: BuildInnoInput): Promise<string>
   if (options.include) L.push("", "; --- user include ---", options.include, "");
 
   L.push("", "[Files]");
-  L.push(`Source: "${appDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs`);
+  L.push(
+    `Source: "${appDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs`,
+  );
 
   if (desktop) {
     L.push("", "[Tasks]");
-    L.push(`Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional:"`);
+    L.push(
+      `Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional:"`,
+    );
   }
 
   L.push("", "[Icons]");
   if (startMenu) L.push(`Name: "{group}\\${v(appName)}"; Filename: "{app}\\${exeName}"`);
   if (desktop) {
-    L.push(`Name: "{autodesktop}\\${v(appName)}"; Filename: "{app}\\${exeName}"; Tasks: desktopicon`);
+    L.push(
+      `Name: "{autodesktop}\\${v(appName)}"; Filename: "{app}\\${exeName}"; Tasks: desktopicon`,
+    );
   }
 
   if (runAfter) {

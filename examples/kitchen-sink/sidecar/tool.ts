@@ -30,20 +30,25 @@ function respond(line: string): void {
   try {
     req = JSON.parse(line);
   } catch {
-    return out(JSON.stringify({ ok: false, error: "invalid json" }));
+    out(JSON.stringify({ ok: false, error: "invalid json" }));
+    return;
   }
   const text = req.text ?? "";
   switch (req.op) {
     case "ping":
-      return out(JSON.stringify({ ok: true, result: "pong", pid: process.pid }));
+      out(JSON.stringify({ ok: true, result: "pong", pid: process.pid }));
+      break;
     case "upper":
-      return out(JSON.stringify({ ok: true, result: text.toUpperCase() }));
+      out(JSON.stringify({ ok: true, result: text.toUpperCase() }));
+      break;
     case "reverse":
-      return out(JSON.stringify({ ok: true, result: [...text].reverse().join("") }));
+      out(JSON.stringify({ ok: true, result: [...text].reverse().join("") }));
+      break;
     case "hash":
-      return out(JSON.stringify({ ok: true, result: sha256(text) }));
+      out(JSON.stringify({ ok: true, result: sha256(text) }));
+      break;
     default:
-      return out(JSON.stringify({ ok: false, error: `unknown op: ${req.op ?? "?"}` }));
+      out(JSON.stringify({ ok: false, error: `unknown op: ${req.op ?? "?"}` }));
   }
 }
 
@@ -56,11 +61,12 @@ async function serve(): Promise<void> {
     const { done, value } = await reader.read();
     if (done) break;
     buf += dec.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf("\n")) >= 0) {
+    let nl = buf.indexOf("\n");
+    while (nl >= 0) {
       const line = buf.slice(0, nl).trim();
       buf = buf.slice(nl + 1);
       if (line) respond(line);
+      nl = buf.indexOf("\n");
     }
   }
 }

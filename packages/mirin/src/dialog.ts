@@ -3,7 +3,7 @@
  * back in a `dialog.result` event, which resolves the matching promise.
  */
 
-import { runtime, onNativeEvent } from "./runtime.ts";
+import { onNativeEvent, runtime } from "./runtime.ts";
 
 export interface OpenDialogOptions {
   message?: string;

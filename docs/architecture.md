@@ -98,8 +98,11 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 ## 5. CEF integration
 
 - **Version pinning.** Mirin pins one CEF version per mirin release (whatever current `cef`/`cef-dll-sys` crates target). A fetch step (`scripts/fetch-cef.ts`) downloads the matching CEF binary distribution from the Spotify CDN into `vendor/cef/` (gitignored) and the dev bundle generator copies the framework from there.
+- **Installed-cache safety.** Consumer builds download release CEF archives and their SHA-256 files over HTTPS-only redirects, verify integrity before parsing, reject traversal before extraction, reject escaping symlinks afterward, verify the platform marker, and only then replace the persistent `~/.mirinjs/cef` cache from a staging directory.
 - **Linking.** The framework is loaded at runtime (`cef_load_library` path on macOS), keeping `libmirin_core` itself free of hard CEF linkage.
 - **Bundle requirement.** CEF on macOS effectively requires the `.app` + helpers structure even during development. `mirin dev` therefore materializes a **dev bundle**: a throwaway `.app` skeleton (ad-hoc signed) whose Resources point at the working tree, so the edit-reload loop doesn't pay a full repackage.
+- **Production locales.** `cef.locales` optionally keeps only selected locale packs in production bundles. Windows/Linux copy matching `locales/*.pak`; macOS retains the matching `.lproj` directory and its grammatical-gender variants before codesigning. Omission preserves the complete CEF runtime.
+- **Release scheduling.** The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation.
 
 ## 6. Repository layout
 
@@ -109,11 +112,12 @@ mirin/
 │  ├─ mirin-core/        # cdylib: C ABI, windowing, CEF browser process, event routing
 │  └─ mirin-helper/      # CEF subprocess binary (incl. render-process preload injection)
 ├─ packages/
-│  ├─ mirin/             # npm package: defineConfig, app runtime, rpc, host bootstrap
-│  │  └─ src/client/     # browser-side: preload bootstrap, rpc client (exported as mirin/client)
-│  └─ mirin-cli/         # `mirin` CLI: init / dev / (build, later)
-├─ examples/hello/
-├─ scripts/              # fetch-cef, dev-bundle generation
+│  ├─ mirin/             # runtime/config/RPC/client package (`mirinjs`)
+│  ├─ mirin-cli/         # `mirin` CLI: init / dev / build / release
+│  ├─ create-mirin/      # project scaffolder
+│  └─ native-*/          # per-platform prebuilt core + helper packages
+├─ examples/             # hello-react, kitchen-sink, spotlight, materials, updater
+├─ scripts/              # CEF fetch, versioning, package, and release helpers
 └─ docs/
 ```
 
@@ -134,7 +138,9 @@ runtime + secure timestamp; per-binary `entitlements` are applied only when aske
 CLIs need none). Spawn at runtime with `app.sidecar(name, { args, … })` — a thin
 `Bun.spawn` wrapper that resolves the bundled path (`runtime().sidecarDir`) and tracks
 the child so it's killed on quit. Sidecars are separate OS processes and, like the
-Worker, must not touch AppKit/CEF.
+Worker, must not touch AppKit/CEF. Sidecar names are validated as single safe filename
+segments (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-`), and source paths must be project-relative
+without escaping the project root.
 
 **Extra workers** — `workers: { name: "src/foo.worker.ts" }`. Each entry is bundled by
 the CLI to `Contents/Resources/workers/<name>.js` (alongside the main `worker.js`).
@@ -142,7 +148,8 @@ Resolve one with `resolveWorker(name)` and hand it to `new Worker(...)`
 (`node:worker_threads`) for CPU/IO offload. Same threading rule (§2): extra workers
 run off the main thread and **cannot** issue window/native FFI — anything native is
 requested from the app worker. They may `dlopen` the core for pure functions (as the
-updater's codec does), but not UI commands.
+updater's codec does), but not UI commands. Worker names and entry paths follow the same
+single-segment / project-root validation as sidecars.
 
 Dev (`mirin dev`) stages both under `.mirin/{sidecars,workers}` and points the host at
 them via `MIRIN_SIDECAR_DIR` / `MIRIN_WORKERS_DIR`; prod resolves them in-bundle
@@ -150,7 +157,8 @@ relative to `Contents/Resources`. The host threads both dirs to the Worker throu
 `workerData` (see `host.ts`, `runtime.ts`).
 
 **Deep links** — `urlSchemes: ["anko"]` registers the app as the macOS handler for
-`anko://…` URLs (written to `Info.plist` `CFBundleURLTypes` by `bundle.ts`). macOS
+`anko://…` URLs (written to `Info.plist` `CFBundleURLTypes` by
+`bundle/macos/app.ts`). macOS
 launches the app (or routes to the running instance — the per-app CEF cache dir makes
 mirin apps single-instance) and delivers the URL to the AppKit delegate's
 `application:openURLs:` (`mac/app.rs`), which emits an `app.open-url` native event the
@@ -173,7 +181,7 @@ embedded-NSView/OSR model. Consequences:
   closing) → CEF sends `WM_CLOSE` to the top-level owner → the WndProc lets the
   *next* `WM_CLOSE` `DestroyWindow`, which tears down the CEF child and fires
   `on_before_close`. This is-closing handshake is the Windows analogue of macOS's
-  view-detach dance (`win/window.rs`).
+  view-detach dance (`win/window/mod.rs`).
 - **Custom title bar** (`titleBarStyle: hidden | hiddenInset`): frameless via
   `WM_NCCALCSIZE` (client == window; maximized inset), DWM shadow restored with
   `DwmExtendFrameIntoClientArea`. The webview child consumes mouse input, so
@@ -204,13 +212,17 @@ embedded-NSView/OSR model. Consequences:
 host) + `mirin_core.dll` + `mirin-helper.exe` + the CEF runtime (libcef.dll, `*.pak`,
 `icudtl.dat`, `locales/`) all beside the exe (so the OS loader resolves libcef), and
 `resources/{ui, worker.js, mirin.manifest.json, version.json}`. `mirin dev`/`build`/
-`release` branch on `process.platform` (`bundle-win.ts`). `mirin release` emits an
+`release` branch on `process.platform` (`bundle/windows/index.ts`). `mirin release` emits an
 **NSIS installer** (`…-setup.exe` — Program Files / per-user install, Start Menu +
 Desktop shortcuts, uninstaller, Add/Remove Programs; customizable via the `nsis`
 config, `installer-win.ts`; needs `makensis`, falls back to a portable `.zip`) +
 a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`; the updater
-swaps the folder via a detached PowerShell relauncher. Consumers install
-the prebuilt `@mirinjs/win32-x64` native package + a CEF release download (no Rust).
+swaps the folder via a detached PowerShell relauncher. Runtime updates require
+HTTPS artifact hosts except loopback HTTP for local testing, validate that the
+manifest matches channel/platform/arch, verify SHA-256 hashes, and reject update
+tars whose entries escape the expected app root before extraction. Consumers
+install the prebuilt `@mirinjs/win32-x64` native package + a CEF release download
+(no Rust).
 Build prereqs: cmake + ninja (for `cef-dll-sys`'s C++ wrapper) + MSVC.
 
 **Material:** transparent OSR windows take a DWM acrylic blur backdrop via the
@@ -231,7 +243,7 @@ port **owns no native toolkit window**:
 
 - **Windowing (CEF Views).** The primary window uses CEF's Views framework:
   `window_create_top_level` owns a real X11 toplevel hosting a `BrowserView`
-  (`browser_view_create`), driven through the Views delegates in `linux/window.rs`.
+  (`browser_view_create`), driven through the Views delegates in `linux/window/mod.rs`.
   The mirin `window_id` is stamped on the BrowserView's `View::id` and read back in the
   shared `on_after_created` to map Browser → window. Frameless windows get a fill
   layout (`set_to_fill_layout`) so the view tracks resize; `can_resize`/`can_maximize`/
@@ -269,7 +281,7 @@ port **owns no native toolkit window**:
   `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`), all beside the host
   with an `$ORIGIN` rpath so `libcef.so` resolves without `LD_LIBRARY_PATH`, plus
   `resources/{ui, worker.js, mirin.manifest.json, version.json, icon.png}`. `mirin dev`/
-  `build`/`release` branch on `process.platform` (`bundle-linux.ts`). Packaging
+  `build`/`release` branch on `process.platform` (`bundle/linux/index.ts`). Packaging
   (AppImage / `.deb` / `.rpm`) is landing this release — see `docs/linux-port.md` §L5.
 
 Full status and rationale: `docs/linux-port.md`.
