@@ -16,19 +16,32 @@
  * any static host. Channels coexist because the channel is part of every name.
  */
 
-import { $ } from "bun";
-import { mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
-import { join, basename } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { build } from "./build.ts";
-import { buildDmg, notarizeAndStaple, type DmgOptions } from "./dmg.ts";
-import { buildNsisInstaller, hasMakensis } from "./installer-win.ts";
-import { buildInnoInstaller, hasInno } from "./installer-inno.ts";
-import { buildLinuxPackages, resolveLinuxFormats } from "./package-linux.ts";
+import { join } from "node:path";
+import { $ } from "bun";
 import { loadCodec } from "mirinjs/codec";
+import { build } from "./build.ts";
+import { notarizeAndStaple } from "./dmg.ts";
+import { buildReleaseInstaller } from "./release/installers.ts";
+import {
+  assertTrustedReleaseUrl,
+  parsePreviousReleaseManifest,
+  releaseArtifactUrl,
+  trustedReleaseBaseUrl,
+} from "./release/previous.ts";
 
-const sha256File = (path: string) =>
-  new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
+// Level 10 keeps updater bundles compact without level 19's steep CPU cost.
+// The native codec uses multiple workers, so this scales across CI runner cores.
+const RELEASE_COMPRESSION_LEVEL = 10;
+
+async function sha256File(path: string): Promise<string> {
+  const hasher = new Bun.CryptoHasher("sha256");
+  for await (const chunk of Bun.file(path).stream()) {
+    hasher.update(chunk);
+  }
+  return hasher.digest("hex");
+}
 
 export async function release(projectDir = process.cwd()): Promise<number> {
   const result = await build(projectDir);
@@ -43,7 +56,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   const arch = process.arch; // "arm64" | "x64"
   const prefix = `${result.channel}-${platform}-${arch}`;
   const safeName = result.appName.replace(/[^A-Za-z0-9._-]/g, "");
-  const base = result.baseUrl.replace(/\/$/, "");
+  const base = trustedReleaseBaseUrl(result.baseUrl);
   // The packaged unit: a flat app folder on Windows/Linux, an `.app` bundle on macOS.
   const appArtifact = isWindows || isLinux ? result.appName : `${result.appName}.app`;
 
@@ -56,6 +69,19 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   // credentials are present. The .tar.zst / patch updater bundles are made from
   // this signed, stapled .app, so the updater swaps in an already-notarized app.
   if (!isWindows && !isLinux) await notarizeAndStaple(result.app);
+
+  // Installer/package tooling runs in child processes and reads the assembled app.
+  // Start it now so it overlaps updater compression and delta generation below.
+  const installerBuild = buildReleaseInstaller({
+    result,
+    buildDir,
+    outDir,
+    appArtifact,
+    prefix,
+    safeName,
+    isWindows,
+    isLinux,
+  });
 
   // Load the codec (zstd/bsdiff) from the *bundled* core, not the raw build output:
   // on Windows mirin_core.dll imports libcef.dll. The DLL loader resolves imports
@@ -75,44 +101,58 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   // Uncompressed tar — the identity + diff/patch basis (BSD tar keeps symlinks).
   const newTar = join(outDir, "_new.tar");
   await $`tar -cf ${newTar} -C ${buildDir} ${appArtifact}`;
-  const tarHash = sha256File(newTar);
+  const tarHash = await sha256File(newTar);
 
   // Full bundle: zstd(newTar).
   const bundleName = `${prefix}-${safeName}${isWindows ? "" : ".app"}.tar.zst`;
   const bundlePath = join(outDir, bundleName);
   console.log(`[mirin release] compressing → ${bundleName}`);
-  codec.compress(newTar, bundlePath, 19);
-  const bundleSha = sha256File(bundlePath);
-  const bundleSize = readFileSync(bundlePath).byteLength;
+  codec.compress(newTar, bundlePath, RELEASE_COMPRESSION_LEVEL);
+  const bundleSha = await sha256File(bundlePath);
+  const bundleSize = statSync(bundlePath).size;
 
   // Delta patch vs the previous release (if reachable). Best-effort.
   const patches: Array<{ fromVersion: string; url: string; sha256: string; size: number }> = [];
   try {
-    const prevRes = await fetch(`${base}/${prefix}-update.json?t=${Date.now()}`, { redirect: "follow" });
+    const manifestUrl = new URL(releaseArtifactUrl(base, `${prefix}-update.json`));
+    manifestUrl.searchParams.set("t", String(Date.now()));
+    const prevRes = await fetch(manifestUrl, {
+      redirect: "follow",
+    });
+    assertTrustedReleaseUrl(prevRes.url);
     if (prevRes.ok) {
-      const prev = (await prevRes.json()) as { version: string; bundle?: { url: string } };
-      if (prev.version && prev.version !== result.version && prev.bundle?.url) {
+      const prev = parsePreviousReleaseManifest(await prevRes.json(), {
+        channel: result.channel,
+        platform,
+        arch,
+      });
+      if (prev.version !== result.version) {
         console.log(`[mirin release] generating delta ${prev.version} → ${result.version}…`);
-        const tmp = join(tmpdir(), `mirin-release-${Date.now()}`);
-        mkdirSync(tmp, { recursive: true });
-        const prevZst = join(tmp, "prev.tar.zst");
-        const dl = await fetch(`${base}/${prev.bundle.url}`, { redirect: "follow" });
-        if (!dl.ok || !dl.body) throw new Error(`prev bundle ${dl.status}`);
-        await Bun.write(prevZst, await dl.arrayBuffer());
-        const prevTar = join(tmp, "prev.tar");
-        codec.decompress(prevZst, prevTar);
-        const rawPatch = join(tmp, "patch.bin");
-        codec.diff(prevTar, newTar, rawPatch); // bsdiff
-        const patchName = `${prefix}-${prev.version}.patch`;
-        const patchPath = join(outDir, patchName);
-        codec.compress(rawPatch, patchPath, 19);
-        rmSync(tmp, { recursive: true, force: true });
-        patches.push({
-          fromVersion: prev.version,
-          url: patchName,
-          sha256: sha256File(patchPath),
-          size: readFileSync(patchPath).byteLength,
-        });
+        const tmp = mkdtempSync(join(tmpdir(), "mirin-release-"));
+        try {
+          const prevZst = join(tmp, "prev.tar.zst");
+          await downloadVerified(
+            releaseArtifactUrl(base, prev.bundle.url),
+            prevZst,
+            prev.bundle.sha256,
+            prev.bundle.size,
+          );
+          const prevTar = join(tmp, "prev.tar");
+          codec.decompress(prevZst, prevTar);
+          const rawPatch = join(tmp, "patch.bin");
+          codec.diff(prevTar, newTar, rawPatch); // bsdiff
+          const patchName = `${prefix}-${prev.version}.patch`;
+          const patchPath = join(outDir, patchName);
+          codec.compress(rawPatch, patchPath, RELEASE_COMPRESSION_LEVEL);
+          patches.push({
+            fromVersion: prev.version,
+            url: patchName,
+            sha256: await sha256File(patchPath),
+            size: statSync(patchPath).size,
+          });
+        } finally {
+          rmSync(tmp, { recursive: true, force: true });
+        }
       }
     }
   } catch (e) {
@@ -133,127 +173,10 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   const manifestName = `${prefix}-update.json`;
   await Bun.write(join(outDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  // Distributable installer for first-time installs (the updater uses the
-  // .tar.zst/patch): a drag-to-Applications .dmg on macOS, a .zip of the app
-  // folder on Windows.
-  let installerName: string | undefined;
-  let installerSize = 0;
-  if (isWindows) {
-    // A real installer (Program Files / per-user install, Start Menu + Desktop
-    // shortcuts, uninstaller, Add/Remove Programs): Inno Setup (modern wizard)
-    // preferred, then NSIS, then a portable .zip if neither toolchain is present.
-    const setupName = `${prefix}-${safeName}-setup.exe`;
-    const installerArgs = {
-      appDir: result.app,
-      appName: result.appName,
-      exeName: `${result.appName}.exe`,
-      version: result.version,
-      bundleId: result.bundleId,
-      outDir,
-      fileName: setupName,
-      projectDir: result.projectDir,
-    };
-    const innoWanted = result.inno !== false;
-    const nsisWanted = result.nsis !== false;
-    const innoOpts = typeof result.inno === "object" ? result.inno : {};
-    const nsisOpts = typeof result.nsis === "object" ? result.nsis : {};
-    let exePath: string | undefined;
-    if (innoWanted && hasInno()) {
-      exePath = await buildInnoInstaller({
-        ...installerArgs,
-        options: { ...innoOpts, publisher: innoOpts.publisher ?? result.publisher },
-      });
-    } else if (nsisWanted && (await hasMakensis())) {
-      exePath = await buildNsisInstaller({
-        ...installerArgs,
-        options: { ...nsisOpts, publisher: nsisOpts.publisher ?? result.publisher },
-      });
-    }
-    if (exePath) {
-      installerName = setupName;
-      installerSize = readFileSync(exePath).byteLength;
-    } else {
-      if (innoWanted || nsisWanted) {
-        console.warn(
-          "[mirin release] no installer toolchain found — shipping the portable .zip. " +
-            "Install Inno Setup (`scoop install inno-setup`) or NSIS (`scoop install nsis`).",
-        );
-      }
-      installerName = `${prefix}-${safeName}.zip`;
-      console.log(`[mirin release] zipping → ${installerName}`);
-      const zipPath = join(outDir, installerName);
-      rmSync(zipPath, { force: true });
-      // bsdtar (Windows `tar`) creates a .zip from the extension with `-a`.
-      await $`tar -a -cf ${zipPath} -C ${buildDir} ${appArtifact}`;
-      installerSize = readFileSync(zipPath).byteLength;
-    }
-  } else if (isLinux) {
-    // Linux: the first-install convenience is a set of distributable packages
-    // (AppImage + .deb + .rpm), the analog of the macOS .dmg / Windows installer.
-    // Never fail the whole release over a packaging step — warn and ship the rest.
-    if (result.linux !== false) {
-      try {
-        const formats = resolveLinuxFormats(result.linux);
-        console.log(`[mirin release] building Linux packages (${formats.join(", ")})…`);
-        const pkgs = await buildLinuxPackages({
-          appDir: result.app,
-          appName: result.appName,
-          bundleId: result.bundleId,
-          version: result.version,
-          publisher: result.publisher,
-          outDir,
-          projectDir: result.projectDir,
-          icon: result.icon,
-          options: typeof result.linux === "object" ? result.linux : {},
-          formats,
-        });
-        // The AppImage doubles as the primary "installer" line in the summary.
-        const appImage = pkgs.find((p) => p.format === "appimage") ?? pkgs[0];
-        if (appImage) {
-          installerName = basename(appImage.path);
-          installerSize = appImage.size;
-        }
-        for (const p of pkgs) {
-          if (p !== appImage) console.log(`  ${basename(p.path)} (${(p.size / 1e6).toFixed(1)} MB)`);
-        }
-      } catch (e) {
-        console.warn(
-          `\n[mirin release] ⚠️  Linux packaging failed: ${e instanceof Error ? e.message : e}\n` +
-            `[mirin release] shipping the updater bundle + manifest WITHOUT packages.\n`,
-        );
-      }
-    }
-  } else if (result.dmg !== false) {
-    // The DMG is the first-install convenience; the updater bundle + manifest (the
-    // critical artifacts) are already built. Never fail the whole release over a
-    // flaky installer step — warn loudly and ship the rest.
-    const dmgName = `${prefix}-${safeName}.dmg`;
-    console.log(`[mirin release] building installer → ${dmgName}`);
-    try {
-      const options: DmgOptions = typeof result.dmg === "object" ? result.dmg : {};
-      const dmgPath = await buildDmg({
-        app: result.app,
-        appName: result.appName,
-        outDir,
-        fileName: dmgName,
-        options,
-        projectDir: result.projectDir,
-        signIdentity: result.signIdentity,
-      });
-      await notarizeAndStaple(dmgPath); // no-op without notary credentials
-      installerName = dmgName;
-      installerSize = readFileSync(dmgPath).byteLength;
-    } catch (e) {
-      console.warn(
-        `\n[mirin release] ⚠️  DMG build failed: ${e instanceof Error ? e.message : e}\n` +
-          `[mirin release] shipping the updater bundle + manifest WITHOUT a .dmg installer.\n`,
-      );
-      rmSync(join(outDir, dmgName), { force: true });
-    }
-  }
+  const { installerName, installerSize } = await installerBuild;
 
   const mb = (n: number) => (n / 1e6).toFixed(1);
-  console.log(`\n[mirin release] done → build/release/`);
+  console.log("\n[mirin release] done → build/release/");
   console.log(`  ${manifestName}`);
   console.log(`  ${bundleName} (${mb(bundleSize)} MB)`);
   for (const p of patches) console.log(`  ${p.url} (${mb(p.size)} MB delta from ${p.fromVersion})`);
@@ -261,4 +184,50 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   console.log(`\nUpload all of build/release/ to: ${result.baseUrl}`);
   if (existsSync(join(outDir, "_new.tar"))) rmSync(join(outDir, "_new.tar"), { force: true });
   return 0;
+}
+
+async function downloadVerified(
+  url: string,
+  destination: string,
+  expectedSha256: string,
+  expectedSize: number,
+): Promise<void> {
+  const response = await fetch(url, { redirect: "follow" });
+  assertTrustedReleaseUrl(response.url);
+  if (!response.ok || !response.body) throw new Error(`previous bundle ${response.status}`);
+
+  const contentLength = Number(response.headers.get("content-length") ?? 0);
+  if (contentLength > 0 && contentLength !== expectedSize) {
+    throw new Error(
+      `previous bundle size mismatch (expected ${expectedSize}, got ${contentLength})`,
+    );
+  }
+
+  const reader = response.body.getReader();
+  const writer = Bun.file(destination).writer();
+  const hasher = new Bun.CryptoHasher("sha256");
+  let received = 0;
+  try {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        if (received > expectedSize) throw new Error("previous bundle exceeds declared size");
+        hasher.update(value);
+        writer.write(value);
+      }
+    } finally {
+      await writer.end();
+    }
+    if (received !== expectedSize) {
+      throw new Error(`previous bundle size mismatch (expected ${expectedSize}, got ${received})`);
+    }
+    if (hasher.digest("hex") !== expectedSha256) {
+      throw new Error("previous bundle checksum mismatch");
+    }
+  } catch (error) {
+    rmSync(destination, { force: true });
+    throw error;
+  }
 }

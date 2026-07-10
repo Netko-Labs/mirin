@@ -1,11 +1,9 @@
 /**
  * `mirin build` — package a standalone, signed .app (docs/macos-mvp.md).
  *
- * 1. vite build               → production UI in dist/
- * 2. resolve native artifacts → core + helper (in-repo build or prebuilt)
- * 3. compile host (minified)  → Contents/MacOS/<exe>
- * 4. bundle Worker (minified) → Resources/worker.js
- * 5. assemble + sign the .app → dist/ui, manifest, dylib, helpers, CEF
+ * 1. vite build + native artifact resolution run in parallel.
+ * 2. compile host + bundle Workers run in parallel.
+ * 3. assemble + sign the app from the completed artifacts.
  *
  * The result runs with no env and no dev server: the host resolves everything
  * from inside the bundle, and webviews load their `app://` URLs served from
@@ -15,17 +13,18 @@
  * ID to produce a distributable, notarizable app.
  */
 
-import { $ } from "bun";
-import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildAppBundle } from "./bundle.ts";
-import { buildWindowsBundle } from "./bundle-win.ts";
-import { buildLinuxBundle } from "./bundle-linux.ts";
-import { buildLinuxPackages, resolveLinuxFormats } from "./package-linux.ts";
-import { makeWindowsIcon } from "./icon-win.ts";
+import { $ } from "bun";
 import { resolveArtifacts } from "./artifacts.ts";
+import { buildLinuxBundle } from "./bundle/linux/index.ts";
+import { buildAppBundle } from "./bundle/macos/index.ts";
+import { normalizeCefLocales } from "./bundle/shared/cef-locales.ts";
+import { buildWindowsBundle } from "./bundle/windows/index.ts";
+import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { makeWindowsIcon } from "./icons/windows/index.ts";
+import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
 import { sweepBuildTemps } from "./temps.ts";
-import { normalizeSidecars, compileWorkers } from "./extras.ts";
 
 const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
@@ -91,11 +90,19 @@ async function brandWindowsExe(
   }
   const fv = winFileVersion(opts.version);
   args.push(
-    "--set-version-string", "ProductName", opts.appName,
-    "--set-version-string", "FileDescription", opts.appName,
-    "--set-version-string", "CompanyName", opts.publisher,
-    "--set-file-version", fv,
-    "--set-product-version", fv,
+    "--set-version-string",
+    "ProductName",
+    opts.appName,
+    "--set-version-string",
+    "FileDescription",
+    opts.appName,
+    "--set-version-string",
+    "CompanyName",
+    opts.publisher,
+    "--set-file-version",
+    fv,
+    "--set-product-version",
+    fv,
   );
   const res = await $`rcedit ${exe} ${args}`.nothrow();
   if (res.exitCode !== 0) {
@@ -181,38 +188,44 @@ export async function build(
   const inno: boolean | import("mirinjs").InnoConfig = config.inno ?? true;
   const linux: boolean | import("mirinjs").LinuxConfig = config.linux ?? true;
   const publisher: string = config.publisher ?? appName;
+  const cefLocales = normalizeCefLocales(config.cef?.locales);
 
   console.log(`[mirin build] ${appName} ${version}`);
 
-  // 1. production UI
-  console.log("[mirin build] vite build…");
-  await $`bunx vite build`.cwd(projectDir);
+  // Production UI and native artifacts do not share outputs, so overlap them.
+  console.log("[mirin build] building UI + native artifacts…");
+  const [, artifacts] = await Promise.all([
+    $`bunx vite build`.cwd(projectDir),
+    resolveArtifacts({ release: true }),
+  ]);
 
-  // 2. native artifacts (release)
-  const artifacts = await resolveArtifacts({ release: true });
-
-  // 3 + 4. host + worker (minified)
-  console.log("[mirin build] compiling host + bundling main process…");
+  // Host compilation, main Worker bundling, and extra Worker bundling are independent.
+  console.log("[mirin build] compiling host + bundling workers…");
   const signIdentity = process.env.MIRIN_SIGN_IDENTITY;
   const hostExe = join(work, IS_WINDOWS ? "host-release.exe" : "host-release");
   const workerJs = join(work, "worker.release.js");
-  await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
-  if (IS_WINDOWS) {
-    patchPeToGuiSubsystem(hostExe);
-    await brandWindowsExe(hostExe, {
-      projectDir,
-      work,
-      appName,
-      version,
-      icon: config.icon,
-      publisher,
-    });
-  }
-  await $`bun build ${mainEntry} --target=bun --minify --outfile ${workerJs}`.cwd(projectDir);
-
-  // Extra assets: resolve sidecar binaries + compile any extra worker entries.
   const sidecars = normalizeSidecars(projectDir, config.sidecars);
-  const extraWorkers = await compileWorkers(projectDir, config.workers, join(work, "workers"), true);
+  const hostBuild = (async (): Promise<void> => {
+    await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
+      projectDir,
+    );
+    if (IS_WINDOWS) {
+      patchPeToGuiSubsystem(hostExe);
+      await brandWindowsExe(hostExe, {
+        projectDir,
+        work,
+        appName,
+        version,
+        icon: config.icon,
+        publisher,
+      });
+    }
+  })();
+  const workerBuild = $`bun build ${mainEntry} --target=bun --minify --outfile ${workerJs}`.cwd(
+    projectDir,
+  );
+  const extraWorkersBuild = compileWorkers(projectDir, config.workers, join(work, "workers"), true);
+  const [, , extraWorkers] = await Promise.all([hostBuild, workerBuild, extraWorkersBuild]);
 
   // 5. assemble (+ sign on macOS)
   const artifactKind = IS_WINDOWS ? "app folder" : IS_LINUX ? "app folder" : ".app";
@@ -241,34 +254,40 @@ export async function build(
         coreDll: artifacts.coreDylib,
         helperExe: artifacts.helperBin,
         cefPath: artifacts.cefPath,
+        cefLocales,
         icon: config.icon ? join(projectDir, config.icon) : undefined,
         resources: { ...resources, sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })) },
       })
     : IS_LINUX
-    ? await buildLinuxBundle({
-        appName,
-        outDir,
-        hostExe,
-        coreDll: artifacts.coreDylib,
-        helperExe: artifacts.helperBin,
-        cefPath: artifacts.cefPath,
-        icon: config.icon ? join(projectDir, config.icon) : undefined,
-        resources: { ...resources, sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })) },
-      })
-    : await buildAppBundle({
-        appName,
-        bundleId,
-        outDir,
-        hostExe,
-        coreDylib: artifacts.coreDylib,
-        helperBin: artifacts.helperBin,
-        cefPath: artifacts.cefPath,
-        version,
-        icon: config.icon ? join(projectDir, config.icon) : undefined,
-        signIdentity,
-        urlSchemes: config.urlSchemes,
-        resources: { ...resources, sidecars },
-      });
+      ? await buildLinuxBundle({
+          appName,
+          outDir,
+          hostExe,
+          coreDll: artifacts.coreDylib,
+          helperExe: artifacts.helperBin,
+          cefPath: artifacts.cefPath,
+          cefLocales,
+          icon: config.icon ? join(projectDir, config.icon) : undefined,
+          resources: {
+            ...resources,
+            sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })),
+          },
+        })
+      : await buildAppBundle({
+          appName,
+          bundleId,
+          outDir,
+          hostExe,
+          coreDylib: artifacts.coreDylib,
+          helperBin: artifacts.helperBin,
+          cefPath: artifacts.cefPath,
+          cefLocales,
+          version,
+          icon: config.icon ? join(projectDir, config.icon) : undefined,
+          signIdentity,
+          urlSchemes: config.urlSchemes,
+          resources: { ...resources, sidecars },
+        });
 
   console.log(`\n[mirin build] done → ${app}`);
 

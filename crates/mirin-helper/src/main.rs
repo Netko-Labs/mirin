@@ -132,10 +132,12 @@ wrap_app! {
                 // Must match mirin-core scheme::app_scheme_options exactly
                 // (standard + secure + cors + fetch — SECURE gives app:// the
                 // secure-context Web APIs; loopback RPC still works, see core).
-                let opts = (SchemeOptions::STANDARD.get_raw()
+                let opts = SchemeOptions::STANDARD.get_raw()
                     | SchemeOptions::SECURE.get_raw()
                     | SchemeOptions::CORS_ENABLED.get_raw()
-                    | SchemeOptions::FETCH_ENABLED.get_raw()) as i32;
+                    | SchemeOptions::FETCH_ENABLED.get_raw();
+                #[cfg(not(target_os = "windows"))]
+                let opts = opts as i32;
                 reg.add_custom_scheme(Some(&CefString::from("app")), opts);
             }
         }

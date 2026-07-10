@@ -1,12 +1,14 @@
 # Getting started
 
-> **Alpha.** macOS arm64 only. Expect rough edges and breaking changes.
+> **Alpha.** macOS arm64, Windows x64, and Linux x64 are supported. macOS is the most
+> exercised path; expect rough edges and breaking changes.
 
 ## Requirements
 
 - **Bun** ≥ 1.2 ([install](https://bun.sh))
-- **macOS** on Apple Silicon (arm64)
-- **Xcode command-line tools** (`xcode-select --install`) — for code signing
+- **macOS** on Apple Silicon (arm64) with Xcode command-line tools
+  (`xcode-select --install`) for code signing, **Windows 10/11 x64**, or a
+  supported **Linux x64** desktop with the CEF/GTK runtime dependencies.
 
 No Rust toolchain is needed to *use* mirin; the native core ships prebuilt.
 
@@ -20,7 +22,7 @@ bun run dev
 ```
 
 The first `dev`/`build` downloads the Chromium Embedded Framework once
-(~hundreds of MB) into `~/.mirinjs/cef/`.
+(~hundreds of MB) into `~/.mirinjs/cef/<version-platform>/`.
 
 You get a native window rendering React with Vite HMR and typed RPC between the
 Bun main process and the webview.
@@ -43,15 +45,44 @@ my-app/
 | Command | What it does |
 |---|---|
 | `bun run dev` (`mirin dev`) | Builds the dev bundle, starts Vite, opens the window at the dev server (HMR). |
-| `bun run build` (`mirin build`) | `vite build` → standalone, ad-hoc-signed `.app` in `./build`, serving the UI from `app://`. |
+| `bun run build` (`mirin build`) | `vite build` → standalone app in `./build` (`.app` on macOS, flat app folder on Windows/Linux), serving the UI from `app://`. |
 
 Set `MIRIN_SIGN_IDENTITY="Developer ID Application: …"` before `build` to
 produce a distributable, notarizable app.
+
+## Release and updates
+
+`mirin release` builds the app and emits installer + updater artifacts under
+`build/release/`:
+
+- macOS: a DMG plus `{channel}-darwin-{arch}-update.json`, full `.tar.zst`, and
+  optional delta patch.
+- Windows: an Inno Setup installer when `iscc` is available, else NSIS when
+  `makensis` is available, else a portable `.zip`, plus the updater artifacts.
+- Linux: AppImage, deb, and rpm packages plus the updater artifacts.
+
+Release compression uses multiple CPU cores, and Linux package formats build in
+parallel with installer creation overlapping updater generation. Apps that ship
+one language can set `cef: { locales: ["en-US"] }`; omit it to retain every CEF
+locale. In ephemeral CI, cache `~/.mirinjs/cef` by Mirin version and runner
+platform so each target does not download and unpack the same runtime again.
+
+Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
+those files, such as GitHub Releases' `.../releases/latest/download`. Runtime
+updates reject non-HTTPS URLs except `http://localhost` / loopback for local
+testing, validate the manifest target, verify SHA-256 hashes, and check the
+archive layout before extraction. Artifact names, versions, and sizes are
+bounded before they become filesystem paths or downloads.
 
 ## Native features
 
 Native capabilities run in the **main process** and are invoked from the UI via
 RPC. Available from `mirinjs`:
+
+The complete list below is implemented on macOS and Windows. Linux currently
+supports the core window/build/release loop and window controls; menus, tray,
+dialogs, clipboard, shortcuts, and deep links remain tracked in
+[`docs/linux-port.md`](linux-port.md).
 
 ```ts
 import { app, menu, Tray, dialog, clipboard, globalShortcut } from "mirinjs";

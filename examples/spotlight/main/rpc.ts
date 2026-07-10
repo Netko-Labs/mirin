@@ -1,5 +1,5 @@
-import { rpc } from "mirinjs/rpc";
 import { app } from "mirinjs";
+import { rpc } from "mirinjs/rpc";
 
 /** A tiny demo "index" the panel searches over. */
 const COMMANDS = [

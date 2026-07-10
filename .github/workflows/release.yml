@@ -1,209 +1,315 @@
 name: Release
 
-# Tag a release to publish: `git tag v0.0.1-alpha.0 && git push --tags`.
-# Requires:
-#   - repo secret NPM_TOKEN (npm automation token with publish rights to
-#     `mirinjs`, `create-mirinjs`, and the `@mirinjs/*` scope), and
-#   - the Blacksmith GitHub app installed on the Netko-Labs org (org-only runner).
+# A version tag from main creates an invisible draft first. Platform builds run
+# concurrently, upload their CEF archives to that draft, and relay only small
+# registry tarballs. Publication and release visibility happen after all targets
+# succeed.
 on:
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write # create the GitHub Release + upload the CEF asset
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.3.14
 
 jobs:
-  release:
-    # Blacksmith Apple Silicon runner; release binaries built on macOS 15 for
-    # broad runtime compatibility (Liquid Glass still activates at runtime on 26+).
-    runs-on: blacksmith-6vcpu-macos-15
+  prepare-release:
+    name: Validate and create draft
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.create-release.outputs.id }}
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          bun-version: latest
+          fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          components: rustfmt
+
+      - name: Validate release tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION=$(bun -e 'console.log(require("./packages/mirin/package.json").version)')
+          if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package version $PACKAGE_VERSION"
+            exit 1
+          fi
+          git fetch origin main --no-tags
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME does not point to a commit merged into main"
+            exit 1
+          fi
+          VERSION="$VERSION" bun -e \
+            'import { distTagForVersion } from "./scripts/lib/dist-tag.ts"; distTagForVersion(process.env.VERSION ?? "")'
+
+      - name: Cache Bun packages
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Audit dependencies
+        run: bun audit
+
+      - name: Validate source
+        run: |
+          bun run fmt-lint:ci
+          bun run typecheck
+          bun run test
+          cargo fmt --all --check
+
+      - name: Create draft release
+        id: create-release
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
+        with:
+          name: Mirin ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+
+  build-macos:
+    name: Build macOS arm64
+    needs: prepare-release
+    runs-on: blacksmith-6vcpu-macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install build tools
         run: brew install ninja
 
-      - name: Verify tag matches package version
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(bun -e 'console.log(require("./packages/mirin/package.json").version)')
-          if [ "$TAG" != "$PKG" ]; then
-            echo "tag v$TAG != package version $PKG (run scripts/version.ts)"; exit 1
-          fi
+      - name: Cache CEF
+        id: cef-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: vendor/cef
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
 
       - name: Fetch CEF
+        if: steps.cef-cache.outputs.cache-hit != 'true'
         run: bun scripts/fetch-cef.ts
 
-      - name: Install deps
-        run: bun install
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
-      - name: Build native (release)
+      - name: Build native release
         run: cargo build --release -p mirin-core -p mirin-helper
 
-      - name: Stage prebuilt native package
+      - name: Stage native package and CEF archive
         run: |
           cp target/release/libmirin_core.dylib packages/native-darwin-arm64/
           cp target/release/mirin-helper packages/native-darwin-arm64/
+          tar -czf cef-darwin-arm64.tar.gz -C vendor/cef "Chromium Embedded Framework.framework"
+          bun scripts/write-sha256.ts cef-darwin-arm64.tar.gz
 
-      - name: Package CEF framework for the CLI to download
-        run: tar -czf cef-darwin-arm64.tar.gz -C vendor/cef "Chromium Embedded Framework.framework"
+      - name: Pack registry packages
+        run: bun scripts/pack-release.ts release-packages
 
-      - name: GitHub Release (CEF asset)
-        uses: softprops/action-gh-release@v3
+      - name: Preserve packed packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          files: cef-darwin-arm64.tar.gz
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
+          name: release-packages-macos
+          path: release-packages/*.tgz
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Publish to the registry
+      - name: Upload CEF to draft release
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          bun scripts/publish-all.ts
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" cef-darwin-arm64.tar.gz cef-darwin-arm64.tar.gz.sha256 --clobber
 
-  # Windows x64 prebuilt-native package + CEF asset. Publishes ONLY
-  # @mirinjs/win32-x64 (MIRIN_PUBLISH_NATIVE_ONLY=1); the shared packages
-  # (mirinjs/@mirinjs/cli/create-mirinjs) are published by the macOS job above.
-  release-windows:
-    runs-on: windows-latest
+  build-windows:
+    name: Build Windows x64
+    needs: prepare-release
+    runs-on: blacksmith-4vcpu-windows-2025
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - name: Install build tools (ninja for cef-dll-sys)
+      - name: Install build tools
         run: choco install ninja -y
 
-      - name: Verify tag matches package version
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(bun -e 'console.log(require("./packages/mirin/package.json").version)')
-          if [ "$TAG" != "$PKG" ]; then
-            echo "tag v$TAG != package version $PKG (run scripts/version.ts)"; exit 1
-          fi
+      - name: Cache CEF
+        id: cef-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: vendor/cef
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
 
       - name: Fetch CEF
+        if: steps.cef-cache.outputs.cache-hit != 'true'
         run: bun scripts/fetch-cef.ts
 
-      - name: Install deps
-        run: bun install
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
-      - name: Build native (release)
+      - name: Build native release
         run: cargo build --release -p mirin-core -p mirin-helper
 
-      - name: Stage prebuilt native package
+      - name: Stage native package and CEF archive
         shell: bash
         run: |
           cp target/release/mirin_core.dll packages/native-win32-x64/
           cp target/release/mirin-helper.exe packages/native-win32-x64/
-
-      - name: Package CEF runtime for the CLI to download
-        shell: bash
-        run: |
-          # The flat Windows runtime the bundler copies (dll/bin/pak/dat +
-          # vk_swiftshader_icd.json + locales/) — not the build-time headers/libs.
           mkdir cef-dist
           cp vendor/cef/*.dll vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat cef-dist/
           cp vendor/cef/vk_swiftshader_icd.json cef-dist/
           cp -r vendor/cef/locales cef-dist/
           tar -czf cef-win32-x64.tar.gz -C cef-dist .
+          bun scripts/write-sha256.ts cef-win32-x64.tar.gz
 
-      - name: GitHub Release (CEF asset)
-        uses: softprops/action-gh-release@v3
-        with:
-          files: cef-win32-x64.tar.gz
-          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
-
-      - name: Publish prebuilt-native package
+      - name: Pack native registry package
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          MIRIN_PUBLISH_NATIVE_ONLY: "1"
-        shell: bash
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          bun scripts/publish-all.ts
+          MIRIN_PACK_NATIVE_ONLY: "1"
+        run: bun scripts/pack-release.ts release-packages
 
-  # Linux x64 prebuilt-native package + CEF asset. Publishes ONLY
-  # @mirinjs/linux-x64 (MIRIN_PUBLISH_NATIVE_ONLY=1); the shared packages
-  # (mirinjs/@mirinjs/cli/create-mirinjs) are published by the macOS job above.
-  release-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: oven-sh/setup-bun@v2
+      - name: Preserve packed package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          bun-version: latest
+          name: release-packages-windows
+          path: release-packages/*.tgz
+          if-no-files-found: error
+          retention-days: 1
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Upload CEF to draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" cef-win32-x64.tar.gz cef-win32-x64.tar.gz.sha256 --clobber
 
-      - uses: Swatinem/rust-cache@v2
+  build-linux:
+    name: Build Linux x64
+    needs: prepare-release
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install build tools
-        # ninja for cef-dll-sys (builds libcef_dll_wrapper via cmake/ninja).
-        # libgtk-3-dev provides the glib/gtk/gdk/cairo/pango dev headers CEF's
-        # C++ build resolves against on Linux.
         run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev
 
-      - name: Verify tag matches package version
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(bun -e 'console.log(require("./packages/mirin/package.json").version)')
-          if [ "$TAG" != "$PKG" ]; then
-            echo "tag v$TAG != package version $PKG (run scripts/version.ts)"; exit 1
-          fi
+      - name: Cache CEF
+        id: cef-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: vendor/cef
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
 
       - name: Fetch CEF
+        if: steps.cef-cache.outputs.cache-hit != 'true'
         run: bun scripts/fetch-cef.ts
 
-      - name: Install deps
-        run: bun install
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
-      - name: Build native (release)
+      - name: Build native release
         run: cargo build --release -p mirin-core -p mirin-helper
 
-      - name: Stage prebuilt native package
+      - name: Stage native package and CEF archive
         run: |
           cp target/release/libmirin_core.so packages/native-linux-x64/
           cp target/release/mirin-helper packages/native-linux-x64/
-
-      - name: Package CEF runtime for the CLI to download
-        run: |
-          # The flat Linux runtime the bundler copies (so/bin/pak/dat +
-          # vk_swiftshader_icd.json + libvulkan.so.1 + chrome-sandbox + locales/)
-          # — not the build-time headers/libs (include/, cmake/, libcef_dll/).
           mkdir cef-dist
           cp vendor/cef/*.so vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat cef-dist/
           cp vendor/cef/vk_swiftshader_icd.json vendor/cef/libvulkan.so.1 vendor/cef/chrome-sandbox cef-dist/
           cp -r vendor/cef/locales cef-dist/
           tar -czf cef-linux-x64.tar.gz -C cef-dist .
+          bun scripts/write-sha256.ts cef-linux-x64.tar.gz
 
-      - name: GitHub Release (CEF asset)
-        uses: softprops/action-gh-release@v3
-        with:
-          files: cef-linux-x64.tar.gz
-          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
-
-      - name: Publish prebuilt-native package
+      - name: Pack native registry package
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          MIRIN_PUBLISH_NATIVE_ONLY: "1"
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          bun scripts/publish-all.ts
+          MIRIN_PACK_NATIVE_ONLY: "1"
+        run: bun scripts/pack-release.ts release-packages
+
+      - name: Preserve packed package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-packages-linux
+          path: release-packages/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload CEF to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" cef-linux-x64.tar.gz cef-linux-x64.tar.gz.sha256 --clobber
+
+  publish-release:
+    name: Publish registry packages and release
+    needs: [prepare-release, build-macos, build-windows, build-linux]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Download packed packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-packages-*
+          path: release-packages
+          merge-multiple: true
+
+      - name: Publish registry packages
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bun scripts/publish-packed.ts release-packages
+
+      - name: Publish GitHub release
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.prepare-release.outputs.release_id }},
+              draft: false
+            })

@@ -1,55 +1,91 @@
-# Contributing to mirin
+# Contributing To Mirin
 
-Thanks for helping build a Bun-native desktop framework. Read `AGENTS.md` for
-the code conventions (they apply to humans and agents alike).
+Thanks for helping build a Bun-native desktop framework. Read `AGENTS.md` and
+`docs/conventions.md` before changing code; their structure, safety, and
+verification rules apply to humans and agents alike.
 
-## Dev setup (the monorepo)
+## Development Setup
 
-Requirements: Bun ≥ 1.2, the Rust toolchain ≥ 1.91, `cmake` + `ninja`
-(`brew install cmake ninja`), and the Xcode command-line tools. macOS arm64.
+All platforms need Bun 1.3.14 or newer, the stable Rust toolchain, CMake, and
+Ninja. Native prerequisites differ by host:
+
+- macOS arm64: Xcode command-line tools.
+- Windows x64: Visual Studio Build Tools with the MSVC C++ toolchain.
+- Linux x64: GTK 3 development headers (`libgtk-3-dev` on Ubuntu).
 
 ```bash
 git clone git@github.com:Netko-Labs/mirin.git
 cd mirin
 bun install
-bun scripts/fetch-cef.ts     # one-time: download the pinned CEF (~hundreds of MB)
-cargo build --workspace      # builds the Rust core + helper
-bun run typecheck
+bun scripts/fetch-cef.ts
+cargo build --workspace
 ```
 
-Run an example (the CLI builds the native crates from source when run in-repo):
+CEF is pinned by the Rust dependency and downloaded into the ignored
+`vendor/cef/` directory. Consumer apps use matching prebuilt native packages and
+cache CEF under `~/.mirinjs/cef/`; they do not need a Rust toolchain.
+
+## Repository Layout
+
+```txt
+crates/
+  mirin-core/              C ABI, engine orchestration, and native platforms
+  mirin-helper/            CEF subprocess and renderer preload injection
+packages/
+  mirin/                   public runtime package (`mirinjs`)
+  mirin-cli/               dev, build, release, and init tooling
+  create-mirin/            project scaffolder (`create-mirinjs`)
+  native-darwin-arm64/     prebuilt macOS core and helper
+  native-win32-x64/        prebuilt Windows core and helper
+  native-linux-x64/        prebuilt Linux core and helper
+examples/
+  hello-react/             smallest application loop
+  kitchen-sink/            broad native feature coverage
+  spotlight/               frameless global-shortcut panel
+  liquid-glass/            macOS material behavior
+  updater/                 release and updater flow
+docs/                      architecture, API, platform, and convention docs
+```
+
+The detailed TypeScript and Rust folder rules live in
+`docs/conventions.md`. Keep `ffi.rs` thin, keep UI work on the UI thread through
+`engine::tasks`, and preserve package public surfaces through their exports.
+
+## Running An Example
+
+The CLI recognizes the monorepo, builds native crates from source, and uses the
+local CEF checkout:
 
 ```bash
 cd examples/hello-react
-bun ../../packages/mirin-cli/src/index.ts dev
+bun run dev
 ```
 
-`examples/kitchen-sink` exercises every native feature; `examples/spotlight` is a
-hotkey-summoned frameless panel.
+Use `examples/kitchen-sink` for broad behavior checks and `examples/updater` for
+a complete local release artifact smoke test.
 
-## Layout
+## Verification
 
+Start with the smallest relevant check, then run the full gates before opening a
+pull request:
+
+```bash
+bun run fmt-lint:ci
+bun run typecheck
+bun run test
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+git diff --check
 ```
-crates/
-  mirin-core/    cdylib: ffi.rs (C ABI), engine/*, mac/*, scheme.rs
-  mirin-helper/  CEF subprocess (preload injection)
-packages/
-  mirin/             runtime API (apps import this)        → npm: mirinjs
-  mirin-cli/         the `mirinjs` CLI (dev/build/init)       → npm: @mirinjs/cli
-  native-darwin-arm64/  prebuilt binaries (CI-populated)    → npm: @mirinjs/darwin-arm64
-  create-mirin/      scaffolder + template                 → npm: create-mirinjs
-examples/            hello-react, kitchen-sink, spotlight
-docs/                architecture, api-design, macos-mvp, getting-started
-```
 
-## Conventions
+For native behavior, run or release a real example on the affected platform.
+The CI matrix repeats native build and Clippy checks on Blacksmith macOS arm64,
+Windows x64, and Linux x64 runners.
 
-- **Rust:** `cargo build --workspace` and `cargo fmt --all --check` must pass, zero warnings. One concern per module; `ffi.rs` stays thin.
-- **TypeScript:** `bun run typecheck` must pass. No `any`; precise return types.
-- **Behavior:** prefer running the real app and observing over isolated assertions. See `AGENTS.md`.
-- **Architecture/IPC/threading invariants:** `docs/architecture.md`. Keep code and docs in sync in the same change.
+## Pull Requests
 
-## Pull requests
-
-Branch off `main`. Don't force-push a branch with an open PR. CI runs the build +
-typecheck + fmt on macOS arm64.
+Branch from `main` and keep unrelated worktree changes intact. Update docs in the
+same change when architecture, public API, packaging, updater, or platform
+lifecycle behavior changes. Do not force-push, rewrite shared history, or publish
+packages unless the repository owner explicitly requests it.

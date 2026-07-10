@@ -12,11 +12,11 @@
  * falls back to the portable `.zip` when it's absent.
  */
 
-import { $ } from "bun";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
-import { join, isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { $ } from "bun";
 import type { NsisConfig } from "mirinjs";
-import { makeWindowsIcon } from "./icon-win.ts";
+import { makeWindowsIcon } from "./icons/windows/index.ts";
 
 export interface BuildNsisInput {
   /** The assembled app folder (build/<App>). */
@@ -50,7 +50,8 @@ const resolve = (projectDir: string, p: string) => (isAbsolute(p) ? p : join(pro
 
 /** Build the installer with `makensis`, returning the setup.exe path. */
 export async function buildNsisInstaller(input: BuildNsisInput): Promise<string> {
-  const { appDir, appName, exeName, version, bundleId, outDir, fileName, options, projectDir } = input;
+  const { appDir, appName, exeName, version, bundleId, outDir, fileName, options, projectDir } =
+    input;
   const out = join(outDir, fileName);
   rmSync(out, { force: true });
 
@@ -63,12 +64,16 @@ export async function buildNsisInstaller(input: BuildNsisInput): Promise<string>
   const publisher = options.publisher ?? appName;
   const root = perMachine ? "HKLM" : "HKCU";
   const installDir =
-    options.installDir ?? (perMachine ? `$PROGRAMFILES64\\${appName}` : `$LOCALAPPDATA\\Programs\\${appName}`);
+    options.installDir ??
+    (perMachine ? `$PROGRAMFILES64\\${appName}` : `$LOCALAPPDATA\\Programs\\${appName}`);
 
   // Installer/uninstaller icon: an explicit .ico, else the app's bundled icon.ico.
   let icon: string | undefined;
   if (options.installerIcon) {
-    icon = makeWindowsIcon(resolve(projectDir, options.installerIcon), join(outDir, "_installer.ico"));
+    icon = makeWindowsIcon(
+      resolve(projectDir, options.installerIcon),
+      join(outDir, "_installer.ico"),
+    );
   } else if (existsSync(join(appDir, "icon.ico"))) {
     icon = join(appDir, "icon.ico");
   }
@@ -85,7 +90,7 @@ export async function buildNsisInstaller(input: BuildNsisInput): Promise<string>
   L.push(`OutFile "${nsis(out)}"`);
   L.push(`InstallDir "${installDir}"`);
   L.push(`RequestExecutionLevel ${perMachine ? "admin" : "user"}`);
-  L.push(`!define MUI_ABORTWARNING`);
+  L.push("!define MUI_ABORTWARNING");
   if (icon) {
     L.push(`!define MUI_ICON "${nsis(icon)}"`);
     L.push(`!define MUI_UNICON "${nsis(icon)}"`);
@@ -127,14 +132,15 @@ export async function buildNsisInstaller(input: BuildNsisInput): Promise<string>
   // Estimated size for Add/Remove Programs.
   L.push(`  \${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2`);
   L.push(`  IntFmt $0 "0x%08X" $0`);
-  const reg = (name: string, val: string) => L.push(`  WriteRegStr ${root} "${key}" "${name}" "${val}"`);
+  const reg = (name: string, val: string) =>
+    L.push(`  WriteRegStr ${root} "${key}" "${name}" "${val}"`);
   reg("DisplayName", nsis(appName));
   reg("DisplayVersion", nsis(version));
   reg("Publisher", nsis(publisher));
   reg("DisplayIcon", `$INSTDIR\\${nsis(exeName)}`);
   reg("InstallLocation", "$INSTDIR");
-  reg("UninstallString", '$INSTDIR\\Uninstall.exe');
-  reg("QuietUninstallString", '$INSTDIR\\Uninstall.exe /S');
+  reg("UninstallString", "$INSTDIR\\Uninstall.exe");
+  reg("QuietUninstallString", "$INSTDIR\\Uninstall.exe /S");
   L.push(`  WriteRegDWORD ${root} "${key}" "NoModify" 1`);
   L.push(`  WriteRegDWORD ${root} "${key}" "NoRepair" 1`);
   L.push(`  WriteRegDWORD ${root} "${key}" "EstimatedSize" $0`);
@@ -142,7 +148,7 @@ export async function buildNsisInstaller(input: BuildNsisInput): Promise<string>
   L.push("SectionEnd");
 
   // Uninstall section.
-  L.push("Section \"Uninstall\"");
+  L.push('Section "Uninstall"');
   L.push(`  SetShellVarContext ${ctx}`);
   if (desktop) L.push(`  Delete "$DESKTOP\\${nsis(appName)}.lnk"`);
   if (startMenu) {

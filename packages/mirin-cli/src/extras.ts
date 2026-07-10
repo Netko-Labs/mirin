@@ -5,10 +5,11 @@
  * place so the two CLI paths stay in sync.
  */
 
+import { mkdirSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { $ } from "bun";
-import { join } from "node:path";
 
-/** Config shapes (mirrors packages/mirin/src/config.ts; CLI can't import the runtime). */
+/** Config shapes (mirrors packages/mirin/src/config/index.ts; CLI can't import the runtime). */
 export type SidecarConfig = Record<string, string | { bin: string; entitlements?: string[] }>;
 export type WorkersConfig = Record<string, string>;
 
@@ -21,16 +22,47 @@ export interface NormalizedSidecar {
   entitlements: string[];
 }
 
+const SAFE_EXTRA_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Extra asset names become bundle filenames, so keep them as path segments. This
+ * prevents config keys such as "../tool" from escaping resources/sidecars or
+ * resources/workers in dev and production bundles.
+ */
+export function safeExtraAssetName(name: string, label: string): string {
+  if (!SAFE_EXTRA_NAME.test(name) || name === "." || name === "..") {
+    throw new Error(
+      `[mirin] invalid ${label} "${name}" — use letters, digits, ".", "_" or "-", ` +
+        "and do not include path separators.",
+    );
+  }
+  return name;
+}
+
+function projectRelativePath(projectDir: string, file: string, label: string): string {
+  if (isAbsolute(file)) {
+    throw new Error(`[mirin] ${label} must be relative to the project root: ${file}`);
+  }
+  const root = resolve(projectDir);
+  const full = resolve(root, file);
+  const rel = relative(root, full);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`[mirin] ${label} escapes the project root: ${file}`);
+  }
+  return full;
+}
+
 /** Resolve `config.sidecars` to absolute source paths. */
 export function normalizeSidecars(
   projectDir: string,
   sidecars: SidecarConfig | undefined,
 ): NormalizedSidecar[] {
   return Object.entries(sidecars ?? {}).map(([name, value]) => {
+    const safeName = safeExtraAssetName(name, "sidecar name");
     const spec = typeof value === "string" ? { bin: value } : value;
     return {
-      name,
-      src: join(projectDir, spec.bin),
+      name: safeName,
+      src: projectRelativePath(projectDir, spec.bin, `sidecar "${safeName}" path`),
       entitlements: spec.entitlements ?? [],
     };
   });
@@ -46,16 +78,21 @@ export async function compileWorkers(
   outDir: string,
   minify: boolean,
 ): Promise<Record<string, string>> {
+  mkdirSync(outDir, { recursive: true });
   const out: Record<string, string> = {};
-  for (const [name, entry] of Object.entries(workers ?? {})) {
-    const js = join(outDir, `${name}.js`);
-    const src = join(projectDir, entry);
+  const compiled = Object.entries(workers ?? {}).map(async ([name, entry]) => {
+    const safeName = safeExtraAssetName(name, "worker name");
+    const js = join(outDir, `${safeName}.js`);
+    const src = projectRelativePath(projectDir, entry, `worker "${safeName}" entry`);
     if (minify) {
       await $`bun build ${src} --target=bun --minify --outfile ${js}`.cwd(projectDir);
     } else {
       await $`bun build ${src} --target=bun --outfile ${js}`.cwd(projectDir);
     }
-    out[name] = js;
+    return { name: safeName, js };
+  });
+  for (const worker of await Promise.all(compiled)) {
+    out[worker.name] = worker.js;
   }
   return out;
 }

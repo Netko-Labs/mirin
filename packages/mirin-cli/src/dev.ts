@@ -8,25 +8,26 @@
  * 5. launch the app pointed at the Vite URL, with RPC injected into the webview
  */
 
-import { $ } from "bun";
-import { mkdirSync, rmSync, symlinkSync, existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import { buildAppBundle } from "./bundle.ts";
-import { buildWindowsBundle } from "./bundle-win.ts";
+import { $ } from "bun";
+import { resolveArtifacts } from "./artifacts.ts";
 import {
   buildLinuxBundle,
-  resolveLinuxIconPng,
-  resolveLinuxDesktopIconPng,
   desktopEntry,
-} from "./bundle-linux.ts";
-import { homedir } from "node:os";
-import { resolveArtifacts } from "./artifacts.ts";
+  resolveLinuxDesktopIconPng,
+  resolveLinuxIconPng,
+} from "./bundle/linux/index.ts";
+import { buildAppBundle } from "./bundle/macos/index.ts";
+import { buildWindowsBundle } from "./bundle/windows/index.ts";
 
 const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
+
+import { compileWorkers, normalizeSidecars } from "./extras.ts";
 import { sweepBuildTemps } from "./temps.ts";
-import { normalizeSidecars, compileWorkers } from "./extras.ts";
 
 /** Vite's default port. `mirin dev` probes upward from here for a free one, so a
  *  second dev session (or anything already on 5173) doesn't collide. */
@@ -87,26 +88,26 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
         icon: iconSrc,
       })
     : IS_LINUX
-    ? await buildLinuxBundle({
-        appName,
-        outDir: work,
-        hostExe,
-        coreDll: artifacts.coreDylib,
-        helperExe: artifacts.helperBin,
-        cefPath: artifacts.cefPath,
-        icon: iconSrc,
-      })
-    : await buildAppBundle({
-        appName,
-        bundleId,
-        outDir: work,
-        hostExe,
-        coreDylib: artifacts.coreDylib,
-        helperBin: artifacts.helperBin,
-        cefPath: artifacts.cefPath,
-        icon: iconSrc,
-        urlSchemes: config.urlSchemes,
-      });
+      ? await buildLinuxBundle({
+          appName,
+          outDir: work,
+          hostExe,
+          coreDll: artifacts.coreDylib,
+          helperExe: artifacts.helperBin,
+          cefPath: artifacts.cefPath,
+          icon: iconSrc,
+        })
+      : await buildAppBundle({
+          appName,
+          bundleId,
+          outDir: work,
+          hostExe,
+          coreDylib: artifacts.coreDylib,
+          helperBin: artifacts.helperBin,
+          cefPath: artifacts.cefPath,
+          icon: iconSrc,
+          urlSchemes: config.urlSchemes,
+        });
 
   // Linux: install a dev `.desktop` entry so cosmic's dock can resolve the app's
   // icon. cosmic matches a running X11 window's `WM_CLASS` (which the core sets to
@@ -138,7 +139,17 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   const devUrl = `http://127.0.0.1:${port}`;
   console.log(`[mirin dev] starting Vite dev server on ${devUrl}…`);
   const vite = Bun.spawn(
-    ["bunx", "vite", "--clearScreen", "false", "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
+    [
+      "bunx",
+      "vite",
+      "--clearScreen",
+      "false",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--strictPort",
+    ],
     {
       cwd: projectDir,
       stdio: ["ignore", "inherit", "inherit"],
@@ -155,13 +166,17 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       MIRIN_CORE: IS_WINDOWS
         ? join(app, "mirin_core.dll")
         : IS_LINUX
-        ? join(app, "libmirin_core.so")
-        : join(app, "Contents", "MacOS", "libmirin_core.dylib"),
+          ? join(app, "libmirin_core.so")
+          : join(app, "Contents", "MacOS", "libmirin_core.dylib"),
       // Linux: the flat app dir holds libcef.so + libmirin_core.so; put it on the
       // loader path so the host's dlopen and libmirin_core's NEEDED libcef.so (and
       // the spawned mirin-helper) all resolve. (macOS uses the framework loader;
       // Windows the exe-dir search — neither needs this.)
-      ...(IS_LINUX ? { LD_LIBRARY_PATH: `${app}${process.env.LD_LIBRARY_PATH ? ":" + process.env.LD_LIBRARY_PATH : ""}` } : {}),
+      ...(IS_LINUX
+        ? {
+            LD_LIBRARY_PATH: `${app}${process.env.LD_LIBRARY_PATH ? ":" + process.env.LD_LIBRARY_PATH : ""}`,
+          }
+        : {}),
       MIRIN_WORKER: workerJs,
       MIRIN_DEV_URL: devUrl,
       MIRIN_MANIFEST_JSON: JSON.stringify({ id: bundleId, windows: config.windows }),

@@ -7,7 +7,7 @@
  * `globalShortcut`, and `logger` features (docs/api-design.md).
  */
 
-import { app, wireAppEvents } from "./app.ts";
+import { app, wireAppEvents } from "./app/index.ts";
 import { boot } from "./runtime.ts";
 
 // Side-effect imports: each feature subscribes its native-event handlers.
@@ -16,48 +16,48 @@ import "./tray.ts";
 import "./dialog.ts";
 import "./shortcut.ts";
 
-export { app } from "./app.ts";
-export { menu } from "./menu.ts";
-export { Tray } from "./tray.ts";
-export { dialog } from "./dialog.ts";
-export { clipboard } from "./clipboard.ts";
-export { globalShortcut } from "./shortcut.ts";
-export { logger, setLogLevel, getLogLevel, Logger } from "./logger.ts";
-export { updater, Updater } from "./updater.ts";
-export { sidecar } from "./sidecar.ts";
-export { NotAttachedError, resolveWorker } from "./runtime.ts";
-
 export type {
-  WindowEvents,
-  WindowMaterialInfo,
-  WindowFrame,
   AppEvents,
-  WindowHandle,
-  WindowOpenOptions,
-  ServeHandle,
   BroadcastEmitters,
   Dock,
-} from "./app.ts";
-export type { MenuItemTemplate, MenuRole } from "./menu.ts";
-export type { LogLevel } from "./logger.ts";
-export type { UpdaterStatus, UpdateInfo, UpdateProgress, UpdaterEvents } from "./updater.ts";
-export type { SidecarOptions, SidecarProcess } from "./sidecar.ts";
-export type { TrayOptions } from "./tray.ts";
-export type { OpenDialogOptions, SaveDialogOptions, MessageDialogOptions } from "./dialog.ts";
+  ServeHandle,
+  WindowEvents,
+  WindowFrame,
+  WindowHandle,
+  WindowMaterialInfo,
+  WindowOpenOptions,
+} from "./app/index.ts";
+export { app } from "./app/index.ts";
+export { clipboard } from "./clipboard.ts";
 export type {
-  MirinConfig,
-  WindowConfig,
-  WindowMaterial,
-  WindowMaterialOptions,
-  ReleaseConfig,
+  CefConfig,
   DmgConfig,
-  NsisConfig,
   InnoConfig,
   LinuxConfig,
   LinuxPackageFormat,
-  SidecarSpec,
+  MirinConfig,
+  NsisConfig,
+  ReleaseConfig,
   SidecarEntitlement,
-} from "./config.ts";
+  SidecarSpec,
+  WindowConfig,
+  WindowMaterial,
+  WindowMaterialOptions,
+} from "./config/index.ts";
+export type { MessageDialogOptions, OpenDialogOptions, SaveDialogOptions } from "./dialog.ts";
+export { dialog } from "./dialog.ts";
+export type { LogLevel } from "./logger.ts";
+export { getLogLevel, Logger, logger, setLogLevel } from "./logger.ts";
+export type { MenuItemTemplate, MenuRole } from "./menu.ts";
+export { menu } from "./menu.ts";
+export { NotAttachedError, resolveWorker } from "./runtime.ts";
+export { globalShortcut } from "./shortcut.ts";
+export type { SidecarOptions, SidecarProcess } from "./sidecar.ts";
+export { sidecar } from "./sidecar.ts";
+export type { TrayOptions } from "./tray.ts";
+export { Tray } from "./tray.ts";
+export type { UpdateInfo, UpdateProgress, UpdaterEvents, UpdaterStatus } from "./updater/index.ts";
+export { Updater, updater } from "./updater/index.ts";
 
 wireAppEvents();
 boot();

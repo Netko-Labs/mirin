@@ -26,10 +26,13 @@ pub const APP_SCHEME: &str = "app";
 /// the browser command line (engine `on_before_command_line_processing`, plus
 /// `--allow-insecure-localhost`). Keep in sync with mirin-helper's registration.
 pub fn app_scheme_options() -> i32 {
-    (SchemeOptions::STANDARD.get_raw()
+    let options = SchemeOptions::STANDARD.get_raw()
         | SchemeOptions::SECURE.get_raw()
         | SchemeOptions::CORS_ENABLED.get_raw()
-        | SchemeOptions::FETCH_ENABLED.get_raw()) as i32
+        | SchemeOptions::FETCH_ENABLED.get_raw();
+    #[cfg(not(target_os = "windows"))]
+    let options = options as i32;
+    options
 }
 
 /// Register the `app` scheme. Call from an App's `on_register_custom_schemes`.
@@ -138,6 +141,8 @@ wrap_resource_handler! {
                 *out = 0;
                 return 0; // EOF
             }
+            // SAFETY: `data_out` was checked non-null, CEF provides at least
+            // `bytes_to_read` writable bytes, and `n` is bounded by both buffers.
             unsafe {
                 std::ptr::copy_nonoverlapping(self.body.as_ptr().add(pos), data_out, n);
             }

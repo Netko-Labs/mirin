@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Materialize the dev .app bundle (docs/architecture.md §5).
  *
@@ -13,9 +14,9 @@
  * Usage: bun scripts/dev-bundle.ts [--bin m1-smoke] [--release]
  */
 
-import { $ } from "bun";
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { $ } from "bun";
 
 const ROOT = join(import.meta.dir, "..");
 const CEF_PATH = process.env.CEF_PATH ?? join(ROOT, "vendor", "cef");

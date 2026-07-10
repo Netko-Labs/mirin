@@ -6,7 +6,7 @@
  * process, so the Rust statics behind these symbols are shared.
  */
 
-import { dlopen, FFIType, ptr, CString, type Pointer } from "bun:ffi";
+import { CString, dlopen, FFIType, type Pointer, ptr } from "bun:ffi";
 
 function nullTerminated(s: string): Uint8Array {
   return new TextEncoder().encode(s + "\0");
@@ -23,8 +23,14 @@ const symbols = {
   mirin_window_set_title: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_window_control: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   mirin_window_set_material: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
-  mirin_window_set_position: { args: [FFIType.u32, FFIType.f64, FFIType.f64], returns: FFIType.void },
-  mirin_window_maybe_start_drag: { args: [FFIType.u32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.void },
+  mirin_window_set_position: {
+    args: [FFIType.u32, FFIType.f64, FFIType.f64],
+    returns: FFIType.void,
+  },
+  mirin_window_maybe_start_drag: {
+    args: [FFIType.u32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32],
+    returns: FFIType.void,
+  },
   mirin_app_quit: { args: [], returns: FFIType.void },
   mirin_app_set_dock_visible: { args: [FFIType.i32], returns: FFIType.void },
   mirin_set_app_menu: { args: [FFIType.ptr], returns: FFIType.void },

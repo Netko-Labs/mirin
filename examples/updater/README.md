@@ -13,8 +13,12 @@ the `mirin release` artifacts, hostable on **GitHub Releases** or **any static h
 - The running app's `app.updater` polls `${baseUrl}/${channel}-darwin-${arch}-update.json`,
   compares the advertised `version` to its own (from the embedded `version.json`),
   downloads a delta patch from its installed version when available (else the full
-  bundle), verifies the result's `sha256`, then **swaps the whole `.app`** and relaunches.
-  (A signed/notarized `.app` must be replaced whole — never edited in place.)
+  bundle), verifies the result's `sha256`, checks the archive layout, then **swaps
+  the whole `.app`** and relaunches. (A signed/notarized `.app` must be replaced
+  whole — never edited in place.)
+
+> Production update hosts must use HTTPS. The runtime only allows HTTP for
+> loopback local testing (`localhost`, `127.0.0.1`, `[::1]`).
 
 **Small updates:** because the bundle is dominated by the unchanging Chromium framework,
 a release where only your app code changed produces a **few-KB patch** instead of a
@@ -32,7 +36,7 @@ bun install
 bun run release
 cp -R build/"Updater Example".app /Applications/
 
-# 2. Serve the release dir (acts as baseUrl http://localhost:4000)
+# 2. Serve the release dir (acts as local-test baseUrl http://localhost:4000)
 bun run serve            # leave running
 
 # 3. Bump the version, release v1.0.1
@@ -59,3 +63,5 @@ in `build/release/` as release assets. `…/releases/latest/download/<file>` res
 newest non-prerelease — so `stable` updates work with zero servers.
 
 Other channels (e.g. `beta`) use a pre-release tag or a separate `baseUrl`/path.
+Keep the uploaded artifact names flat; `app.updater` accepts the filenames emitted
+by `mirin release`.

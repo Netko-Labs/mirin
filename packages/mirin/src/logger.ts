@@ -53,12 +53,16 @@ export function getLogLevel(): LogLevel {
 }
 
 export class Logger {
+  readonly #scope?: string;
+
   /** @param scope optional dotted scope shown as `[mirin:scope]`. */
-  constructor(private readonly scope?: string) {}
+  constructor(scope?: string) {
+    this.#scope = scope;
+  }
 
   /** Derive a scoped child logger (e.g. `logger.child("db")`). */
   child(scope: string): Logger {
-    return new Logger(this.scope ? `${this.scope}:${scope}` : scope);
+    return new Logger(this.#scope ? `${this.#scope}:${scope}` : scope);
   }
 
   /** Set the global level (same as the exported `setLogLevel`). */
@@ -85,7 +89,7 @@ export class Logger {
 
   #emit(level: Exclude<LogLevel, "silent">, args: unknown[]): void {
     if (ORDER[level] < ORDER[currentLevel]) return;
-    const name = this.scope ? `[mirin:${this.scope}]` : "[mirin]";
+    const name = this.#scope ? `[mirin:${this.#scope}]` : "[mirin]";
     const prefix = useColor ? `${COLOR.dim}${name}${COLOR.reset}` : name;
     const tag = useColor ? `${COLOR[level]}${level}${COLOR.reset}` : level;
     const sink = level === "warn" || level === "error" ? console.error : console.log;

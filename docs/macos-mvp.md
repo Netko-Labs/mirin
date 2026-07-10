@@ -1,6 +1,6 @@
 # macOS MVP Plan
 
-Goal: **a developer can `bunx mirin init`, write a typed config + RPC router, run `mirin dev`, and get a real CEF window on macOS talking to their Bun code with full type inference.** No packaging, menus, tray, or updater in this milestone.
+Goal: **a developer can `bunx mirin init`, write a typed config + RPC router, run `mirin dev`, and get a real CEF window on macOS talking to their Bun code with full type inference.** This document started as the macOS MVP plan and is now the historical milestone ledger through packaging, app-shell APIs, and updates.
 
 Targets macOS 13+ (arm64 first, x64 builds once CI exists).
 
@@ -56,13 +56,13 @@ Targets macOS 13+ (arm64 first, x64 builds once CI exists).
 - Host production mode (`host.ts`): with no `MIRIN_*` env, resolves the core dylib (`MacOS/`), Worker + manifest (`Resources/`) relative to its own executable; windows load their manifest `app://` URLs.
 - A `DisplayHandler::on_console_message` surfaces webview console output to host stderr (dev + diagnostics).
 - **Exit criteria — met:** `mirin build` then Finder-launch the `.app` cold → React renders from `app://`, typed RPC round-trips, live events stream, clean quit (6→0).
-- **Two findings (saved to memory):**
-  1. `app://` must NOT be registered `SECURE` — as a secure origin, the RPC `ws://127.0.0.1` is blocked as mixed content (a non-localhost secure scheme gets no loopback exception). Standard + CORS + Fetch is enough.
-  2. Even non-secure, the `app://` origin isn't "local" address space, so **Local Network Access** checks (Chromium 148; the successor to Private Network Access) block the loopback `ws://`. Disabled via `--disable-features=LocalNetworkAccessChecks,…` (targeted; not the broad `--disable-web-security`). Feature names are Chromium-version-sensitive.
-- *Deferred:* notarization + Developer-ID hardened runtime (hooks exist via `MIRIN_SIGN_IDENTITY`), `.dmg`/`.zip` packaging, published-package artifact resolution.
+- **Two findings (saved to memory, updated in code):**
+  1. `app://` is now registered `STANDARD | SECURE | CORS_ENABLED | FETCH_ENABLED`, so pages get secure-context-only Web APIs. The loopback RPC socket still works because the command line disables the targeted Local Network Access checks for this desktop data plane.
+  2. Chromium's **Local Network Access** feature names are version-sensitive; keep the targeted `--disable-features=LocalNetworkAccessChecks,…` list in `engine::on_before_command_line_processing` in sync with the pinned CEF version. Avoid broad `--disable-web-security`.
+- *Moved to M7:* notarization/DMG release artifacts, published-package artifact resolution, and updater bundle generation.
 
 ### M6 — App-shell features (macOS) — ✅ DONE
-Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dialog,clipboard,shortcut,window}.rs`, `engine/{menu,tray,dialog,clipboard,shortcut}.rs`, `ffi.rs`; TS `app.ts`/`runtime.ts` + `menu/tray/dialog/clipboard/shortcut.ts`). Conventions codified in `AGENTS.md` (TanStack-style). Verified by running:
+Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dialog,clipboard,shortcut}.rs`, `mac/window/mod.rs`, `engine/{menu,tray,dialog,clipboard,shortcut}.rs`, `ffi.rs`; TS `app/index.ts`/`runtime.ts` + `menu/tray/dialog/clipboard/shortcut.ts`). Conventions codified in `AGENTS.md` (TanStack-style). Verified by running:
 - **Application menu + context menus** — declarative template with `role` items (AppKit responder-chain selectors) and custom items routed by id as `menu.click`. Verified: File/Edit/View live; "File → Say Hello" pushed `menu: hello` to the UI.
 - **Tray** — `NSStatusItem` with title/tooltip/menu. Verified: 🍴 status item present; its menu pushed `tray: hello`.
 - **Global shortcuts** — Carbon `RegisterEventHotKey` (system-wide, no accessibility prompt). Verified: the Spotlight panel is summoned by ⌘⇧J. (Avoid combos other apps claim — ⌘⇧Space is 1Password's.)
@@ -72,10 +72,18 @@ Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dial
 - **Custom title bar + frameless** — `titleBarStyle: "hiddenInset" | "hidden"`, `transparent`, `alwaysOnTop`, `movableByBackground`, `visible:false`. CEF ignores `-webkit-app-region`, so a transparent `TitleBarDragView` (overriding `mouseDownCanMoveWindow`) is overlaid on the title strip for real dragging. Verified via the kitchen-sink (draggable custom title bar) and Spotlight (borderless translucent panel, traffic lights hidden, clear background).
 - **Examples** — `examples/kitchen-sink` (all features) and `examples/spotlight` (hotkey-summoned frameless command palette: type-to-filter over RPC, Esc to dismiss, resident).
 
+### M7 — Scaffold, release artifacts, updater — ✅ DONE
+- `bun create mirinjs` + `mirin init`: shared scaffold package (`create-mirinjs`) with the React/Vite/RPC starter.
+- Installed-mode native artifacts: `@mirinjs/darwin-arm64` optional package + matching CEF release download into `~/.mirinjs/cef/<version-platform>`; no Rust toolchain needed for consumers.
+- `mirin release` (macOS): Developer-ID signing/notarization when credentials are present, DMG installer, flat update manifest, full `.tar.zst` bundle, and best-effort bsdiff delta patch from the previously published release.
+- `app.updater`: packaged-app check/download/apply flow, version/channel identity from `Resources/version.json`, SHA-256 verification for downloads and reconstructed tars, archive layout validation before extraction, macOS codesign verification, whole-`.app` swap + relaunch.
+- Security constraints: runtime update URLs must be HTTPS except loopback HTTP for local testing; manifests must match channel/platform/arch; artifact names are flat files produced by `mirin release`.
+- **Example:** `examples/updater` demonstrates local self-hosting and GitHub Releases.
+
 ## Post-MVP queue (ordered, tentative)
-1. `mirin init` (scaffold), notarization + dmg/zip for `mirin build`
-2. Dialogs interactive test harness; payload encryption on the RPC plane; user preload scripts
-3. Multi-webview windows (BrowserView equivalent); per-window `loadUrl`
-4. Windows port (CEF default + WebView2 option), then Linux
-5. Auto-updater (bsdiff-style incremental, electrobun-inspired)
-6. Consider a CEF-IPC RPC transport (message router) to avoid loopback-origin policy friction entirely
+1. Dialogs interactive test harness; updater runtime swap field testing across signed/notarized installs
+2. Payload encryption on the RPC plane, or a CEF-IPC RPC transport (message router) to avoid loopback-origin policy friction entirely
+3. User preload scripts; session/cookie controls
+4. Multi-webview windows (BrowserView equivalent); per-window `loadUrl`
+5. Linux port
+6. Windows WebView2 option

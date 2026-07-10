@@ -1,21 +1,21 @@
 # Releasing
 
-Releases are cut by pushing a `v*` tag; GitHub Actions builds the native
-artifacts and publishes to the registry. Nothing is published until you tag.
+Releases are cut by pushing a `v*` tag from a commit already merged into `main`;
+GitHub Actions builds the native artifacts and publishes to the registry.
+Nothing is published until you tag.
 
 ## One-time setup
 
 The CLI and native packages publish under the **`@mirinjs` org scope**
-(`@mirinjs/cli`, `@mirinjs/darwin-arm64`); `mirinjs` and `create-mirinjs` are
-unscoped. The org and the publish token are already configured:
+(`@mirinjs/cli` and one native package per platform); `mirinjs` and
+`create-mirinjs` are unscoped. The org and publish token are already configured:
 
 - **`@mirinjs` org** — owned on the registry; the publish token has access to it.
-- **`NPM_TOKEN` secret** — an automation token with publish rights, set as the
+- **`NPM_TOKEN` secret** — a registry automation token with publish rights, set as the
   repo secret (`gh secret set NPM_TOKEN --repo Netko-Labs/mirin`).
-- **Blacksmith** — CI/release run on Blacksmith's Apple Silicon macOS runners
-  (`blacksmith-6vcpu-macos-15`). Install the Blacksmith GitHub app on the
-  **Netko-Labs org** at <https://app.blacksmith.sh> (Blacksmith is org-only). To
-  fall back to GitHub-hosted runners, change `runs-on` to `macos-14`.
+- **Blacksmith** — CI/release use Blacksmith macOS 15, Windows 2025, and Ubuntu
+  24.04 runners. Install the Blacksmith GitHub app for this repository in the
+  **Netko-Labs org** at <https://app.blacksmith.sh>.
 
 ## Cutting a release
 
@@ -28,17 +28,25 @@ git push --follow-tags
 
 `release.yml` then, on the `v*` tag:
 
-1. verifies the tag matches `packages/mirin`'s version,
-2. fetches CEF and builds the release native binaries,
-3. stages `libmirin_core.dylib` + `mirin-helper` into `@mirinjs/darwin-arm64`,
-4. uploads `cef-darwin-arm64.tar.gz` to the GitHub Release (the CLI downloads it),
-5. publishes `@mirinjs/darwin-arm64`, `create-mirinjs`, `mirinjs`, `@mirinjs/cli` to the registry.
-   Each is packed with `bun pm pack` (which rewrites `workspace:*` to the concrete
-   version) and uploaded with `npm publish <tarball>` — `bun publish` doesn't read
-   `~/.npmrc` auth in CI (oven-sh/bun#24124).
+1. verifies the tag matches `packages/mirin`, checks its commit is in `main`, and
+   creates an invisible draft release,
+2. builds native binaries concurrently on macOS arm64, Windows x64, and Linux x64,
+3. stages each platform's core and helper, uploads its CEF archive plus SHA-256
+   checksum to the draft, and preserves its small packed registry tarball,
+4. waits for every platform, verifies all packed names and versions, then
+   publishes the native packages plus `create-mirinjs`, `mirinjs`, and
+   `@mirinjs/cli`,
+5. publishes the GitHub release only after the registry step succeeds.
 
-Pre-release tags (`-alpha`/`-beta`) are marked as GitHub pre-releases and should
-be published to the registry under the `alpha` dist-tag once the workflow is hardened.
+If any platform fails, the release remains a draft and no shared package is
+published.
+
+Each package is packed with `bun pm pack` and uploaded with `bun publish
+<tarball>` using `NPM_CONFIG_TOKEN`. Stable versions use the `latest` registry
+tag. Prereleases use their channel (`alpha`, `beta`, `rc`, and so on); unknown
+prerelease channels use `next`, so a prerelease can never replace `latest`.
+
+Pre-release tags (`-alpha`/`-beta`) are marked as GitHub pre-releases.
 
 ## What ships where
 
@@ -46,9 +54,11 @@ be published to the registry under the `alpha` dist-tag once the workflow is har
 |---|---|
 | `mirinjs` | runtime API (TS source) |
 | `@mirinjs/cli` | `mirinjs` CLI; optional-deps the per-platform native package |
-| `@mirinjs/darwin-arm64` | prebuilt `libmirin_core.dylib` + `mirin-helper` |
+| `@mirinjs/darwin-arm64` | prebuilt macOS core + helper |
+| `@mirinjs/win32-x64` | prebuilt Windows core + helper |
+| `@mirinjs/linux-x64` | prebuilt Linux core + helper |
 | `create-mirinjs` | scaffolder + starter template |
-| GitHub Release asset | `cef-darwin-arm64.tar.gz` (CEF is too large for npm) |
+| GitHub Release assets | `cef-<platform>-<arch>.tar.gz` plus `.sha256` (CEF is too large for the package registry) |
 
 Adding a platform later = a new `@mirinjs/<os>-<arch>` package + a matching CEF
 release asset + a CI build matrix entry.

@@ -10,7 +10,7 @@
  */
 
 import { join } from "node:path";
-import { runtime, onNativeEvent } from "./runtime.ts";
+import { onNativeEvent, runtime } from "./runtime.ts";
 
 export interface SidecarOptions {
   /** Arguments passed after the binary path. */
@@ -70,7 +70,9 @@ function ensureHooks(): void {
 export function sidecar(name: string, opts: SidecarOptions = {}): SidecarProcess {
   const dir = runtime().sidecarDir;
   if (!dir) {
-    throw new Error(`app.sidecar("${name}"): no sidecar dir (is this running under the mirin host?)`);
+    throw new Error(
+      `app.sidecar("${name}"): no sidecar dir (is this running under the mirin host?)`,
+    );
   }
   ensureHooks();
 

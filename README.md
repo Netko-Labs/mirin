@@ -7,12 +7,15 @@ Mirin is a desktop application framework in the spirit of Electron, built native
 ## Why mirin
 
 - **Bun-native, permanently.** Bun is not a compatibility layer or a phase — it is the runtime. The main process API is designed around Bun idioms (top-level await, typed FFI, Workers), not ported from Node.
-- **One engine everywhere.** CEF (Chromium) is the only engine on macOS and Linux, and the default on Windows. Identical rendering, identical devtools, identical web platform across every install. Windows apps that want a smaller footprint can opt into WebView2.
+- **One engine everywhere.** CEF (Chromium) is the engine on macOS, Windows, and Linux. Identical rendering, identical devtools, identical web platform across every install. A WebView2 option on Windows remains a future size optimization.
 - **Declarative first.** An app is a typed config — windows, lifecycle, RPC surface — with imperative escape hatches when you need them. Closer to how you'd *describe* an app than how you'd wire one up in 2013.
 - **Typed end to end.** RPC between the Bun process and webview JS is schema-derived: one router definition, full TypeScript inference on both sides, no stringly-typed channels.
 - **Rust underneath.** The native layer (windowing, CEF embedding, IPC plumbing) is Rust, exposed to Bun through a stable C ABI.
 
 ## Architecture at a glance
+
+The macOS bundle below illustrates the shared host/Worker/core model; Windows
+and Linux use the same process model in flat app directories.
 
 ```
 your-app.app
@@ -25,14 +28,14 @@ your-app.app
 
 See [docs/architecture.md](docs/architecture.md) for the full picture, [docs/api-design.md](docs/api-design.md) for the developer-facing API, and [docs/macos-mvp.md](docs/macos-mvp.md) for the current roadmap.
 
-## Quickstart (macOS arm64)
+## Quickstart (macOS arm64 / Windows x64 / Linux x64 alpha)
 
 ```bash
 bun create mirinjs my-app
 cd my-app
 bun install
 bun run dev      # native window: React + Vite HMR + typed RPC
-bun run build    # standalone .app in ./build
+bun run build    # standalone app in ./build
 ```
 
 You get a mirin-owned native window rendering React, a typed `greet` query
@@ -40,28 +43,34 @@ round-tripping to the Bun process, and live `tick` events pushed back to the UI
 — all over a token-gated localhost socket. In dev the UI loads from Vite (HMR);
 in a build it's served from the bundle via the native `app://` scheme.
 
-The first run downloads the pinned CEF framework once (~hundreds of MB) into
-`~/.mirinjs/cef/`. Requires Bun and the Xcode command-line tools — **no Rust
-toolchain needed**; the native core ships prebuilt. See
+The first run downloads the pinned CEF runtime once (~hundreds of MB) into
+`~/.mirinjs/cef/<version-platform>/`. Requires Bun; macOS builds also need the
+Xcode command-line tools for signing. **No Rust toolchain needed** to use mirin;
+the native core ships prebuilt for supported platforms. See
 [docs/getting-started.md](docs/getting-started.md).
 
 Working on mirin itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status
 
-Pre-alpha, macOS only. **The full loop works end-to-end** — both `mirin dev`
-(Vite HMR) and `mirin build` (standalone signed `.app`): Bun host → CEF →
-mirin-owned NSWindow → React (rolldown-vite) → typed RPC both directions, served
-in production from `app://`, with clean teardown (zero orphan processes).
+Pre-alpha. macOS arm64 is the most exercised path; the Windows and Linux x64 CEF
+ports are implemented and documented. **The full loop works
+end-to-end** — `mirin init`, `mirin dev` (Vite HMR), `mirin build` (standalone
+app), and `mirin release` (installer + updater artifacts): Bun host → CEF →
+native window → React (rolldown-vite) → typed RPC both directions, served in
+production from `app://`, with clean teardown (zero orphan processes in verified
+flows).
 
-Built: native core + helper (Rust/CEF), the Bun host/Worker handoff, the FFI
-command surface, manifest-driven windows, preload injection, typed RPC over a
-localhost WebSocket, the `app://` scheme handler, `mirin dev` / `mirin build`,
-and the macOS app-shell tier — **native menus + context menus, a menu-bar
-tray, dialogs, clipboard, global shortcuts, window controls, custom /
-frameless title bars, and genuinely transparent windows backed by native
-materials (Apple Liquid Glass + vibrancy) via off-screen rendering**
-(`docs/macos-mvp.md`, M0–M6 done).
+Built on every platform: native core + helper (Rust/CEF), the Bun host/Worker
+handoff, the FFI command surface, manifest-driven windows, preload injection,
+typed RPC over a localhost WebSocket, the `app://` scheme handler, `mirin init` /
+`dev` / `build` / `release`, sidecars, extra workers, deep links, updater
+artifacts, DMG / Inno / NSIS / AppImage / deb / rpm packages, and window
+controls. macOS and Windows also ship the broader app-shell tier: **native menus
+and context menus, tray, dialogs, clipboard, global shortcuts, window controls,
+custom / frameless title bars, and transparent/material windows**. Linux
+app-shell parity is still in progress; see `docs/linux-port.md` for the precise
+matrix.
 
 ### Examples
 
@@ -73,10 +82,11 @@ materials (Apple Liquid Glass + vibrancy) via off-screen rendering**
   **Liquid Glass** (type-to-filter over RPC, Esc to dismiss, stays resident).
 - `examples/liquid-glass` — live picker that swaps native background materials
   (Liquid Glass + vibrancy) on a transparent window.
+- `examples/updater` — `app.updater` plus `mirin release` artifacts.
 
-Not yet built (toward Electron/electrobun parity): `mirin init`, notarization +
-dmg packaging, multi-webview windows, the auto-updater, and the Windows/Linux
-ports.
+Not yet built (toward Electron/electrobun parity): multi-webview windows,
+user preload scripts, session/cookie controls, payload encryption or a CEF IPC
+replacement for the RPC data plane, and a WebView2 option on Windows.
 
 ## Prior art & credits
 

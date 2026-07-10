@@ -1,5 +1,5 @@
-import { rpc } from "mirinjs/rpc";
 import type { UpdateInfo, UpdateProgress, UpdaterStatus } from "mirinjs";
+import { rpc } from "mirinjs/rpc";
 
 /** RPC surface for the updater UI. Imported by the main process (handlers) and,
  *  as a type only, by the React UI (`mirinjs/client`). */

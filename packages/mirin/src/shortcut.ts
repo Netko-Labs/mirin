@@ -3,7 +3,7 @@
  * native side reports presses as `shortcut.trigger` events.
  */
 
-import { runtime, onNativeEvent } from "./runtime.ts";
+import { onNativeEvent, runtime } from "./runtime.ts";
 
 let nextId = 1;
 const handlers = new Map<number, () => void>();

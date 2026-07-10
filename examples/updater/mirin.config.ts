@@ -6,9 +6,9 @@ export default defineConfig({
   main: "main/main.ts",
 
   // Auto-update config. `mirin release` emits artifacts named for this channel;
-  // the built app polls `${baseUrl}/${channel}-darwin-${arch}-update.json`.
+  // the built app polls `${baseUrl}/${channel}-${platform}-${arch}-update.json`.
   //
-  //   Self-host (default): `bun serve.ts` serves ./build/release on :4000.
+  //   Self-host (local test): `bun serve.ts` serves ./build/release on :4000.
   //   GitHub Releases:     baseUrl: "https://github.com/<org>/<repo>/releases/latest/download"
   release: {
     baseUrl: "http://localhost:4000",

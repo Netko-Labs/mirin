@@ -1,6 +1,6 @@
 {
   "name": "mirinjs",
-  "version": "0.1.0-alpha.14",
+  "version": "0.1.0-alpha.15",
   "description": "Build desktop apps with Bun, TypeScript, and Chromium (CEF). The Bun-native Electron alternative.",
   "type": "module",
   "license": "MIT",
@@ -23,7 +23,7 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./config": "./src/config.ts",
+    "./config": "./src/config/index.ts",
     "./rpc": "./src/rpc.ts",
     "./client": "./src/client.ts",
     "./codec": "./src/codec.ts",

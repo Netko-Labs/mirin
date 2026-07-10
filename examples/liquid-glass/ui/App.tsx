@@ -1,6 +1,6 @@
+import type { WindowMaterial, WindowMaterialOptions } from "mirinjs/config";
 import { useEffect, useState } from "react";
 import { api } from "./api.ts";
-import type { WindowMaterial, WindowMaterialOptions } from "mirinjs/config";
 
 type Material = WindowMaterial | WindowMaterialOptions | null;
 
@@ -13,15 +13,50 @@ interface Choice {
 
 /** Materials to cycle through, grouped for the picker. */
 const CHOICES: Choice[] = [
-  { key: "glass", label: "Liquid Glass", note: "NSGlassEffectView", value: { type: "liquidGlass", cornerRadius: 20 } },
-  { key: "glass-blue", label: "Glass · blue tint", note: "tint #3b82f6", value: { type: "liquidGlass", tint: "#3b82f6aa", cornerRadius: 20 } },
-  { key: "glass-pink", label: "Glass · pink tint", note: "tint #ec4899", value: { type: "liquidGlass", tint: "#ec4899aa", cornerRadius: 20 } },
+  {
+    key: "glass",
+    label: "Liquid Glass",
+    note: "NSGlassEffectView",
+    value: { type: "liquidGlass", cornerRadius: 20 },
+  },
+  {
+    key: "glass-blue",
+    label: "Glass · blue tint",
+    note: "tint #3b82f6",
+    value: { type: "liquidGlass", tint: "#3b82f6aa", cornerRadius: 20 },
+  },
+  {
+    key: "glass-pink",
+    label: "Glass · pink tint",
+    note: "tint #ec4899",
+    value: { type: "liquidGlass", tint: "#ec4899aa", cornerRadius: 20 },
+  },
   { key: "hud", label: "HUD", note: "vibrancy", value: { type: "hud", cornerRadius: 20 } },
-  { key: "sidebar", label: "Sidebar", note: "vibrancy", value: { type: "sidebar", cornerRadius: 20 } },
-  { key: "popover", label: "Popover", note: "vibrancy", value: { type: "popover", cornerRadius: 20 } },
+  {
+    key: "sidebar",
+    label: "Sidebar",
+    note: "vibrancy",
+    value: { type: "sidebar", cornerRadius: 20 },
+  },
+  {
+    key: "popover",
+    label: "Popover",
+    note: "vibrancy",
+    value: { type: "popover", cornerRadius: 20 },
+  },
   { key: "menu", label: "Menu", note: "vibrancy", value: { type: "menu", cornerRadius: 20 } },
-  { key: "underWindow", label: "Under Window", note: "vibrancy", value: { type: "underWindowBackground", cornerRadius: 20 } },
-  { key: "fullScreen", label: "Full Screen UI", note: "vibrancy", value: { type: "fullScreenUI", cornerRadius: 20 } },
+  {
+    key: "underWindow",
+    label: "Under Window",
+    note: "vibrancy",
+    value: { type: "underWindowBackground", cornerRadius: 20 },
+  },
+  {
+    key: "fullScreen",
+    label: "Full Screen UI",
+    note: "vibrancy",
+    value: { type: "fullScreenUI", cornerRadius: 20 },
+  },
   { key: "none", label: "None", note: "clear (no material)", value: null },
 ];
 
@@ -45,11 +80,14 @@ export function App() {
     <div className="app">
       <header>
         <h1>Liquid Glass</h1>
-        <p>Native macOS materials rendered behind a transparent (OSR) web window. Click to swap live.</p>
+        <p>
+          Native macOS materials rendered behind a transparent (OSR) web window. Click to swap live.
+        </p>
       </header>
       <div className="grid">
         {CHOICES.map((c) => (
           <button
+            type="button"
             key={c.key}
             className={`card ${active === c.key ? "active" : ""}`}
             onClick={() => pick(c)}

@@ -28,13 +28,12 @@ export interface MutationProc<I, O> {
 export interface EventProc<P> {
   readonly type: "event";
   /** Phantom field carrying the payload type; never set at runtime. */
-  readonly __payload?: P;
+  readonly payload?: P;
 }
 
-export type Procedure =
-  | QueryProc<any, any>
-  | MutationProc<any, any>
-  | EventProc<any>;
+// Type-level `any` preserves caller-defined handler input/output inference here;
+// no runtime value is widened through this union.
+export type Procedure = QueryProc<any, any> | MutationProc<any, any> | EventProc<any>;
 
 export interface Router<T extends Record<string, Procedure> = Record<string, Procedure>> {
   readonly type: "router";

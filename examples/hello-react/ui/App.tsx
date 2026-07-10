@@ -64,7 +64,7 @@ export function App() {
             placeholder="add a todo"
             style={{ ...input, flex: 1 }}
           />
-          <button onClick={addTodo} style={button}>
+          <button type="button" onClick={addTodo} style={button}>
             Add
           </button>
         </div>

@@ -24,14 +24,14 @@ import lib), `default_cache_dir` (`%LOCALAPPDATA%`), `derive_subprocess_path`
 compiles and links on Windows** — the project's biggest risk, cleared.
 
 ### W1 — Window MVP — ✅ DONE
-`win/window.rs`: mirin-owned top-level window (class + WndProc), CEF child via
+`win/window/mod.rs`: mirin-owned top-level window (class + WndProc), CEF child via
 `WindowInfo::set_as_child`, id↔HWND registry, child resize on `WM_SIZE`. The
 `set_as_child` **close handshake** (do_close marks closing → next WM_CLOSE destroys
 → on_before_close → quit). `MIRIN_AUTOQUIT_MS` debug hook. Verified: `m1-smoke`
 renders example.com (software), clean self-exit, zero orphan helpers.
 
 ### W2 — `mirin dev` runs Anko — ✅ DONE
-`artifacts.ts` (win32 + dll/exe names), `bundle-win.ts` (flat app folder + CEF
+`artifacts.ts` (win32 + dll/exe names), `bundle/windows/index.ts` (flat app folder + CEF
 runtime copy), `dev.ts`/`host.ts` platform branches. Verified: Anko's React UI
 renders in the CEF window, Vite HMR, typed RPC round-trips, clean close.
 
@@ -49,7 +49,7 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
   `ReleaseCapture`+`WM_NCLBUTTONDOWN` against CEF's `-webkit-app-region` regions.
   Verified: drag moves the window, **double-click (detail≥2) toggles maximize**, and the
   OS move loop gives **aero snap** (drag to top→maximize, edges→half).
-- **App icon** — the bundler packs the iconset PNGs into `<App>/icon.ico` (`icon-win.ts`,
+- **App icon** — the bundler packs the iconset PNGs into `<App>/icon.ico` (`icons/windows/index.ts`,
   multi-size); the core loads it at runtime and sets it via `WM_SETICON` (taskbar /
   Alt-Tab / title). Verified (window has a non-null icon handle). Anko's existing
   `icon.iconset` works unchanged. (The `.exe` *file* icon in Explorer would need rcedit —
@@ -88,7 +88,7 @@ install (`/S /D=`) → 252 files + Add/Remove Programs entry, the installed app
 cold-launches (0 GPU failures), silent uninstall removes the folder + registry key.
 Customizable via the `nsis` config (perMachine/oneClick, shortcuts, license,
 publisher, runAfterFinish, installerIcon, raw `include`); needs `makensis`, else
-falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via choco. `updater.ts` Windows arm: `win32` prefix,
+falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
 `%LOCALAPPDATA%` support dir, detached-PowerShell folder swap + relaunch (implemented;
 the runtime swap isn't field-tested). `publish-all.ts` publishes the host-platform
 native package. *Note:* loading the codec dll for compression needs the bundle dir on

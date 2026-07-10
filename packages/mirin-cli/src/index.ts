@@ -4,14 +4,17 @@
  */
 
 import { resolve } from "node:path";
-import { dev } from "./dev.ts";
-import { build } from "./build.ts";
-import { release } from "./release.ts";
 import { scaffold } from "create-mirinjs";
-import type { LinuxPackageFormat } from "mirinjs";
+import { build } from "./build.ts";
+import { dev } from "./dev.ts";
+import { parseLinuxFormats } from "./package/linux/index.ts";
+import { release } from "./release.ts";
 
 /** Minimal flag parser: `--k=v`, `--k v`, and boolean `--k`; the rest are positionals. */
-function parseArgs(argv: string[]): { positionals: string[]; opts: Record<string, string | boolean> } {
+function parseArgs(argv: string[]): {
+  positionals: string[];
+  opts: Record<string, string | boolean>;
+} {
   const opts: Record<string, string | boolean> = {};
   const positionals: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -65,9 +68,7 @@ switch (command) {
   case "build": {
     const version = typeof opts.version === "string" ? opts.version : undefined;
     const target = typeof opts["linux-target"] === "string" ? opts["linux-target"] : undefined;
-    const linuxFormats = target
-      ? (target.split(",").map((s) => s.trim()).filter(Boolean) as LinuxPackageFormat[])
-      : undefined;
+    const linuxFormats = target ? parseLinuxFormats(target) : undefined;
     const packageLinux = opts.linux === true || linuxFormats != null;
     await build(process.cwd(), { version, packageLinux, linuxFormats });
     process.exit(0);

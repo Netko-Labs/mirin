@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Fetch the CEF binary distribution into vendor/cef (docs/architecture.md §5).
  *
@@ -9,9 +10,9 @@
  * Usage: bun scripts/fetch-cef.ts [--force]
  */
 
-import { $ } from "bun";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { $ } from "bun";
 
 const ROOT = join(import.meta.dir, "..");
 const CEF_DIR = join(ROOT, "vendor", "cef");
@@ -25,7 +26,7 @@ if (!pinned) {
 }
 
 if (!force && existsSync(join(CEF_DIR, "archive.json"))) {
-  console.log(`[fetch-cef] vendor/cef already present (use --force to refresh)`);
+  console.log("[fetch-cef] vendor/cef already present (use --force to refresh)");
   process.exit(0);
 }
 

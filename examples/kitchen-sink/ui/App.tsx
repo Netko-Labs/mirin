@@ -9,18 +9,24 @@ export function App() {
       <div className="titlebar">
         <span className="titlebar-title">mirin · Kitchen Sink</span>
         <div className="titlebar-controls">
-          <button title="Minimize" onClick={() => api.minimize(null)}>
+          <button type="button" title="Minimize" onClick={() => api.minimize(null)}>
             &#x2013;
           </button>
-          <button title="Maximize" onClick={() => api.maximize(null)}>
+          <button type="button" title="Maximize" onClick={() => api.maximize(null)}>
             &#x25A1;
           </button>
-          <button title="Close" className="close" onClick={() => api.close(null)}>
+          <button type="button" title="Close" className="close" onClick={() => api.close(null)}>
             &#x2715;
           </button>
         </div>
       </div>
-      <div className="content" onContextMenu={(e) => (e.preventDefault(), api.showContextMenu(null))}>
+      <div
+        className="content"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          api.showContextMenu(null);
+        }}
+      >
         <h1>Native feature tour</h1>
         <p className="sub">
           Every button drives a native macOS capability from the Bun process over typed RPC.
@@ -46,9 +52,14 @@ function WindowSection() {
     <section className="card">
       <h2>Window controls</h2>
       <div className="row">
-        <button onClick={() => api.minimize(null)}>Minimize</button>
-        <button onClick={() => api.toggleFullscreen(null)}>Fullscreen</button>
+        <button type="button" onClick={() => api.minimize(null)}>
+          Minimize
+        </button>
+        <button type="button" onClick={() => api.toggleFullscreen(null)}>
+          Fullscreen
+        </button>
         <button
+          type="button"
           onClick={() => {
             const next = !onTop;
             setOnTop(next);
@@ -57,7 +68,9 @@ function WindowSection() {
         >
           Always on top: {onTop ? "on" : "off"}
         </button>
-        <button onClick={() => api.openSecondWindow(null)}>Open window</button>
+        <button type="button" onClick={() => api.openSecondWindow(null)}>
+          Open window
+        </button>
       </div>
     </section>
   );
@@ -69,9 +82,16 @@ function DialogSection() {
     <section className="card">
       <h2>Dialogs</h2>
       <div className="row">
-        <button onClick={async () => setResult(fmt(await api.openFile(null)))}>Open file…</button>
-        <button onClick={async () => setResult(fmt(await api.saveFile(null)))}>Save as…</button>
-        <button onClick={async () => setResult(`button ${(await api.messageBox(null)).button}`)}>
+        <button type="button" onClick={async () => setResult(fmt(await api.openFile(null)))}>
+          Open file…
+        </button>
+        <button type="button" onClick={async () => setResult(fmt(await api.saveFile(null)))}>
+          Save as…
+        </button>
+        <button
+          type="button"
+          onClick={async () => setResult(`button ${(await api.messageBox(null)).button}`)}
+        >
           Message box
         </button>
       </div>
@@ -88,8 +108,12 @@ function ClipboardSection() {
       <h2>Clipboard</h2>
       <div className="row">
         <input value={text} onChange={(e) => setText(e.target.value)} />
-        <button onClick={() => api.clipboardWrite(text)}>Copy</button>
-        <button onClick={async () => setRead(await api.clipboardRead(null))}>Read</button>
+        <button type="button" onClick={() => api.clipboardWrite(text)}>
+          Copy
+        </button>
+        <button type="button" onClick={async () => setRead(await api.clipboardRead(null))}>
+          Read
+        </button>
       </div>
       <div className="result">{read && `clipboard: ${read}`}</div>
     </section>
@@ -107,8 +131,8 @@ function SidecarSection() {
       <h2>Sidecar (bundled binary)</h2>
       <p className="result" style={{ marginTop: 0 }}>
         A Bun-compiled <code>tool</code> binary bundled into the .app, spawned via{" "}
-        <strong>app.sidecar("tool")</strong> — one-shot, a persistent NDJSON server, and a
-        streaming process you can kill.
+        <strong>app.sidecar("tool")</strong> — one-shot, a persistent NDJSON server, and a streaming
+        process you can kill.
       </p>
 
       <div className="row">
@@ -120,6 +144,7 @@ function SidecarSection() {
           <option value="hash">hash</option>
         </select>
         <button
+          type="button"
           onClick={async () => setResult(JSON.stringify(await api.sidecarServer({ op, text })))}
         >
           Server request
@@ -127,19 +152,29 @@ function SidecarSection() {
       </div>
 
       <div className="row">
-        <button onClick={async () => setResult(`version: ${await api.sidecarVersion(null)}`)}>
+        <button
+          type="button"
+          onClick={async () => setResult(`version: ${await api.sidecarVersion(null)}`)}
+        >
           Version (one-shot)
         </button>
-        <button onClick={async () => setResult(`echo: ${await api.sidecarEcho(text)}`)}>
+        <button
+          type="button"
+          onClick={async () => setResult(`echo: ${await api.sidecarEcho(text)}`)}
+        >
           Echo (one-shot)
         </button>
-        <button onClick={async () => setResult(`fail: ${JSON.stringify(await api.sidecarFail(null))}`)}>
+        <button
+          type="button"
+          onClick={async () => setResult(`fail: ${JSON.stringify(await api.sidecarFail(null))}`)}
+        >
           Fail (stderr + exit 3)
         </button>
       </div>
 
       <div className="row">
         <button
+          type="button"
           onClick={async () => {
             const pid = await api.sidecarStart(null);
             setResult(`streaming started (pid ${pid}) — see event log`);
@@ -150,6 +185,7 @@ function SidecarSection() {
           Start stream
         </button>
         <button
+          type="button"
           onClick={async () => {
             await api.sidecarStop(null);
             setResult("streaming stopped (sidecar killed)");
@@ -205,7 +241,9 @@ function useEventLog(): string[] {
       api.sidecarTick.on(({ n }) => add(`sidecar tick: ${n}`)),
       api.deepLink.on(({ url }) => add(`deep link: ${url}`)),
     ];
-    return () => offs.forEach((off) => off());
+    return () => {
+      for (const off of offs) off();
+    };
   }, []);
   return entries;
 }

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import type { UpdateInfo, UpdaterStatus } from "mirinjs";
+import { useEffect, useState } from "react";
 import { api } from "./api.ts";
 
 export function App() {
@@ -25,7 +25,9 @@ export function App() {
       api.updaterProgress.on(({ fraction }) => setProgress(fraction)),
       api.updaterError.on(({ message }) => setMessage(`Error: ${message}`)),
     ];
-    return () => offs.forEach((off) => off());
+    return () => {
+      for (const off of offs) off();
+    };
   }, []);
 
   async function check() {
@@ -67,22 +69,26 @@ export function App() {
 
       {!enabled && (
         <p style={S.note}>
-          Updates are disabled — run a packaged build with <code>release.baseUrl</code> set
-          (this is inert in <code>mirin dev</code>).
+          Updates are disabled — run a packaged build with <code>release.baseUrl</code> set (this is
+          inert in <code>mirin dev</code>).
         </p>
       )}
 
       <div style={S.row}>
-        <button style={S.btn} onClick={check} disabled={busy || !enabled}>
+        <button type="button" style={S.btn} onClick={check} disabled={busy || !enabled}>
           {status === "checking" ? "Checking…" : "Check for updates"}
         </button>
         {available && !downloaded && (
-          <button style={S.btn} onClick={download} disabled={busy}>
+          <button type="button" style={S.btn} onClick={download} disabled={busy}>
             {status === "downloading" ? "Downloading…" : `Download ${available.version}`}
           </button>
         )}
         {downloaded && (
-          <button style={{ ...S.btn, ...S.primary }} onClick={() => api.applyUpdate(null)}>
+          <button
+            type="button"
+            style={{ ...S.btn, ...S.primary }}
+            onClick={() => api.applyUpdate(null)}
+          >
             Restart &amp; install
           </button>
         )}
@@ -123,7 +129,13 @@ const S: Record<string, React.CSSProperties> = {
     fontSize: 14,
   },
   primary: { background: "#5b8cff", borderColor: "#5b8cff", color: "#fff" },
-  barOuter: { height: 8, background: "#23232b", borderRadius: 6, overflow: "hidden", marginBottom: 14 },
+  barOuter: {
+    height: 8,
+    background: "#23232b",
+    borderRadius: 6,
+    overflow: "hidden",
+    marginBottom: 14,
+  },
   barInner: { height: "100%", background: "#5b8cff", transition: "width 120ms linear" },
   msg: { color: "#c9c9d2" },
   status: { color: "#6a6a73", fontSize: 12, marginTop: 24 },

@@ -5,6 +5,7 @@
     "": {
       "name": "mirin-monorepo",
       "devDependencies": {
+        "@biomejs/biome": "2.2.4",
         "@mirinjs/cli": "workspace:*",
         "@types/bun": "^1.2.0",
         "typescript": "^5.8.0",
@@ -74,12 +75,12 @@
       "name": "updater-example",
       "version": "1.0.0",
       "dependencies": {
-        "mirinjs": "^0.0.1-alpha.10",
+        "mirinjs": "workspace:*",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
-        "@mirinjs/cli": "^0.0.1-alpha.10",
+        "@mirinjs/cli": "workspace:*",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
@@ -88,40 +89,63 @@
     },
     "packages/create-mirin": {
       "name": "create-mirinjs",
-      "version": "0.1.0-alpha.0",
+      "version": "0.1.0-alpha.15",
       "bin": {
         "create-mirinjs": "./src/index.ts",
       },
     },
     "packages/mirin": {
       "name": "mirinjs",
-      "version": "0.1.0-alpha.0",
+      "version": "0.1.0-alpha.15",
     },
     "packages/mirin-cli": {
       "name": "@mirinjs/cli",
-      "version": "0.1.0-alpha.0",
+      "version": "0.1.0-alpha.15",
       "bin": {
         "mirin": "./src/index.ts",
       },
       "dependencies": {
-        "create-mirinjs": "0.1.0-alpha.0",
-        "mirinjs": "0.1.0-alpha.0",
+        "create-mirinjs": "0.1.0-alpha.15",
+        "mirinjs": "0.1.0-alpha.15",
       },
       "optionalDependencies": {
-        "@mirinjs/darwin-arm64": "0.1.0-alpha.0",
-        "@mirinjs/win32-x64": "0.1.0-alpha.0",
+        "@mirinjs/darwin-arm64": "0.1.0-alpha.15",
+        "@mirinjs/linux-x64": "0.1.0-alpha.15",
+        "@mirinjs/win32-x64": "0.1.0-alpha.15",
       },
     },
     "packages/native-darwin-arm64": {
       "name": "@mirinjs/darwin-arm64",
-      "version": "0.1.0-alpha.0",
+      "version": "0.1.0-alpha.15",
+    },
+    "packages/native-linux-x64": {
+      "name": "@mirinjs/linux-x64",
+      "version": "0.1.0-alpha.15",
     },
     "packages/native-win32-x64": {
       "name": "@mirinjs/win32-x64",
-      "version": "0.1.0-alpha.0",
+      "version": "0.1.0-alpha.15",
     },
   },
   "packages": {
+    "@biomejs/biome": ["@biomejs/biome@2.2.4", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.2.4", "@biomejs/cli-darwin-x64": "2.2.4", "@biomejs/cli-linux-arm64": "2.2.4", "@biomejs/cli-linux-arm64-musl": "2.2.4", "@biomejs/cli-linux-x64": "2.2.4", "@biomejs/cli-linux-x64-musl": "2.2.4", "@biomejs/cli-win32-arm64": "2.2.4", "@biomejs/cli-win32-x64": "2.2.4" }, "bin": { "biome": "bin/biome" } }, "sha512-TBHU5bUy/Ok6m8c0y3pZiuO/BZoY/OcGxoLlrfQof5s8ISVwbVBdFINPQZyFfKwil8XibYWb7JMwnT8wT4WVPg=="],
+
+    "@biomejs/cli-darwin-arm64": ["@biomejs/cli-darwin-arm64@2.2.4", "", { "os": "darwin", "cpu": "arm64" }, "sha512-RJe2uiyaloN4hne4d2+qVj3d3gFJFbmrr5PYtkkjei1O9c+BjGXgpUPVbi8Pl8syumhzJjFsSIYkcLt2VlVLMA=="],
+
+    "@biomejs/cli-darwin-x64": ["@biomejs/cli-darwin-x64@2.2.4", "", { "os": "darwin", "cpu": "x64" }, "sha512-cFsdB4ePanVWfTnPVaUX+yr8qV8ifxjBKMkZwN7gKb20qXPxd/PmwqUH8mY5wnM9+U0QwM76CxFyBRJhC9tQwg=="],
+
+    "@biomejs/cli-linux-arm64": ["@biomejs/cli-linux-arm64@2.2.4", "", { "os": "linux", "cpu": "arm64" }, "sha512-M/Iz48p4NAzMXOuH+tsn5BvG/Jb07KOMTdSVwJpicmhN309BeEyRyQX+n1XDF0JVSlu28+hiTQ2L4rZPvu7nMw=="],
+
+    "@biomejs/cli-linux-arm64-musl": ["@biomejs/cli-linux-arm64-musl@2.2.4", "", { "os": "linux", "cpu": "arm64" }, "sha512-7TNPkMQEWfjvJDaZRSkDCPT/2r5ESFPKx+TEev+I2BXDGIjfCZk2+b88FOhnJNHtksbOZv8ZWnxrA5gyTYhSsQ=="],
+
+    "@biomejs/cli-linux-x64": ["@biomejs/cli-linux-x64@2.2.4", "", { "os": "linux", "cpu": "x64" }, "sha512-orr3nnf2Dpb2ssl6aihQtvcKtLySLta4E2UcXdp7+RTa7mfJjBgIsbS0B9GC8gVu0hjOu021aU8b3/I1tn+pVQ=="],
+
+    "@biomejs/cli-linux-x64-musl": ["@biomejs/cli-linux-x64-musl@2.2.4", "", { "os": "linux", "cpu": "x64" }, "sha512-m41nFDS0ksXK2gwXL6W6yZTYPMH0LughqbsxInSKetoH6morVj43szqKx79Iudkp8WRT5SxSh7qVb8KCUiewGg=="],
+
+    "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.2.4", "", { "os": "win32", "cpu": "arm64" }, "sha512-NXnfTeKHDFUWfxAefa57DiGmu9VyKi0cDqFpdI+1hJWQjGJhJutHPX0b5m+eXvTKOaf+brU+P0JrQAZMb5yYaQ=="],
+
+    "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.2.4", "", { "os": "win32", "cpu": "x64" }, "sha512-3Y4V4zVRarVh/B/eSHczR4LYoSVyv3Dfuvm3cWs5w/HScccS0+Wt/lHOcDTRYeHjQmMYVC3rIRWqyN2EI52+zg=="],
+
     "@emnapi/core": ["@emnapi/core@1.11.0", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.2", "tslib": "^2.4.0" } }, "sha512-l9Oo58x0HOP5znGzVhYW9U3e5wVuA4LAZU2AGezTmkhO1CgQRFDhDg4nneHsu/t3WniXg9QrG2nIXL/ZS8ln8Q=="],
 
     "@emnapi/runtime": ["@emnapi/runtime@1.11.0", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-55coeOFKHv1ywEcUXJtWU5f+Jr/W5tZDvZig8DLKSwUN1JpROQ4rk/SNOQiFWmaR/VKF4zuFyW1B8JduOSv6Pg=="],
@@ -131,6 +155,8 @@
     "@mirinjs/cli": ["@mirinjs/cli@workspace:packages/mirin-cli"],
 
     "@mirinjs/darwin-arm64": ["@mirinjs/darwin-arm64@workspace:packages/native-darwin-arm64"],
+
+    "@mirinjs/linux-x64": ["@mirinjs/linux-x64@workspace:packages/native-linux-x64"],
 
     "@mirinjs/win32-x64": ["@mirinjs/win32-x64@workspace:packages/native-win32-x64"],
 

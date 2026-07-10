@@ -4,7 +4,7 @@
 //! Unlike macOS — where CEF paints into a mirin-owned NSView and the embedded-view
 //! close lifecycle needs the detach dance — CEF on Windows renders *windowed*: it
 //! creates and owns a child HWND parented to the mirin-owned top-level window built
-//! in `window.rs`, and closing follows CEF's standard path (WM_CLOSE →
+//! in `window/mod.rs`, and closing follows CEF's standard path (WM_CLOSE →
 //! CloseBrowser → on_before_close).
 
 pub mod clipboard;

@@ -4,12 +4,25 @@
  * carrying that id. `role` items map to AppKit's standard actions.
  */
 
-import { runtime, onNativeEvent } from "./runtime.ts";
+import { onNativeEvent, runtime } from "./runtime.ts";
 
 export type MenuRole =
-  | "quit" | "close" | "minimize" | "zoom" | "front" | "togglefullscreen"
-  | "hide" | "hideothers" | "unhide"
-  | "undo" | "redo" | "cut" | "copy" | "paste" | "selectall" | "delete";
+  | "quit"
+  | "close"
+  | "minimize"
+  | "zoom"
+  | "front"
+  | "togglefullscreen"
+  | "hide"
+  | "hideothers"
+  | "unhide"
+  | "undo"
+  | "redo"
+  | "cut"
+  | "copy"
+  | "paste"
+  | "selectall"
+  | "delete";
 
 export interface MenuItemTemplate {
   label?: string;

@@ -26,7 +26,9 @@ app.on("ready", () => {
   });
 
   // Keep `shown` in sync with reality, and auto-hide when focus is lost.
-  panel.on("focus", () => (shown = true));
+  panel.on("focus", () => {
+    shown = true;
+  });
   panel.on("blur", () => {
     shown = false;
     void panel.hide();

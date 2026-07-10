@@ -4,8 +4,8 @@
  * request/response server, and a streaming emitter that's killed on demand.
  */
 
-import { app } from "mirinjs";
 import type { SidecarProcess } from "mirinjs";
+import { app } from "mirinjs";
 
 /** Read a stdout/stderr stream line-by-line, calling `onLine` per line. */
 async function readLines(
@@ -19,11 +19,12 @@ async function readLines(
     const { done, value } = await reader.read();
     if (done) break;
     buf += dec.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf("\n")) >= 0) {
+    let nl = buf.indexOf("\n");
+    while (nl >= 0) {
       const line = buf.slice(0, nl).trim();
       buf = buf.slice(nl + 1);
       if (line) onLine(line);
+      nl = buf.indexOf("\n");
     }
   }
 }
@@ -48,7 +49,12 @@ const waiters: Array<(line: string) => void> = [];
 
 function ensureServer(): SidecarProcess {
   if (server) return server;
-  const proc = app.sidecar("tool", { args: ["serve"], stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+  const proc = app.sidecar("tool", {
+    args: ["serve"],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
   server = proc;
   // Each reply line resolves the oldest pending request (FIFO).
   void readLines(proc.stdout as ReadableStream<Uint8Array>, (line) => waiters.shift()?.(line));

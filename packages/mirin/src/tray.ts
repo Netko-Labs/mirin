@@ -3,8 +3,8 @@
  * through the shared menu registry); a tray without a menu fires `onClick`.
  */
 
-import { runtime, onNativeEvent } from "./runtime.ts";
 import { buildNativeMenu, type MenuItemTemplate } from "./menu.ts";
+import { onNativeEvent, runtime } from "./runtime.ts";
 
 export interface TrayOptions {
   title?: string;

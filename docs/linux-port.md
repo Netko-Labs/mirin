@@ -25,7 +25,7 @@ model:
 
 - The primary window uses CEF's **Views** framework: `window_create_top_level` owns a
   real X11 toplevel hosting a `BrowserView` (`browser_view_create`), driven through
-  the Views delegates in `linux/window.rs`. Frameless windows get a **fill layout**
+  the Views delegates in `linux/window/mod.rs`. Frameless windows get a **fill layout**
   (`set_to_fill_layout`) so the browser view tracks resize.
 - Window **management** (move / resize / live-resize, maximize / fullscreen /
   always-on-top, taskbar icon, app id) is done via **Xlib** against the CEF window's
@@ -41,7 +41,7 @@ model:
   `libcef.so`, `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`,
   `chrome-sandbox`, …) via `export-cef-dir` (auto-selects linux64).
 
-## Windowing (`linux/window.rs`)
+## Windowing (`linux/window/mod.rs`)
 
 **CEF Views toplevel.** `MirinWindowDelegate` + `MirinBrowserViewDelegate` (via
 `wrap_window_delegate!` / `wrap_browser_view_delegate!`) with an id→Window registry.
@@ -131,7 +131,7 @@ a native move via `_NET_WM_MOVERESIZE` (see Windowing above).
 Cargo builds `cef`/`cef-dll-sys` on Linux (the project's biggest risk — **cleared**).
 `lib.rs` `linux` module; engine `#[cfg]` arms for `load_cef` (no framework loader —
 `libcef.so` resolves via the link path / rpath), `default_cache_dir`
-(`$XDG_CACHE_HOME`), `derive_subprocess_path` (`mirin-helper`). `linux/window.rs` holds
+(`$XDG_CACHE_HOME`), `derive_subprocess_path` (`mirin-helper`). `linux/window/mod.rs` holds
 the CEF **Views** integration and the id→Window registry. `cargo build --workspace`
 warning-clean.
 
@@ -144,7 +144,7 @@ namespace sandbox (unprivileged userns; no setuid `chrome-sandbox`).
 
 ### L2 — `mirin dev` runs Anko — ✅ DONE
 CLI wired for Linux: `artifacts.ts` (linux `libmirin_core.so`, `mirin-helper`,
-`libcef.so` marker), `bundle-linux.ts` (flat app dir + CEF runtime copy), `dev.ts`/
+`libcef.so` marker), `bundle/linux/index.ts` (flat app dir + CEF runtime copy), `dev.ts`/
 `host.ts` linux branches (flat `resources/` layout, `MIRIN_CORE=…/libmirin_core.so`,
 `LD_LIBRARY_PATH`=app dir). **Verified:** `mirin dev` builds the Rust core + helper,
 compiles the host + bundles the Worker, assembles the Linux app dir, starts Vite, and
@@ -197,20 +197,18 @@ Feature status:
   true transparency would need OSR (as `win/` does), which the Linux port currently
   does not have (the OSR path was removed in the X11 pivot).
 
-### L5 — Distribution — 🚧 LANDING THIS RELEASE
-Linux packaging is being implemented in the CLI (`packages/mirin-cli`, owned by another
-agent — exact details to be reported there). Intent:
+### L5 — Distribution — ✅ DONE
+Linux packaging lives in `packages/mirin-cli`:
 
-- A `@mirinjs/linux-x64` prebuilt-native package (core lib + helper + CEF marker), so
-  app consumers install without a Rust toolchain.
-- Distributable artifacts: **AppImage** (via `appimagetool`) and **`.deb` / `.rpm`**
-  (via `fpm`), plus a plain tarball. Each drops the `.desktop` entry with a matching
-  `StartupWMClass` and stages the app icon so the dock resolves it.
-- Updater arm.
-
-*(Exact formats, flags, and the updater mechanism are landing in this release; see the
-CLI changes / that agent's report for specifics — the details above describe intent,
-not a frozen contract.)*
+- A `@mirinjs/linux-x64` prebuilt-native package ships the core lib and helper for
+  installed consumers.
+- `mirin build --linux` and `mirin release` can emit **AppImage** (`appimagetool`) plus
+  **`.deb` / `.rpm`** (`fpm`) from the assembled flat app folder.
+- Each package stages a `.desktop` entry with a matching `StartupWMClass`, a hicolor
+  icon, and a wrapper/AppRun that executes the real host binary inside the payload.
+- Package metadata is validated before writing launchers or desktop files: app ids are
+  single path segments, desktop fields reject line injection, and CLI/config package
+  formats are restricted to `appimage`, `deb`, and `rpm`.
 
 ## Notes for contributors
 - App-shell features not yet ported are handled by the engine's
