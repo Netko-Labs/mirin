@@ -76,8 +76,12 @@ pub fn control(id: u32, verb: &str) {
     // SAFETY: each call targets the live top-level hwnd.
     unsafe {
         match verb {
-            "minimize" => ShowWindow(hwnd, SW_MINIMIZE),
-            "restore" => ShowWindow(hwnd, SW_RESTORE),
+            "minimize" => {
+                ShowWindow(hwnd, SW_MINIMIZE);
+            }
+            "restore" => {
+                ShowWindow(hwnd, SW_RESTORE);
+            }
             "maximize" => {
                 if IsZoomed(hwnd) != 0 {
                     ShowWindow(hwnd, SW_RESTORE);
@@ -91,7 +95,9 @@ pub fn control(id: u32, verb: &str) {
                 SetForegroundWindow(hwnd);
                 SetFocus(hwnd);
             }
-            "hide" => ShowWindow(hwnd, SW_HIDE),
+            "hide" => {
+                ShowWindow(hwnd, SW_HIDE);
+            }
             "center" => center_window(hwnd),
             "alwaysOnTop:on" => set_topmost(hwnd, true),
             "alwaysOnTop:off" => set_topmost(hwnd, false),

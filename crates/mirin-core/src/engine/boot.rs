@@ -6,8 +6,6 @@ use super::config::CoreConfig;
 use super::handlers::MirinApp;
 use super::state::{ICON_PATH, IDENTIFIER, IS_DEV, RESOURCES_PATH, STARTUP_URL};
 
-#[cfg(target_os = "linux")]
-use crate::linux;
 #[cfg(target_os = "macos")]
 use crate::mac;
 #[cfg(target_os = "windows")]

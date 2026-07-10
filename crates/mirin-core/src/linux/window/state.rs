@@ -1,4 +1,4 @@
-use cef::Window;
+use cef::{ImplWindow, Window};
 use std::cell::RefCell;
 use std::collections::HashMap;
 

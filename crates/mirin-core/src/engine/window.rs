@@ -1,8 +1,13 @@
 use cef::*;
+#[cfg(target_os = "linux")]
+use std::cell::RefCell;
 use std::sync::atomic::Ordering;
 
-use super::config::{WindowMaterial, WindowOpts};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use super::config::WindowMaterial;
+use super::config::WindowOpts;
 use super::state::{CLIENT, RPC_PORT, RPC_TOKEN};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::engine::osr;
 
 #[cfg(target_os = "linux")]

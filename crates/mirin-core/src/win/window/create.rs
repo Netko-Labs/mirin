@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 
-use windows_sys::Win32::Foundation::{HINSTANCE, HWND};
+use windows_sys::Win32::Foundation::HINSTANCE;
 use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::MARGINS;
