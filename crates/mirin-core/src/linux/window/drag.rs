@@ -5,15 +5,17 @@ use super::controls::control;
 use super::state::window_xid;
 use super::x11::{disable_frame_sync, net_wm_moveresize};
 
+pub type DragRegion = (i32, i32, i32, i32, bool);
+
 thread_local! {
     /// window_id -> the page's `-webkit-app-region` rects (x, y, w, h,
     /// draggable), CSS px.
-    static DRAG_REGIONS: RefCell<HashMap<u32, Vec<(i32, i32, i32, i32, bool)>>> =
+    static DRAG_REGIONS: RefCell<HashMap<u32, Vec<DragRegion>>> =
         RefCell::new(HashMap::new());
 }
 
 /// Replace the draggable `-webkit-app-region` rects for a window.
-pub fn set_draggable_regions(window_id: u32, regions: Vec<(i32, i32, i32, i32, bool)>) {
+pub fn set_draggable_regions(window_id: u32, regions: Vec<DragRegion>) {
     DRAG_REGIONS.with(|m| {
         m.borrow_mut().insert(window_id, regions);
     });

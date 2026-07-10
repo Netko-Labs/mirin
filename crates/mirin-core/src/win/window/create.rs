@@ -237,5 +237,5 @@ pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
         width: client_w,
         height: client_h,
     };
-    (hwnd as *mut c_void, bounds)
+    (hwnd, bounds)
 }

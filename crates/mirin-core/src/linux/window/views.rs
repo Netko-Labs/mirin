@@ -94,7 +94,7 @@ wrap_window_delegate! {
                 window.show();
                 window.activate();
             }
-            install_window_props(window.window_handle() as u64);
+            install_window_props(window.window_handle());
         }
 
         fn on_window_destroyed(&self, _window: Option<&mut Window>) {

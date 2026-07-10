@@ -174,7 +174,7 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
     bmi.bmiHeader.biHeight = -height; // top-down to match CEF's buffer
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB as u32;
+    bmi.bmiHeader.biCompression = BI_RGB;
 
     let mut bits: *mut c_void = std::ptr::null_mut();
     let dib = CreateDIBSection(
@@ -198,15 +198,15 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
             bottom: 0,
         };
         GetWindowRect(hwnd, &mut wr);
-        let mut pos = POINT {
+        let pos = POINT {
             x: wr.left,
             y: wr.top,
         };
-        let mut size = SIZE {
+        let size = SIZE {
             cx: width,
             cy: height,
         };
-        let mut src = POINT { x: 0, y: 0 };
+        let src = POINT { x: 0, y: 0 };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
@@ -214,7 +214,7 @@ pub unsafe fn paint(window_id: u32, buffer: *const u8, width: i32, height: i32) 
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
         UpdateLayeredWindow(
-            hwnd, screen_dc, &mut pos, &mut size, mem_dc, &mut src, 0, &blend, ULW_ALPHA,
+            hwnd, screen_dc, &pos, &size, mem_dc, &src, 0, &blend, ULW_ALPHA,
         );
 
         SelectObject(mem_dc, old);

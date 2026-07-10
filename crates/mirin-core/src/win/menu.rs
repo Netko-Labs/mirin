@@ -103,7 +103,8 @@ pub fn popup_menu(items: &[MenuItemSpec]) {
     let menu = build_menu(items);
     // SAFETY: pure query.
     let owner = unsafe { GetForegroundWindow() };
-    let cmd = track(menu, owner);
+    // SAFETY: both handles were returned by Win32 above and remain live here.
+    let cmd = unsafe { track(menu, owner) };
     unsafe { DestroyMenu(menu) };
     dispatch(cmd);
 }
@@ -111,7 +112,10 @@ pub fn popup_menu(items: &[MenuItemSpec]) {
 /// Show `menu` at the cursor owned by `owner`, returning the chosen command id
 /// (0 = dismissed). Shared by `popup_menu` and the tray's context menu. The owner
 /// must be made foreground first or the menu won't dismiss on an outside click.
-pub fn track(menu: HMENU, owner: HWND) -> u32 {
+///
+/// # Safety
+/// `menu` and `owner` must be live handles for the duration of this call.
+pub(super) unsafe fn track(menu: HMENU, owner: HWND) -> u32 {
     let mut pt = POINT { x: 0, y: 0 };
     // SAFETY: TPM_RETURNCMD returns the selected id synchronously.
     unsafe {

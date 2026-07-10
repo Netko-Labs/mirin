@@ -32,5 +32,5 @@ pub(super) fn drain_windows() -> Vec<WindowEntry> {
 
 /// The X11 window id (XID) backing a window's CEF Views toplevel.
 pub(super) fn window_xid(window_id: u32) -> Option<u64> {
-    with_window(window_id, |window| window.window_handle() as u64)
+    with_window(window_id, |window| window.window_handle())
 }

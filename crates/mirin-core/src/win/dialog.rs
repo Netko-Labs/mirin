@@ -136,7 +136,7 @@ fn pick_folder(spec: &DialogSpec) -> Option<Vec<String>> {
     bi.ulFlags = BIF_RETURNONLYFSDIRS;
     // SAFETY: bi is valid; the returned PIDL is freed with CoTaskMemFree.
     unsafe {
-        let pidl = SHBrowseForFolderW(&mut bi);
+        let pidl = SHBrowseForFolderW(&bi);
         if pidl.is_null() {
             return None;
         }

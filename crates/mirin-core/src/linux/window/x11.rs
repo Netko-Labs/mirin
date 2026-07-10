@@ -5,7 +5,7 @@ thread_local! {
     /// Lazily-opened Xlib handle + Display for `_NET_WM_MOVERESIZE` and
     /// `WM_CLASS`/`_NET_WM_ICON` writes. UI thread only.
     static XLIB: RefCell<Option<(x11_dl::xlib::Xlib, *mut x11_dl::xlib::Display)>> =
-        RefCell::new(None);
+        const { RefCell::new(None) };
 }
 
 pub(super) fn with_xlib<R>(

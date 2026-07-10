@@ -43,7 +43,10 @@ pub fn run_core(mut config: CoreConfig) -> i32 {
             );
         }
     }
+    #[cfg(target_os = "macos")]
     let _library = load_cef();
+    #[cfg(not(target_os = "macos"))]
+    load_cef();
 
     let args = cef::args::Args::new();
     let Some(cmd_line) = args.as_cmd_line() else {
