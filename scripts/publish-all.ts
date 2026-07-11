@@ -23,10 +23,10 @@ const ROOT = join(import.meta.dir, "..");
 const NATIVE_PKG = `native-${process.platform}-${process.arch}`;
 const NATIVE_FILES =
   process.platform === "win32"
-    ? ["mirin_core.dll", "mirin-helper.exe"]
+    ? ["mirin_core.dll", "mirin-codec.exe", "mirin-helper.exe"]
     : process.platform === "linux"
-      ? ["libmirin_core.so", "mirin-helper"]
-      : ["libmirin_core.dylib", "mirin-helper"];
+      ? ["libmirin_core.so", "mirin-codec", "mirin-helper"]
+      : ["libmirin_core.dylib", "mirin-codec", "mirin-helper"];
 
 // The shared packages (runtime + CLI + scaffolder) are platform-agnostic and must
 // be published exactly once. The primary release runner (macOS) publishes them with

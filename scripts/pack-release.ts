@@ -17,10 +17,10 @@ const packages = nativeOnly
 
 const nativeFiles =
   process.platform === "win32"
-    ? ["mirin_core.dll", "mirin-helper.exe"]
+    ? ["mirin_core.dll", "mirin-codec.exe", "mirin-helper.exe"]
     : process.platform === "linux"
-      ? ["libmirin_core.so", "mirin-helper"]
-      : ["libmirin_core.dylib", "mirin-helper"];
+      ? ["libmirin_core.so", "mirin-codec", "mirin-helper"]
+      : ["libmirin_core.dylib", "mirin-codec", "mirin-helper"];
 
 for (const file of nativeFiles) {
   const path = join(ROOT, "packages", nativePackage, file);

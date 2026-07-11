@@ -125,6 +125,8 @@ export interface BuildResult {
   releaseNotes?: string;
   /** libmirin_core path (for the updater codec at release time). */
   coreDylib: string;
+  /** Standalone updater codec executable used at release time. */
+  codecBin: string;
   /** Project root (so `mirin release` can resolve relative asset paths). */
   projectDir: string;
   /** DMG config from mirin.config.ts (`true`/object/`false`); default `true`. */
@@ -325,6 +327,7 @@ export async function build(
     baseUrl,
     releaseNotes,
     coreDylib: artifacts.coreDylib,
+    codecBin: artifacts.codecBin,
     projectDir,
     dmg,
     nsis,

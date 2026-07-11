@@ -17,6 +17,7 @@
   ],
   "files": [
     "libmirin_core.dylib",
+    "mirin-codec",
     "mirin-helper",
     "README.md"
   ],

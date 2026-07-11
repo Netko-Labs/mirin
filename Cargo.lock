@@ -1071,10 +1071,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mirin-codec"
+version = "0.1.0-alpha.16"
+dependencies = [
+ "qbsdiff",
+ "zstd",
+]
+
+[[package]]
 name = "mirin-core"
 version = "0.1.0-alpha.16"
 dependencies = [
  "cef",
+ "mirin-codec",
  "notify-rust",
  "objc2",
  "objc2-app-kit",
@@ -1082,12 +1091,10 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "png",
- "qbsdiff",
  "serde",
  "serde_json",
  "windows-sys 0.61.2",
  "x11-dl",
- "zstd",
 ]
 
 [[package]]

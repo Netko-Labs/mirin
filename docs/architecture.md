@@ -102,20 +102,21 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 - **Linking.** The framework is loaded at runtime (`cef_load_library` path on macOS), keeping `libmirin_core` itself free of hard CEF linkage.
 - **Bundle requirement.** CEF on macOS effectively requires the `.app` + helpers structure even during development. `mirin dev` therefore materializes a **dev bundle**: a throwaway `.app` skeleton (ad-hoc signed) whose Resources point at the working tree, so the edit-reload loop doesn't pay a full repackage.
 - **Production locales.** `cef.locales` optionally keeps only selected locale packs in production bundles. Windows/Linux copy matching `locales/*.pak`; macOS retains the matching `.lproj` directory and its grammatical-gender variants before codesigning. Omission preserves the complete CEF runtime.
-- **Release scheduling.** The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation.
+- **Release scheduling.** The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. A standalone `mirin-codec` binary performs release-time zstd and bsdiff work without loading CEF or depending on Bun FFI; the runtime core links the same Rust codec library.
 
 ## 6. Repository layout
 
 ```
 mirin/
 ├─ crates/
+│  ├─ mirin-codec/       # shared updater codec library + release helper binary
 │  ├─ mirin-core/        # cdylib: C ABI, windowing, CEF browser process, event routing
 │  └─ mirin-helper/      # CEF subprocess binary (incl. render-process preload injection)
 ├─ packages/
 │  ├─ mirin/             # runtime/config/RPC/client package (`mirinjs`)
 │  ├─ mirin-cli/         # `mirin` CLI: init / dev / build / release
 │  ├─ create-mirin/      # project scaffolder
-│  └─ native-*/          # per-platform prebuilt core + helper packages
+│  └─ native-*/          # per-platform prebuilt core, codec, and helper packages
 ├─ examples/             # hello-react, kitchen-sink, spotlight, materials, updater
 ├─ scripts/              # CEF fetch, versioning, package, and release helpers
 └─ docs/

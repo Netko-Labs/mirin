@@ -1,0 +1,9 @@
+[package]
+name = "mirin-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qbsdiff = "1.4"
+zstd = { version = "0.13", features = ["zstdmt"] }

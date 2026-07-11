@@ -92,8 +92,8 @@ publisher, runAfterFinish, installerIcon, raw `include`); needs `makensis`, else
 falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
 `%LOCALAPPDATA%` support dir, detached-PowerShell folder swap + relaunch (implemented;
 the runtime swap isn't field-tested). `publish-all.ts` publishes the host-platform
-native package. *Note:* loading the codec dll for compression needs the bundle dir on
-PATH (mirin_core.dll imports libcef.dll; the loader searches PATH, not the dll's dir).
+native package. Release-time compression uses the standalone `mirin-codec.exe`,
+which has no CEF or Bun FFI dependency.
 
 ## Notes for contributors
 - Testing local mirin against an installed-deps app (Anko): the worker bundles the

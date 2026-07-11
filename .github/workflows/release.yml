@@ -109,7 +109,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: vendor/cef
-          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-codec/Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
 
       - name: Fetch CEF
         if: steps.cef-cache.outputs.cache-hit != 'true'
@@ -119,11 +119,12 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build native release
-        run: cargo build --release -p mirin-core -p mirin-helper
+        run: cargo build --release -p mirin-codec -p mirin-core -p mirin-helper
 
       - name: Stage native package and CEF archive
         run: |
           cp target/release/libmirin_core.dylib packages/native-darwin-arm64/
+          cp target/release/mirin-codec packages/native-darwin-arm64/
           cp target/release/mirin-helper packages/native-darwin-arm64/
           tar -czf cef-darwin-arm64.tar.gz -C vendor/cef "Chromium Embedded Framework.framework"
           bun scripts/write-sha256.ts cef-darwin-arm64.tar.gz
@@ -182,7 +183,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: vendor/cef
-          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-codec/Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
 
       - name: Fetch CEF
         if: steps.cef-cache.outputs.cache-hit != 'true'
@@ -192,12 +193,13 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build native release
-        run: cargo build --release -p mirin-core -p mirin-helper
+        run: cargo build --release -p mirin-codec -p mirin-core -p mirin-helper
 
       - name: Stage native package and CEF archive
         shell: bash
         run: |
           cp target/release/mirin_core.dll packages/native-win32-${{ matrix.arch }}/
+          cp target/release/mirin-codec.exe packages/native-win32-${{ matrix.arch }}/
           cp target/release/mirin-helper.exe packages/native-win32-${{ matrix.arch }}/
           mkdir cef-dist
           cp vendor/cef/*.dll vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat cef-dist/
@@ -264,7 +266,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: vendor/cef
-          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/mirin-codec/Cargo.toml', 'crates/mirin-core/Cargo.toml', 'crates/mirin-helper/Cargo.toml', 'scripts/fetch-cef.ts') }}
 
       - name: Fetch CEF
         if: steps.cef-cache.outputs.cache-hit != 'true'
@@ -274,11 +276,12 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build native release
-        run: cargo build --release -p mirin-core -p mirin-helper
+        run: cargo build --release -p mirin-codec -p mirin-core -p mirin-helper
 
       - name: Stage native package and CEF archive
         run: |
           cp target/release/libmirin_core.so packages/native-linux-${{ matrix.arch }}/
+          cp target/release/mirin-codec packages/native-linux-${{ matrix.arch }}/
           cp target/release/mirin-helper packages/native-linux-${{ matrix.arch }}/
           mkdir cef-dist
           cp vendor/cef/*.so vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat cef-dist/

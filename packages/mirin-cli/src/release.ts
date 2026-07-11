@@ -20,7 +20,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { loadCodec } from "mirinjs/codec";
 import { build } from "./build.ts";
 import { notarizeAndStaple } from "./dmg.ts";
 import { buildReleaseInstaller } from "./release/installers.ts";
@@ -34,6 +33,37 @@ import {
 // Level 10 keeps updater bundles compact without level 19's steep CPU cost.
 // The native codec uses multiple workers, so this scales across CI runner cores.
 const RELEASE_COMPRESSION_LEVEL = 10;
+
+interface ReleaseCodec {
+  compress(src: string, dst: string, level: number): void;
+  decompress(src: string, dst: string): void;
+  diff(oldPath: string, newPath: string, patchPath: string): void;
+}
+
+export function createReleaseCodec(binary: string): ReleaseCodec {
+  const run = (operation: string, ...args: string[]) => {
+    const result = Bun.spawnSync({
+      cmd: [binary, operation, ...args],
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    if (result.exitCode !== 0) {
+      const detail = new TextDecoder().decode(result.stderr).trim();
+      throw new Error(`codec ${operation} failed${detail ? `: ${detail}` : ""}`);
+    }
+  };
+  return {
+    compress(src, dst, level) {
+      run("compress", src, dst, String(level));
+    },
+    decompress(src, dst) {
+      run("decompress", src, dst);
+    },
+    diff(oldPath, newPath, patchPath) {
+      run("diff", oldPath, newPath, patchPath);
+    },
+  };
+}
 
 async function sha256File(path: string): Promise<string> {
   const hasher = new Bun.CryptoHasher("sha256");
@@ -83,20 +113,10 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     isLinux,
   });
 
-  // Load the codec (zstd/bsdiff) from the *bundled* core, not the raw build output:
-  // on Windows mirin_core.dll imports libcef.dll. The DLL loader resolves imports
-  // from PATH (and the loader exe's dir), not the dll's own dir, so prepend the
-  // bundle dir to PATH so libcef.dll is found. On Linux libmirin_core.so has a
-  // NEEDED libcef.so (RUNPATH $ORIGIN), so load the *bundled* .so where libcef.so
-  // sits beside it — the raw native package has no libcef.so and dlopen fails.
-  // (On macOS the framework loads at runtime, so result.coreDylib works directly.)
-  const codecCore = isWindows
-    ? join(result.app, "mirin_core.dll")
-    : isLinux
-      ? join(result.app, "libmirin_core.so")
-      : result.coreDylib;
-  if (isWindows) process.env.PATH = `${result.app};${process.env.PATH ?? ""}`;
-  const codec = loadCodec(codecCore);
+  // Release tooling runs in plain Bun, including Windows arm64 builds where
+  // bun:ffi is unavailable. The standalone helper also avoids loading CEF merely
+  // to compress updater artifacts.
+  const codec = createReleaseCodec(result.codecBin);
 
   // Uncompressed tar — the identity + diff/patch basis (BSD tar keeps symlinks).
   const newTar = join(outDir, "_new.tar");

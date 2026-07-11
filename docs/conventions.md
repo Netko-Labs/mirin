@@ -44,13 +44,14 @@ Top-level layout:
 
 ```txt
 crates/
+  mirin-codec/      updater codec library and release executable
   mirin-core/       Rust native core loaded through Bun FFI
   mirin-helper/     CEF subprocess executable
 packages/
   mirin/            public runtime package (`mirinjs`)
   mirin-cli/        CLI package (`@mirinjs/cli`)
   create-mirin/     scaffold package
-  native-*/         prebuilt platform packages
+  native-*/         prebuilt core, codec, and CEF helper packages
 examples/
   hello-react/      minimal happy-path app
   kitchen-sink/     native feature coverage app

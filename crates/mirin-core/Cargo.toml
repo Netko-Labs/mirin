@@ -21,9 +21,8 @@ sandbox = ["cef/sandbox"]
 cef.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# Updater codec (delta patches): zstd compression + binary bsdiff/bspatch.
-zstd = { version = "0.13", features = ["zstdmt"] }
-qbsdiff = "1.4"
+# Updater codec (delta patches), shared with the standalone release helper.
+mirin-codec = { path = "../mirin-codec" }
 notify-rust = "4.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]

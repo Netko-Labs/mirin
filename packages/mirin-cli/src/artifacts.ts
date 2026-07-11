@@ -35,6 +35,8 @@ const IN_REPO = existsSync(join(REPO_ROOT, "crates", "mirin-core"));
 export interface Artifacts {
   /** libmirin_core.dylib — dlopened by the host. */
   coreDylib: string;
+  /** Standalone updater codec used by `mirin release`. */
+  codecBin: string;
   /** mirin-helper — the CEF subprocess binary. */
   helperBin: string;
   /** host entry (TS/JS) compiled with `bun build --compile`. */
@@ -53,12 +55,13 @@ export async function resolveArtifacts(opts: { release: boolean }): Promise<Arti
 
   if (IN_REPO) {
     const profile = opts.release ? "release" : "debug";
-    console.log(`[mirin] building native core + helper (${profile})…`);
+    console.log(`[mirin] building native core + helpers (${profile})…`);
     const flags = opts.release ? ["--release"] : [];
-    await $`cargo build -p mirin-core -p mirin-helper ${flags}`.cwd(REPO_ROOT);
+    await $`cargo build -p mirin-codec -p mirin-core -p mirin-helper ${flags}`.cwd(REPO_ROOT);
     const target = join(REPO_ROOT, "target", profile);
     return {
       coreDylib: join(target, coreFileName()),
+      codecBin: join(target, codecFileName()),
       helperBin: join(target, helperFileName()),
       hostEntry: join(REPO_ROOT, "packages", "mirin", "src", "host.ts"),
       cefPath,
@@ -68,6 +71,7 @@ export async function resolveArtifacts(opts: { release: boolean }): Promise<Arti
   const nativeDir = resolveNativeDir();
   return {
     coreDylib: join(nativeDir, coreFileName()),
+    codecBin: join(nativeDir, codecFileName()),
     helperBin: join(nativeDir, helperFileName()),
     hostEntry: resolvePackageFile("mirinjs/host"),
     cefPath,
@@ -84,6 +88,10 @@ function coreFileName(): string {
 /** The CEF subprocess binary name for the host platform. */
 function helperFileName(): string {
   return process.platform === "win32" ? "mirin-helper.exe" : "mirin-helper";
+}
+
+function codecFileName(): string {
+  return process.platform === "win32" ? "mirin-codec.exe" : "mirin-codec";
 }
 
 function assertSupportedPlatform(): void {

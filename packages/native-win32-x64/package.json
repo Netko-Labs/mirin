@@ -17,6 +17,7 @@
   ],
   "files": [
     "mirin_core.dll",
+    "mirin-codec.exe",
     "mirin-helper.exe",
     "README.md"
   ],

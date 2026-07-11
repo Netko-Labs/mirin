@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/mirin-core", "crates/mirin-helper"]
+members = ["crates/mirin-codec", "crates/mirin-core", "crates/mirin-helper"]
 
 [workspace.package]
 version = "0.1.0-alpha.16"

@@ -1,8 +1,8 @@
 # @mirinjs/linux-arm64
 
 Prebuilt [mirin](https://github.com/Netko-Labs/mirin) native binaries for Linux
-arm64: `libmirin_core.so` (the CEF browser-process core, `dlopen`ed by the host)
-and `mirin-helper` (the CEF subprocess).
+arm64: `libmirin_core.so` (the CEF browser-process core, `dlopen`ed by the host),
+`mirin-codec` (the release-time updater codec), and `mirin-helper` (the CEF subprocess).
 
 This package is an optional, platform-gated dependency of `@mirinjs/cli`. The
 binaries are produced by CI on each release; you should not install or use it
