@@ -211,7 +211,11 @@ export async function build(
   const workerJs = join(work, "worker.release.js");
   const sidecars = normalizeSidecars(projectDir, config.sidecars);
   const hostBuild = (async (): Promise<void> => {
-    await $`bun build --compile --minify ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
+    // Bun's Windows arm64 build currently has no bun:ffi/TinyCC runtime. The
+    // win32-arm64 Mirin package therefore carries an x64 compatibility payload,
+    // which Windows 11 ARM executes through its built-in x64 emulation layer.
+    const target = IS_WINDOWS && process.arch === "arm64" ? ["--target=bun-windows-x64"] : [];
+    await $`bun build --compile --minify ${target} ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
       projectDir,
     );
     if (IS_WINDOWS) {

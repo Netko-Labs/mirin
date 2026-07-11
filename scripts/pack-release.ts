@@ -9,7 +9,11 @@ const outputArgument = Bun.argv[2];
 if (!outputArgument) throw new Error("usage: bun scripts/pack-release.ts <output-directory>");
 
 const outputDirectory = resolve(outputArgument);
-const nativePackage = `native-${process.platform}-${process.arch}`;
+const nativeArch = process.env.MIRIN_PACK_NATIVE_ARCH ?? process.arch;
+if (!/^(arm64|x64)$/.test(nativeArch)) {
+  throw new Error(`invalid MIRIN_PACK_NATIVE_ARCH: ${nativeArch}`);
+}
+const nativePackage = `native-${process.platform}-${nativeArch}`;
 const nativeOnly = process.env.MIRIN_PACK_NATIVE_ONLY === "1";
 const packages = nativeOnly
   ? [nativePackage]

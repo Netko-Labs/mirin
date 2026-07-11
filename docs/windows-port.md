@@ -95,6 +95,12 @@ the runtime swap isn't field-tested). `publish-all.ts` publishes the host-platfo
 native package. Release-time compression uses the standalone `mirin-codec.exe`,
 which has no CEF or Bun FFI dependency.
 
+Windows arm64 currently uses an x64 host/core/CEF compatibility payload because
+Bun's native Windows arm64 runtime does not provide `bun:ffi`. Windows 11 ARM runs
+that payload through its built-in x64 emulation. The arm64 package and release
+asset names describe the supported host OS; native ARM execution requires the
+planned Node-API bridge migration.
+
 ## Notes for contributors
 - Testing local mirin against an installed-deps app (Anko): the worker bundles the
   *published* `mirinjs`, so `bun link` the local package (`bun link` in

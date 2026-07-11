@@ -10,3 +10,6 @@ CEF_PATH = { value = "vendor/cef", force = false, relative = true }
 # LD_LIBRARY_PATH (macOS uses the framework loader; Windows the exe-dir search).
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]

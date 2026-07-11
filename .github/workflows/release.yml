@@ -163,7 +163,9 @@ jobs:
           - arch: x64
             runner: blacksmith-4vcpu-windows-2025
           - arch: arm64
-            runner: windows-11-arm
+            # Bun's Windows arm64 runtime cannot execute bun:ffi. Build the
+            # compatibility payload as x64 and verify it later on Anko's ARM runner.
+            runner: blacksmith-4vcpu-windows-2025
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -217,6 +219,7 @@ jobs:
       - name: Pack native registry package
         env:
           MIRIN_PACK_NATIVE_ONLY: "1"
+          MIRIN_PACK_NATIVE_ARCH: ${{ matrix.arch }}
         run: bun scripts/pack-release.ts release-packages
 
       - name: Preserve packed package

@@ -59,7 +59,11 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   // `bun build --compile` emits an `.exe` on Windows; name it so explicitly.
   const hostExe = join(work, IS_WINDOWS ? "host.exe" : "host");
   const workerJs = join(work, "worker.js");
-  await $`bun build --compile ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(projectDir);
+  const hostTarget =
+    process.platform === "win32" && process.arch === "arm64" ? ["--target=bun-windows-x64"] : [];
+  await $`bun build --compile ${hostTarget} ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
+    projectDir,
+  );
   await $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(projectDir);
 
   // Extra assets (dev): compile workers into .mirin/workers and symlink sidecar
