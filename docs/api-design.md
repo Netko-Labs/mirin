@@ -180,7 +180,7 @@ off the main-process API:
 - `WindowHandle` controls: minimize, maximize, restore, fullscreen, focus, show,
   hide, center, always-on-top, position, material changes.
 - macOS `app.dock.hide()` / `app.dock.show()`.
-- `app.sidecar(name, opts)` and `resolveWorker(name)` for bundled sidecars and
+- `app.sidecar(name, opts)`, `resolveSidecar(name)`, and `resolveWorker(name)` for bundled sidecars and
   extra workers declared in `mirin.config.ts`; config names are safe filename
   segments and source paths are project-relative.
 - `app.updater` for packaged apps built with `release.baseUrl`.

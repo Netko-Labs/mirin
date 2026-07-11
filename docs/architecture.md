@@ -141,7 +141,8 @@ inside-out order (after `libmirin_core.dylib`, before the helpers) with the hard
 runtime + secure timestamp; per-binary `entitlements` are applied only when asked (most
 CLIs need none). Spawn at runtime with `app.sidecar(name, { args, … })` — a thin
 `Bun.spawn` wrapper that resolves the bundled path (`runtime().sidecarDir`) and tracks
-the child so it's killed on quit. Sidecars are separate OS processes and, like the
+the child so it's killed on quit. Use `resolveSidecar(name)` when the application needs
+the staged path without launching it, such as installing a user-facing command. Sidecars are separate OS processes and, like the
 Worker, must not touch AppKit/CEF. Sidecar names are validated as single safe filename
 segments (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-`), and source paths must be project-relative
 without escaping the project root.

@@ -128,6 +128,11 @@ jobs:
           tar -czf cef-darwin-arm64.tar.gz -C vendor/cef "Chromium Embedded Framework.framework"
           bun scripts/write-sha256.ts cef-darwin-arm64.tar.gz
 
+      - name: Smoke test native notification bridge
+        env:
+          DYLD_FRAMEWORK_PATH: ${{ github.workspace }}/vendor/cef
+        run: bun scripts/smoke-notification.ts packages/native-darwin-arm64/libmirin_core.dylib
+
       - name: Pack registry packages
         run: bun scripts/pack-release.ts release-packages
 
@@ -200,6 +205,10 @@ jobs:
           cp -r vendor/cef/locales cef-dist/
           tar -czf cef-win32-${{ matrix.arch }}.tar.gz -C cef-dist .
           bun scripts/write-sha256.ts cef-win32-${{ matrix.arch }}.tar.gz
+
+      - name: Smoke test native notification bridge
+        shell: bash
+        run: PATH="$PWD/vendor/cef:$PATH" bun scripts/smoke-notification.ts packages/native-win32-${{ matrix.arch }}/mirin_core.dll
 
       - name: Pack native registry package
         env:
@@ -275,6 +284,9 @@ jobs:
           cp -r vendor/cef/locales cef-dist/
           tar -czf cef-linux-${{ matrix.arch }}.tar.gz -C cef-dist .
           bun scripts/write-sha256.ts cef-linux-${{ matrix.arch }}.tar.gz
+
+      - name: Smoke test native notification bridge
+        run: LD_LIBRARY_PATH="$PWD/vendor/cef:${LD_LIBRARY_PATH:-}" bun scripts/smoke-notification.ts packages/native-linux-${{ matrix.arch }}/libmirin_core.so
 
       - name: Pack native registry package
         env:

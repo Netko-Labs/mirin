@@ -36,6 +36,17 @@ export interface SidecarProcess {
   kill(signal?: number | NodeJS.Signals): void;
 }
 
+/** Resolve a declared sidecar's staged/bundled path without starting it. */
+export function resolveSidecar(name: string): string {
+  const dir = runtime().sidecarDir;
+  if (!dir) {
+    throw new Error(
+      `resolveSidecar("${name}"): no sidecar dir (is this running under the mirin host?)`,
+    );
+  }
+  return join(dir, name);
+}
+
 const children = new Set<Bun.Subprocess>();
 let hooked = false;
 
@@ -68,15 +79,9 @@ function ensureHooks(): void {
  * isn't attached or no `sidecarDir` is known (e.g. run outside the host).
  */
 export function sidecar(name: string, opts: SidecarOptions = {}): SidecarProcess {
-  const dir = runtime().sidecarDir;
-  if (!dir) {
-    throw new Error(
-      `app.sidecar("${name}"): no sidecar dir (is this running under the mirin host?)`,
-    );
-  }
   ensureHooks();
 
-  const bin = join(dir, name);
+  const bin = resolveSidecar(name);
   const child = Bun.spawn([bin, ...(opts.args ?? [])], {
     cwd: opts.cwd,
     env: opts.env ? { ...process.env, ...opts.env } : process.env,

@@ -55,7 +55,7 @@ export { notification } from "./notification.ts";
 export { NotAttachedError, resolveWorker } from "./runtime.ts";
 export { globalShortcut } from "./shortcut.ts";
 export type { SidecarOptions, SidecarProcess } from "./sidecar.ts";
-export { sidecar } from "./sidecar.ts";
+export { resolveSidecar, sidecar } from "./sidecar.ts";
 export type { TrayOptions } from "./tray.ts";
 export { Tray } from "./tray.ts";
 export type { UpdateInfo, UpdateProgress, UpdaterEvents, UpdaterStatus } from "./updater/index.ts";
