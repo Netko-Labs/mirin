@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "mirin-core"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "cef",
  "notify-rust",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "mirin-helper"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "cef",
 ]
