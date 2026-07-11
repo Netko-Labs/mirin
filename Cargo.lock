@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "mirin-codec"
-version = "0.1.0-alpha.16"
+version = "0.1.0-alpha.17"
 dependencies = [
  "qbsdiff",
  "zstd",
@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "mirin-core"
-version = "0.1.0-alpha.16"
+version = "0.1.0-alpha.17"
 dependencies = [
  "cef",
  "mirin-codec",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "mirin-helper"
-version = "0.1.0-alpha.16"
+version = "0.1.0-alpha.17"
 dependencies = [
  "cef",
 ]

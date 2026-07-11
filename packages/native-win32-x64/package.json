@@ -1,6 +1,6 @@
 {
   "name": "@mirinjs/win32-x64",
-  "version": "0.1.0-alpha.16",
+  "version": "0.1.0-alpha.17",
   "description": "Prebuilt mirin native binaries for Windows x64 (mirin_core.dll + helper).",
   "license": "MIT",
   "homepage": "https://github.com/Netko-Labs/mirin#readme",
