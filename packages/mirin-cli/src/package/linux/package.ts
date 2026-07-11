@@ -137,7 +137,7 @@ async function buildFpm(
   kind: "deb" | "rpm",
 ): Promise<LinuxPackageResult> {
   const fpm = resolveFpm();
-  const arch = kind === "deb" ? "amd64" : "x86_64";
+  const arch = linuxPackageArch(kind);
   const fileName =
     kind === "deb"
       ? `${binName}_${input.version}_${arch}.deb`
@@ -242,7 +242,8 @@ async function buildAppImage(
     stageHicolorIcon(appDirRoot, input);
   }
 
-  const fileName = `${input.appName}-${input.version}-x86_64.AppImage`;
+  const arch = linuxPackageArch("appimage");
+  const fileName = `${input.appName}-${input.version}-${arch}.AppImage`;
   const out = join(input.outDir, fileName);
   rmSync(out, { force: true });
 
@@ -250,7 +251,7 @@ async function buildAppImage(
   // --appimage-extract-and-run: run appimagetool without FUSE. ARCH is required by
   // appimagetool; NO_STRIP avoids stripping the Bun-compiled host (which would break it).
   const res = await $`${appimagetool} --appimage-extract-and-run ${appDirRoot} ${out}`
-    .env({ ...process.env, ARCH: "x86_64", NO_STRIP: "1" })
+    .env({ ...process.env, ARCH: arch, NO_STRIP: "1" })
     .nothrow()
     .quiet();
   rmSync(appDirRoot, { recursive: true, force: true });
@@ -259,6 +260,13 @@ async function buildAppImage(
   }
   chmodSync(out, 0o755);
   return { format: "appimage", path: out, size: size(out) };
+}
+
+function linuxPackageArch(kind: "appimage" | "deb" | "rpm"): string {
+  if (process.arch === "arm64") {
+    return kind === "deb" ? "arm64" : "aarch64";
+  }
+  return kind === "deb" ? "amd64" : "x86_64";
 }
 
 /** Resolve the effective set of formats from config + an optional CLI/caller override. */

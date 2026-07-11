@@ -9,7 +9,7 @@
  *    entry from the `mirin` package, and a CEF framework downloaded once from
  *    the matching GitHub Release into `~/.mirinjs/cef/<version>`. No Rust needed.
  *
- * Alpha supports macOS arm64, Windows x64, and Linux x64.
+ * Alpha supports macOS arm64, Windows x64/arm64, and Linux x64/arm64.
  */
 
 import {
@@ -89,11 +89,11 @@ function helperFileName(): string {
 function assertSupportedPlatform(): void {
   const supported =
     (process.platform === "darwin" && process.arch === "arm64") ||
-    (process.platform === "win32" && process.arch === "x64") ||
-    (process.platform === "linux" && process.arch === "x64");
+    (process.platform === "win32" && (process.arch === "x64" || process.arch === "arm64")) ||
+    (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64"));
   if (!supported) {
     throw new Error(
-      "mirin alpha supports macOS arm64, Windows x64, and Linux x64 " +
+      "mirin alpha supports macOS arm64, Windows x64/arm64, and Linux x64/arm64 " +
         `(got ${process.platform}/${process.arch}).`,
     );
   }

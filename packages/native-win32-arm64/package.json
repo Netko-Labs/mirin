@@ -1,0 +1,26 @@
+{
+  "name": "@mirinjs/win32-arm64",
+  "version": "0.1.0-alpha.15",
+  "description": "Prebuilt mirin native binaries for Windows arm64 (mirin_core.dll + helper).",
+  "license": "MIT",
+  "homepage": "https://github.com/Netko-Labs/mirin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netko-Labs/mirin.git",
+    "directory": "packages/native-win32-arm64"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "mirin_core.dll",
+    "mirin-helper.exe",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

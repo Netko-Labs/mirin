@@ -33,13 +33,14 @@ model:
   runtime, so there are **no build-time X11 dev libraries** required for this path.
 
 ## Build prerequisites
-- Rust `x86_64-unknown-linux-gnu` + a C/C++ toolchain (gcc/clang).
+- Rust `x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu` + a C/C++
+  toolchain (gcc/clang).
 - **cmake + ninja** on PATH — `cef-dll-sys` builds the libcef C++ wrapper with them.
 - GTK3 + X11 dev headers present (CEF Linux runtime deps). Note: mirin's own Xlib
   window management uses `x11-dl` (dlopen), so it needs no X11 dev libs of its own.
 - `bun scripts/fetch-cef.ts` populates `vendor/cef` (flat Linux distribution:
   `libcef.so`, `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`,
-  `chrome-sandbox`, …) via `export-cef-dir` (auto-selects linux64).
+  `chrome-sandbox`, …) via `export-cef-dir` (auto-selects the host Linux arch).
 
 ## Windowing (`linux/window/mod.rs`)
 
@@ -200,8 +201,8 @@ Feature status:
 ### L5 — Distribution — ✅ DONE
 Linux packaging lives in `packages/mirin-cli`:
 
-- A `@mirinjs/linux-x64` prebuilt-native package ships the core lib and helper for
-  installed consumers.
+- `@mirinjs/linux-x64` and `@mirinjs/linux-arm64` prebuilt-native packages ship
+  the core lib and helper for installed consumers.
 - `mirin build --linux` and `mirin release` can emit **AppImage** (`appimagetool`) plus
   **`.deb` / `.rpm`** (`fpm`) from the assembled flat app folder.
 - Each package stages a `.desktop` entry with a matching `StartupWMClass`, a hicolor

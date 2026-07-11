@@ -311,6 +311,8 @@ export interface ReleaseConfig {
   baseUrl: string;
   /** Update channel; baked into artifact names + support dir. Default "stable". */
   channel?: string;
+  /** Optional markdown release notes embedded in the update manifest. */
+  notes?: string;
 }
 
 export interface CefConfig {

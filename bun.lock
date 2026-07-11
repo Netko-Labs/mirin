@@ -110,7 +110,9 @@
       },
       "optionalDependencies": {
         "@mirinjs/darwin-arm64": "0.1.0-alpha.15",
+        "@mirinjs/linux-arm64": "0.1.0-alpha.15",
         "@mirinjs/linux-x64": "0.1.0-alpha.15",
+        "@mirinjs/win32-arm64": "0.1.0-alpha.15",
         "@mirinjs/win32-x64": "0.1.0-alpha.15",
       },
     },
@@ -118,8 +120,16 @@
       "name": "@mirinjs/darwin-arm64",
       "version": "0.1.0-alpha.15",
     },
+    "packages/native-linux-arm64": {
+      "name": "@mirinjs/linux-arm64",
+      "version": "0.1.0-alpha.15",
+    },
     "packages/native-linux-x64": {
       "name": "@mirinjs/linux-x64",
+      "version": "0.1.0-alpha.15",
+    },
+    "packages/native-win32-arm64": {
+      "name": "@mirinjs/win32-arm64",
       "version": "0.1.0-alpha.15",
     },
     "packages/native-win32-x64": {
@@ -156,7 +166,11 @@
 
     "@mirinjs/darwin-arm64": ["@mirinjs/darwin-arm64@workspace:packages/native-darwin-arm64"],
 
+    "@mirinjs/linux-arm64": ["@mirinjs/linux-arm64@workspace:packages/native-linux-arm64"],
+
     "@mirinjs/linux-x64": ["@mirinjs/linux-x64@workspace:packages/native-linux-x64"],
+
+    "@mirinjs/win32-arm64": ["@mirinjs/win32-arm64@workspace:packages/native-win32-arm64"],
 
     "@mirinjs/win32-x64": ["@mirinjs/win32-x64@workspace:packages/native-win32-x64"],
 

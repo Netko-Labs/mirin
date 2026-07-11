@@ -221,7 +221,7 @@ swaps the folder via a detached PowerShell relauncher. Runtime updates require
 HTTPS artifact hosts except loopback HTTP for local testing, validate that the
 manifest matches channel/platform/arch, verify SHA-256 hashes, and reject update
 tars whose entries escape the expected app root before extraction. Consumers
-install the prebuilt `@mirinjs/win32-x64` native package + a CEF release download
+install the prebuilt `@mirinjs/win32-{arch}` native package + a CEF release download
 (no Rust).
 Build prereqs: cmake + ninja (for `cef-dll-sys`'s C++ wrapper) + MSVC.
 

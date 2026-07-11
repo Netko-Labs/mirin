@@ -13,7 +13,9 @@ const inputDirectory = resolve(inputArgument);
 const packageDirectories = [
   "native-darwin-arm64",
   "native-win32-x64",
+  "native-win32-arm64",
   "native-linux-x64",
+  "native-linux-arm64",
   "create-mirin",
   "mirin",
   "mirin-cli",
@@ -21,7 +23,9 @@ const packageDirectories = [
 const requiredNativeFiles: Record<string, string[]> = {
   "native-darwin-arm64": ["libmirin_core.dylib", "mirin-helper"],
   "native-win32-x64": ["mirin_core.dll", "mirin-helper.exe"],
+  "native-win32-arm64": ["mirin_core.dll", "mirin-helper.exe"],
   "native-linux-x64": ["libmirin_core.so", "mirin-helper"],
+  "native-linux-arm64": ["libmirin_core.so", "mirin-helper"],
 };
 
 const packages: Array<{ archive: string; name: string; version: string }> = [];

@@ -33,6 +33,8 @@
   "optionalDependencies": {
     "@mirinjs/darwin-arm64": "0.1.0-alpha.15",
     "@mirinjs/win32-x64": "0.1.0-alpha.15",
+    "@mirinjs/win32-arm64": "0.1.0-alpha.15",
+    "@mirinjs/linux-arm64": "0.1.0-alpha.15",
     "@mirinjs/linux-x64": "0.1.0-alpha.15"
   },
   "publishConfig": {

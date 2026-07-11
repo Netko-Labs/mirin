@@ -6,10 +6,11 @@ only `crates/mirin-core/src/win/*` (Win32) and the CLI's bundling differ. Engine
 CEF, **windowed** (CEF owns a child HWND parented to a mirin-owned top-level Win32
 window) — not the macOS embedded-NSView/OSR model.
 
-Targets Windows 10/11 x64.
+Targets Windows 10/11 x64 and arm64.
 
 ## Build prerequisites
-- Rust `x86_64-pc-windows-msvc` + MSVC (VS Build Tools, cl.exe).
+- Rust `x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc` + MSVC (VS Build
+  Tools, cl.exe).
 - **cmake + ninja** on PATH — `cef-dll-sys` builds the libcef C++ wrapper with them.
 - `bun scripts/fetch-cef.ts` populates `vendor/cef` (flat Windows distribution:
   libcef.dll, `*.pak`, `icudtl.dat`, `locales/`, …) via `export-cef-dir`.
@@ -80,7 +81,7 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
   machines keep Chromium's D3D11 default.
 
 ### W5 — Distribution — ✅ DONE (updater swap unverified)
-`@mirinjs/win32-x64` prebuilt-native package + CLI optional dep; `artifacts.ts`
+`@mirinjs/win32-{arch}` prebuilt-native package + CLI optional dep; `artifacts.ts`
 installed-mode + CEF release download (platform-generic). `mirin release` (verified)
 emits `{channel}-win32-{arch}-update.json` + `.tar.zst` updater bundle + a real
 **NSIS installer** (`…-setup.exe`, `installer-win.ts`). Verified end-to-end: silent

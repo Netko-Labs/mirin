@@ -30,7 +30,8 @@ git push --follow-tags
 
 1. verifies the tag matches `packages/mirin`, checks its commit is in `main`, and
    creates an invisible draft release,
-2. builds native binaries concurrently on macOS arm64, Windows x64, and Linux x64,
+2. builds native binaries concurrently on macOS arm64, Windows x64/arm64, and
+   Linux x64/arm64,
 3. stages each platform's core and helper, uploads its CEF archive plus SHA-256
    checksum to the draft, and preserves its small packed registry tarball,
 4. waits for every platform, verifies all packed names and versions, then
@@ -55,8 +56,8 @@ Pre-release tags (`-alpha`/`-beta`) are marked as GitHub pre-releases.
 | `mirinjs` | runtime API (TS source) |
 | `@mirinjs/cli` | `mirinjs` CLI; optional-deps the per-platform native package |
 | `@mirinjs/darwin-arm64` | prebuilt macOS core + helper |
-| `@mirinjs/win32-x64` | prebuilt Windows core + helper |
-| `@mirinjs/linux-x64` | prebuilt Linux core + helper |
+| `@mirinjs/win32-x64` / `@mirinjs/win32-arm64` | prebuilt Windows core + helper |
+| `@mirinjs/linux-x64` / `@mirinjs/linux-arm64` | prebuilt Linux core + helper |
 | `create-mirinjs` | scaffolder + starter template |
 | GitHub Release assets | `cef-<platform>-<arch>.tar.gz` plus `.sha256` (CEF is too large for the package registry) |
 

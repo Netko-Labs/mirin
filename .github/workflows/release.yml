@@ -145,11 +145,19 @@ jobs:
         run: gh release upload "$GITHUB_REF_NAME" cef-darwin-arm64.tar.gz cef-darwin-arm64.tar.gz.sha256 --clobber
 
   build-windows:
-    name: Build Windows x64
+    name: Build Windows ${{ matrix.arch }}
     needs: prepare-release
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: blacksmith-4vcpu-windows-2025
+          - arch: arm64
+            runner: windows-11-arm
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -184,14 +192,14 @@ jobs:
       - name: Stage native package and CEF archive
         shell: bash
         run: |
-          cp target/release/mirin_core.dll packages/native-win32-x64/
-          cp target/release/mirin-helper.exe packages/native-win32-x64/
+          cp target/release/mirin_core.dll packages/native-win32-${{ matrix.arch }}/
+          cp target/release/mirin-helper.exe packages/native-win32-${{ matrix.arch }}/
           mkdir cef-dist
           cp vendor/cef/*.dll vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat cef-dist/
           cp vendor/cef/vk_swiftshader_icd.json cef-dist/
           cp -r vendor/cef/locales cef-dist/
-          tar -czf cef-win32-x64.tar.gz -C cef-dist .
-          bun scripts/write-sha256.ts cef-win32-x64.tar.gz
+          tar -czf cef-win32-${{ matrix.arch }}.tar.gz -C cef-dist .
+          bun scripts/write-sha256.ts cef-win32-${{ matrix.arch }}.tar.gz
 
       - name: Pack native registry package
         env:
@@ -201,7 +209,7 @@ jobs:
       - name: Preserve packed package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-packages-windows
+          name: release-packages-windows-${{ matrix.arch }}
           path: release-packages/*.tgz
           if-no-files-found: error
           retention-days: 1
@@ -210,14 +218,22 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" cef-win32-x64.tar.gz cef-win32-x64.tar.gz.sha256 --clobber
+        run: gh release upload "$GITHUB_REF_NAME" cef-win32-${{ matrix.arch }}.tar.gz cef-win32-${{ matrix.arch }}.tar.gz.sha256 --clobber
 
   build-linux:
-    name: Build Linux x64
+    name: Build Linux ${{ matrix.arch }}
     needs: prepare-release
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: blacksmith-4vcpu-ubuntu-2404
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -251,14 +267,14 @@ jobs:
 
       - name: Stage native package and CEF archive
         run: |
-          cp target/release/libmirin_core.so packages/native-linux-x64/
-          cp target/release/mirin-helper packages/native-linux-x64/
+          cp target/release/libmirin_core.so packages/native-linux-${{ matrix.arch }}/
+          cp target/release/mirin-helper packages/native-linux-${{ matrix.arch }}/
           mkdir cef-dist
           cp vendor/cef/*.so vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat cef-dist/
           cp vendor/cef/vk_swiftshader_icd.json vendor/cef/libvulkan.so.1 vendor/cef/chrome-sandbox cef-dist/
           cp -r vendor/cef/locales cef-dist/
-          tar -czf cef-linux-x64.tar.gz -C cef-dist .
-          bun scripts/write-sha256.ts cef-linux-x64.tar.gz
+          tar -czf cef-linux-${{ matrix.arch }}.tar.gz -C cef-dist .
+          bun scripts/write-sha256.ts cef-linux-${{ matrix.arch }}.tar.gz
 
       - name: Pack native registry package
         env:
@@ -268,7 +284,7 @@ jobs:
       - name: Preserve packed package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-packages-linux
+          name: release-packages-linux-${{ matrix.arch }}
           path: release-packages/*.tgz
           if-no-files-found: error
           retention-days: 1
@@ -276,7 +292,7 @@ jobs:
       - name: Upload CEF to draft release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" cef-linux-x64.tar.gz cef-linux-x64.tar.gz.sha256 --clobber
+        run: gh release upload "$GITHUB_REF_NAME" cef-linux-${{ matrix.arch }}.tar.gz cef-linux-${{ matrix.arch }}.tar.gz.sha256 --clobber
 
   publish-release:
     name: Publish registry packages and release

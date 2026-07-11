@@ -95,6 +95,7 @@ export class Updater {
         version: m.version,
         currentVersion: v.version,
         channel: v.channel,
+        body: m.body,
       };
       this.#setStatus("update-available");
       this.#emit("update-available", info);

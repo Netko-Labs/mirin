@@ -1,14 +1,15 @@
 # Getting started
 
-> **Alpha.** macOS arm64, Windows x64, and Linux x64 are supported. macOS is the most
-> exercised path; expect rough edges and breaking changes.
+> **Alpha.** macOS arm64, Windows x64/arm64, and Linux x64/arm64 are supported.
+> macOS is the most exercised path; expect rough edges and breaking changes.
 
 ## Requirements
 
 - **Bun** ≥ 1.2 ([install](https://bun.sh))
 - **macOS** on Apple Silicon (arm64) with Xcode command-line tools
-  (`xcode-select --install`) for code signing, **Windows 10/11 x64**, or a
-  supported **Linux x64** desktop with the CEF/GTK runtime dependencies.
+  (`xcode-select --install`) for code signing, **Windows 10/11 x64 or arm64**,
+  or a supported **Linux x64 or arm64** desktop with the CEF/GTK runtime
+  dependencies.
 
 No Rust toolchain is needed to *use* mirin; the native core ships prebuilt.
 
@@ -72,7 +73,8 @@ those files, such as GitHub Releases' `.../releases/latest/download`. Runtime
 updates reject non-HTTPS URLs except `http://localhost` / loopback for local
 testing, validate the manifest target, verify SHA-256 hashes, and check the
 archive layout before extraction. Artifact names, versions, and sizes are
-bounded before they become filesystem paths or downloads.
+bounded before they become filesystem paths or downloads. Set `release.notes`
+to embed markdown release notes in the update manifest for app update UIs.
 
 ## Native features
 

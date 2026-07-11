@@ -8,11 +8,13 @@ export function parseManifest(
   expected: { channel: string; platform: string; arch: string },
 ): Manifest {
   const manifest = record(value, "manifest");
+  const body = optionalStringField(manifest, "body", 64 * 1024);
   const parsed: Manifest = {
     version: versionField(manifest, "version"),
     channel: stringField(manifest, "channel"),
     platform: stringField(manifest, "platform"),
     arch: stringField(manifest, "arch"),
+    ...(body === undefined ? {} : { body }),
     tarHash: sha256Field(manifest, "tarHash"),
     bundle: artifactField(manifest.bundle, "bundle"),
     patches: patchesField(manifest.patches),
@@ -39,6 +41,19 @@ function record(value: unknown, label: string): Record<string, unknown> {
 function stringField(source: Record<string, unknown>, key: string): string {
   const value = source[key];
   if (typeof value !== "string" || value.length === 0 || value.length > 1024) {
+    throw new Error(`invalid update manifest field: ${key}`);
+  }
+  return value;
+}
+
+function optionalStringField(
+  source: Record<string, unknown>,
+  key: string,
+  maxLength: number,
+): string | undefined {
+  const value = source[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length > maxLength) {
     throw new Error(`invalid update manifest field: ${key}`);
   }
   return value;

@@ -121,6 +121,8 @@ export interface BuildResult {
   channel: string;
   /** Update baseUrl, if `release` is configured. */
   baseUrl?: string;
+  /** Markdown release notes embedded in the updater manifest, if configured. */
+  releaseNotes?: string;
   /** libmirin_core path (for the updater codec at release time). */
   coreDylib: string;
   /** Project root (so `mirin release` can resolve relative asset paths). */
@@ -183,6 +185,7 @@ export async function build(
   const version = opts.version ?? appVersion(projectDir);
   const channel: string = config.release?.channel ?? "stable";
   const baseUrl: string | undefined = config.release?.baseUrl;
+  const releaseNotes: string | undefined = config.release?.notes;
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
   const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
   const inno: boolean | import("mirinjs").InnoConfig = config.inno ?? true;
@@ -320,6 +323,7 @@ export async function build(
     version,
     channel,
     baseUrl,
+    releaseNotes,
     coreDylib: artifacts.coreDylib,
     projectDir,
     dmg,

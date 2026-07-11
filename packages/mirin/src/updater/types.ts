@@ -32,6 +32,8 @@ export interface Manifest {
   channel: string;
   platform: string;
   arch: string;
+  /** Optional markdown release notes shown by app UIs. */
+  body?: string;
   /** SHA-256 of the uncompressed bundle tar (update identity + integrity). */
   tarHash: string;
   bundle: UpdateArtifact;
@@ -43,6 +45,8 @@ export interface UpdateInfo {
   version: string;
   currentVersion: string;
   channel: string;
+  /** Optional markdown release notes from the update manifest. */
+  body?: string;
 }
 
 export interface UpdateProgress {

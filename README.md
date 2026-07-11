@@ -28,7 +28,7 @@ your-app.app
 
 See [docs/architecture.md](docs/architecture.md) for the full picture, [docs/api-design.md](docs/api-design.md) for the developer-facing API, and [docs/macos-mvp.md](docs/macos-mvp.md) for the current roadmap.
 
-## Quickstart (macOS arm64 / Windows x64 / Linux x64 alpha)
+## Quickstart (macOS arm64 / Windows x64/arm64 / Linux x64/arm64 alpha)
 
 ```bash
 bun create mirinjs my-app
@@ -53,8 +53,8 @@ Working on mirin itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status
 
-Pre-alpha. macOS arm64 is the most exercised path; the Windows and Linux x64 CEF
-ports are implemented and documented. **The full loop works
+Pre-alpha. macOS arm64 is the most exercised path; the Windows and Linux CEF
+ports are implemented and documented for x64 and arm64. **The full loop works
 end-to-end** — `mirin init`, `mirin dev` (Vite HMR), `mirin build` (standalone
 app), and `mirin release` (installer + updater artifacts): Bun host → CEF →
 native window → React (rolldown-vite) → typed RPC both directions, served in

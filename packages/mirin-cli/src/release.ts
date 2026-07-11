@@ -166,6 +166,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     channel: result.channel,
     platform,
     arch,
+    body: result.releaseNotes,
     tarHash,
     bundle: { url: bundleName, sha256: bundleSha, size: bundleSize },
     patches,

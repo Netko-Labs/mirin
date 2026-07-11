@@ -33,7 +33,9 @@ const PACKAGES = [
   "mirin-cli",
   "native-darwin-arm64",
   "native-win32-x64",
+  "native-win32-arm64",
   "native-linux-x64",
+  "native-linux-arm64",
   "create-mirin",
 ];
 const previousVersions = new Set<string>();

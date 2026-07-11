@@ -19,6 +19,13 @@ describe("updater manifest validation", () => {
     expect(parseManifest(manifest, expected)).toEqual(manifest);
   });
 
+  test("accepts markdown release notes", () => {
+    expect(parseManifest({ ...manifest, body: "## Notes\n- **Fixed** things" }, expected)).toEqual({
+      ...manifest,
+      body: "## Notes\n- **Fixed** things",
+    });
+  });
+
   test("rejects path-bearing versions and artifact names", () => {
     expect(() => parseManifest({ ...manifest, version: "../../escape" }, expected)).toThrow(
       "invalid update manifest version",
