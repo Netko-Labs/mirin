@@ -94,6 +94,12 @@ function DialogSection() {
         >
           Message box
         </button>
+        <button
+          type="button"
+          onClick={async () => setResult((await api.showNotification(null)) ? "sent" : "failed")}
+        >
+          Notification
+        </button>
       </div>
       <div className="result">{result}</div>
     </section>

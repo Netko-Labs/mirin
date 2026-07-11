@@ -180,6 +180,15 @@ pub extern "C" fn mirin_dialog_show(spec_json: *const c_char) {
     engine::dialog_show(cstr(spec_json));
 }
 
+// ---- notifications ----
+
+/// Show a desktop notification described by JSON `{ title, body?, appName? }`.
+/// Returns 1 when the host notification service accepted it.
+#[no_mangle]
+pub extern "C" fn mirin_notification_show(spec_json: *const c_char) -> c_int {
+    engine::notification_show(cstr(spec_json)) as c_int
+}
+
 // ---- updater codec (zstd + bsdiff; file-path; 0 = ok, non-zero = error) ----
 
 #[no_mangle]

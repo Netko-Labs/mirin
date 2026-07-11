@@ -173,6 +173,7 @@ off the main-process API:
 
 - `menu.setApplicationMenu(template)` / `menu.popup(template)` for app and context menus.
 - `new Tray({ title, tooltip, menu, onClick })`.
+- `notification.show({ title, body? })` for a best-effort native desktop notice.
 - `dialog.openFile()` / `dialog.saveFile()` / `dialog.message()`.
 - `clipboard.readText()` / `clipboard.writeText(text)`.
 - `globalShortcut.register(accelerator, fn)`.

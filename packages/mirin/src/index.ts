@@ -50,6 +50,8 @@ export type { LogLevel } from "./logger.ts";
 export { getLogLevel, Logger, logger, setLogLevel } from "./logger.ts";
 export type { MenuItemTemplate, MenuRole } from "./menu.ts";
 export { menu } from "./menu.ts";
+export type { NotificationOptions } from "./notification.ts";
+export { notification } from "./notification.ts";
 export { NotAttachedError, resolveWorker } from "./runtime.ts";
 export { globalShortcut } from "./shortcut.ts";
 export type { SidecarOptions, SidecarProcess } from "./sidecar.ts";

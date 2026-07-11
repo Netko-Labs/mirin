@@ -131,6 +131,10 @@ assets into the signed `.app`, **codesign/notarize** them, and **resolve their p
 across dev vs prod. Two opt-in config blocks fill that gap (both macOS, both off by
 default):
 
+**Notifications** — `notification.show({ title, body? })` crosses the Bun FFI boundary
+as one validated JSON payload and delegates to the platform notification service via
+`notify-rust`. Delivery is best-effort and has no action/click lifecycle.
+
 **Sidecars** — `sidecars: { name: "path/to/bin" | { bin, entitlements } }`. Each binary
 is copied to `Contents/Resources/sidecars/<name>`, `chmod +x`, and codesigned in the
 inside-out order (after `libmirin_core.dylib`, before the helpers) with the hardened

@@ -1,4 +1,4 @@
-import { app, clipboard, dialog, menu } from "mirinjs";
+import { app, clipboard, dialog, menu, notification } from "mirinjs";
 import { rpc } from "mirinjs/rpc";
 import { runOnce, serverRequest, startTicker, stopTicker } from "./tools.ts";
 
@@ -19,6 +19,9 @@ export const router = rpc.router({
       detail: "This is a native NSAlert driven from the Bun process.",
       buttons: ["Great", "Meh", "Cancel"],
     }),
+  ),
+  showNotification: rpc.mutation(async () =>
+    notification.show({ title: "Kitchen Sink", body: "Native notifications are working." }),
   ),
 
   // --- clipboard ---

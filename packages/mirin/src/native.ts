@@ -42,6 +42,7 @@ const symbols = {
   mirin_clipboard_read_text: { args: [], returns: FFIType.ptr },
   mirin_clipboard_write_text: { args: [FFIType.ptr], returns: FFIType.void },
   mirin_dialog_show: { args: [FFIType.ptr], returns: FFIType.void },
+  mirin_notification_show: { args: [FFIType.ptr], returns: FFIType.i32 },
 } as const;
 
 export type EventListener = (event: string) => void;
@@ -173,5 +174,10 @@ export class Core {
   dialogShow(specJson: string): void {
     const buf = nullTerminated(specJson);
     this.#lib.symbols.mirin_dialog_show(ptr(buf));
+  }
+
+  notificationShow(specJson: string): boolean {
+    const buf = nullTerminated(specJson);
+    return this.#lib.symbols.mirin_notification_show(ptr(buf)) === 1;
   }
 }
