@@ -16,16 +16,9 @@ public static class MirinNotificationSmoke
     public static int Run(string libraryPath)
     {
         IntPtr library = NativeLibrary.Load(libraryPath);
-        try
-        {
-            IntPtr symbol = NativeLibrary.GetExport(library, "mirin_notification_show");
-            NotificationShow show = Marshal.GetDelegateForFunctionPointer<NotificationShow>(symbol);
-            return show("{\"title\":\"Mirin release smoke\",\"body\":\"Native Windows notification bridge\"}");
-        }
-        finally
-        {
-            NativeLibrary.Free(library);
-        }
+        IntPtr symbol = NativeLibrary.GetExport(library, "mirin_notification_show");
+        NotificationShow show = Marshal.GetDelegateForFunctionPointer<NotificationShow>(symbol);
+        return show("{\"title\":\"Mirin release smoke\",\"body\":\"Native Windows notification bridge\"}");
     }
 }
 "@
