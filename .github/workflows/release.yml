@@ -207,8 +207,10 @@ jobs:
           bun scripts/write-sha256.ts cef-win32-${{ matrix.arch }}.tar.gz
 
       - name: Smoke test native notification bridge
-        shell: bash
-        run: PATH="$PWD/vendor/cef:$PATH" bun scripts/smoke-notification.ts packages/native-win32-${{ matrix.arch }}/mirin_core.dll
+        shell: pwsh
+        run: |
+          $env:PATH = "$PWD\vendor\cef;$env:PATH"
+          ./scripts/smoke-notification.ps1 packages/native-win32-${{ matrix.arch }}/mirin_core.dll
 
       - name: Pack native registry package
         env:
