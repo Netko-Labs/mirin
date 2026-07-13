@@ -54,34 +54,64 @@ onNativeEvent("menu.click", (event) => {
   clickHandlers.get(event.id as number)?.();
 });
 
-/** Convert a template to the native JSON shape, registering click handlers. */
-export function buildNativeMenu(items: MenuItemTemplate[]): NativeMenuItem[] {
-  return items.map((item) => {
-    const native: NativeMenuItem = {
-      label: item.label,
-      role: item.role,
-      type: item.type,
-      accelerator: item.accelerator,
-      enabled: item.enabled,
-      checked: item.checked,
-    };
-    if (item.click) {
-      const id = nextId++;
-      clickHandlers.set(id, item.click);
-      native.id = id;
-    }
-    if (item.submenu) native.submenu = buildNativeMenu(item.submenu);
-    return native;
-  });
+/** A built menu: the native JSON shape plus the handler ids it registered, so
+ *  the owner can release them when the menu is replaced or dismissed. */
+export interface BuiltMenu {
+  native: NativeMenuItem[];
+  ids: number[];
 }
+
+/** Convert a template to the native JSON shape, registering click handlers into
+ *  a fresh id set. The caller owns `ids` and must pass them to
+ *  `releaseMenuHandlers` once the menu is gone, or the closures leak. */
+export function buildNativeMenu(items: MenuItemTemplate[]): BuiltMenu {
+  const ids: number[] = [];
+  const build = (list: MenuItemTemplate[]): NativeMenuItem[] =>
+    list.map((item) => {
+      const native: NativeMenuItem = {
+        label: item.label,
+        role: item.role,
+        type: item.type,
+        accelerator: item.accelerator,
+        enabled: item.enabled,
+        checked: item.checked,
+      };
+      if (item.click) {
+        const id = nextId++;
+        clickHandlers.set(id, item.click);
+        ids.push(id);
+        native.id = id;
+      }
+      if (item.submenu) native.submenu = build(item.submenu);
+      return native;
+    });
+  return { native: build(items), ids };
+}
+
+/** Drop click handlers previously registered by `buildNativeMenu`. */
+export function releaseMenuHandlers(ids: number[]): void {
+  for (const id of ids) clickHandlers.delete(id);
+}
+
+// Handlers for the currently-installed app menu and the most recent popup, kept
+// so each replacement frees the previous generation instead of leaking it.
+let appMenuIds: number[] = [];
+let popupIds: number[] = [];
 
 export const menu = {
   /** Replace the application menu bar. */
   setApplicationMenu(template: MenuItemTemplate[]): void {
-    runtime().core.setAppMenu(JSON.stringify(buildNativeMenu(template)));
+    const built = buildNativeMenu(template);
+    runtime().core.setAppMenu(JSON.stringify(built.native));
+    releaseMenuHandlers(appMenuIds);
+    appMenuIds = built.ids;
   },
   /** Show a context menu at the cursor. */
   popup(template: MenuItemTemplate[]): void {
-    runtime().core.popupMenu(JSON.stringify(buildNativeMenu(template)));
+    const built = buildNativeMenu(template);
+    runtime().core.popupMenu(JSON.stringify(built.native));
+    // Free the prior popup's handlers; at most one popup's worth is retained.
+    releaseMenuHandlers(popupIds);
+    popupIds = built.ids;
   },
 };

@@ -7,6 +7,7 @@
 import { join } from "node:path";
 import { workerData } from "node:worker_threads";
 import type { WindowConfig } from "./config/index.ts";
+import { logger } from "./logger.ts";
 import { Core } from "./native.ts";
 import { RpcServer } from "./rpc-server.ts";
 
@@ -88,7 +89,16 @@ function dispatch(raw: string): void {
   } catch {
     return;
   }
-  for (const fn of listeners.get(event.type) ?? []) fn(event);
+  // Guard each listener: a throwing user handler (menu/tray/shortcut click,
+  // window event, dialog result) must not abort the drain batch or crash the
+  // Worker's event loop. Log and continue so the rest of the batch still fires.
+  for (const fn of listeners.get(event.type) ?? []) {
+    try {
+      fn(event);
+    } catch (err) {
+      logger.error(`native event handler for "${event.type}" threw`, err);
+    }
+  }
 }
 
 /** Boot the runtime from the Worker's workerData. No-op when run detached. */

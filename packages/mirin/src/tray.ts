@@ -3,7 +3,7 @@
  * through the shared menu registry); a tray without a menu fires `onClick`.
  */
 
-import { buildNativeMenu, type MenuItemTemplate } from "./menu.ts";
+import { buildNativeMenu, type MenuItemTemplate, releaseMenuHandlers } from "./menu.ts";
 import { onNativeEvent, runtime } from "./runtime.ts";
 
 export interface TrayOptions {
@@ -22,15 +22,22 @@ onNativeEvent("tray.click", (event) => {
 
 export class Tray {
   readonly id = nextId++;
+  #menuIds: number[] = [];
 
   constructor(options: TrayOptions) {
     if (options.onClick) clickHandlers.set(this.id, options.onClick);
+    let menu: ReturnType<typeof buildNativeMenu>["native"] | undefined;
+    if (options.menu) {
+      const built = buildNativeMenu(options.menu);
+      menu = built.native;
+      this.#menuIds = built.ids;
+    }
     runtime().core.trayCreate(
       JSON.stringify({
         id: this.id,
         title: options.title,
         tooltip: options.tooltip,
-        menu: options.menu ? buildNativeMenu(options.menu) : undefined,
+        menu,
       }),
     );
   }
@@ -38,5 +45,7 @@ export class Tray {
   destroy(): void {
     runtime().core.trayDestroy(this.id);
     clickHandlers.delete(this.id);
+    releaseMenuHandlers(this.#menuIds);
+    this.#menuIds = [];
   }
 }

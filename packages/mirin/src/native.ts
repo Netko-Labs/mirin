@@ -7,6 +7,7 @@
  */
 
 import { CString, dlopen, FFIType, type Pointer, ptr } from "bun:ffi";
+import { logger } from "./logger.ts";
 
 function nullTerminated(s: string): Uint8Array {
   return new TextEncoder().encode(s + "\0");
@@ -73,7 +74,15 @@ export class Core {
       for (;;) {
         const p = this.#lib.symbols.mirin_poll_event() as Pointer | null;
         if (!p) break;
-        listener(new CString(p).toString());
+        const raw = new CString(p).toString();
+        // Never let a listener throw out of the interval callback: that would
+        // drop the rest of this batch and can crash the Worker. Listeners guard
+        // their own handlers too; this is the outer backstop.
+        try {
+          listener(raw);
+        } catch (err) {
+          logger.error("native event listener threw", err);
+        }
       }
     };
     setInterval(drain, 8);

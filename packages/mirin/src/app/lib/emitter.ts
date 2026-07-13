@@ -1,3 +1,5 @@
+import { logger } from "../../logger.ts";
+
 type Listener<P> = (payload: P) => void;
 
 export class Emitter<Events extends Record<string, unknown>> {
@@ -35,6 +37,13 @@ export class Emitter<Events extends Record<string, unknown>> {
   }
 
   protected emit<K extends keyof Events>(type: K, payload: Events[K]): void {
-    for (const fn of this.#listeners.get(type) ?? []) fn(payload);
+    // One throwing subscriber must not stop the rest of the fan-out.
+    for (const fn of this.#listeners.get(type) ?? []) {
+      try {
+        fn(payload);
+      } catch (err) {
+        logger.error(`event handler for "${String(type)}" threw`, err);
+      }
+    }
   }
 }
