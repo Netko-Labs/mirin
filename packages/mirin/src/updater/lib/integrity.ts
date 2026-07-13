@@ -2,6 +2,10 @@ import { rmSync } from "node:fs";
 import type { UpdateProgress } from "../types.ts";
 import { assertTrustedUpdateUrl } from "./urls.ts";
 
+/** Absolute ceiling on a streamed artifact, enforced even when the manifest
+ *  omits `size`, so a hostile/oversized response can't fill the disk. */
+const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024 * 1024;
+
 interface DownloadOptions {
   url: string;
   destination: string;
@@ -30,8 +34,13 @@ export async function downloadVerifiedArtifact(options: DownloadOptions): Promis
         const { done, value } = await reader.read();
         if (done) break;
         received += value.byteLength;
+        // Bound the write by the declared size when present, and always by the
+        // absolute ceiling — a manifest that omits `size` must not stream forever.
         if (options.size !== undefined && received > options.size) {
           throw new Error(`download exceeds expected size ${options.size}`);
+        }
+        if (received > MAX_ARTIFACT_BYTES) {
+          throw new Error("download exceeds the maximum allowed size");
         }
         hasher.update(value);
         writer.write(value);

@@ -28,6 +28,15 @@ function isLoopbackHost(hostname: string): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
 }
 
+/** Whether `raw` is a well-formed URL pointing at loopback (local testing). */
+export function isLoopbackUpdateUrl(raw: string): boolean {
+  try {
+    return isLoopbackHost(new URL(raw).hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function artifactUrl(base: string, fileName: string): string {
   if (
     fileName.length === 0 ||

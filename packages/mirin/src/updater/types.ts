@@ -14,6 +14,12 @@ export interface VersionInfo {
   baseUrl: string;
   name: string;
   identifier: string;
+  /** Raw base64 Ed25519 public key. When set, the updater rejects any manifest
+   *  without a valid detached signature from the matching private key. */
+  publicKey?: string;
+  /** macOS Team ID (certificate OU) the downloaded update's code signature is
+   *  pinned to. Defence in depth alongside `publicKey`. */
+  teamId?: string;
 }
 
 export interface UpdateArtifact {

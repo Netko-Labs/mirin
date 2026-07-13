@@ -313,6 +313,20 @@ export interface ReleaseConfig {
   channel?: string;
   /** Optional markdown release notes embedded in the update manifest. */
   notes?: string;
+  /**
+   * Raw base64 Ed25519 **public** key. When set, the app requires a valid
+   * detached signature (`{prefix}-update.json.sig`) over the update manifest
+   * before trusting it — closing the "anyone who can serve the URL ships code"
+   * gap. Sign at release time by exporting the matching raw base64 private key
+   * as `MIRIN_UPDATE_PRIVATE_KEY` in your `mirin release` pipeline.
+   */
+  publicKey?: string;
+  /**
+   * macOS Team ID (the signing certificate's OU, e.g. "ABCDE12345"). When set,
+   * a downloaded update's code signature is pinned to it, so an update signed by
+   * a different Developer ID is rejected. Defence in depth alongside `publicKey`.
+   */
+  teamId?: string;
 }
 
 export interface CefConfig {

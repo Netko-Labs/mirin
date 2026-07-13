@@ -29,6 +29,7 @@ import {
   releaseArtifactUrl,
   trustedReleaseBaseUrl,
 } from "./release/previous.ts";
+import { signManifestIfConfigured } from "./release/signing.ts";
 
 // Level 10 keeps updater bundles compact without level 19's steep CPU cost.
 // The native codec uses multiple workers, so this scales across CI runner cores.
@@ -192,13 +193,16 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     patches,
   };
   const manifestName = `${prefix}-update.json`;
-  await Bun.write(join(outDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
+  const manifestBody = `${JSON.stringify(manifest, null, 2)}\n`;
+  await Bun.write(join(outDir, manifestName), manifestBody);
+  const sigName = await signManifestIfConfigured(outDir, manifestName, manifestBody);
 
   const { installerName, installerSize } = await installerBuild;
 
   const mb = (n: number) => (n / 1e6).toFixed(1);
   console.log("\n[mirin release] done → build/release/");
   console.log(`  ${manifestName}`);
+  if (sigName) console.log(`  ${sigName}`);
   console.log(`  ${bundleName} (${mb(bundleSize)} MB)`);
   for (const p of patches) console.log(`  ${p.url} (${mb(p.size)} MB delta from ${p.fromVersion})`);
   if (installerName) console.log(`  ${installerName} (${mb(installerSize)} MB installer)`);

@@ -242,7 +242,16 @@ export async function build(
   // version.json embeds the running app's update identity (read by app.updater).
   // Only when `release` is configured — otherwise the app has no updater.
   const versionJson = baseUrl
-    ? JSON.stringify({ version, channel, baseUrl, name: appName, identifier: bundleId })
+    ? JSON.stringify({
+        version,
+        channel,
+        baseUrl,
+        name: appName,
+        identifier: bundleId,
+        // Authenticity pins for the updater; only embedded when configured.
+        ...(config.release?.publicKey ? { publicKey: config.release.publicKey } : {}),
+        ...(config.release?.teamId ? { teamId: config.release.teamId } : {}),
+      })
     : undefined;
   const resources = {
     uiDir: join(projectDir, "dist"),
