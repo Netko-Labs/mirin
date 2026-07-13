@@ -184,10 +184,26 @@ fn apply_material(
 
 /// Tell the worker which material backend was actually used.
 fn emit_material_event(window_id: u32, requested: &str, backend: &str) {
-    crate::engine::emit_event(&format!(
-        r#"{{"type":"window.material","id":{window_id},"requested":"{requested}","backend":"{backend}","liquidGlassAvailable":{available}}}"#,
-        available = glass_available(),
+    crate::engine::emit_event(&material_event_json(
+        window_id,
+        requested,
+        backend,
+        glass_available(),
     ));
+}
+
+/// Build the `window.material` event JSON. `requested` is the app-supplied
+/// `material.type` string, so it must be escaped — serde_json handles quotes and
+/// backslashes that a hand-rolled `format!` would turn into invalid JSON.
+fn material_event_json(window_id: u32, requested: &str, backend: &str, available: bool) -> String {
+    serde_json::json!({
+        "type": "window.material",
+        "id": window_id,
+        "requested": requested,
+        "backend": backend,
+        "liquidGlassAvailable": available,
+    })
+    .to_string()
 }
 
 /// Map a vibrancy material name to NSVisualEffectMaterial.
@@ -207,5 +223,23 @@ fn visual_effect_material(name: &str) -> NSVisualEffectMaterial {
         "sheet" => NSVisualEffectMaterial::Sheet,
         "toolTip" => NSVisualEffectMaterial::ToolTip,
         _ => NSVisualEffectMaterial::HUDWindow,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::material_event_json;
+
+    #[test]
+    fn material_event_escapes_special_chars() {
+        // A `material.type` with a quote/backslash must not break the Worker's
+        // JSON.parse — the payload has to stay valid JSON.
+        let json = material_event_json(7, r#"a"b\c"#, "vibrancy", true);
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["type"], "window.material");
+        assert_eq!(value["id"], 7);
+        assert_eq!(value["requested"], r#"a"b\c"#);
+        assert_eq!(value["backend"], "vibrancy");
+        assert_eq!(value["liquidGlassAvailable"], true);
     }
 }

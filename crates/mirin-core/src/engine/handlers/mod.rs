@@ -183,26 +183,45 @@ impl MirinHandler {
         self.is_closing
     }
 
-    #[cfg(target_os = "windows")]
+    /// The live browser mapped to `window_id`, if any. Caller must hold the lock.
+    fn browser_for_window(&self, window_id: u32) -> Option<Browser> {
+        self.window_ids
+            .iter()
+            .find(|(_, &wid)| wid == window_id)
+            .map(|(&ident, _)| ident)
+            .and_then(|ident| {
+                self.browser_list
+                    .iter()
+                    .find(|b| b.identifier() == ident)
+                    .cloned()
+            })
+    }
+
+    /// Close only the browser mapped to `window_id` (non-force). Snapshots the
+    /// browser under a short lock, then closes outside it — `close_browser`
+    /// re-enters `on_before_close` (same mutex) synchronously on the UI thread.
     pub fn close_browser_for_window(this: &Arc<Mutex<Self>>, window_id: u32) {
         let browser = {
             let handler = this.lock().expect("failed to lock MirinHandler");
-            handler
-                .window_ids
-                .iter()
-                .find(|(_, &wid)| wid == window_id)
-                .map(|(&ident, _)| ident)
-                .and_then(|ident| {
-                    handler
-                        .browser_list
-                        .iter()
-                        .find(|b| b.identifier() == ident)
-                        .cloned()
-                })
+            handler.browser_for_window(window_id)
         };
         if let Some(browser) = browser {
             if let Some(host) = browser.host() {
                 host.close_browser(0);
+            }
+        }
+    }
+
+    /// Navigate the browser mapped to `window_id` to `url`. Snapshots the browser
+    /// under a short lock, then loads outside it.
+    pub fn load_url_for_window(this: &Arc<Mutex<Self>>, window_id: u32, url: &str) {
+        let browser = {
+            let handler = this.lock().expect("failed to lock MirinHandler");
+            handler.browser_for_window(window_id)
+        };
+        if let Some(browser) = browser {
+            if let Some(frame) = browser.main_frame() {
+                frame.load_url(Some(&CefString::from(url)));
             }
         }
     }

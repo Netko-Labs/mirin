@@ -70,7 +70,9 @@ define_class!(
             if let Some(handler) = MirinHandler::instance() {
                 let already_closing = { handler.lock().expect("lock").is_closing() };
                 if !already_closing {
-                    MirinHandler::close_all_browsers(&handler, false);
+                    // Close only this window, not every browser: a red-button /
+                    // Cmd-W on one window of a multi-window app must not quit it.
+                    MirinHandler::close_browser_for_window(&handler, self.ivars().window_id.get());
                     return Bool::NO;
                 }
             }

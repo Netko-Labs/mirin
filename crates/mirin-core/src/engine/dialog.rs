@@ -41,8 +41,17 @@ wrap_task! {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
             let Some(json) = self.spec_json.borrow_mut().take() else { return };
-            let Ok(spec) = serde_json::from_str::<DialogSpec>(&json) else { return };
-            run(&spec);
+            match serde_json::from_str::<DialogSpec>(&json) {
+                Ok(spec) => run(&spec),
+                // A malformed/unsupported spec must still settle the Worker's
+                // pending promise (keyed by requestId) or the caller hangs
+                // forever. Recover just the requestId and reply with null.
+                Err(_) => {
+                    if let Some(request_id) = parse_request_id(&json) {
+                        emit_dialog_result(request_id, serde_json::Value::Null);
+                    }
+                }
+            }
         }
     }
 }
@@ -62,10 +71,27 @@ fn run(spec: &DialogSpec) {
         "message" => serde_json::json!({ "button": message(spec) }),
         _ => serde_json::Value::Null,
     };
+    emit_dialog_result(spec.request_id, value);
+}
 
+/// Recover just the `requestId` from a spec that failed full parsing, so a
+/// malformed dialog can still be nacked back to the waiting Worker promise.
+fn parse_request_id(json: &str) -> Option<u32> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RequestIdOnly {
+        request_id: u32,
+    }
+    serde_json::from_str::<RequestIdOnly>(json)
+        .ok()
+        .map(|r| r.request_id)
+}
+
+/// Emit the `dialog.result` event that resolves the Worker's pending promise.
+fn emit_dialog_result(request_id: u32, value: serde_json::Value) {
     let event = serde_json::json!({
         "type": "dialog.result",
-        "requestId": spec.request_id,
+        "requestId": request_id,
         "value": value,
     });
     crate::engine::emit_event(&event.to_string());

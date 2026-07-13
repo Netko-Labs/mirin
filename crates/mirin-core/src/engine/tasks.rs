@@ -95,30 +95,34 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
-            let _id = self.id;
+            let id = self.id;
             match self.command {
                 WindowCommand::Close => {
+                    // Close only the target window; `close_all_browsers` is the
+                    // app-quit path and must not be reached by a per-window close.
                     if let Some(handler) = MirinHandler::instance() {
-                        MirinHandler::close_all_browsers(&handler, false);
+                        MirinHandler::close_browser_for_window(&handler, id);
                     }
                 }
                 WindowCommand::LoadUrl => {
-                    if let Some(_url) = self.arg.borrow().as_ref() {
-                        // M2: load_url on a specific browser; needs window->browser map.
+                    if let Some(url) = self.arg.borrow().as_ref() {
+                        if let Some(handler) = MirinHandler::instance() {
+                            MirinHandler::load_url_for_window(&handler, id, url);
+                        }
                     }
                 }
                 WindowCommand::SetTitle => {
                     #[cfg(target_os = "macos")]
                     if let Some(title) = self.arg.borrow().as_ref() {
-                        mac::set_window_title(_id, title);
+                        mac::set_window_title(id, title);
                     }
                     #[cfg(target_os = "windows")]
                     if let Some(title) = self.arg.borrow().as_ref() {
-                        win::set_window_title(_id, title);
+                        win::set_window_title(id, title);
                     }
                     #[cfg(target_os = "linux")]
                     if let Some(title) = self.arg.borrow().as_ref() {
-                        linux::set_window_title(_id, title);
+                        linux::set_window_title(id, title);
                     }
                 }
             }

@@ -44,3 +44,7 @@ windows-sys = { version = "0.61", features = [
 
 [profile.release]
 lto = "thin"
+# The core is a cdylib loaded over a flat C ABI by Bun and called back by CEF's
+# C++ loop. A Rust panic that unwinds across either boundary is undefined
+# behavior; aborting on panic makes it a defined, immediate crash instead.
+panic = "abort"

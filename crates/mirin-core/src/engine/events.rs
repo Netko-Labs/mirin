@@ -17,9 +17,12 @@ thread_local! {
 
 /// Queue a JSON event for the Worker to drain.
 pub fn emit_event(json: &str) {
+    // Recover from a poisoned lock instead of panicking: with `panic = "abort"`
+    // an `.expect()` here would take the whole process down over a transient
+    // poison on the hottest path in the engine.
     EVENT_QUEUE
         .lock()
-        .expect("event queue")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .push_back(json.to_string());
 }
 
@@ -38,7 +41,10 @@ pub fn emit_window_frame(id: u32, kind: &str, x: f64, y: f64, w: f64, h: f64, ma
 
 /// Pop the next queued event as a C string (valid until the next call), or null.
 pub fn poll_event() -> *const c_char {
-    let next = EVENT_QUEUE.lock().expect("event queue").pop_front();
+    let next = EVENT_QUEUE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .pop_front();
     match next {
         Some(json) => {
             let cstr = CString::new(json).unwrap_or_default();
