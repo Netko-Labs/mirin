@@ -61,7 +61,12 @@ export class RpcServer {
         if (url.searchParams.get("token") !== token) {
           return new Response("unauthorized", { status: 401 });
         }
+        // The webview id is assigned by the native core and injected into each
+        // webview's preload; reject a malformed value rather than coercing it.
         const webview = Number(url.searchParams.get("webview") ?? "0");
+        if (!Number.isInteger(webview) || webview < 0) {
+          return new Response("bad webview", { status: 400 });
+        }
         if (server.upgrade(req, { data: { webview } })) return undefined;
         return new Response("mirin rpc");
       },
@@ -106,14 +111,24 @@ export class RpcServer {
   /** Push an event to every connected webview. */
   broadcast(method: string, payload: unknown): void {
     const frame = JSON.stringify({ kind: "event", method, payload });
-    for (const ws of this.#sockets) ws.send(frame);
+    for (const ws of this.#sockets) this.#send(ws, frame);
   }
 
   /** Push an event to a single webview. */
   emitTo(webview: number, method: string, payload: unknown): void {
     const frame = JSON.stringify({ kind: "event", method, payload });
     for (const ws of this.#sockets) {
-      if (ws.data.webview === webview) ws.send(frame);
+      if (ws.data.webview === webview) this.#send(ws, frame);
+    }
+  }
+
+  /** Send to one socket, tolerating a socket that is mid-close — one dead
+   *  webview must not abort delivery to the rest of the fan-out. */
+  #send(ws: ServerWebSocket<SocketData>, frame: string): void {
+    try {
+      ws.send(frame);
+    } catch {
+      // socket closing/closed; drop this delivery
     }
   }
 
