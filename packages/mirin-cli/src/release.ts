@@ -25,7 +25,7 @@ import { notarizeAndStaple } from "./dmg.ts";
 import { buildReleaseInstaller } from "./release/installers.ts";
 import {
   assertTrustedReleaseUrl,
-  parsePreviousReleaseManifest,
+  readPreviousReleaseManifest,
   releaseArtifactUrl,
   trustedReleaseBaseUrl,
 } from "./release/previous.ts";
@@ -33,10 +33,12 @@ import {
 // Level 10 keeps updater bundles compact without level 19's steep CPU cost.
 // The native codec uses multiple workers, so this scales across CI runner cores.
 const RELEASE_COMPRESSION_LEVEL = 10;
+const MAX_RELEASE_ARTIFACT_BYTES = 512 * 1024 * 1024;
+const MAX_RELEASE_TAR_BYTES = 1024 * 1024 * 1024;
 
 interface ReleaseCodec {
   compress(src: string, dst: string, level: number): void;
-  decompress(src: string, dst: string): void;
+  decompressBounded(src: string, dst: string, maxOutputBytes: number): void;
   diff(oldPath: string, newPath: string, patchPath: string): void;
 }
 
@@ -56,8 +58,8 @@ export function createReleaseCodec(binary: string): ReleaseCodec {
     compress(src, dst, level) {
       run("compress", src, dst, String(level));
     },
-    decompress(src, dst) {
-      run("decompress", src, dst);
+    decompressBounded(src, dst, maxOutputBytes) {
+      run("decompress-bounded", src, dst, String(maxOutputBytes));
     },
     diff(oldPath, newPath, patchPath) {
       run("diff", oldPath, newPath, patchPath);
@@ -120,8 +122,15 @@ export async function release(projectDir = process.cwd()): Promise<number> {
 
   // Uncompressed tar — the identity + diff/patch basis (BSD tar keeps symlinks).
   const newTar = join(outDir, "_new.tar");
-  await $`tar -cf ${newTar} -C ${buildDir} ${appArtifact}`;
+  await $`tar -cf ${newTar} -C ${buildDir} ${appArtifact}`.env({
+    ...process.env,
+    COPYFILE_DISABLE: "1",
+  });
   const tarHash = await sha256File(newTar);
+  const tarSize = statSync(newTar).size;
+  if (tarSize <= 0 || tarSize > MAX_RELEASE_TAR_BYTES) {
+    throw new Error(`release tar exceeds the updater limit (${MAX_RELEASE_TAR_BYTES} bytes)`);
+  }
 
   // Full bundle: zstd(newTar).
   const bundleName = `${prefix}-${safeName}${isWindows ? "" : ".app"}.tar.zst`;
@@ -130,9 +139,20 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   codec.compress(newTar, bundlePath, RELEASE_COMPRESSION_LEVEL);
   const bundleSha = await sha256File(bundlePath);
   const bundleSize = statSync(bundlePath).size;
+  if (bundleSize <= 0 || bundleSize > MAX_RELEASE_ARTIFACT_BYTES) {
+    throw new Error(
+      `release bundle exceeds the updater limit (${MAX_RELEASE_ARTIFACT_BYTES} bytes)`,
+    );
+  }
 
   // Delta patch vs the previous release (if reachable). Best-effort.
-  const patches: Array<{ fromVersion: string; url: string; sha256: string; size: number }> = [];
+  const patches: Array<{
+    fromVersion: string;
+    url: string;
+    sha256: string;
+    size: number;
+    uncompressedSize: number;
+  }> = [];
   try {
     const manifestUrl = new URL(releaseArtifactUrl(base, `${prefix}-update.json`));
     manifestUrl.searchParams.set("t", String(Date.now()));
@@ -141,7 +161,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     });
     assertTrustedReleaseUrl(prevRes.url);
     if (prevRes.ok) {
-      const prev = parsePreviousReleaseManifest(await prevRes.json(), {
+      const prev = await readPreviousReleaseManifest(prevRes, {
         channel: result.channel,
         platform,
         arch,
@@ -158,17 +178,29 @@ export async function release(projectDir = process.cwd()): Promise<number> {
             prev.bundle.size,
           );
           const prevTar = join(tmp, "prev.tar");
-          codec.decompress(prevZst, prevTar);
+          codec.decompressBounded(prevZst, prevTar, prev.tarSize);
+          if (statSync(prevTar).size !== prev.tarSize) {
+            throw new Error("previous bundle decompressed size mismatch");
+          }
           const rawPatch = join(tmp, "patch.bin");
           codec.diff(prevTar, newTar, rawPatch); // bsdiff
+          const uncompressedSize = statSync(rawPatch).size;
+          if (uncompressedSize <= 0 || uncompressedSize > MAX_RELEASE_ARTIFACT_BYTES) {
+            throw new Error("delta patch exceeds the updater limit");
+          }
           const patchName = `${prefix}-${prev.version}.patch`;
           const patchPath = join(outDir, patchName);
           codec.compress(rawPatch, patchPath, RELEASE_COMPRESSION_LEVEL);
+          const patchSize = statSync(patchPath).size;
+          if (patchSize <= 0 || patchSize > MAX_RELEASE_ARTIFACT_BYTES) {
+            throw new Error("compressed delta patch exceeds the updater limit");
+          }
           patches.push({
             fromVersion: prev.version,
             url: patchName,
             sha256: await sha256File(patchPath),
-            size: statSync(patchPath).size,
+            size: patchSize,
+            uncompressedSize,
           });
         } finally {
           rmSync(tmp, { recursive: true, force: true });
@@ -188,6 +220,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     arch,
     body: result.releaseNotes,
     tarHash,
+    tarSize,
     bundle: { url: bundleName, sha256: bundleSha, size: bundleSize },
     patches,
   };

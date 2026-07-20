@@ -90,10 +90,14 @@ cold-launches (0 GPU failures), silent uninstall removes the folder + registry k
 Customizable via the `nsis` config (perMachine/oneClick, shortcuts, license,
 publisher, runAfterFinish, installerIcon, raw `include`); needs `makensis`, else
 falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
-`%LOCALAPPDATA%` support dir, detached-PowerShell folder swap + relaunch (implemented;
-the runtime swap isn't field-tested). `publish-all.ts` publishes the host-platform
-native package. Release-time compression uses the standalone `mirin-codec.exe`,
-which has no CEF or Bun FFI dependency.
+`%LOCALAPPDATA%` support dir, bounded/generation-correlated download staging,
+validated real app root + `<App>.exe` + `resources/version.json`, and a detached
+PowerShell folder swap + relaunch. The launch VBScript propagates
+`Win32_Process.Create` failure before the running app quits. The post-exit swap
+still has no durable success acknowledgement and is not field-tested.
+`publish-all.ts` publishes the host-platform native package. Release-time
+compression uses the standalone `mirin-codec.exe`, which has no CEF or Bun FFI
+dependency.
 
 Windows arm64 currently uses an x64 host/core/CEF compatibility payload because
 Bun's native Windows arm64 runtime does not provide `bun:ffi`. Windows 11 ARM runs

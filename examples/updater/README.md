@@ -11,14 +11,20 @@ the `mirin release` artifacts, hostable on **GitHub Releases** or **any static h
   - `stable-darwin-<arch>-UpdaterExample.app.tar.zst` — the full bundle (fallback)
   - `stable-darwin-<arch>-<prevVersion>.patch` — a small **delta** from the previous release
 - The running app's `app.updater` polls `${baseUrl}/${channel}-darwin-${arch}-update.json`,
-  compares the advertised `version` to its own (from the embedded `version.json`),
-  downloads a delta patch from its installed version when available (else the full
-  bundle), verifies the result's `sha256`, checks the archive layout, then **swaps
-  the whole `.app`** and relaunches. (A signed/notarized `.app` must be replaced
-  whole — never edited in place.)
+  accepts only a strictly newer SemVer than the structured embedded `version.json`,
+  and downloads a delta patch from its installed version when available (else the
+  full bundle). Checks are single-flight and each download is tied to the checked
+  version/hash generation. The updater enforces declared compressed, patch, and tar
+  sizes; verifies SHA-256; rejects unsafe tar node/link layouts; validates the real
+  staged root, executable, executable mode, and embedded identity; then **swaps the
+  whole `.app`** and relaunches. (A signed/notarized `.app` must be replaced whole —
+  never edited in place.)
 
 > Production update hosts must use HTTPS. The runtime only allows HTTP for
-> loopback local testing (`localhost`, `127.0.0.1`, `[::1]`).
+> loopback local testing (`localhost`, `127.0.0.1`, `[::1]`). Current manifests
+> include required `tarSize` and patch `uncompressedSize` bounds. Older runtimes
+> ignore those additive fields; hardened runtimes reject older manifests that omit
+> them.
 
 **Small updates:** because the bundle is dominated by the unchanging Chromium framework,
 a release where only your app code changed produces a **few-KB patch** instead of a

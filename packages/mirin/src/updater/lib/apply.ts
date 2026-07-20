@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { VersionInfo } from "../types.ts";
@@ -8,6 +8,17 @@ interface ApplyOptions {
   resourcesDir: string;
   staged: string;
   version: VersionInfo;
+}
+
+export function renderWindowsLaunchVbs(applyVbs: string): string {
+  const command = `wscript.exe //B //Nologo "${applyVbs}"`.replace(/"/g, '""');
+  return [
+    "Dim status, pid",
+    `status = GetObject("winmgmts:Win32_Process").Create("${command}", Null, Null, pid)`,
+    "If status <> 0 Then WScript.Quit status",
+    "WScript.Quit 0",
+    "",
+  ].join("\r\n");
 }
 
 /** Start a detached platform helper that swaps the app after this process exits. */
@@ -27,6 +38,7 @@ async function applyWindows({ resourcesDir, staged, version }: ApplyOptions): Pr
   const script = join(tmpdir(), `mirin-apply-${token}.ps1`);
   const applyVbs = join(tmpdir(), `mirin-apply-${token}.vbs`);
   const launchVbs = join(tmpdir(), `mirin-launch-${token}.vbs`);
+  const helperFiles = [script, applyVbs, launchVbs];
   const backup = `${runningApp}.mirin-old-${process.pid}`;
   const ps = [
     "$ErrorActionPreference='Stop'",
@@ -48,37 +60,34 @@ async function applyWindows({ resourcesDir, staged, version }: ApplyOptions): Pr
   ].join("\n");
   writeFileSync(script, ps, "utf8");
 
-  // wscript is a GUI-subsystem host, so PowerShell never flashes a console.
   writeFileSync(
     applyVbs,
     `CreateObject("WScript.Shell").Run "powershell -NoProfile -NonInteractive ` +
       `-ExecutionPolicy Bypass -WindowStyle Hidden -File ""${script}""", 0, False\n`,
     "utf8",
   );
+  writeFileSync(launchVbs, renderWindowsLaunchVbs(applyVbs), "utf8");
 
-  // WMI owns the swap process, allowing it to outlive the Bun host's job object.
-  writeFileSync(
-    launchVbs,
-    `GetObject("winmgmts:Win32_Process").Create ` +
-      `"wscript.exe //B //Nologo ""${applyVbs}""", Null, Null, pid\n`,
-    "utf8",
-  );
-  const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs], {
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  const exitCode = await launcher.exited;
-  if (exitCode !== 0) throw new Error(`failed to launch Windows updater (${exitCode})`);
+  try {
+    const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await launcher.exited;
+    if (exitCode !== 0) {
+      throw new Error(`failed to launch Windows updater via WMI (${exitCode})`);
+    }
+  } catch (error) {
+    for (const file of helperFiles) rmSync(file, { force: true });
+    throw error;
+  }
 }
 
 function applyLinux({ resourcesDir, staged, version }: ApplyOptions): void {
   const runningApp = join(resourcesDir, "..");
   const binary = join(runningApp, version.name);
-  spawnShellSwap(runningApp, staged, [
-    `chmod +x ${sh(binary)} 2>/dev/null || true`,
-    `setsid ${sh(binary)} >/dev/null 2>&1 < /dev/null &`,
-  ]);
+  spawnShellSwap(runningApp, staged, [`setsid ${sh(binary)} >/dev/null 2>&1 < /dev/null &`]);
 }
 
 function applyMac({ resourcesDir, staged }: ApplyOptions): void {

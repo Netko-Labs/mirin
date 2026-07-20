@@ -6,6 +6,7 @@ const manifest = {
   version: "1.2.3",
   ...expected,
   tarHash: "a".repeat(64),
+  tarSize: 4096,
   bundle: {
     url: "stable-darwin-arm64-Anko.app.tar.zst",
     sha256: "b".repeat(64),
@@ -19,15 +20,25 @@ describe("updater manifest validation", () => {
     expect(parseManifest(manifest, expected)).toEqual(manifest);
   });
 
-  test("accepts markdown release notes", () => {
-    expect(parseManifest({ ...manifest, body: "## Notes\n- **Fixed** things" }, expected)).toEqual({
+  test("accepts bounded patches and markdown release notes", () => {
+    const value = {
       ...manifest,
       body: "## Notes\n- **Fixed** things",
-    });
+      patches: [
+        {
+          fromVersion: "1.2.2",
+          url: "stable-darwin-arm64-1.2.2.patch",
+          sha256: "c".repeat(64),
+          size: 500,
+          uncompressedSize: 900,
+        },
+      ],
+    };
+    expect(parseManifest(value, expected)).toEqual(value);
   });
 
-  test("rejects path-bearing versions and artifact names", () => {
-    expect(() => parseManifest({ ...manifest, version: "../../escape" }, expected)).toThrow(
+  test("rejects invalid SemVer and path-bearing artifact names", () => {
+    expect(() => parseManifest({ ...manifest, version: "1.2.3-beta.01" }, expected)).toThrow(
       "invalid update manifest version",
     );
     expect(() =>
@@ -38,12 +49,42 @@ describe("updater manifest validation", () => {
     ).toThrow("unsafe update artifact name");
   });
 
-  test("rejects artifacts larger than the updater limit", () => {
+  test("requires compressed, patch, and reconstructed-output bounds", () => {
+    const { size: _size, ...bundleWithoutSize } = manifest.bundle;
+    expect(() => parseManifest({ ...manifest, bundle: bundleWithoutSize }, expected)).toThrow(
+      "invalid update manifest field: size",
+    );
+    const { tarSize: _tarSize, ...withoutTarSize } = manifest;
+    expect(() => parseManifest(withoutTarSize, expected)).toThrow(
+      "invalid update manifest field: tarSize",
+    );
     expect(() =>
       parseManifest(
-        { ...manifest, bundle: { ...manifest.bundle, size: 9 * 1024 * 1024 * 1024 } },
+        {
+          ...manifest,
+          patches: [
+            {
+              fromVersion: "1.2.2",
+              url: "patch.zst",
+              sha256: "c".repeat(64),
+              size: 12,
+            },
+          ],
+        },
+        expected,
+      ),
+    ).toThrow("invalid update manifest field: uncompressedSize");
+  });
+
+  test("rejects values above conservative absolute limits", () => {
+    expect(() =>
+      parseManifest(
+        { ...manifest, bundle: { ...manifest.bundle, size: 513 * 1024 * 1024 } },
         expected,
       ),
     ).toThrow("invalid update manifest field: size");
+    expect(() => parseManifest({ ...manifest, tarSize: 1024 * 1024 * 1024 + 1 }, expected)).toThrow(
+      "invalid update manifest field: tarSize",
+    );
   });
 });

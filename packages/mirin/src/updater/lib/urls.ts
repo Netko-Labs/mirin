@@ -31,6 +31,7 @@ function isLoopbackHost(hostname: string): boolean {
 export function artifactUrl(base: string, fileName: string): string {
   if (
     fileName.length === 0 ||
+    fileName.length > 255 ||
     fileName.includes("/") ||
     fileName.includes("\\") ||
     fileName.includes("?") ||

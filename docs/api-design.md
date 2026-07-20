@@ -183,7 +183,14 @@ off the main-process API:
 - `app.sidecar(name, opts)`, `resolveSidecar(name)`, and `resolveWorker(name)` for bundled sidecars and
   extra workers declared in `mirin.config.ts`; config names are safe filename
   segments and source paths are project-relative.
-- `app.updater` for packaged apps built with `release.baseUrl`.
+- `app.updater` for packaged apps built with `release.baseUrl`. `checkForUpdate()`
+  is single-flight and reports only releases with strictly newer SemVer precedence;
+  equal versions, downgrades, and build-metadata-only changes return `null`.
+  `download()` and `applyAndRelaunch()` reject concurrent operations, and rechecking
+  invalidates older staged generations. Malformed embedded `version.json` metadata
+  disables the updater. Downloads require generated size bounds and are not
+  considered staged until archive structure, platform executable, executable mode
+  (macOS/Linux), embedded identity, integrity, and platform signature checks pass.
 
 Still future: multi-webview-per-window (BrowserView equivalent), user preload
 scripts, session/cookie controls, payload encryption or a CEF IPC replacement for

@@ -103,6 +103,7 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 - **Bundle requirement.** CEF on macOS effectively requires the `.app` + helpers structure even during development. `mirin dev` therefore materializes a **dev bundle**: a throwaway `.app` skeleton (ad-hoc signed) whose Resources point at the working tree, so the edit-reload loop doesn't pay a full repackage.
 - **Production locales.** `cef.locales` optionally keeps only selected locale packs in production bundles. Windows/Linux copy matching `locales/*.pak`; macOS retains the matching `.lproj` directory and its grammatical-gender variants before codesigning. Omission preserves the complete CEF runtime.
 - **Release scheduling.** The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. A standalone `mirin-codec` binary performs release-time zstd and bsdiff work without loading CEF or depending on Bun FFI; the runtime core links the same Rust codec library.
+- **Updater transactions.** Packaged apps structurally parse their five-field `version.json` identity, accept only strictly newer SemVer precedence (build metadata does not make a release newer), and single-flight manifest checks. Each accepted manifest receives a generation tied to its version and tar hash; downloads use generation-specific directories, concurrent download/apply calls are rejected, and a recheck or failure invalidates stale staged state. Manifest bodies, compressed artifacts, raw patches, reconstructed tars, entry counts, paths, and link targets have absolute limits. New manifests declare exact compressed sizes, `tarSize`, and patch `uncompressedSize`; bounded additive codec/FFI calls enforce decompression, patch-input, and patch-output ceilings while legacy codec calls remain available for trusted local use. Before apply, Mirin rejects traversal, sparse/special nodes, escaping symlinks/hardlinks, a linked/non-directory root, a missing/non-regular platform executable, missing executable mode on macOS/Linux, and staged `version.json` identity drift. macOS codesign verification follows structural checks. Release tar creation disables macOS AppleDouble sidecars so the archive has one expected root.
 
 ## 6. Repository layout
 
@@ -223,10 +224,13 @@ host) + `mirin_core.dll` + `mirin-helper.exe` + the CEF runtime (libcef.dll, `*.
 Desktop shortcuts, uninstaller, Add/Remove Programs; customizable via the `nsis`
 config, `installer-win.ts`; needs `makensis`, falls back to a portable `.zip`) +
 a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`; the updater
-swaps the folder via a detached PowerShell relauncher. Runtime updates require
-HTTPS artifact hosts except loopback HTTP for local testing, validate that the
-manifest matches channel/platform/arch, verify SHA-256 hashes, and reject update
-tars whose entries escape the expected app root before extraction. Consumers
+swaps the folder via a detached PowerShell relauncher. The pre-quit VBScript now
+returns the `Win32_Process.Create` status, so the running app quits only after WMI
+accepts the detached helper. Runtime updates require HTTPS artifact hosts except
+loopback HTTP for local testing, enforce the bounded generation transaction above,
+verify SHA-256 hashes, and validate the extracted root, executable, and embedded
+identity before apply. The post-exit folder swap remains asynchronous and has no
+durable success acknowledgement. Consumers
 install the prebuilt `@mirinjs/win32-{arch}` native package + a CEF release download
 (no Rust).
 Build prereqs: cmake + ninja (for `cef-dll-sys`'s C++ wrapper) + MSVC.

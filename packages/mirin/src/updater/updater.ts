@@ -1,19 +1,12 @@
-/**
- * mirin/updater — the `app.updater` API (runs in the Bun Worker).
- *
- * Reads the app's `Resources/version.json` (embedded by `mirin build` when
- * `release` is set), polls `{baseUrl}/{prefix}-update.json`, and when a different
- * version is published downloads it, verifies its SHA-256, then swaps the whole
- * `.app` and relaunches. Updates prefer a small **delta patch** (bsdiff) from the
- * currently-installed version and fall back to the full bundle whenever a patch
- * isn't usable.
- *
- * A signed/notarized `.app` cannot be modified in place without breaking its
- * signature, so the whole bundle is always replaced. Updates run only in a
- * packaged app with `release` set; in `mirin dev` the updater is idle.
- */
-
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -21,10 +14,21 @@ import { loadCodec } from "../codec.ts";
 import { runtime } from "../runtime.ts";
 import { applyUpdateAndRelaunch } from "./lib/apply.ts";
 import { verifyArchiveLayout } from "./lib/archive.ts";
+import { readBoundedManifestJson } from "./lib/http.ts";
 import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
+import { MAX_TAR_BYTES } from "./lib/limits.ts";
 import { parseManifest } from "./lib/manifest.ts";
 import { IS_LINUX, IS_MAC, IS_WINDOWS, platformName } from "./lib/platform.ts";
+import { isStrictlyNewer } from "./lib/semver.ts";
+import { validateStagedBundle } from "./lib/staged.ts";
+import {
+  generationDirectoryName,
+  type PendingGeneration,
+  SingleFlight,
+  UpdateTransactionState,
+} from "./lib/transaction.ts";
 import { artifactUrl, assertTrustedUpdateUrl, trustedBaseUrl } from "./lib/urls.ts";
+import { parseVersionJson } from "./lib/version.ts";
 import type {
   Listener,
   Manifest,
@@ -35,12 +39,23 @@ import type {
   VersionInfo,
 } from "./types.ts";
 
+class StaleGenerationError extends Error {
+  constructor() {
+    super("update generation became stale during download");
+  }
+}
+
+interface PendingManifest extends PendingGeneration {
+  manifest: Manifest;
+}
+
 export class Updater {
   #listeners = new Map<keyof UpdaterEvents, Set<Listener<unknown>>>();
   #status: UpdaterStatus = "idle";
   #info: VersionInfo | null | undefined;
-  #manifest: Manifest | null = null;
-  #staged: string | null = null;
+  #pendingManifest: PendingManifest | null = null;
+  #transactions = new UpdateTransactionState();
+  #checks = new SingleFlight<UpdateInfo | null>();
   #autoCheck: ReturnType<typeof setInterval> | undefined;
 
   on<K extends keyof UpdaterEvents>(type: K, listener: Listener<UpdaterEvents[K]>): () => void {
@@ -58,85 +73,122 @@ export class Updater {
   get status(): UpdaterStatus {
     return this.#status;
   }
+
   get currentVersion(): string {
     return this.#version()?.version ?? "0.0.0";
   }
+
   get channel(): string {
     return this.#version()?.channel ?? "stable";
   }
-  /** Whether updates are configured (packaged build with `release` set). */
+
+  /** Whether updates are configured with valid packaged metadata. */
   get enabled(): boolean {
     return this.#version() != null;
   }
 
-  /** Fetch the channel manifest; report an available update or `null`. Never throws. */
-  async checkForUpdate(): Promise<UpdateInfo | null> {
-    const v = this.#version();
-    if (!v) return null;
+  /** Fetch the channel manifest; report a strictly newer update or `null`. Never throws. */
+  checkForUpdate(): Promise<UpdateInfo | null> {
+    if (this.#transactions.isApplying) return Promise.resolve(null);
+    return this.#checks.run(() => this.#performCheck());
+  }
+
+  async #performCheck(): Promise<UpdateInfo | null> {
+    const version = this.#version();
+    if (!version) return null;
+
+    const previousStaged = this.#transactions.staged;
+    const generation = this.#transactions.beginCheck();
+    this.#pendingManifest = null;
+    if (previousStaged) rmSync(previousStaged.workDir, { recursive: true, force: true });
     this.#setStatus("checking");
+
     try {
-      const base = this.#baseUrl(v);
-      const url = `${base}/${this.#prefix()}-update.json?t=${Date.now()}`;
-      const res = await fetch(url, { redirect: "follow" });
-      assertTrustedUpdateUrl(res.url);
-      if (!res.ok) throw new Error(`manifest ${res.status}`);
-      const m = parseManifest(await res.json(), {
-        channel: v.channel,
+      const base = this.#baseUrl(version);
+      const url = `${base}/${this.#prefix(version)}-update.json?t=${Date.now()}`;
+      const response = await fetch(url, { redirect: "follow" });
+      assertTrustedUpdateUrl(response.url);
+      if (!response.ok) throw new Error(`manifest ${response.status}`);
+      const manifest = parseManifest(await readBoundedManifestJson(response), {
+        channel: version.channel,
         platform: platformName(),
         arch: process.arch,
       });
-      if (!m.version || m.version === v.version) {
-        this.#manifest = null;
+      if (!isStrictlyNewer(manifest.version, version.version)) {
         this.#setStatus("idle");
         return null;
       }
-      this.#manifest = m;
+
+      const pending = this.#transactions.commitCheck(
+        generation,
+        manifest.version,
+        manifest.tarHash,
+      );
+      if (!pending) return null;
+      this.#pendingManifest = { ...pending, manifest };
       const info: UpdateInfo = {
-        version: m.version,
-        currentVersion: v.version,
-        channel: v.channel,
-        body: m.body,
+        version: manifest.version,
+        currentVersion: version.version,
+        channel: version.channel,
+        body: manifest.body,
       };
       this.#setStatus("update-available");
       this.#emit("update-available", info);
       return info;
-    } catch (err) {
-      this.#fail(err);
+    } catch (error) {
+      const staged = this.#transactions.invalidate();
+      this.#pendingManifest = null;
+      if (staged) rmSync(staged.workDir, { recursive: true, force: true });
+      this.#fail(error);
       return null;
     }
   }
 
-  /**
-   * Download + verify the pending update — a delta patch from the installed
-   * version when available, else the full bundle. Emits `progress`.
-   */
-  async download(onProgress?: (p: UpdateProgress) => void): Promise<void> {
-    const v = this.#version();
-    const m = this.#manifest;
-    if (!v || !m) throw new Error("no update to download — call checkForUpdate() first");
+  /** Download, bound, verify, extract, and structurally validate the pending update. */
+  async download(onProgress?: (progress: UpdateProgress) => void): Promise<void> {
+    if (this.#checks.isRunning)
+      throw new Error("cannot download while an update check is in progress");
+    const installed = this.#version();
+    const snapshot = this.#transactions.beginDownload();
+    const pending = this.#pendingManifest;
+    if (!installed || !pending || !this.#sameGeneration(snapshot, pending)) {
+      this.#transactions.failDownload(snapshot);
+      throw new Error("pending update metadata is unavailable");
+    }
+
     this.#setStatus("downloading");
+    const manifest = pending.manifest;
+    const support = this.#supportDir(installed);
+    const tarsDir = join(support, "tars");
+    const updatesDir = join(support, "updates");
+    const workDir = join(updatesDir, generationDirectoryName(snapshot));
+    const extractDir = join(workDir, "extract");
+    mkdirSync(tarsDir, { recursive: true });
+    mkdirSync(updatesDir, { recursive: true });
+    rmSync(workDir, { recursive: true, force: true });
+    mkdirSync(workDir, { recursive: true });
+
     try {
       const codec = loadCodec(this.#corePath());
-      const support = this.#supportDir(v);
-      const tarsDir = join(support, "tars");
-      const work = join(support, "updates");
-      mkdirSync(tarsDir, { recursive: true });
-      rmSync(work, { recursive: true, force: true });
-      mkdirSync(work, { recursive: true });
-
-      const base = this.#baseUrl(v);
-      const newTar = join(work, "new.tar");
-      const cachedTar = join(tarsDir, `${v.version}.tar`);
-      const patch = m.patches?.find((p) => p.fromVersion === v.version);
-      const reportProgress = (progress: UpdateProgress) => {
+      const base = this.#baseUrl(installed);
+      const newTar = join(workDir, "new.tar");
+      const cachedTar = join(tarsDir, `${installed.version}.tar`);
+      const patch = manifest.patches?.find(
+        (candidate) => candidate.fromVersion === installed.version,
+      );
+      const reportProgress = (progress: UpdateProgress): void => {
         this.#emit("progress", progress);
         onProgress?.(progress);
       };
 
-      let ok = false;
+      let reconstructed = false;
       if (patch && existsSync(cachedTar)) {
         try {
-          const patchZst = join(work, "patch.zst");
+          const oldTarSize = statSync(cachedTar).size;
+          if (oldTarSize <= 0 || oldTarSize > MAX_TAR_BYTES) {
+            throw new Error("cached update tar exceeds the updater limit");
+          }
+          const patchZst = join(workDir, "patch.zst");
           await downloadVerifiedArtifact({
             url: artifactUrl(base, patch.url),
             destination: patchZst,
@@ -144,78 +196,133 @@ export class Updater {
             size: patch.size,
             onProgress: reportProgress,
           });
-          const patchRaw = join(work, "patch.bin");
-          codec.decompress(patchZst, patchRaw);
-          codec.patch(cachedTar, patchRaw, newTar); // bspatch
-          await verifyFileSha256(newTar, m.tarHash, "reconstructed bundle hash mismatch");
-          ok = true;
-        } catch {
-          ok = false; // delta failed → full bundle
+          this.#assertCurrent(snapshot);
+          const patchRaw = join(workDir, "patch.bin");
+          codec.decompressBounded(patchZst, patchRaw, patch.uncompressedSize);
+          if (statSync(patchRaw).size !== patch.uncompressedSize) {
+            throw new Error("decompressed patch size mismatch");
+          }
+          codec.patchBounded(
+            cachedTar,
+            patchRaw,
+            newTar,
+            oldTarSize,
+            patch.uncompressedSize,
+            manifest.tarSize,
+          );
+          await verifyFileSha256(
+            newTar,
+            manifest.tarHash,
+            "reconstructed bundle hash mismatch",
+            manifest.tarSize,
+          );
+          this.#assertCurrent(snapshot);
+          reconstructed = true;
+        } catch (error) {
+          rmSync(newTar, { force: true });
+          if (error instanceof StaleGenerationError) throw error;
+          this.#assertCurrent(snapshot);
         }
       }
-      if (!ok) {
-        const bundleZst = join(work, "bundle.tar.zst");
+
+      if (!reconstructed) {
+        const bundleZst = join(workDir, "bundle.tar.zst");
         await downloadVerifiedArtifact({
-          url: artifactUrl(base, m.bundle.url),
+          url: artifactUrl(base, manifest.bundle.url),
           destination: bundleZst,
-          sha256: m.bundle.sha256,
-          size: m.bundle.size,
+          sha256: manifest.bundle.sha256,
+          size: manifest.bundle.size,
           onProgress: reportProgress,
         });
-        codec.decompress(bundleZst, newTar);
-        await verifyFileSha256(newTar, m.tarHash, "reconstructed bundle hash mismatch");
+        this.#assertCurrent(snapshot);
+        codec.decompressBounded(bundleZst, newTar, manifest.tarSize);
+        await verifyFileSha256(
+          newTar,
+          manifest.tarHash,
+          "reconstructed bundle hash mismatch",
+          manifest.tarSize,
+        );
+        this.#assertCurrent(snapshot);
       }
 
-      // Cache the new tar (for the next delta) and extract for swapping.
-      const keepTar = join(tarsDir, `${m.version}.tar`);
+      const bundleRoot = IS_WINDOWS || IS_LINUX ? installed.name : `${installed.name}.app`;
+      await verifyArchiveLayout(newTar, bundleRoot);
+      this.#assertCurrent(snapshot);
+      mkdirSync(extractDir, { recursive: true });
+      await $`tar -xf ${newTar} -C ${extractDir}`.quiet();
+      this.#assertCurrent(snapshot);
+      const staged = join(extractDir, bundleRoot);
+      validateStagedBundle({
+        staged,
+        extractionRoot: extractDir,
+        platform: platformName(),
+        installed,
+        expectedVersion: manifest.version,
+      });
+
+      if (IS_MAC) {
+        const verification = await $`codesign --verify --deep --strict ${staged}`.quiet().nothrow();
+        if (verification.exitCode !== 0) {
+          throw new Error("codesign verification failed on the downloaded update");
+        }
+      }
+      this.#assertCurrent(snapshot);
+
+      const keepTar = join(tarsDir, `${manifest.version}.tar`);
       rmSync(keepTar, { force: true });
       renameSync(newTar, keepTar);
-      await verifyArchiveLayout(keepTar, IS_WINDOWS || IS_LINUX ? v.name : `${v.name}.app`);
-      await $`tar -xf ${keepTar} -C ${work}`.quiet();
-      // The packaged unit: a flat app folder on Windows/Linux, an `.app` on macOS.
-      const staged = join(work, IS_WINDOWS || IS_LINUX ? v.name : `${v.name}.app`);
-      if (!existsSync(staged)) throw new Error(`extracted bundle not found at ${staged}`);
-
-      // codesign is macOS-only; Windows and Linux have no equivalent step here.
-      if (IS_MAC) {
-        const verify = await $`codesign --verify --deep --strict ${staged}`.quiet().nothrow();
-        if (verify.exitCode !== 0)
-          throw new Error("codesign verification failed on the downloaded update");
+      if (!this.#transactions.completeDownload(snapshot, staged, workDir)) {
+        throw new StaleGenerationError();
       }
-
-      // Keep only the newest cached tar.
-      for (const f of readdirSync(tarsDir)) {
-        if (f !== `${m.version}.tar`) rmSync(join(tarsDir, f), { force: true });
+      for (const file of readdirSync(tarsDir)) {
+        if (file !== `${manifest.version}.tar`) {
+          rmSync(join(tarsDir, file), { recursive: true, force: true });
+        }
       }
-
-      this.#staged = staged;
       this.#setStatus("update-available");
-    } catch (err) {
-      this.#fail(err);
-      throw err;
+    } catch (error) {
+      rmSync(workDir, { recursive: true, force: true });
+      const current = this.#transactions.failDownload(snapshot);
+      if (current) {
+        this.#pendingManifest = null;
+        this.#fail(error);
+      }
+      throw error;
     }
   }
 
-  /** Swap the running `.app` with the downloaded bundle and relaunch. */
+  /** Launch the platform swap helper, then quit only after launch was accepted. */
   async applyAndRelaunch(): Promise<void> {
-    const v = this.#version();
-    if (!v || !this.#staged) throw new Error("no staged update — call download() first");
+    if (this.#checks.isRunning)
+      throw new Error("cannot apply while an update check is in progress");
+    const installed = this.#version();
+    const resourcesDir = this.#resourcesDir();
+    const staged = this.#transactions.beginApply();
+    if (!installed || !resourcesDir) {
+      this.#transactions.finishApply(false);
+      throw new Error("installed update metadata is unavailable");
+    }
+
     this.#setStatus("applying");
     try {
       await applyUpdateAndRelaunch({
-        resourcesDir: this.#resourcesDir()!,
-        staged: this.#staged,
-        version: v,
+        resourcesDir,
+        staged: staged.staged,
+        version: installed,
       });
-      this.#setStatus("complete");
-      runtime().core.quit();
-    } catch (err) {
-      this.#fail(err);
-      throw err;
+    } catch (error) {
+      this.#transactions.finishApply(false);
+      this.#pendingManifest = null;
+      rmSync(staged.workDir, { recursive: true, force: true });
+      this.#fail(error);
+      throw error;
     }
+
+    this.#transactions.finishApply(true);
+    this.#setStatus("complete");
+    runtime().core.quit();
   }
 
-  /** Poll for updates every `intervalMs`. Returns a stop function. */
   startAutoCheck(intervalMs = 6 * 60 * 60 * 1000): () => void {
     this.stopAutoCheck();
     void this.checkForUpdate();
@@ -228,19 +335,17 @@ export class Updater {
     this.#autoCheck = undefined;
   }
 
-  // ---- internals ----
-
   #version(): VersionInfo | null {
     if (this.#info !== undefined) return this.#info;
-    const dir = this.#resourcesDir();
-    const path = dir ? join(dir, "version.json") : undefined;
-    if (path && existsSync(path)) {
-      try {
-        this.#info = JSON.parse(readFileSync(path, "utf8")) as VersionInfo;
-      } catch {
-        this.#info = null;
-      }
-    } else {
+    const resourcesDir = this.#resourcesDir();
+    const path = resourcesDir ? join(resourcesDir, "version.json") : undefined;
+    if (!path || !existsSync(path)) {
+      this.#info = null;
+      return null;
+    }
+    try {
+      this.#info = parseVersionJson(readFileSync(path, "utf8"));
+    } catch {
       this.#info = null;
     }
     return this.#info;
@@ -255,32 +360,41 @@ export class Updater {
   }
 
   #corePath(): string {
-    const p = runtime().corePath;
-    if (!p) throw new Error("libmirin_core path unavailable");
-    return p;
+    const path = runtime().corePath;
+    if (!path) throw new Error("libmirin_core path unavailable");
+    return path;
   }
 
-  #prefix(): string {
-    return `${this.#version()!.channel}-${platformName()}-${process.arch}`;
+  #prefix(version: VersionInfo): string {
+    return `${version.channel}-${platformName()}-${process.arch}`;
   }
 
-  /** The release host to poll. `MIRIN_UPDATE_BASE_URL` overrides the embedded
-   *  `baseUrl` (for local end-to-end testing against a throwaway server). */
-  #baseUrl(v: VersionInfo): string {
-    return trustedBaseUrl(process.env.MIRIN_UPDATE_BASE_URL ?? v.baseUrl);
+  #baseUrl(version: VersionInfo): string {
+    return trustedBaseUrl(process.env.MIRIN_UPDATE_BASE_URL ?? version.baseUrl);
   }
 
-  #supportDir(v: VersionInfo): string {
+  #supportDir(version: VersionInfo): string {
     if (IS_WINDOWS) {
       const base = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-      return join(base, v.identifier, v.channel);
+      return join(base, version.identifier, version.channel);
     }
     if (IS_LINUX) {
-      // XDG base dir spec: $XDG_DATA_HOME, defaulting to ~/.local/share.
       const base = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
-      return join(base, v.identifier, v.channel);
+      return join(base, version.identifier, version.channel);
     }
-    return join(homedir(), "Library", "Application Support", v.identifier, v.channel);
+    return join(homedir(), "Library", "Application Support", version.identifier, version.channel);
+  }
+
+  #sameGeneration(left: PendingGeneration, right: PendingGeneration): boolean {
+    return (
+      left.generation === right.generation &&
+      left.version === right.version &&
+      left.tarHash === right.tarHash
+    );
+  }
+
+  #assertCurrent(snapshot: PendingGeneration): void {
+    if (!this.#transactions.isCurrent(snapshot)) throw new StaleGenerationError();
   }
 
   #setStatus(status: UpdaterStatus): void {
@@ -288,19 +402,19 @@ export class Updater {
     this.#emit("status", { status });
   }
 
-  #fail(err: unknown): void {
-    const message = err instanceof Error ? err.message : String(err);
+  #fail(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
     this.#status = "error";
     this.#emit("status", { status: "error" });
     this.#emit("error", { message });
   }
 
   #emit<K extends keyof UpdaterEvents>(type: K, payload: UpdaterEvents[K]): void {
-    for (const fn of this.#listeners.get(type) ?? []) fn(payload);
+    for (const listener of this.#listeners.get(type) ?? []) listener(payload);
     try {
       runtime().rpc.broadcast(`mirin:updater:${type}`, payload);
     } catch {
-      // detached / rpc not up — ignore
+      // The runtime may be detached while updater helpers are tested or shutting down.
     }
   }
 }

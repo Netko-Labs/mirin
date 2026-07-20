@@ -1,5 +1,6 @@
 export interface PreviousReleaseManifest {
   version: string;
+  tarSize: number;
   bundle: {
     url: string;
     sha256: string;
@@ -7,7 +8,10 @@ export interface PreviousReleaseManifest {
   };
 }
 
-const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 256 * 1024;
+const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
+const MAX_TAR_BYTES = 1024 * 1024 * 1024;
+const SEMVER_IDENTIFIER = /^[0-9A-Za-z-]+$/;
 
 export function parsePreviousReleaseManifest(
   value: unknown,
@@ -15,37 +19,106 @@ export function parsePreviousReleaseManifest(
 ): PreviousReleaseManifest {
   const manifest = record(value, "manifest");
   for (const key of ["channel", "platform", "arch"] as const) {
-    if (stringField(manifest, key) !== expected[key]) {
+    if (stringField(manifest, key, 64) !== expected[key]) {
       throw new Error(`previous update manifest target mismatch: ${key}`);
     }
   }
 
-  const version = stringField(manifest, "version");
+  const version = stringField(manifest, "version", 128);
+  assertSemVer(version);
+  const tarSize = sizeField(manifest.tarSize, MAX_TAR_BYTES, "tar size");
+  const bundle = record(manifest.bundle, "bundle");
+  const url = stringField(bundle, "url", 255);
+  releaseArtifactUrl("https://example.invalid", url);
+  const sha256 = stringField(bundle, "sha256", 64).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error("invalid previous bundle checksum");
+  const size = sizeField(bundle.size, MAX_ARTIFACT_BYTES, "bundle size");
+
+  return { version, tarSize, bundle: { url, sha256, size } };
+}
+
+export async function readPreviousReleaseManifest(
+  response: Response,
+  expected: { channel: string; platform: string; arch: string },
+): Promise<PreviousReleaseManifest> {
+  const rawLength = response.headers.get("content-length");
+  if (rawLength !== null) {
+    if (!/^\d+$/.test(rawLength) || Number(rawLength) > MAX_MANIFEST_BYTES) {
+      throw new Error("previous update manifest is too large");
+    }
+  }
+  if (!response.body) throw new Error("previous update manifest has no body");
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_MANIFEST_BYTES) {
+        await reader.cancel();
+        throw new Error("previous update manifest is too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new Error("invalid previous update manifest JSON");
+  }
+  return parsePreviousReleaseManifest(value, expected);
+}
+
+function assertSemVer(value: string): void {
+  const plus = value.indexOf("+");
+  if (plus !== -1 && value.indexOf("+", plus + 1) !== -1) {
+    throw new Error("invalid previous update version");
+  }
+  const withoutBuild = plus === -1 ? value : value.slice(0, plus);
+  if (plus !== -1) assertIdentifiers(value.slice(plus + 1), false);
+  const hyphen = withoutBuild.indexOf("-");
+  const core = hyphen === -1 ? withoutBuild : withoutBuild.slice(0, hyphen);
+  if (hyphen !== -1) assertIdentifiers(withoutBuild.slice(hyphen + 1), true);
+  const parts = core.split(".");
   if (
-    version.length > 128 ||
-    !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
-      version,
+    parts.length !== 3 ||
+    parts.some((part) => !/^\d+$/.test(part) || (part.length > 1 && part.startsWith("0")))
+  ) {
+    throw new Error("invalid previous update version");
+  }
+}
+
+function assertIdentifiers(value: string, rejectNumericLeadingZero: boolean): void {
+  const parts = value.split(".");
+  if (
+    parts.some(
+      (part) =>
+        !SEMVER_IDENTIFIER.test(part) ||
+        (rejectNumericLeadingZero && /^\d+$/.test(part) && part.length > 1 && part.startsWith("0")),
     )
   ) {
     throw new Error("invalid previous update version");
   }
+}
 
-  const bundle = record(manifest.bundle, "bundle");
-  const url = stringField(bundle, "url");
-  releaseArtifactUrl("https://example.invalid", url);
-  const sha256 = stringField(bundle, "sha256").toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error("invalid previous bundle checksum");
-  const size = bundle.size;
-  if (
-    typeof size !== "number" ||
-    !Number.isSafeInteger(size) ||
-    size <= 0 ||
-    size > MAX_ARTIFACT_BYTES
-  ) {
-    throw new Error("invalid previous bundle size");
+function sizeField(value: unknown, maximum: number, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`invalid previous ${label}`);
   }
-
-  return { version, bundle: { url, sha256, size } };
+  return value;
 }
 
 export function trustedReleaseBaseUrl(raw: string): string {
@@ -91,9 +164,9 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function stringField(source: Record<string, unknown>, key: string): string {
+function stringField(source: Record<string, unknown>, key: string, maximum: number): string {
   const value = source[key];
-  if (typeof value !== "string" || value.length === 0) {
+  if (typeof value !== "string" || value.length === 0 || value.length > maximum) {
     throw new Error(`invalid previous update field: ${key}`);
   }
   return value;

@@ -71,10 +71,21 @@ platform so each target does not download and unpack the same runtime again.
 Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
 those files, such as GitHub Releases' `.../releases/latest/download`. Runtime
 updates reject non-HTTPS URLs except `http://localhost` / loopback for local
-testing, validate the manifest target, verify SHA-256 hashes, and check the
-archive layout before extraction. Artifact names, versions, and sizes are
-bounded before they become filesystem paths or downloads. Set `release.notes`
-to embed markdown release notes in the update manifest for app update UIs.
+testing, validate the manifest target, and accept only strictly newer SemVer
+precedence. Checks are single-flight; downloads and applies are guarded operations
+correlated to a version/hash generation, so a recheck cannot apply an older staged
+bundle. Manifest bodies, downloads, decompressed patches, reconstructed tars,
+archive entries, and path/link lengths are bounded. SHA-256, archive node/link
+safety, the real staged root and platform executable, executable mode on
+macOS/Linux, and staged `version.json` identity are all verified before apply.
+Set `release.notes` to embed markdown release notes in the update manifest for app
+update UIs.
+
+Current `mirin release` manifests add required `tarSize` and patch
+`uncompressedSize` bounds. Older Mirin runtimes ignore these additive fields and
+can consume new releases. Hardened runtimes intentionally reject legacy manifests
+that omit the bounds; release tooling can still publish a full update when the
+previous remote manifest is legacy, but skips delta generation against it.
 
 ## Native features
 

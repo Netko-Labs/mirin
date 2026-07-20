@@ -76,8 +76,8 @@ Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dial
 - `bun create mirinjs` + `mirin init`: shared scaffold package (`create-mirinjs`) with the React/Vite/RPC starter.
 - Installed-mode native artifacts: `@mirinjs/darwin-arm64` optional package + matching CEF release download into `~/.mirinjs/cef/<version-platform>`; no Rust toolchain needed for consumers.
 - `mirin release` (macOS): Developer-ID signing/notarization when credentials are present, DMG installer, flat update manifest, full `.tar.zst` bundle, and best-effort bsdiff delta patch from the previously published release.
-- `app.updater`: packaged-app check/download/apply flow, version/channel identity from `Resources/version.json`, SHA-256 verification for downloads and reconstructed tars, archive layout validation before extraction, macOS codesign verification, whole-`.app` swap + relaunch.
-- Security constraints: runtime update URLs must be HTTPS except loopback HTTP for local testing; manifests must match channel/platform/arch; artifact names are flat files produced by `mirin release`.
+- `app.updater`: packaged-app check/download/apply flow with structured `Resources/version.json`, strictly newer SemVer selection, single-flight checks, generation-correlated staging, bounded zstd/patch output, SHA-256 verification, archive type/link validation, real `.app`/executable/identity checks, macOS executable-mode + codesign verification, and whole-`.app` swap + relaunch.
+- Security constraints: runtime update URLs must be HTTPS except loopback HTTP for local testing; manifests must match channel/platform/arch and declare compressed/tar/patch bounds; artifact names are flat files produced by `mirin release`. Legacy manifests without the new bounds are rejected by hardened runtimes; new manifests remain readable by older runtimes.
 - **Example:** `examples/updater` demonstrates local self-hosting and GitHub Releases.
 
 ## Post-MVP queue (ordered, tentative)
