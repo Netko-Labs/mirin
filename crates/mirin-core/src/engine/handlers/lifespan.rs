@@ -18,7 +18,7 @@ wrap_life_span_handler! {
             };
             if let Some(browser) = browser_to_close {
                 if let Some(host) = browser.host() {
-                    host.close_browser(0);
+                    host.close_browser(1);
                 }
             }
         }
@@ -27,7 +27,7 @@ wrap_life_span_handler! {
         }
         fn on_before_close(&self, browser: Option<&mut Browser>) {
             let outcome = self.inner.lock().expect("lock").on_before_close(browser);
-            MirinHandler::complete_before_close(outcome);
+            MirinHandler::complete_before_close(&self.inner, outcome);
         }
     }
 }

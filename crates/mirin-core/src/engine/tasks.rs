@@ -38,6 +38,11 @@ pub(crate) fn post_request_quit(inner: Arc<Mutex<MirinHandler>>) {
     post_task(ThreadId::UI, Some(&mut task));
 }
 
+pub(crate) fn post_finish_quit_if_idle(inner: Arc<Mutex<MirinHandler>>) {
+    let mut task = FinishQuitIfIdleTask::new(inner);
+    post_task(ThreadId::UI, Some(&mut task));
+}
+
 pub(crate) fn post_quit() {
     let mut task = QuitTask::new();
     post_task(ThreadId::UI, Some(&mut task));
@@ -84,16 +89,27 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            let Some(handler) = MirinHandler::instance() else {
+                state::finish_window_creation(self.id);
+                return;
+            };
             if state::quit_requested() {
-                state::finish_window_creation();
-                if let Some(handler) = MirinHandler::instance() {
-                    MirinHandler::finish_quit_if_idle(&handler);
-                }
+                MirinHandler::fail_window_creation(
+                    &handler,
+                    self.id,
+                    "application quit before window creation",
+                );
                 return;
             }
             #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             if let Some(opts) = self.opts.borrow_mut().take() {
-                create_window_on_ui(self.id, opts);
+                if !create_window_on_ui(self.id, opts) {
+                    MirinHandler::fail_window_creation(
+                        &handler,
+                        self.id,
+                        "native browser creation failed",
+                    );
+                }
             }
         }
     }
@@ -160,6 +176,18 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             MirinHandler::request_quit(&self.inner);
+        }
+    }
+}
+
+wrap_task! {
+    struct FinishQuitIfIdleTask {
+        inner: Arc<Mutex<MirinHandler>>,
+    }
+    impl Task {
+        fn execute(&self) {
+            debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            MirinHandler::finish_quit_if_idle(&self.inner);
         }
     }
 }

@@ -64,6 +64,7 @@
       }
     };
     nextSocket.onmessage = (event) => {
+      if (socket !== nextSocket) return;
       let message;
       try {
         message = JSON.parse(event.data);
@@ -118,7 +119,12 @@
       const id = nextId++;
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
-        send({ kind: "request", id, method, input });
+        try {
+          send({ kind: "request", id, method, input });
+        } catch (error) {
+          pending.delete(id);
+          reject(error);
+        }
       });
     },
     onEvent(method, listener) {

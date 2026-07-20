@@ -32,6 +32,15 @@ class FakeWebSocket {
   close(): void {}
 }
 
+class TrackingMap<K, V> extends Map<K, V> {
+  static instances: Map<unknown, unknown>[] = [];
+
+  constructor() {
+    super();
+    TrackingMap.instances.push(this as Map<unknown, unknown>);
+  }
+}
+
 function bootstrapSource(): string {
   const path = resolve(import.meta.dir, "../../../crates/mirin-helper/src/bootstrap.js");
   return readFileSync(path, "utf8")
@@ -43,8 +52,10 @@ function bootstrapSource(): string {
 function installBridge(): {
   window: BootstrapWindow & { mirin: MirinBridge };
   reconnects: Array<() => void>;
+  pending: Map<unknown, unknown>;
 } {
   FakeWebSocket.instances = [];
+  TrackingMap.instances = [];
   const reconnects: Array<() => void> = [];
   const window: BootstrapWindow = { innerWidth: 800, innerHeight: 600 };
   const document = {
@@ -61,6 +72,7 @@ function installBridge(): {
     "WebSocket",
     "setTimeout",
     "console",
+    "Map",
     bootstrapSource(),
   ) as (
     window: BootstrapWindow,
@@ -68,11 +80,14 @@ function installBridge(): {
     WebSocket: typeof FakeWebSocket,
     setTimeout: (callback: () => void, delay: number) => number,
     console: Console,
+    Map: MapConstructor,
   ) => void;
 
-  execute(window, document, FakeWebSocket, setTimeout, console);
+  execute(window, document, FakeWebSocket, setTimeout, console, TrackingMap);
   if (!window.mirin) throw new Error("bootstrap did not install window.mirin");
-  return { window: window as BootstrapWindow & { mirin: MirinBridge }, reconnects };
+  const pending = TrackingMap.instances[0];
+  if (!pending) throw new Error("bootstrap did not create pending map");
+  return { window: window as BootstrapWindow & { mirin: MirinBridge }, reconnects, pending };
 }
 
 test("disconnect rejects in-flight calls and does not replay them", async () => {
@@ -110,4 +125,45 @@ test("disconnect rejects in-flight calls and does not replay them", async () => 
     data: JSON.stringify({ kind: "response", id: 2, ok: true, result: "saved" }),
   });
   expect(await futureCall).toBe("saved");
+});
+
+test("serialization failure removes the pending request", async () => {
+  const { window, pending } = installBridge();
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+
+  const result = await window.mirin.call("notes.save", circular).then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  expect(result).toBeInstanceOf(Error);
+  expect(pending.size).toBe(0);
+});
+
+test("messages from a replaced socket cannot settle current calls", async () => {
+  const { window, reconnects } = installBridge();
+  const firstSocket = FakeWebSocket.instances[0];
+  firstSocket.onopen?.();
+  firstSocket.onclose?.();
+  reconnects.shift()?.();
+
+  const secondSocket = FakeWebSocket.instances[1];
+  secondSocket.onopen?.();
+  const call = window.mirin.call("notes.save", { title: "current" });
+  let settled = false;
+  void call.finally(() => {
+    settled = true;
+  });
+
+  firstSocket.onmessage?.({
+    data: JSON.stringify({ kind: "response", id: 1, ok: true, result: "stale" }),
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+
+  secondSocket.onmessage?.({
+    data: JSON.stringify({ kind: "response", id: 1, ok: true, result: "saved" }),
+  });
+  expect(await call).toBe("saved");
 });

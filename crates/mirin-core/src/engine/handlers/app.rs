@@ -100,11 +100,11 @@ wrap_browser_process_handler! {
 
             #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             if let Some(url) = STARTUP_URL.with(|u| u.borrow().clone()) {
-                if !state::begin_window_creation() {
+                let id = NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed);
+                if !state::begin_window_creation(id) {
                     MirinHandler::request_quit(&handler);
                     return;
                 }
-                let id = NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed);
                 let mut opts = WindowOpts::startup(url);
                 if std::env::var_os("MIRIN_SMOKE_TRANSPARENT").is_some() {
                     opts.transparent = true;
@@ -116,7 +116,14 @@ wrap_browser_process_handler! {
                         });
                     }
                 }
-                create_window_on_ui(id, opts);
+                if !create_window_on_ui(id, opts) {
+                    MirinHandler::fail_window_creation(
+                        &handler,
+                        id,
+                        "native startup browser creation failed",
+                    );
+                    MirinHandler::request_quit(&handler);
+                }
             }
         }
     }

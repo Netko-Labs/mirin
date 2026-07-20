@@ -8,15 +8,32 @@ use super::tasks;
 /// Allocate a window id and request creation on the UI thread. Returns the id
 /// synchronously.
 pub fn create_window(opts: WindowOpts) -> u32 {
-    if !state::begin_window_creation() {
+    let id = NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed);
+    if !state::begin_window_creation(id) {
+        schedule_quit_check();
         return 0;
     }
-    let id = NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed);
     if !tasks::post_create_window(id, opts) {
-        state::finish_window_creation();
+        let released = state::finish_window_creation(id);
+        if should_schedule_quit_check(released, state::quit_requested()) {
+            schedule_quit_check();
+        }
         return 0;
     }
     id
+}
+
+fn schedule_quit_check() {
+    if !state::quit_requested() {
+        return;
+    }
+    if let Some(handler) = MirinHandler::instance() {
+        MirinHandler::finish_quit_if_idle(&handler);
+    }
+}
+
+fn should_schedule_quit_check(released: bool, quit_requested: bool) -> bool {
+    released && quit_requested
 }
 
 pub fn close_window(id: u32) {
@@ -68,4 +85,16 @@ pub fn window_maybe_start_drag(id: u32, x: i32, y: i32, detail: i32, ht: i32) {
 pub fn set_material(id: u32, spec_json: String) {
     let material: Option<WindowMaterial> = serde_json::from_str(&spec_json).ok().flatten();
     tasks::post_set_material(id, material);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_schedule_quit_check;
+
+    #[test]
+    fn creation_release_schedules_only_requested_quit_checks() {
+        assert!(should_schedule_quit_check(true, true));
+        assert!(!should_schedule_quit_check(true, false));
+        assert!(!should_schedule_quit_check(false, true));
+    }
 }

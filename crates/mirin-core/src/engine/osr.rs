@@ -53,15 +53,26 @@ pub fn register(window_id: u32, browser: Browser) {
 pub fn unregister(browser_ident: i32) {
     let window_id = BROWSER_TO_WINDOW.with(|m| m.borrow_mut().remove(&browser_ident));
     if let Some(window_id) = window_id {
-        OSR_BROWSERS.with(|m| {
-            m.borrow_mut().remove(&window_id);
-        });
-        OSR_WINDOWS.with(|s| {
-            s.borrow_mut().remove(&window_id);
-        });
-        #[cfg(target_os = "macos")]
-        mac::osr::remove(window_id);
+        discard_window(window_id);
     }
+}
+
+/// Drop all window-keyed OSR state when browser creation fails before a browser
+/// identifier is available.
+pub fn discard_window(window_id: u32) {
+    BROWSER_TO_WINDOW.with(|m| {
+        m.borrow_mut().retain(|_, mapped| *mapped != window_id);
+    });
+    OSR_BROWSERS.with(|m| {
+        m.borrow_mut().remove(&window_id);
+    });
+    OSR_WINDOWS.with(|s| {
+        s.borrow_mut().remove(&window_id);
+    });
+    #[cfg(target_os = "macos")]
+    mac::osr::remove(window_id);
+    #[cfg(target_os = "windows")]
+    crate::win::osr::remove(window_id);
 }
 
 fn host(window_id: u32) -> Option<BrowserHost> {

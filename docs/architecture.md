@@ -71,7 +71,9 @@ mirin_app_quit()
 Options cross the boundary as JSON for the MVP. It's measurably slower than a binary layout and we don't care yet; these are low-frequency control calls. Revisit only with profiles in hand.
 
 **Events (Rust → Bun).** Rust appends JSON events such as `core.ready`,
-`window.created`, and `window.closed` to a process-global queue. The Worker drains
+`window.created`, `window.create-failed`, and `window.closed` to a process-global
+queue. Creation results carry the allocated Mirin window id, so the Worker can
+resolve or reject exactly the matching handle. The Worker drains
 that queue through `mirin_poll_event` every 8 ms and dispatches by the event's
 `type`. Polling is required because the host main thread is blocked inside
 `mirin_run`; a bun:ffi callback invoked from that thread does not enter the
@@ -104,8 +106,10 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 A socket disconnect rejects and clears every outstanding renderer RPC promise.
 Requests already sent are never replayed after reconnect because they may have
 executed in the Worker; calls made after the disconnect may use the new
-connection. This gives failures at-most-once transport behavior instead of
-leaving promises pending forever.
+connection. Serialization failure removes the request before rejecting it, and
+frames delivered by a replaced socket are ignored. This gives failures
+at-most-once transport behavior instead of leaving promises pending forever or
+allowing stale connections to settle current calls.
 
 ## 5. CEF integration
 
@@ -126,12 +130,21 @@ that lock. Native close gestures route through the same targeted browser close;
 only explicit app quit closes every browser.
 
 `app.windows.open()` resolves when the matching native `window.created` event is
-observed, not when the create command is merely queued. Automatic manifest
-windows are all awaited before `app.ready` fires. Explicit quit records a
-process-wide quit request: a zero-window app exits immediately, queued creation
-tasks are canceled, and a browser that completes creation during the race is
-closed before the message loop exits. The loop ends only when both live browsers
-and pending creations are zero.
+observed, not when the create command is merely queued. Pending creations are
+reserved by Mirin window id; popup and DevTools callbacks cannot consume those
+reservations. Synchronous platform/CEF creation failure tears down partial native
+and OSR state, releases that exact id, and emits `window.create-failed`, which
+rejects and unregisters the matching TypeScript handle.
+
+Automatic manifest windows are all awaited before `app.ready` fires. A failure
+prevents `ready` and requests orderly application quit. Pre-ready macOS Dock
+policy is flushed at `core.ready`, before automatic windows are opened. Explicit
+quit is monotonic: it records the process-wide request and force-closes every
+current or late-created browser, even when another browser is already closing,
+so `beforeunload` cancellation cannot leave the app permanently half-quit.
+Queued creation tasks are canceled with correlated failures. The loop ends only
+when both live browsers and pending creation ids are zero; a reservation rollback
+that reaches zero schedules a UI-thread idle-finish check.
 
 ## 6. Repository layout
 
@@ -212,11 +225,12 @@ native layer (`mac/` vs `win/` vs `linux/`) and the bundle layout differ. `win/`
 mirin-owned top-level Win32 window (`WindowInfo::set_as_child`) — not the macOS
 embedded-NSView/OSR model. Consequences:
 
-- **Close lifecycle.** `CloseBrowser(false)` → `do_close` (which marks the window
-  closing) → CEF sends `WM_CLOSE` to the top-level owner → the WndProc lets the
-  *next* `WM_CLOSE` `DestroyWindow`, which tears down the CEF child and fires
-  `on_before_close`. This is-closing handshake is the Windows analogue of macOS's
-  view-detach dance (`win/window/mod.rs`).
+- **Close lifecycle.** `CloseBrowser(false)` → `do_close` (which marks that exact
+  window closing) → CEF sends `WM_CLOSE` to the top-level owner → the WndProc lets
+  the *next* `WM_CLOSE` `DestroyWindow`, which tears down the CEF child and fires
+  `on_before_close`. This per-window acknowledgement is the Windows analogue of
+  macOS's view-detach dance (`win/window/mod.rs`). Explicit app quit upgrades all
+  current and later closes to `CloseBrowser(true)`.
 - **Custom title bar** (`titleBarStyle: hidden | hiddenInset`): frameless via
   `WM_NCCALCSIZE` (client == window; maximized inset), DWM shadow restored with
   `DwmExtendFrameIntoClientArea`. The webview child consumes mouse input, so

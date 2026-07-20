@@ -39,6 +39,15 @@ pub fn close_window(id: u32) {
     }
 }
 
+/// Tear down a native shell whose CEF browser never reached the close handshake.
+pub fn discard_window(id: u32) {
+    forget_window_drag(id);
+    if let Some(window) = state::remove_window(id) {
+        window.setDelegate(None);
+        window.close();
+    }
+}
+
 /// Close every mirin-owned window (app quit path).
 pub fn close_all_windows() {
     let windows: Vec<Retained<NSWindow>> = state::drain_windows();
@@ -68,9 +77,11 @@ define_class!(
         #[unsafe(method(windowShouldClose:))]
         unsafe fn window_should_close(&self, _sender: &NSWindow) -> Bool {
             if let Some(handler) = MirinHandler::instance() {
-                let already_closing = { handler.lock().expect("lock").is_closing() };
+                let window_id = self.ivars().window_id.get();
+                let already_closing =
+                    { handler.lock().expect("lock").is_window_closing(window_id) };
                 if !already_closing {
-                    MirinHandler::close_browser_for_window(&handler, self.ivars().window_id.get());
+                    MirinHandler::close_browser_for_window(&handler, window_id);
                     return Bool::NO;
                 }
             }

@@ -1,20 +1,41 @@
 use cef::Client;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 pub(crate) static NEXT_WINDOW_ID: AtomicU32 = AtomicU32::new(1);
 pub(crate) static READY: AtomicBool = AtomicBool::new(false);
 /// Set as soon as any thread requests app termination. Creation tasks check it
 /// before touching native UI so an early quit cannot race a new browser into life.
 pub(crate) static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
-/// Browser creations accepted by the Worker but not yet observed by
-/// `LifeSpanHandler::on_after_created`.
-static PENDING_WINDOW_CREATIONS: AtomicU32 = AtomicU32::new(0);
+/// Mirin window ids accepted by the Worker but not yet observed by
+/// `LifeSpanHandler::on_after_created` or explicitly failed/canceled.
+static PENDING_WINDOW_CREATIONS: LazyLock<Mutex<WindowCreationReservations>> =
+    LazyLock::new(|| Mutex::new(WindowCreationReservations::default()));
 /// True under `mirin dev`; gates the web-inspector context-menu item.
 pub(crate) static IS_DEV: AtomicBool = AtomicBool::new(false);
 pub(crate) static RPC_PORT: AtomicU16 = AtomicU16::new(0);
 pub(crate) static RPC_TOKEN: Mutex<String> = Mutex::new(String::new());
+
+#[derive(Default)]
+struct WindowCreationReservations {
+    ids: HashSet<u32>,
+}
+
+impl WindowCreationReservations {
+    fn reserve(&mut self, id: u32) -> bool {
+        self.ids.insert(id)
+    }
+
+    fn release(&mut self, id: u32) -> bool {
+        self.ids.remove(&id)
+    }
+
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+}
 
 thread_local! {
     /// The shared CEF client, created at context init and cloned per browser.
@@ -49,40 +70,39 @@ pub(crate) fn quit_requested() -> bool {
 }
 
 /// Reserve one asynchronous browser creation unless quit has already won the
-/// race. A second check closes the window between the first load and increment.
-pub(crate) fn begin_window_creation() -> bool {
+/// race. The second check closes the window between reservation and return.
+pub(crate) fn begin_window_creation(id: u32) -> bool {
     if quit_requested() {
         return false;
     }
-    PENDING_WINDOW_CREATIONS.fetch_add(1, Ordering::SeqCst);
+    {
+        let mut pending = PENDING_WINDOW_CREATIONS
+            .lock()
+            .expect("pending window creation lock");
+        if quit_requested() || !pending.reserve(id) {
+            return false;
+        }
+    }
     if quit_requested() {
-        finish_window_creation();
+        finish_window_creation(id);
         return false;
     }
     true
 }
 
-/// Mark one accepted browser creation complete and return the remaining count.
-pub(crate) fn finish_window_creation() -> u32 {
-    let mut current = PENDING_WINDOW_CREATIONS.load(Ordering::SeqCst);
-    loop {
-        if current == 0 {
-            return 0;
-        }
-        match PENDING_WINDOW_CREATIONS.compare_exchange(
-            current,
-            current - 1,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            Ok(_) => return current - 1,
-            Err(actual) => current = actual,
-        }
-    }
+/// Release the exact accepted browser creation. Returns whether that id existed.
+pub(crate) fn finish_window_creation(id: u32) -> bool {
+    PENDING_WINDOW_CREATIONS
+        .lock()
+        .expect("pending window creation lock")
+        .release(id)
 }
 
-pub(crate) fn pending_window_creations() -> u32 {
-    PENDING_WINDOW_CREATIONS.load(Ordering::SeqCst)
+pub(crate) fn pending_window_creations() -> usize {
+    PENDING_WINDOW_CREATIONS
+        .lock()
+        .expect("pending window creation lock")
+        .len()
 }
 
 /// Whether this is a `mirin dev` run (enables the Inspect Element context menu).
@@ -119,4 +139,34 @@ pub fn wm_class() -> Option<(String, String)> {
 #[cfg(not(target_os = "linux"))]
 pub fn wm_class() -> Option<(String, String)> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WindowCreationReservations;
+
+    #[test]
+    fn creation_reservations_release_only_the_matching_window() {
+        let mut reservations = WindowCreationReservations::default();
+        assert!(reservations.reserve(1));
+        assert!(reservations.reserve(2));
+        assert_eq!(reservations.len(), 2);
+
+        assert!(!reservations.release(99));
+        assert_eq!(reservations.len(), 2);
+        assert!(reservations.release(2));
+        assert_eq!(reservations.len(), 1);
+        assert!(!reservations.release(2));
+        assert_eq!(reservations.len(), 1);
+        assert!(reservations.release(1));
+        assert_eq!(reservations.len(), 0);
+    }
+
+    #[test]
+    fn creation_reservations_reject_duplicate_ids() {
+        let mut reservations = WindowCreationReservations::default();
+        assert!(reservations.reserve(7));
+        assert!(!reservations.reserve(7));
+        assert_eq!(reservations.len(), 1);
+    }
 }

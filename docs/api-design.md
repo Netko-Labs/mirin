@@ -54,9 +54,11 @@ app.on("window-all-closed", () => {
 
 Declared windows with no `open` field open automatically at launch. `ready`
 fires only after every automatic window has emitted native `window.created`;
-`app.windows.open(...)` uses the same event correlation and resolves with its
-handle at that point. This guarantees a live native browser, but does not promise
-first paint or an established renderer RPC socket. `defineConfig` is an identity
+if any automatic window reports `window.create-failed`, `ready` does not fire and
+Mirin requests orderly application quit. `app.windows.open(...)` uses the same
+event correlation, resolving with its handle on success or rejecting and
+unregistering that handle on failure. This guarantees a live native browser, but
+does not promise first paint or an established renderer RPC socket. `defineConfig` is an identity
 function that exists for typing/intellisense; the manifest must remain
 serializable data.
 
@@ -130,7 +132,10 @@ app.dock.hide();   // accessory app: no Dock tile, no menu bar (windows still sh
 app.dock.show();   // back to a regular app
 ```
 
-Calls made before the app is ready are applied once it is. Combine with `titleBarStyle: "hidden"` for a chromeless, Dock-less panel (the Spotlight example does both).
+Calls made before the native core is ready are applied at `core.ready`, before
+automatic windows are opened and before public `app.ready`. Combine with
+`titleBarStyle: "hidden"` for a chromeless, Dock-less panel (the Spotlight
+example does both).
 
 ## 3. Typed RPC
 
