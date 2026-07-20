@@ -76,15 +76,17 @@ describe("updater manifest validation", () => {
     ).toThrow("invalid update manifest field: uncompressedSize");
   });
 
-  test("rejects values above conservative absolute limits", () => {
+  test("allows existing multi-gigabyte tars and rejects values above 8 GiB", () => {
+    const threeGiB = 3 * 1024 * 1024 * 1024;
+    expect(parseManifest({ ...manifest, tarSize: threeGiB }, expected).tarSize).toBe(threeGiB);
     expect(() =>
       parseManifest(
         { ...manifest, bundle: { ...manifest.bundle, size: 513 * 1024 * 1024 } },
         expected,
       ),
     ).toThrow("invalid update manifest field: size");
-    expect(() => parseManifest({ ...manifest, tarSize: 1024 * 1024 * 1024 + 1 }, expected)).toThrow(
-      "invalid update manifest field: tarSize",
-    );
+    expect(() =>
+      parseManifest({ ...manifest, tarSize: 8 * 1024 * 1024 * 1024 + 1 }, expected),
+    ).toThrow("invalid update manifest field: tarSize");
   });
 });

@@ -323,4 +323,13 @@ mod tests {
         assert!(!patched.exists());
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn bounded_writer_preserves_limits_above_u32() {
+        let limit = 8_u64 * 1024 * 1024 * 1024;
+        let mut output = BoundedWriter::new(Vec::new(), limit);
+        output.write_all(b"mirin").unwrap();
+        assert_eq!(output.remaining, limit - 5);
+        assert_eq!(output.inner, b"mirin");
+    }
 }

@@ -24,6 +24,7 @@ import { buildWindowsBundle } from "./bundle/windows/index.ts";
 import { compileWorkers, normalizeSidecars } from "./extras.ts";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
 import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
+import { validateReleaseChannel } from "./release/channel.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -185,7 +186,7 @@ export async function build(
   const bundleId: string = config.id ?? "dev.mirin.app";
   const mainEntry = join(projectDir, config.main ?? "main/main.ts");
   const version = opts.version ?? appVersion(projectDir);
-  const channel: string = config.release?.channel ?? "stable";
+  const channel = validateReleaseChannel(config.release?.channel ?? "stable");
   const baseUrl: string | undefined = config.release?.baseUrl;
   const releaseNotes: string | undefined = config.release?.notes;
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;

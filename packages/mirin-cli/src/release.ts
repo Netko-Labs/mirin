@@ -34,7 +34,7 @@ import {
 // The native codec uses multiple workers, so this scales across CI runner cores.
 const RELEASE_COMPRESSION_LEVEL = 10;
 const MAX_RELEASE_ARTIFACT_BYTES = 512 * 1024 * 1024;
-const MAX_RELEASE_TAR_BYTES = 1024 * 1024 * 1024;
+const MAX_RELEASE_TAR_BYTES = 8 * 1024 * 1024 * 1024;
 
 interface ReleaseCodec {
   compress(src: string, dst: string, level: number): void;
@@ -46,13 +46,10 @@ export function createReleaseCodec(binary: string): ReleaseCodec {
   const run = (operation: string, ...args: string[]) => {
     const result = Bun.spawnSync({
       cmd: [binary, operation, ...args],
-      stdout: "inherit",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
     });
-    if (result.exitCode !== 0) {
-      const detail = new TextDecoder().decode(result.stderr).trim();
-      throw new Error(`codec ${operation} failed${detail ? `: ${detail}` : ""}`);
-    }
+    if (result.exitCode !== 0) throw new Error(`codec ${operation} failed`);
   };
   return {
     compress(src, dst, level) {

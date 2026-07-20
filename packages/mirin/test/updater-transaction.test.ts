@@ -6,26 +6,47 @@ import {
 } from "../src/updater/lib/transaction.ts";
 
 describe("updater transaction generations", () => {
-  test("rejects stale completion and guards concurrent download/apply operations", () => {
+  test("rejects checks during download and stale completion after invalidation", () => {
     const state = new UpdateTransactionState();
     const firstGeneration = state.beginCheck();
     const first = state.commitCheck(firstGeneration, "1.1.0", "a".repeat(64));
     expect(first).not.toBeNull();
     const oldDownload = state.beginDownload();
 
+    expect(() => state.beginCheck()).toThrow("cannot check while an update is downloading");
+    expect(() => state.beginDownload()).toThrow("already in progress");
+    expect(() => state.beginApply()).toThrow("cannot apply while an update is downloading");
+
+    state.invalidate();
+    expect(state.completeDownload(oldDownload, "/stale", "/stale-work")).toBe(false);
+
     const secondGeneration = state.beginCheck();
     const second = state.commitCheck(secondGeneration, "1.2.0", "b".repeat(64));
     expect(second).not.toBeNull();
-    expect(state.completeDownload(oldDownload, "/stale", "/stale-work")).toBe(false);
-
     const currentDownload = state.beginDownload();
-    expect(() => state.beginDownload()).toThrow("already in progress");
     expect(state.completeDownload(currentDownload, "/staged", "/work")).toBe(true);
     const staged = state.beginApply();
     expect(staged.version).toBe("1.2.0");
     expect(() => state.beginApply()).toThrow("already in progress");
     state.finishApply(false);
     expect(state.staged).toBeNull();
+  });
+
+  test("keeps successful helper handoff terminal until process exit", () => {
+    const state = new UpdateTransactionState();
+    const generation = state.beginCheck();
+    state.commitCheck(generation, "1.1.0", "a".repeat(64));
+    const download = state.beginDownload();
+    state.completeDownload(download, "/staged", "/work");
+    state.beginApply();
+    state.finishApply(true);
+
+    expect(state.isHandedOff).toBe(true);
+    state.finishApply(false);
+    expect(state.isHandedOff).toBe(true);
+    expect(() => state.beginCheck()).toThrow("cannot check for updates while applying");
+    expect(() => state.beginDownload()).toThrow("cannot download an update while applying");
+    expect(() => state.beginApply()).toThrow("already in progress");
   });
 
   test("uses generation, version, and hash in work-directory identity", () => {

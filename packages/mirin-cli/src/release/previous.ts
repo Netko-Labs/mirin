@@ -10,7 +10,7 @@ export interface PreviousReleaseManifest {
 
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
-const MAX_TAR_BYTES = 1024 * 1024 * 1024;
+const MAX_TAR_BYTES = 8 * 1024 * 1024 * 1024;
 const SEMVER_IDENTIFIER = /^[0-9A-Za-z-]+$/;
 
 export function parsePreviousReleaseManifest(

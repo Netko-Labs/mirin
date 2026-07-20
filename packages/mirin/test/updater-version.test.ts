@@ -28,9 +28,10 @@ describe("updater SemVer ordering", () => {
 });
 
 describe("installed updater metadata", () => {
-  test("parses and normalizes the five-field version identity", () => {
-    expect(parseVersionInfo(installed)).toEqual({
+  test("parses and normalizes the five-field version identity with safe dotted channels", () => {
+    expect(parseVersionInfo({ ...installed, channel: "beta.preview-2" })).toEqual({
       ...installed,
+      channel: "beta.preview-2",
       baseUrl: "https://updates.example.com",
     });
   });
@@ -40,6 +41,12 @@ describe("installed updater metadata", () => {
       "invalid installed version field: name",
     );
     expect(() => parseVersionInfo({ ...installed, channel: "../stable" })).toThrow(
+      "invalid installed version field: channel",
+    );
+    expect(() => parseVersionInfo({ ...installed, channel: "beta..preview" })).toThrow(
+      "invalid installed version field: channel",
+    );
+    expect(() => parseVersionInfo({ ...installed, channel: "stable." })).toThrow(
       "invalid installed version field: channel",
     );
     expect(() => parseVersionInfo({ ...installed, identifier: "com..mirin" })).toThrow(

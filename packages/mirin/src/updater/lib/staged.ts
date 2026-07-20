@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { chmodSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { VersionInfo } from "../types.ts";
 import { MAX_ARCHIVE_ENTRIES } from "./limits.ts";
@@ -80,7 +80,13 @@ export function validateStagedBundle(options: StagedValidationOptions): VersionI
   if (!isWithin(staged, realExecutable) || !isWithin(staged, realVersion)) {
     throw new Error("staged update identity files escape the bundle");
   }
-  if (options.platform !== "win32" && (statSync(executable).mode & 0o111) === 0) {
+  const executableMode = statSync(executable).mode;
+  if (options.platform === "linux") {
+    if ((executableMode & 0o100) === 0) chmodSync(executable, executableMode | 0o100);
+    if ((statSync(executable).mode & 0o100) === 0) {
+      throw new Error("staged update executable is not owner-executable");
+    }
+  } else if (options.platform === "darwin" && (executableMode & 0o111) === 0) {
     throw new Error("staged update executable is not executable");
   }
 

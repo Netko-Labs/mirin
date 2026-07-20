@@ -9,6 +9,7 @@
 
 import { app, wireAppEvents } from "./app/index.ts";
 import { boot } from "./runtime.ts";
+import { initializeUpdater } from "./updater/updater.ts";
 
 // Side-effect imports: each feature subscribes its native-event handlers.
 import "./menu.ts";
@@ -63,6 +64,7 @@ export { Updater, updater } from "./updater/index.ts";
 
 wireAppEvents();
 boot();
+initializeUpdater();
 
 // Re-export so `import mirin from "mirin"` style also works if desired.
 export default app;

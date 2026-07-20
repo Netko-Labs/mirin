@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateStagedBundle } from "../src/updater/lib/staged.ts";
@@ -57,19 +65,18 @@ describe("staged update bundle validation", () => {
     }
   });
 
-  test("rejects non-executable and symlinked platform executables", () => {
+  test("ensures owner execute only after validating a regular Linux executable", () => {
     const stage = createLinuxStage();
     try {
       chmodSync(stage.executable, 0o644);
-      expect(() =>
-        validateStagedBundle({
-          staged: stage.staged,
-          extractionRoot: stage.extractionRoot,
-          platform: "linux",
-          installed,
-          expectedVersion: "1.1.0",
-        }),
-      ).toThrow("is not executable");
+      validateStagedBundle({
+        staged: stage.staged,
+        extractionRoot: stage.extractionRoot,
+        platform: "linux",
+        installed,
+        expectedVersion: "1.1.0",
+      });
+      expect(statSync(stage.executable).mode & 0o100).toBe(0o100);
 
       rmSync(stage.executable);
       const outside = join(stage.root, "outside");

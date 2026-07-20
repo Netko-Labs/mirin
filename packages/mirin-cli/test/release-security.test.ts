@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { validateReleaseChannel } from "../src/release/channel.ts";
 import {
   parsePreviousReleaseManifest,
   readPreviousReleaseManifest,
@@ -19,6 +20,15 @@ const manifest = {
     size: 42,
   },
 };
+
+describe("release channel validation", () => {
+  test("accepts safe dotted channels and rejects path-like punctuation", () => {
+    expect(validateReleaseChannel("beta.preview-2")).toBe("beta.preview-2");
+    expect(() => validateReleaseChannel("../beta")).toThrow("safe channel name");
+    expect(() => validateReleaseChannel("beta..preview")).toThrow("safe channel name");
+    expect(() => validateReleaseChannel("stable.")).toThrow("safe channel name");
+  });
+});
 
 describe("previous release validation", () => {
   test("accepts a matching release manifest with compressed and tar bounds", () => {
@@ -44,13 +54,17 @@ describe("previous release validation", () => {
     ).toThrow("unsafe previous update artifact name");
   });
 
-  test("requires legacy manifests to declare a bounded reconstructed tar size", () => {
+  test("requires legacy manifests to declare a reconstructed tar no larger than 8 GiB", () => {
     const { tarSize: _tarSize, ...legacy } = manifest;
     expect(() => parsePreviousReleaseManifest(legacy, expected)).toThrow(
       "invalid previous tar size",
     );
+    const threeGiB = 3 * 1024 * 1024 * 1024;
+    expect(parsePreviousReleaseManifest({ ...manifest, tarSize: threeGiB }, expected).tarSize).toBe(
+      threeGiB,
+    );
     expect(() =>
-      parsePreviousReleaseManifest({ ...manifest, tarSize: 1024 * 1024 * 1024 + 1 }, expected),
+      parsePreviousReleaseManifest({ ...manifest, tarSize: 8 * 1024 * 1024 * 1024 + 1 }, expected),
     ).toThrow("invalid previous tar size");
   });
 

@@ -9,11 +9,11 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { $ } from "bun";
 import { loadCodec } from "../codec.ts";
 import { runtime } from "../runtime.ts";
 import { applyUpdateAndRelaunch } from "./lib/apply.ts";
 import { verifyArchiveLayout } from "./lib/archive.ts";
+import { pruneGenerationDirectories, removePathBestEffort } from "./lib/cleanup.ts";
 import { readBoundedManifestJson } from "./lib/http.ts";
 import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
 import { MAX_TAR_BYTES } from "./lib/limits.ts";
@@ -24,6 +24,7 @@ import { validateStagedBundle } from "./lib/staged.ts";
 import {
   generationDirectoryName,
   type PendingGeneration,
+  runDownloadOperation,
   SingleFlight,
   UpdateTransactionState,
 } from "./lib/transaction.ts";
@@ -89,7 +90,9 @@ export class Updater {
 
   /** Fetch the channel manifest; report a strictly newer update or `null`. Never throws. */
   checkForUpdate(): Promise<UpdateInfo | null> {
-    if (this.#transactions.isApplying) return Promise.resolve(null);
+    if (this.#transactions.isApplying || this.#transactions.isDownloading) {
+      return Promise.resolve(null);
+    }
     return this.#checks.run(() => this.#performCheck());
   }
 
@@ -97,13 +100,14 @@ export class Updater {
     const version = this.#version();
     if (!version) return null;
 
-    const previousStaged = this.#transactions.staged;
-    const generation = this.#transactions.beginCheck();
-    this.#pendingManifest = null;
-    if (previousStaged) rmSync(previousStaged.workDir, { recursive: true, force: true });
-    this.#setStatus("checking");
-
+    let generation: number | undefined;
     try {
+      const previousStaged = this.#transactions.staged;
+      generation = this.#transactions.beginCheck();
+      this.#pendingManifest = null;
+      if (previousStaged) removePathBestEffort(previousStaged.workDir, true);
+      this.#setStatus("checking");
+
       const base = this.#baseUrl(version);
       const url = `${base}/${this.#prefix(version)}-update.json?t=${Date.now()}`;
       const response = await fetch(url, { redirect: "follow" });
@@ -124,7 +128,10 @@ export class Updater {
         manifest.version,
         manifest.tarHash,
       );
-      if (!pending) return null;
+      if (!pending) {
+        this.#setStatus("idle");
+        return null;
+      }
       this.#pendingManifest = { ...pending, manifest };
       const info: UpdateInfo = {
         version: manifest.version,
@@ -136,9 +143,11 @@ export class Updater {
       this.#emit("update-available", info);
       return info;
     } catch (error) {
-      const staged = this.#transactions.invalidate();
-      this.#pendingManifest = null;
-      if (staged) rmSync(staged.workDir, { recursive: true, force: true });
+      if (generation !== undefined) {
+        const staged = this.#transactions.invalidate();
+        this.#pendingManifest = null;
+        if (staged) removePathBestEffort(staged.workDir, true);
+      }
       this.#fail(error);
       return null;
     }
@@ -146,70 +155,101 @@ export class Updater {
 
   /** Download, bound, verify, extract, and structurally validate the pending update. */
   async download(onProgress?: (progress: UpdateProgress) => void): Promise<void> {
-    if (this.#checks.isRunning)
+    if (this.#checks.isRunning) {
       throw new Error("cannot download while an update check is in progress");
-    const installed = this.#version();
-    const snapshot = this.#transactions.beginDownload();
-    const pending = this.#pendingManifest;
-    if (!installed || !pending || !this.#sameGeneration(snapshot, pending)) {
-      this.#transactions.failDownload(snapshot);
-      throw new Error("pending update metadata is unavailable");
     }
+    const snapshot = this.#transactions.beginDownload();
+    let workDir: string | undefined;
 
-    this.#setStatus("downloading");
-    const manifest = pending.manifest;
-    const support = this.#supportDir(installed);
-    const tarsDir = join(support, "tars");
-    const updatesDir = join(support, "updates");
-    const workDir = join(updatesDir, generationDirectoryName(snapshot));
-    const extractDir = join(workDir, "extract");
-    mkdirSync(tarsDir, { recursive: true });
-    mkdirSync(updatesDir, { recursive: true });
-    rmSync(workDir, { recursive: true, force: true });
-    mkdirSync(workDir, { recursive: true });
+    await runDownloadOperation({
+      state: this.#transactions,
+      snapshot,
+      operation: async () => {
+        const installed = this.#version();
+        const pending = this.#pendingManifest;
+        if (!installed || !pending || !this.#sameGeneration(snapshot, pending)) {
+          throw new Error("pending update metadata is unavailable");
+        }
 
-    try {
-      const codec = loadCodec(this.#corePath());
-      const base = this.#baseUrl(installed);
-      const newTar = join(workDir, "new.tar");
-      const cachedTar = join(tarsDir, `${installed.version}.tar`);
-      const patch = manifest.patches?.find(
-        (candidate) => candidate.fromVersion === installed.version,
-      );
-      const reportProgress = (progress: UpdateProgress): void => {
-        this.#emit("progress", progress);
-        onProgress?.(progress);
-      };
+        this.#setStatus("downloading");
+        const manifest = pending.manifest;
+        const support = supportDir(installed);
+        const tarsDir = join(support, "tars");
+        const updatesDir = join(support, "updates");
+        workDir = join(updatesDir, generationDirectoryName(snapshot));
+        const extractDir = join(workDir, "extract");
+        mkdirSync(tarsDir, { recursive: true });
+        mkdirSync(updatesDir, { recursive: true });
+        rmSync(workDir, { recursive: true, force: true });
+        mkdirSync(workDir, { recursive: true });
 
-      let reconstructed = false;
-      if (patch && existsSync(cachedTar)) {
-        try {
-          const oldTarSize = statSync(cachedTar).size;
-          if (oldTarSize <= 0 || oldTarSize > MAX_TAR_BYTES) {
-            throw new Error("cached update tar exceeds the updater limit");
+        const codec = loadCodec(this.#corePath());
+        const base = this.#baseUrl(installed);
+        const newTar = join(workDir, "new.tar");
+        const cachedTar = join(tarsDir, `${installed.version}.tar`);
+        const patch = manifest.patches?.find(
+          (candidate) => candidate.fromVersion === installed.version,
+        );
+        const reportProgress = (progress: UpdateProgress): void => {
+          this.#emit("progress", progress);
+          onProgress?.(progress);
+        };
+
+        let reconstructed = false;
+        if (patch && existsSync(cachedTar)) {
+          try {
+            const oldTarSize = statSync(cachedTar).size;
+            if (oldTarSize <= 0 || oldTarSize > MAX_TAR_BYTES) {
+              throw new Error("cached update tar exceeds the updater limit");
+            }
+            const patchZst = join(workDir, "patch.zst");
+            await downloadVerifiedArtifact({
+              url: artifactUrl(base, patch.url),
+              destination: patchZst,
+              sha256: patch.sha256,
+              size: patch.size,
+              onProgress: reportProgress,
+            });
+            this.#assertCurrent(snapshot);
+            const patchRaw = join(workDir, "patch.bin");
+            codec.decompressBounded(patchZst, patchRaw, patch.uncompressedSize);
+            if (statSync(patchRaw).size !== patch.uncompressedSize) {
+              throw new Error("decompressed patch size mismatch");
+            }
+            codec.patchBounded(
+              cachedTar,
+              patchRaw,
+              newTar,
+              oldTarSize,
+              patch.uncompressedSize,
+              manifest.tarSize,
+            );
+            await verifyFileSha256(
+              newTar,
+              manifest.tarHash,
+              "reconstructed bundle hash mismatch",
+              manifest.tarSize,
+            );
+            this.#assertCurrent(snapshot);
+            reconstructed = true;
+          } catch (error) {
+            removePathBestEffort(newTar);
+            if (error instanceof StaleGenerationError) throw error;
+            this.#assertCurrent(snapshot);
           }
-          const patchZst = join(workDir, "patch.zst");
+        }
+
+        if (!reconstructed) {
+          const bundleZst = join(workDir, "bundle.tar.zst");
           await downloadVerifiedArtifact({
-            url: artifactUrl(base, patch.url),
-            destination: patchZst,
-            sha256: patch.sha256,
-            size: patch.size,
+            url: artifactUrl(base, manifest.bundle.url),
+            destination: bundleZst,
+            sha256: manifest.bundle.sha256,
+            size: manifest.bundle.size,
             onProgress: reportProgress,
           });
           this.#assertCurrent(snapshot);
-          const patchRaw = join(workDir, "patch.bin");
-          codec.decompressBounded(patchZst, patchRaw, patch.uncompressedSize);
-          if (statSync(patchRaw).size !== patch.uncompressedSize) {
-            throw new Error("decompressed patch size mismatch");
-          }
-          codec.patchBounded(
-            cachedTar,
-            patchRaw,
-            newTar,
-            oldTarSize,
-            patch.uncompressedSize,
-            manifest.tarSize,
-          );
+          codec.decompressBounded(bundleZst, newTar, manifest.tarSize);
           await verifyFileSha256(
             newTar,
             manifest.tarHash,
@@ -217,89 +257,66 @@ export class Updater {
             manifest.tarSize,
           );
           this.#assertCurrent(snapshot);
-          reconstructed = true;
-        } catch (error) {
-          rmSync(newTar, { force: true });
-          if (error instanceof StaleGenerationError) throw error;
-          this.#assertCurrent(snapshot);
         }
-      }
 
-      if (!reconstructed) {
-        const bundleZst = join(workDir, "bundle.tar.zst");
-        await downloadVerifiedArtifact({
-          url: artifactUrl(base, manifest.bundle.url),
-          destination: bundleZst,
-          sha256: manifest.bundle.sha256,
-          size: manifest.bundle.size,
-          onProgress: reportProgress,
-        });
+        const bundleRoot = IS_WINDOWS || IS_LINUX ? installed.name : `${installed.name}.app`;
+        await verifyArchiveLayout(newTar, bundleRoot);
         this.#assertCurrent(snapshot);
-        codec.decompressBounded(bundleZst, newTar, manifest.tarSize);
-        await verifyFileSha256(
-          newTar,
-          manifest.tarHash,
-          "reconstructed bundle hash mismatch",
-          manifest.tarSize,
+        mkdirSync(extractDir, { recursive: true });
+        await runIgnoredCommand(
+          ["tar", IS_LINUX ? "-xpf" : "-xf", newTar, "-C", extractDir],
+          "tar extraction failed",
         );
         this.#assertCurrent(snapshot);
-      }
+        const staged = join(extractDir, bundleRoot);
+        validateStagedBundle({
+          staged,
+          extractionRoot: extractDir,
+          platform: platformName(),
+          installed,
+          expectedVersion: manifest.version,
+        });
 
-      const bundleRoot = IS_WINDOWS || IS_LINUX ? installed.name : `${installed.name}.app`;
-      await verifyArchiveLayout(newTar, bundleRoot);
-      this.#assertCurrent(snapshot);
-      mkdirSync(extractDir, { recursive: true });
-      await $`tar -xf ${newTar} -C ${extractDir}`.quiet();
-      this.#assertCurrent(snapshot);
-      const staged = join(extractDir, bundleRoot);
-      validateStagedBundle({
-        staged,
-        extractionRoot: extractDir,
-        platform: platformName(),
-        installed,
-        expectedVersion: manifest.version,
-      });
-
-      if (IS_MAC) {
-        const verification = await $`codesign --verify --deep --strict ${staged}`.quiet().nothrow();
-        if (verification.exitCode !== 0) {
-          throw new Error("codesign verification failed on the downloaded update");
+        if (IS_MAC) {
+          await runIgnoredCommand(
+            ["codesign", "--verify", "--deep", "--strict", staged],
+            "codesign verification failed on the downloaded update",
+          );
         }
-      }
-      this.#assertCurrent(snapshot);
+        this.#assertCurrent(snapshot);
 
-      const keepTar = join(tarsDir, `${manifest.version}.tar`);
-      rmSync(keepTar, { force: true });
-      renameSync(newTar, keepTar);
-      if (!this.#transactions.completeDownload(snapshot, staged, workDir)) {
-        throw new StaleGenerationError();
-      }
-      for (const file of readdirSync(tarsDir)) {
-        if (file !== `${manifest.version}.tar`) {
-          rmSync(join(tarsDir, file), { recursive: true, force: true });
+        const keepTarName = `${manifest.version}.tar`;
+        const keepTar = join(tarsDir, keepTarName);
+        removePathBestEffort(keepTar);
+        renameSync(newTar, keepTar);
+        if (!this.#transactions.completeDownload(snapshot, staged, workDir)) {
+          throw new StaleGenerationError();
         }
-      }
-      this.#setStatus("update-available");
-    } catch (error) {
-      rmSync(workDir, { recursive: true, force: true });
-      const current = this.#transactions.failDownload(snapshot);
-      if (current) {
+        pruneTarCacheBestEffort(tarsDir, keepTarName);
+        this.#setStatus("update-available");
+      },
+      onCurrentFailure: (error) => {
         this.#pendingManifest = null;
         this.#fail(error);
-      }
-      throw error;
-    }
+      },
+      cleanup: () => {
+        if (workDir) removePathBestEffort(workDir, true);
+      },
+    });
   }
 
   /** Launch the platform swap helper, then quit only after launch was accepted. */
   async applyAndRelaunch(): Promise<void> {
-    if (this.#checks.isRunning)
+    if (this.#checks.isRunning) {
       throw new Error("cannot apply while an update check is in progress");
+    }
     const installed = this.#version();
     const resourcesDir = this.#resourcesDir();
     const staged = this.#transactions.beginApply();
     if (!installed || !resourcesDir) {
       this.#transactions.finishApply(false);
+      this.#pendingManifest = null;
+      removePathBestEffort(staged.workDir, true);
       throw new Error("installed update metadata is unavailable");
     }
 
@@ -308,23 +325,26 @@ export class Updater {
       await applyUpdateAndRelaunch({
         resourcesDir,
         staged: staged.staged,
+        workDir: staged.workDir,
         version: installed,
       });
     } catch (error) {
       this.#transactions.finishApply(false);
       this.#pendingManifest = null;
-      rmSync(staged.workDir, { recursive: true, force: true });
+      removePathBestEffort(staged.workDir, true);
       this.#fail(error);
       throw error;
     }
 
     this.#transactions.finishApply(true);
+    this.stopAutoCheck();
     this.#setStatus("complete");
     runtime().core.quit();
   }
 
   startAutoCheck(intervalMs = 6 * 60 * 60 * 1000): () => void {
     this.stopAutoCheck();
+    if (this.#transactions.isHandedOff) return () => {};
     void this.checkForUpdate();
     this.#autoCheck = setInterval(() => void this.checkForUpdate(), intervalMs);
     return () => this.stopAutoCheck();
@@ -373,18 +393,6 @@ export class Updater {
     return trustedBaseUrl(process.env.MIRIN_UPDATE_BASE_URL ?? version.baseUrl);
   }
 
-  #supportDir(version: VersionInfo): string {
-    if (IS_WINDOWS) {
-      const base = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-      return join(base, version.identifier, version.channel);
-    }
-    if (IS_LINUX) {
-      const base = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
-      return join(base, version.identifier, version.channel);
-    }
-    return join(homedir(), "Library", "Application Support", version.identifier, version.channel);
-  }
-
   #sameGeneration(left: PendingGeneration, right: PendingGeneration): boolean {
     return (
       left.generation === right.generation &&
@@ -410,12 +418,69 @@ export class Updater {
   }
 
   #emit<K extends keyof UpdaterEvents>(type: K, payload: UpdaterEvents[K]): void {
-    for (const listener of this.#listeners.get(type) ?? []) listener(payload);
+    for (const listener of this.#listeners.get(type) ?? []) {
+      try {
+        listener(payload);
+      } catch {
+        // User listeners cannot break updater state transitions or mask failures.
+      }
+    }
     try {
       runtime().rpc.broadcast(`mirin:updater:${type}`, payload);
     } catch {
       // The runtime may be detached while updater helpers are tested or shutting down.
     }
+  }
+}
+
+async function runIgnoredCommand(command: string[], errorMessage: string): Promise<void> {
+  const process = Bun.spawn(command, {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const exitCode = await process.exited;
+  if (exitCode !== 0) throw new Error(`${errorMessage} (${exitCode})`);
+}
+
+function pruneTarCacheBestEffort(tarsDir: string, keepFile: string): void {
+  let files: string[];
+  try {
+    files = readdirSync(tarsDir);
+  } catch {
+    return;
+  }
+  for (const file of files) {
+    if (file !== keepFile) removePathBestEffort(join(tarsDir, file), true);
+  }
+}
+
+function supportDir(version: VersionInfo): string {
+  if (IS_WINDOWS) {
+    const base = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+    return join(base, version.identifier, version.channel);
+  }
+  if (IS_LINUX) {
+    const base = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+    return join(base, version.identifier, version.channel);
+  }
+  return join(homedir(), "Library", "Application Support", version.identifier, version.channel);
+}
+
+export function initializeUpdater(): void {
+  let resourcesDir: string | undefined;
+  try {
+    resourcesDir = runtime().resourcesDir;
+  } catch {
+    return;
+  }
+  if (!resourcesDir) return;
+
+  try {
+    const version = parseVersionJson(readFileSync(join(resourcesDir, "version.json"), "utf8"));
+    pruneGenerationDirectories(join(supportDir(version), "updates"));
+  } catch {
+    // Invalid or unavailable updater metadata disables startup cleanup.
   }
 }
 

@@ -15,6 +15,7 @@ export class UpdateTransactionState {
   #staged: StagedGeneration | null = null;
   #downloading: number | null = null;
   #applying = false;
+  #handedOff = false;
 
   get pending(): PendingGeneration | null {
     return this.#pending;
@@ -25,11 +26,20 @@ export class UpdateTransactionState {
   }
 
   get isApplying(): boolean {
-    return this.#applying;
+    return this.#applying || this.#handedOff;
+  }
+
+  get isDownloading(): boolean {
+    return this.#downloading !== null;
+  }
+
+  get isHandedOff(): boolean {
+    return this.#handedOff;
   }
 
   beginCheck(): number {
-    if (this.#applying) throw new Error("cannot check for updates while applying");
+    if (this.isApplying) throw new Error("cannot check for updates while applying");
+    if (this.#downloading !== null) throw new Error("cannot check while an update is downloading");
     this.#generation += 1;
     this.#pending = null;
     this.#staged = null;
@@ -43,7 +53,7 @@ export class UpdateTransactionState {
   }
 
   beginDownload(): PendingGeneration {
-    if (this.#applying) throw new Error("cannot download an update while applying");
+    if (this.isApplying) throw new Error("cannot download an update while applying");
     if (this.#downloading !== null) throw new Error("an update download is already in progress");
     if (!this.#pending) throw new Error("no update to download — call checkForUpdate() first");
     this.#downloading = this.#pending.generation;
@@ -66,7 +76,7 @@ export class UpdateTransactionState {
   }
 
   beginApply(): StagedGeneration {
-    if (this.#applying) throw new Error("an update apply is already in progress");
+    if (this.isApplying) throw new Error("an update apply is already in progress");
     if (this.#downloading !== null) throw new Error("cannot apply while an update is downloading");
     if (!this.#staged || !this.matches(this.#staged)) {
       throw new Error("no staged update — call download() first");
@@ -76,11 +86,15 @@ export class UpdateTransactionState {
   }
 
   finishApply(success: boolean): void {
-    this.#applying = false;
-    if (!success) {
-      this.#pending = null;
-      this.#staged = null;
+    if (this.#handedOff) return;
+    if (success) {
+      this.#applying = false;
+      this.#handedOff = true;
+      return;
     }
+    this.#applying = false;
+    this.#pending = null;
+    this.#staged = null;
   }
 
   isCurrent(snapshot: PendingGeneration): boolean {
@@ -101,6 +115,35 @@ export class UpdateTransactionState {
       this.#pending.version === snapshot.version &&
       this.#pending.tarHash === snapshot.tarHash
     );
+  }
+}
+
+interface DownloadOperationOptions<T> {
+  state: UpdateTransactionState;
+  snapshot: PendingGeneration;
+  operation: () => Promise<T>;
+  onCurrentFailure: (error: unknown) => void;
+  cleanup: () => void;
+}
+
+export async function runDownloadOperation<T>(options: DownloadOperationOptions<T>): Promise<T> {
+  try {
+    return await options.operation();
+  } catch (error) {
+    const current = options.state.failDownload(options.snapshot);
+    if (current) {
+      try {
+        options.onCurrentFailure(error);
+      } catch {
+        // Reporting must not replace the download failure.
+      }
+    }
+    try {
+      options.cleanup();
+    } catch {
+      // Cleanup must not replace the download failure.
+    }
+    throw error;
   }
 }
 

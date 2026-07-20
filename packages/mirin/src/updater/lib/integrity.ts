@@ -1,5 +1,6 @@
-import { rmSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import type { UpdateProgress } from "../types.ts";
+import { removePathBestEffort } from "./cleanup.ts";
 import { MAX_ARTIFACT_BYTES, MAX_TAR_BYTES } from "./limits.ts";
 import { assertTrustedUpdateUrl } from "./urls.ts";
 
@@ -29,7 +30,7 @@ export async function downloadVerifiedArtifact(options: DownloadOptions): Promis
     throw new Error("download requires a bounded declared size");
   }
 
-  rmSync(options.destination, { force: true });
+  removePathBestEffort(options.destination);
   try {
     const response = await fetch(options.url, { redirect: "follow" });
     assertTrustedUpdateUrl(response.url);
@@ -44,13 +45,18 @@ export async function downloadVerifiedArtifact(options: DownloadOptions): Promis
     const writer = Bun.file(options.destination).writer();
     const hasher = new Bun.CryptoHasher("sha256");
     let received = 0;
+    let failure: { error: unknown } | undefined;
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         received += value.byteLength;
         if (received > options.size || received > MAX_ARTIFACT_BYTES) {
-          await reader.cancel();
+          try {
+            await reader.cancel();
+          } catch {
+            // Cancellation cannot replace the declared-size failure.
+          }
           throw new Error(`download exceeds expected size ${options.size}`);
         }
         hasher.update(value);
@@ -62,16 +68,26 @@ export async function downloadVerifiedArtifact(options: DownloadOptions): Promis
           fraction: received / options.size,
         });
       }
-    } finally {
-      reader.releaseLock();
-      await writer.end();
+    } catch (error) {
+      failure = { error };
     }
+    try {
+      reader.releaseLock();
+    } catch {
+      // Releasing the reader cannot replace the download result.
+    }
+    try {
+      await writer.end();
+    } catch (error) {
+      if (!failure) failure = { error };
+    }
+    if (failure) throw failure.error;
     if (received !== options.size) {
       throw new Error(`download size mismatch (expected ${options.size}, got ${received})`);
     }
     if (hasher.digest("hex") !== options.sha256) throw new Error("download hash mismatch");
   } catch (error) {
-    rmSync(options.destination, { force: true });
+    removePathBestEffort(options.destination);
     throw error;
   }
 }
