@@ -47,6 +47,7 @@ crates/
   mirin-codec/      updater codec library and release executable
   mirin-core/       Rust native core loaded through Bun FFI
   mirin-helper/     CEF subprocess executable
+  mirin-native/     alpha GPUI native-UI crate (standalone, outside the workspace)
 packages/
   mirin/            public runtime package (`mirinjs`)
   mirin-cli/        CLI package (`@mirinjs/cli`)

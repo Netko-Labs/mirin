@@ -1,0 +1,17 @@
+# Alpha crate, intentionally excluded from the root workspace (see the root
+# Cargo.toml `exclude`): gpui's dependency tree is large and its platform
+# requirements (Vulkan on Linux, Metal on macOS, DirectX on Windows) are not yet
+# part of mirin's CI. Build it standalone: `cargo build` from this directory.
+[package]
+name = "mirin-native"
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "mirin native (alpha): GPU-rendered native UI for mirin apps, built on GPUI"
+
+[dependencies]
+gpui = "0.2"
+
+[[example]]
+name = "hello"

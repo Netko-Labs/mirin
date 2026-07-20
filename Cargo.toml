@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
 members = ["crates/mirin-codec", "crates/mirin-core", "crates/mirin-helper"]
+# mirin-native is an alpha GPUI spike with its own heavy dependency tree and
+# platform requirements; it builds standalone from its directory (own lockfile)
+# and stays out of workspace-wide build/clippy/test until it graduates.
+exclude = ["crates/mirin-native"]
 
 [workspace.package]
 version = "0.1.0-alpha.18"

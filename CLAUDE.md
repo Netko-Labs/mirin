@@ -54,6 +54,8 @@ the same change.
 
 - `crates/mirin-core` - Rust native core (`cdylib` plus test/smoke binaries).
 - `crates/mirin-helper` - CEF subprocess executable.
+- `crates/mirin-native` - alpha GPUI-based native UI crate (standalone; excluded
+  from the Cargo workspace until it graduates).
 - `packages/mirin` - developer-facing runtime, RPC, client bridge, updater, and
   typed app APIs.
 - `packages/mirin-cli` - dev/build/release/init tooling.
