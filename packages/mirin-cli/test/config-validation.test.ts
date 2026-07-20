@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { validateScaffoldName } from "create-mirinjs";
 import { build } from "../src/build.ts";
 import { dev } from "../src/dev.ts";
 import {
@@ -58,6 +59,11 @@ describe("CLI app identity validation", () => {
   test.each(["1", "1.2", "01.2.3", "1.2.3-01", "v1.2.3", "1.2.3/"])(
     "rejects non-strict version %s",
     (value) => expect(() => validateAppVersion(value)).toThrow("invalid app version"),
+  );
+
+  test.each(["a", "app1", "my-app", "a1-b2-c3", "a".repeat(63)])(
+    "accepts scaffold name %s as a CLI app name",
+    (value) => expect(validateAppName(validateScaffoldName(value))).toBe(value),
   );
 });
 
@@ -129,5 +135,7 @@ function project(overrides: Record<string, string>): string {
     join(root, "package.json"),
     `${JSON.stringify({ name: "safe-app", version: overrides.version ?? "1.2.3" })}\n`,
   );
+  mkdirSync(join(root, "main"));
+  writeFileSync(join(root, "main", "main.ts"), "export {};\n");
   return root;
 }

@@ -27,7 +27,12 @@ const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
 
 import { compileWorkers, normalizeSidecars, normalizeWorkers } from "./extras.ts";
-import { canonicalProjectRoot } from "./shared/fs/project-source.ts";
+import {
+  assertProjectFile,
+  canonicalProjectRoot,
+  resolveProjectFile,
+  validateOwnedOutputDirectory,
+} from "./shared/fs/project-source.ts";
 import { resolveAppVersion, validateAppIdentity } from "./shared/validation/config.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
@@ -47,7 +52,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     version: resolveAppVersion(root),
   });
   const { appName, bundleId, version, channel } = identity;
-  const mainEntry = join(root, config.main ?? "main/main.ts");
+  const mainEntry = resolveProjectFile(root, config.main ?? "main/main.ts", "main entry");
   const iconSrc = config.icon ? join(root, config.icon) : undefined;
   const sidecars = normalizeSidecars(root, config.sidecars);
   const workers = normalizeWorkers(root, config.workers);
@@ -56,7 +61,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   // bundling; the file is read from the project at window-create time.
   const linuxIconPng = IS_LINUX && iconSrc ? resolveLinuxIconPng(iconSrc) : undefined;
 
-  const work = join(root, ".mirin");
+  const work = validateOwnedOutputDirectory(root, ".mirin", "dev work directory");
   mkdirSync(work, { recursive: true });
   // `bun build --compile` drops temp *.bun-build files in the cwd; clear any left
   // behind by a previously interrupted run so they don't pile up in the project.
@@ -79,12 +84,13 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   // binaries into .mirin/sidecars (no copy/sign in dev — they run unsigned locally).
   const workersDir = join(work, "workers");
   await compileWorkers(root, workers, workersDir, false);
-  const sidecarsDir = join(work, "sidecars");
+  const sidecarsDir = validateOwnedOutputDirectory(root, join(work, "sidecars"), "sidecar output");
   mkdirSync(sidecarsDir, { recursive: true });
   for (const sc of sidecars) {
     const link = join(sidecarsDir, sc.name);
+    const source = assertProjectFile(root, sc.src, `sidecar "${sc.name}"`);
     rmSync(link, { force: true });
-    symlinkSync(sc.src, link);
+    symlinkSync(source, link);
   }
 
   // --- assemble the dev bundle (Windows/Linux app folder, or macOS .app) ---
@@ -95,6 +101,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
         bundleId,
         version,
         channel,
+        projectDir: root,
         outDir: work,
         hostExe,
         coreDll: artifacts.coreDylib,
@@ -108,6 +115,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
           bundleId,
           version,
           channel,
+          projectDir: root,
           outDir: work,
           hostExe,
           coreDll: artifacts.coreDylib,
@@ -120,6 +128,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
           bundleId,
           version,
           channel,
+          projectDir: root,
           outDir: work,
           hostExe,
           coreDylib: artifacts.coreDylib,

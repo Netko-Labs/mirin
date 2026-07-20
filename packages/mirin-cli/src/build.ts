@@ -24,7 +24,11 @@ import { buildWindowsBundle } from "./bundle/windows/index.ts";
 import { compileWorkers, normalizeSidecars, normalizeWorkers } from "./extras.ts";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
 import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
-import { canonicalProjectRoot } from "./shared/fs/project-source.ts";
+import {
+  canonicalProjectRoot,
+  resolveProjectFile,
+  validateOwnedOutputDirectory,
+} from "./shared/fs/project-source.ts";
 import { resolveAppVersion, validateAppIdentity } from "./shared/validation/config.ts";
 import { serializeVersionMetadata } from "./shared/validation/version-json.ts";
 import { sweepBuildTemps } from "./temps.ts";
@@ -172,7 +176,7 @@ export async function build(
     version: resolveAppVersion(root, opts.version),
   });
   const { appName, bundleId, version, channel } = identity;
-  const mainEntry = join(root, config.main ?? "main/main.ts");
+  const mainEntry = resolveProjectFile(root, config.main ?? "main/main.ts", "main entry");
   const baseUrl: string | undefined =
     config.release === undefined ? undefined : config.release.baseUrl;
   const releaseNotes: string | undefined = config.release?.notes;
@@ -187,8 +191,8 @@ export async function build(
   const versionJson =
     config.release === undefined ? undefined : serializeVersionMetadata({ ...identity, baseUrl });
 
-  const outDir = join(root, "build");
-  const work = join(root, ".mirin");
+  const outDir = validateOwnedOutputDirectory(root, "build", "build output directory");
+  const work = validateOwnedOutputDirectory(root, ".mirin", "build work directory");
   mkdirSync(outDir, { recursive: true });
   mkdirSync(work, { recursive: true });
   sweepBuildTemps(root);
@@ -255,6 +259,7 @@ export async function build(
         bundleId,
         version,
         channel,
+        projectDir: root,
         outDir,
         hostExe,
         coreDll: artifacts.coreDylib,
@@ -270,6 +275,7 @@ export async function build(
           bundleId,
           version,
           channel,
+          projectDir: root,
           outDir,
           hostExe,
           coreDll: artifacts.coreDylib,
@@ -287,6 +293,7 @@ export async function build(
           bundleId,
           version,
           channel,
+          projectDir: root,
           outDir,
           hostExe,
           coreDylib: artifacts.coreDylib,

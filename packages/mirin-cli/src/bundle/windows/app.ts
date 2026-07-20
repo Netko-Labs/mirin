@@ -19,7 +19,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } fro
 import { extname, join } from "node:path";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
 import { makeWindowsIcon } from "../../icons/windows/index.ts";
-import { copyRegularFile } from "../../shared/fs/project-source.ts";
+import { copyProjectFile, safeDestructiveDirectory } from "../../shared/fs/project-source.ts";
 import { validateAppIdentity } from "../../shared/validation/config.ts";
 import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { copyFlatCefLocales } from "../shared/cef-locales.ts";
@@ -38,6 +38,7 @@ export interface WinBundleOptions {
   bundleId: string;
   version: string;
   channel: string;
+  projectDir: string;
   outDir: string;
   hostExe: string; // compiled Bun host (.exe)
   coreDll: string; // mirin_core.dll
@@ -69,14 +70,18 @@ export async function buildWindowsBundle(
     channel: opts.channel,
   });
   validateVersionMetadataForBundle(opts.resources?.versionJson, identity);
-  validateBundleExtras(opts.resources?.sidecars, opts.resources?.workers);
+  validateBundleExtras(opts.projectDir, opts.resources?.sidecars, opts.resources?.workers);
   const { appName } = identity;
   const { cefPath } = opts;
   if (!existsSync(join(cefPath, CEF_MARKER))) {
     throw new Error(`CEF runtime not found at ${cefPath} — run: bun scripts/fetch-cef.ts`);
   }
 
-  const app = join(opts.outDir, appName);
+  const app = safeDestructiveDirectory(
+    opts.projectDir,
+    join(opts.outDir, appName),
+    "Windows bundle output directory",
+  );
   rmSync(app, { recursive: true, force: true });
   mkdirSync(app, { recursive: true });
 
@@ -108,7 +113,12 @@ export async function buildWindowsBundle(
       mkdirSync(workersDir, { recursive: true });
       for (const [name, src] of Object.entries(opts.resources.workers)) {
         const safeName = safeExtraAssetName(name, "worker name");
-        copyRegularFile(src, join(workersDir, `${safeName}.js`), `worker "${safeName}" bundle`);
+        copyProjectFile(
+          opts.projectDir,
+          src,
+          join(workersDir, `${safeName}.js`),
+          `worker "${safeName}" bundle`,
+        );
       }
     }
     if (opts.resources.sidecars?.length) {
@@ -116,7 +126,12 @@ export async function buildWindowsBundle(
       mkdirSync(sidecarsDir, { recursive: true });
       for (const sc of opts.resources.sidecars) {
         const safeName = safeExtraAssetName(sc.name, "sidecar name");
-        copyRegularFile(sc.src, join(sidecarsDir, safeName), `sidecar "${safeName}"`);
+        copyProjectFile(
+          opts.projectDir,
+          sc.src,
+          join(sidecarsDir, safeName),
+          `sidecar "${safeName}"`,
+        );
       }
     }
   }

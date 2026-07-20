@@ -4,11 +4,16 @@
  * uninstaller so removal never recursively deletes unrelated user files.
  */
 
-import { existsSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { $ } from "bun";
 import type { NsisConfig } from "mirinjs";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
+import {
+  assertProjectFile,
+  canonicalProjectRoot,
+  resolveProjectFile,
+} from "./shared/fs/project-source.ts";
 import { validateAppIdentity } from "./shared/validation/config.ts";
 
 export interface BuildNsisInput {
@@ -34,15 +39,32 @@ export interface RenderNsisInput extends BuildNsisInput {
   out: string;
   icon?: string;
   license?: string;
+  /** Additional flat payload files owned by this build and safe to remove from legacy installs. */
+  legacyRootFiles?: readonly string[];
 }
+
+const LEGACY_CEF_ROOT_FILES = [
+  "chrome_100_percent.pak",
+  "chrome_200_percent.pak",
+  "d3dcompiler_47.dll",
+  "dxcompiler.dll",
+  "dxil.dll",
+  "icudtl.dat",
+  "libcef.dll",
+  "libEGL.dll",
+  "libGLESv2.dll",
+  "resources.pak",
+  "snapshot_blob.bin",
+  "v8_context_snapshot.bin",
+  "vk_swiftshader.dll",
+  "vk_swiftshader_icd.json",
+  "vulkan-1.dll",
+] as const;
 
 /** Whether `makensis` is on PATH. */
 export async function hasMakensis(): Promise<boolean> {
   return (await $`makensis -VERSION`.quiet().nothrow()).exitCode === 0;
 }
-
-const resolve = (projectDir: string, path: string): string =>
-  isAbsolute(path) ? path : join(projectDir, path);
 
 /** Render a complete NSIS script without touching the filesystem. */
 export function renderNsisScript(input: RenderNsisInput): string {
@@ -104,9 +126,26 @@ export function renderNsisScript(input: RenderNsisInput): string {
   const key = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${bundleId}`;
   const context = perMachine ? "all" : "current";
   const appExe = `$INSTDIR\\app\\${nsisLiteral(exeName)}`;
+  const legacyRootFiles = normalizedLegacyRootFiles(exeName, input.legacyRootFiles);
+  appendLegacyCleanupFunction(lines, {
+    name: "CleanupLegacyFlatPayload",
+    exeName,
+    bundleId,
+    rootFiles: legacyRootFiles,
+    deleteNsisUninstaller: true,
+  });
+  appendLegacyCleanupFunction(lines, {
+    name: "un.CleanupLegacyFlatPayload",
+    exeName,
+    bundleId,
+    rootFiles: legacyRootFiles,
+    deleteNsisUninstaller: false,
+  });
 
   lines.push("Section");
   lines.push(`  SetShellVarContext ${context}`);
+  lines.push("  Call CleanupLegacyFlatPayload");
+  lines.push('  RMDir /r "$INSTDIR\\app"');
   lines.push('  SetOutPath "$INSTDIR\\app"');
   lines.push(`  File /r "${nsisLiteral(appDir)}\\*"`);
   lines.push('  WriteUninstaller "$INSTDIR\\Uninstall.exe"');
@@ -146,6 +185,7 @@ export function renderNsisScript(input: RenderNsisInput): string {
     lines.push(`  Delete "$SMPROGRAMS\\${nsisLiteral(appName)}\\${nsisLiteral(appName)}.lnk"`);
     lines.push(`  RMDir "$SMPROGRAMS\\${nsisLiteral(appName)}"`);
   }
+  lines.push("  Call un.CleanupLegacyFlatPayload");
   lines.push('  RMDir /r "$INSTDIR\\app"');
   lines.push('  Delete "$INSTDIR\\Uninstall.exe"');
   lines.push(`  DeleteRegKey ${root} "${key}"`);
@@ -169,11 +209,13 @@ export async function buildNsisInstaller(input: BuildNsisInput): Promise<string>
   }
   const out = join(input.outDir, input.fileName);
   rmSync(out, { force: true });
+  const root = canonicalProjectRoot(input.projectDir);
 
   let icon: string | undefined;
   if (input.options.installerIcon) {
+    const source = resolveProjectFile(root, input.options.installerIcon, "NSIS installer icon");
     icon = makeWindowsIcon(
-      resolve(input.projectDir, input.options.installerIcon),
+      assertProjectFile(root, source, "NSIS installer icon"),
       join(input.outDir, "_installer.ico"),
     );
   } else if (existsSync(join(input.appDir, "icon.ico"))) {
@@ -181,12 +223,18 @@ export async function buildNsisInstaller(input: BuildNsisInput): Promise<string>
   }
 
   const license = input.options.license
-    ? resolve(input.projectDir, input.options.license)
+    ? assertProjectFile(
+        root,
+        resolveProjectFile(root, input.options.license, "NSIS license"),
+        "NSIS license",
+      )
     : undefined;
-  if (license && !existsSync(license)) throw new Error(`nsis: license not found: ${license}`);
+  const legacyRootFiles = readdirSync(input.appDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
 
   const script = join(input.outDir, "_installer.nsi");
-  writeFileSync(script, renderNsisScript({ ...input, out, icon, license }));
+  writeFileSync(script, renderNsisScript({ ...input, out, icon, license, legacyRootFiles }));
   console.log(`[mirin release] compiling NSIS installer → ${input.fileName}`);
   const result = await $`makensis -V2 ${script}`.nothrow();
   rmSync(script, { force: true });
@@ -195,6 +243,75 @@ export async function buildNsisInstaller(input: BuildNsisInput): Promise<string>
     throw new Error(`makensis failed (exit ${result.exitCode})`);
   }
   return out;
+}
+
+interface LegacyCleanupOptions {
+  name: string;
+  exeName: string;
+  bundleId: string;
+  rootFiles: readonly string[];
+  deleteNsisUninstaller: boolean;
+}
+
+function appendLegacyCleanupFunction(lines: string[], options: LegacyCleanupOptions): void {
+  const { name, exeName, bundleId, rootFiles, deleteNsisUninstaller } = options;
+  lines.push("", `Function ${name}`);
+  for (const marker of [exeName, "mirin_core.dll", "mirin-helper.exe", "libcef.dll"]) {
+    lines.push(`  IfFileExists "$INSTDIR\\${nsisLiteral(marker)}" 0 .done`);
+  }
+  lines.push('  IfFileExists "$INSTDIR\\resources\\mirin.manifest.json" 0 .done');
+  lines.push('  RMDir /r "$INSTDIR\\resources"');
+  lines.push('  RMDir /r "$INSTDIR\\locales"');
+  for (const file of rootFiles) {
+    lines.push(`  Delete "$INSTDIR\\${nsisLiteral(file)}"`);
+  }
+  lines.push('  Delete "$INSTDIR\\unins000.exe"');
+  lines.push('  Delete "$INSTDIR\\unins000.dat"');
+  lines.push('  Delete "$INSTDIR\\unins000.msg"');
+  if (deleteNsisUninstaller) lines.push('  Delete "$INSTDIR\\Uninstall.exe"');
+  const innoKey = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{${bundleId}}_is1`;
+  lines.push(`  DeleteRegKey HKCU "${innoKey}"`);
+  lines.push(`  DeleteRegKey HKLM "${innoKey}"`);
+  lines.push(".done:");
+  lines.push("FunctionEnd");
+}
+
+function normalizedLegacyRootFiles(
+  exeName: string,
+  additionalFiles: readonly string[] | undefined,
+): string[] {
+  const candidates = [
+    exeName,
+    "mirin_core.dll",
+    "mirin-helper.exe",
+    "icon.ico",
+    ...LEGACY_CEF_ROOT_FILES,
+    ...(additionalFiles ?? []),
+  ];
+  const seen = new Set<string>();
+  const files: string[] = [];
+  for (const file of candidates) {
+    validateLegacyRootFileName(file);
+    const key = file.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push(file);
+  }
+  return files;
+}
+
+function validateLegacyRootFileName(value: string): void {
+  if (
+    value.length === 0 ||
+    value.length > 255 ||
+    value === "." ||
+    value === ".." ||
+    value.endsWith(".") ||
+    value.endsWith(" ") ||
+    /[\\/\0\r\n]/.test(value)
+  ) {
+    throw new Error("nsis: legacy payload entries must be flat portable file names");
+  }
 }
 
 function nsisLiteral(value: string): string {

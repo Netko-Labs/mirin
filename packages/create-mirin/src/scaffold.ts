@@ -16,6 +16,7 @@ import { join, posix, win32 } from "node:path";
 
 const TEMPLATE_DIR = join(import.meta.dir, "..", "template");
 const SCAFFOLD_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const WINDOWS_RESERVED_SCAFFOLD_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const MAX_SCAFFOLD_NAME_LENGTH = 63;
 
 export interface ScaffoldOptions {
@@ -52,12 +53,21 @@ export function scaffold(targetDir: string, options: ScaffoldOptions = {}): stri
 /** Return a basename for POSIX or Windows-style paths on every host platform. */
 export function scaffoldBasename(path: string): string {
   const withoutTrailingSeparators = path.replace(/[\\/]+$/, "");
-  return win32.basename(posix.basename(withoutTrailingSeparators));
+  const isWindowsPath =
+    /^[A-Za-z]:[\\/]/.test(withoutTrailingSeparators) ||
+    withoutTrailingSeparators.startsWith("\\\\") ||
+    (!withoutTrailingSeparators.includes("/") && withoutTrailingSeparators.includes("\\"));
+  return (isWindowsPath ? win32 : posix).basename(withoutTrailingSeparators);
 }
 
 /** Enforce the package-safe name documented by the scaffold command. */
 export function validateScaffoldName(value: string): string {
-  if (value.length === 0 || value.length > MAX_SCAFFOLD_NAME_LENGTH || !SCAFFOLD_NAME.test(value)) {
+  if (
+    value.length === 0 ||
+    value.length > MAX_SCAFFOLD_NAME_LENGTH ||
+    !SCAFFOLD_NAME.test(value) ||
+    WINDOWS_RESERVED_SCAFFOLD_NAME.test(value)
+  ) {
     throw new Error(
       `invalid app name ${JSON.stringify(value)} — use 1–${MAX_SCAFFOLD_NAME_LENGTH} ` +
         'lowercase letters or digits separated by single hyphens (for example "my-app").',

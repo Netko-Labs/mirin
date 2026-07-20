@@ -16,10 +16,17 @@ const base: RenderNsisInput = {
 };
 
 describe("NSIS script rendering", () => {
-  test("keeps the owned payload under $INSTDIR\\app and quotes executable commands", () => {
+  test("cleans the owned app directory before overlay and quotes executable commands", () => {
     const script = renderNsisScript(base);
+    const cleanup = script.indexOf("  Call CleanupLegacyFlatPayload");
+    const removeApp = script.indexOf('  RMDir /r "$INSTDIR\\app"', cleanup);
+    const setOutPath = script.indexOf('  SetOutPath "$INSTDIR\\app"', removeApp);
+    const copyPayload = script.indexOf('File /r "C:\\build path\\Safe App\\*"', setOutPath);
 
-    expect(script).toContain('SetOutPath "$INSTDIR\\app"');
+    expect(cleanup).toBeGreaterThan(-1);
+    expect(removeApp).toBeGreaterThan(cleanup);
+    expect(setOutPath).toBeGreaterThan(removeApp);
+    expect(copyPayload).toBeGreaterThan(setOutPath);
     expect(script).toContain('File /r "C:\\build path\\Safe App\\*"');
     expect(script).toContain(
       'CreateShortcut "$DESKTOP\\Safe App.lnk" "$INSTDIR\\app\\Safe App.exe"',
@@ -37,6 +44,34 @@ describe("NSIS script rendering", () => {
     expect(lines).toContain('  RMDir "$INSTDIR"');
     expect(lines).not.toContain('  RMDir /r "$INSTDIR"');
     expect(lines.some((line) => line.includes("DeleteRegKey HKCU"))).toBe(true);
+  });
+
+  test("guards exact legacy flat cleanup and provides an uninstall fallback", () => {
+    const script = renderNsisScript({
+      ...base,
+      legacyRootFiles: ["removed-runtime.dll"],
+    });
+
+    expect(script).toContain("Function CleanupLegacyFlatPayload");
+    expect(script).toContain("Function un.CleanupLegacyFlatPayload");
+    expect(script).toContain('IfFileExists "$INSTDIR\\Safe App.exe" 0 .done');
+    expect(script).toContain('IfFileExists "$INSTDIR\\mirin_core.dll" 0 .done');
+    expect(script).toContain('IfFileExists "$INSTDIR\\mirin-helper.exe" 0 .done');
+    expect(script).toContain('IfFileExists "$INSTDIR\\libcef.dll" 0 .done');
+    expect(script).toContain('IfFileExists "$INSTDIR\\resources\\mirin.manifest.json" 0 .done');
+    expect(script).toContain('  Delete "$INSTDIR\\removed-runtime.dll"');
+    expect(script).not.toContain('  Delete "$INSTDIR\\sentinel.txt"');
+    expect(script).toContain('  RMDir /r "$INSTDIR\\resources"');
+    expect(script).toContain('  RMDir /r "$INSTDIR\\locales"');
+    expect(script).not.toContain('RMDir /r "$INSTDIR"');
+
+    const uninstallSection = script.indexOf('Section "Uninstall"');
+    const fallback = script.indexOf("  Call un.CleanupLegacyFlatPayload", uninstallSection);
+    const removeApp = script.indexOf('  RMDir /r "$INSTDIR\\app"', fallback);
+    const removeRoot = script.indexOf('  RMDir "$INSTDIR"', removeApp);
+    expect(fallback).toBeGreaterThan(uninstallSection);
+    expect(removeApp).toBeGreaterThan(fallback);
+    expect(removeRoot).toBeGreaterThan(removeApp);
   });
 
   test("supports spaces while escaping structured dollar and quote characters", () => {

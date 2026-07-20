@@ -15,8 +15,13 @@ afterEach(() => {
 describe("scaffold names", () => {
   test("extracts POSIX and synthetic Windows basenames on every platform", () => {
     expect(scaffoldBasename("/Users/test/my-app/")).toBe("my-app");
+    expect(scaffoldBasename("/tmp/c:valid-app")).toBe("c:valid-app");
     expect(scaffoldBasename("C:\\Users\\test\\windows-app\\")).toBe("windows-app");
+    expect(scaffoldBasename("parent\\relative-app")).toBe("relative-app");
     expect(scaffoldBasename("\\\\server\\share\\network-app")).toBe("network-app");
+    expect(() => validateScaffoldName(scaffoldBasename("/tmp/c:valid-app"))).toThrow(
+      "invalid app name",
+    );
   });
 
   test.each(["My-App", "my app", "my_app", "-my-app", "my-app-", "my--app", "../app"])(
@@ -29,6 +34,22 @@ describe("scaffold names", () => {
     const target = join(root, "Invalid App");
 
     expect(() => scaffold(target)).toThrow("invalid app name");
+    expect(existsSync(target)).toBe(false);
+  });
+
+  test.each([
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+    ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`),
+  ])("rejects Windows reserved name %s before copying the template", (name) => {
+    const root = temporaryDirectory();
+    const target = join(root, "safe-target");
+
+    expect(() => validateScaffoldName(name)).toThrow("invalid app name");
+    expect(() => scaffold(target, { name })).toThrow("invalid app name");
     expect(existsSync(target)).toBe(false);
   });
 });

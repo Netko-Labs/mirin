@@ -1,33 +1,36 @@
 /**
- * Windows installer via **Inno Setup** — a modern, clean wizard (the installer VS
- * Code ships). Generates an `.iss` script from the app folder + config and compiles
- * it with `iscc`. Like the NSIS path it installs per-user (`%LOCALAPPDATA%\Programs`,
- * no elevation) or per-machine (Program Files), creates Start Menu + Desktop
- * shortcuts, and registers an uninstaller / Add-Remove-Programs entry — but with
- * Inno's `WizardStyle=modern` flat UI instead of NSIS's dated one.
- *
- * Requires `iscc` (Inno Setup 6+) on PATH; the caller checks `hasInno()` and falls
- * back to NSIS / the portable `.zip` when it's absent.
+ * Windows installer via Inno Setup. Structured config values are validated or
+ * escaped; `include` remains the documented raw advanced extension point.
  */
 
 import { existsSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { $ } from "bun";
 import type { InnoConfig } from "mirinjs";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
+import {
+  assertProjectFile,
+  canonicalProjectRoot,
+  resolveProjectFile,
+} from "./shared/fs/project-source.ts";
 import { validateAppIdentity } from "./shared/validation/config.ts";
 
 export interface BuildInnoInput {
-  appDir: string; // the assembled app folder (build/<App>)
+  appDir: string;
   appName: string;
-  exeName: string; // <App>.exe
+  exeName: string;
   version: string;
   channel: string;
-  bundleId: string; // reverse-DNS id → AppId / uninstall key
-  outDir: string; // build/release
-  fileName: string; // e.g. stable-win32-x64-Anko-setup.exe
+  bundleId: string;
+  outDir: string;
+  fileName: string;
   options: InnoConfig;
   projectDir: string;
+}
+
+export interface RenderInnoInput extends BuildInnoInput {
+  icon?: string;
+  license?: string;
 }
 
 /** Whether the Inno Setup compiler `iscc` is on PATH. */
@@ -35,30 +38,17 @@ export function hasInno(): boolean {
   return Bun.which("iscc") != null;
 }
 
-const resolve = (projectDir: string, p: string) => (isAbsolute(p) ? p : join(projectDir, p));
-/** Escape an Inno directive value: `{` is the constant sigil. */
-const v = (value: string): string => {
-  if (/[\0\r\n]/.test(value)) throw new Error("inno: values cannot contain control characters");
-  return value.replace(/\{/g, "{{");
-};
-
-/** Build the installer with `iscc`, returning the setup.exe path. */
-export async function buildInnoInstaller(input: BuildInnoInput): Promise<string> {
-  const identity = validateAppIdentity({
+/** Render a complete Inno Setup script without touching the filesystem. */
+export function renderInnoScript(input: RenderInnoInput): string {
+  const { appName, bundleId, version } = validateAppIdentity({
     appName: input.appName,
     bundleId: input.bundleId,
     version: input.version,
     channel: input.channel,
   });
-  const { appName, bundleId, version } = identity;
-  const { appDir, exeName, outDir, fileName, options, projectDir } = input;
+  validateInstallerFileName(input.fileName);
+  const { appDir, exeName, outDir, fileName, options, icon, license } = input;
   if (exeName !== `${appName}.exe`) throw new Error(`inno: exeName must be ${appName}.exe`);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.exe$/.test(fileName) || fileName.length > 255) {
-    throw new Error("inno: fileName must be a flat portable .exe name");
-  }
-  const out = join(outDir, fileName);
-  rmSync(out, { force: true });
-  const baseName = fileName.slice(0, -".exe".length);
 
   const perMachine = options.perMachine === true;
   const minimal = options.oneClick === true;
@@ -67,89 +57,175 @@ export async function buildInnoInstaller(input: BuildInnoInput): Promise<string>
   const runAfter = options.runAfterFinish !== false;
   const changeDir = options.allowChangeInstallDir !== false && !minimal;
   const publisher = options.publisher ?? appName;
-  const installDir =
+  const installDir = renderInnoInstallDir(
     options.installDir ??
-    (perMachine ? "{autopf}\\" + appName : "{localappdata}\\Programs\\" + appName);
+      (perMachine ? `{autopf}\\${appName}` : `{localappdata}\\Programs\\${appName}`),
+  );
+  const baseName = fileName.slice(0, -".exe".length);
 
-  // Setup icon: an explicit .ico, else the app's bundled icon.ico.
-  let icon: string | undefined;
-  if (options.installerIcon) {
-    icon = makeWindowsIcon(resolve(projectDir, options.installerIcon), join(outDir, "_inno.ico"));
-  } else if (existsSync(join(appDir, "icon.ico"))) {
-    icon = join(appDir, "icon.ico");
-  }
-  const license = options.license ? resolve(projectDir, options.license) : undefined;
-  if (license && !existsSync(license)) throw new Error(`inno: license not found: ${license}`);
-
-  const L: string[] = [];
-  L.push("[Setup]");
-  L.push(`AppId={{${bundleId}}`);
-  L.push(`AppName=${v(appName)}`);
-  L.push(`AppVersion=${v(version)}`);
-  // Without this, Inno's display name defaults to "<name> version <x>" (shown in
-  // the wizard title + Add/Remove Programs); pin it to the app name.
-  L.push(`AppVerName=${v(appName)}`);
-  L.push(`AppPublisher=${v(publisher)}`);
-  L.push("WizardStyle=modern");
-  L.push(`DefaultDirName=${installDir}`);
-  L.push(`DefaultGroupName=${v(appName)}`);
-  L.push(`PrivilegesRequired=${perMachine ? "admin" : "lowest"}`);
-  L.push(`OutputDir=${outDir}`);
-  L.push(`OutputBaseFilename=${baseName}`);
-  // CEF is the bulk of the installer. Normal compression plus two independent
-  // LZMA2 blocks is substantially faster on CI with a modest size tradeoff.
-  L.push("Compression=lzma2/normal");
-  L.push("LZMANumBlockThreads=2");
-  L.push("SolidCompression=yes");
-  L.push("ArchitecturesAllowed=x64compatible");
-  L.push("ArchitecturesInstallIn64BitMode=x64compatible");
-  L.push(`UninstallDisplayIcon={app}\\${exeName}`);
-  if (icon) L.push(`SetupIconFile=${icon}`);
-  if (license) L.push(`LicenseFile=${license}`);
+  const lines: string[] = [];
+  lines.push("[Setup]");
+  lines.push(`AppId={{${bundleId}}`);
+  lines.push(`AppName=${innoLiteral(appName)}`);
+  lines.push(`AppVersion=${innoLiteral(version)}`);
+  lines.push(`AppVerName=${innoLiteral(appName)}`);
+  lines.push(`AppPublisher=${innoLiteral(publisher)}`);
+  lines.push("WizardStyle=modern");
+  lines.push(`DefaultDirName=${installDir}`);
+  lines.push(`DefaultGroupName=${innoLiteral(appName)}`);
+  lines.push(`PrivilegesRequired=${perMachine ? "admin" : "lowest"}`);
+  lines.push(`OutputDir=${innoLiteralPath(outDir, "output directory")}`);
+  lines.push(`OutputBaseFilename=${innoLiteralPath(baseName, "output base filename")}`);
+  lines.push("Compression=lzma2/normal");
+  lines.push("LZMANumBlockThreads=2");
+  lines.push("SolidCompression=yes");
+  lines.push("ArchitecturesAllowed=x64compatible");
+  lines.push("ArchitecturesInstallIn64BitMode=x64compatible");
+  lines.push(`UninstallDisplayIcon={app}\\${innoLiteralPath(exeName, "executable name")}`);
+  if (icon) lines.push(`SetupIconFile=${innoLiteralPath(icon, "installer icon")}`);
+  if (license) lines.push(`LicenseFile=${innoLiteralPath(license, "license file")}`);
   if (minimal) {
-    L.push("DisableWelcomePage=yes");
-    L.push("DisableReadyPage=yes");
+    lines.push("DisableWelcomePage=yes");
+    lines.push("DisableReadyPage=yes");
   }
-  if (!changeDir) L.push("DisableDirPage=yes");
-  if (!startMenu) L.push("DisableProgramGroupPage=yes");
-  if (options.include) L.push("", "; --- user include ---", options.include, "");
+  if (!changeDir) lines.push("DisableDirPage=yes");
+  if (!startMenu) lines.push("DisableProgramGroupPage=yes");
+  if (options.include) lines.push("", "; --- user include ---", options.include, "");
 
-  L.push("", "[Files]");
-  L.push(
-    `Source: "${appDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs`,
+  lines.push("", "[Files]");
+  lines.push(
+    `Source: "${innoQuotedPath(appDir, "app directory")}\\*"; ` +
+      'DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs',
   );
 
   if (desktop) {
-    L.push("", "[Tasks]");
-    L.push(
-      `Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional:"`,
+    lines.push("", "[Tasks]");
+    lines.push(
+      'Name: "desktopicon"; Description: "Create a desktop shortcut"; ' +
+        'GroupDescription: "Additional:"',
     );
   }
 
-  L.push("", "[Icons]");
-  if (startMenu) L.push(`Name: "{group}\\${v(appName)}"; Filename: "{app}\\${exeName}"`);
+  lines.push("", "[Icons]");
+  if (startMenu) {
+    lines.push(
+      `Name: "{group}\\${innoQuoted(appName)}"; ` + `Filename: "{app}\\${innoQuoted(exeName)}"`,
+    );
+  }
   if (desktop) {
-    L.push(
-      `Name: "{autodesktop}\\${v(appName)}"; Filename: "{app}\\${exeName}"; Tasks: desktopicon`,
+    lines.push(
+      `Name: "{autodesktop}\\${innoQuoted(appName)}"; ` +
+        `Filename: "{app}\\${innoQuoted(exeName)}"; Tasks: desktopicon`,
     );
   }
 
   if (runAfter) {
-    L.push("", "[Run]");
-    L.push(
-      `Filename: "{app}\\${exeName}"; Description: "Launch ${v(appName)}"; ` +
-        "Flags: nowait postinstall skipifsilent",
+    lines.push("", "[Run]");
+    lines.push(
+      `Filename: "{app}\\${innoQuoted(exeName)}"; ` +
+        `Description: "Launch ${innoQuoted(appName)}"; Flags: nowait postinstall skipifsilent`,
     );
   }
 
-  const script = join(outDir, "_installer.iss");
-  writeFileSync(script, L.join("\n") + "\n");
-  console.log(`[mirin release] compiling Inno Setup installer → ${fileName}`);
-  const res = await $`iscc /Q ${script}`.nothrow();
+  return `${lines.join("\n")}\n`;
+}
+
+/** Build the installer with `iscc`, returning the setup.exe path. */
+export async function buildInnoInstaller(input: BuildInnoInput): Promise<string> {
+  const { appName } = validateAppIdentity({
+    appName: input.appName,
+    bundleId: input.bundleId,
+    version: input.version,
+    channel: input.channel,
+  });
+  validateInstallerFileName(input.fileName);
+  if (input.exeName !== `${appName}.exe`) {
+    throw new Error(`inno: exeName must be ${appName}.exe`);
+  }
+  const root = canonicalProjectRoot(input.projectDir);
+
+  let icon: string | undefined;
+  if (input.options.installerIcon) {
+    const source = resolveProjectFile(root, input.options.installerIcon, "Inno installer icon");
+    icon = makeWindowsIcon(
+      assertProjectFile(root, source, "Inno installer icon"),
+      join(input.outDir, "_inno.ico"),
+    );
+  } else if (existsSync(join(input.appDir, "icon.ico"))) {
+    icon = join(input.appDir, "icon.ico");
+  }
+  const license = input.options.license
+    ? assertProjectFile(
+        root,
+        resolveProjectFile(root, input.options.license, "Inno license"),
+        "Inno license",
+      )
+    : undefined;
+
+  const rendered = renderInnoScript({ ...input, icon, license });
+  const out = join(input.outDir, input.fileName);
+  rmSync(out, { force: true });
+  const script = join(input.outDir, "_installer.iss");
+  writeFileSync(script, rendered);
+  console.log(`[mirin release] compiling Inno Setup installer → ${input.fileName}`);
+  const result = await $`iscc /Q ${script}`.nothrow();
   rmSync(script, { force: true });
-  rmSync(join(outDir, "_inno.ico"), { force: true });
-  if (res.exitCode !== 0 || !existsSync(out)) {
-    throw new Error(`iscc failed (exit ${res.exitCode})`);
+  rmSync(join(input.outDir, "_inno.ico"), { force: true });
+  if (result.exitCode !== 0 || !existsSync(out)) {
+    throw new Error(`iscc failed (exit ${result.exitCode})`);
   }
   return out;
+}
+
+function renderInnoInstallDir(value: string): string {
+  if (value.length === 0 || value.length > 1024 || /[\0\r\n"]/.test(value)) {
+    throw new Error(
+      "inno: installDir must be an absolute Windows path or start with {autopf} or {localappdata}",
+    );
+  }
+
+  const constant = value.match(/^(\{(?:autopf|localappdata)\})(?=$|[\\/])/i);
+  if (constant) {
+    const prefix = constant[1];
+    if (prefix === undefined) throw new Error("inno: invalid installDir constant");
+    return `${prefix}${innoLiteralPath(value.slice(prefix.length), "install directory")}`;
+  }
+  if (/^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(value)) {
+    return innoLiteralPath(value, "install directory");
+  }
+  throw new Error(
+    "inno: installDir must be an absolute Windows path or start with {autopf} or {localappdata}",
+  );
+}
+
+function innoLiteral(value: string): string {
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error("inno: structured values cannot contain control characters");
+  }
+  return value.replace(/\{/g, "{{");
+}
+
+function innoQuoted(value: string): string {
+  return innoLiteral(value).replace(/"/g, '""');
+}
+
+function innoLiteralPath(value: string, label: string): string {
+  if (value.length === 0 || /[\0\r\n"]/.test(value)) {
+    throw new Error(`inno: ${label} contains invalid characters`);
+  }
+  return value.replace(/\{/g, "{{");
+}
+
+function innoQuotedPath(value: string, label: string): string {
+  return innoLiteralPath(value, label).replace(/"/g, '""');
+}
+
+function validateInstallerFileName(value: string): void {
+  if (
+    value.length === 0 ||
+    value.length > 255 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*\.exe$/.test(value)
+  ) {
+    throw new Error("inno: fileName must be a flat portable .exe name");
+  }
 }

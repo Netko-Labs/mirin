@@ -228,9 +228,13 @@ removing its prior output. `mirin dev`/`build`/`release` branch on `process.plat
 (`…-setup.exe` — Program Files / per-user install, Start Menu + Desktop shortcuts,
 uninstaller, Add/Remove Programs; customizable via the `nsis` config,
 `installer-win.ts`; needs `makensis`, falls back to a portable `.zip`). Its owned app
-payload lives under `$INSTDIR\\app`; `Uninstall.exe` remains at `$INSTDIR`, and uninstall
-recursively removes only `app`, deletes known shortcuts/registry/uninstaller entries,
-then attempts a non-recursive root removal so unrelated user files survive. It also emits
+payload lives under `$INSTDIR\\app`; upgrades remove that owned directory before copying.
+A five-marker fingerprint gates cleanup of the former flat NSIS/Inno payload, which deletes
+only enumerated root files and owned `resources`/`locales`. `Uninstall.exe` remains at
+`$INSTDIR`; uninstall repeats the guarded legacy cleanup, recursively removes only `app`,
+deletes known shortcuts/registry/uninstaller entries, then attempts a non-recursive root
+removal so unrelated user files survive. Inno install directories accept absolute Windows
+paths or `{autopf}`/`{localappdata}` prefixes, while literal script paths are escaped. It also emits
 a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`; the updater
 swaps the folder via a detached PowerShell relauncher. Runtime updates require
 HTTPS artifact hosts except loopback HTTP for local testing, validate that the

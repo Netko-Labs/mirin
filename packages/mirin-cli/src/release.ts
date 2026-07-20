@@ -29,6 +29,7 @@ import {
   releaseArtifactUrl,
   trustedReleaseBaseUrl,
 } from "./release/previous.ts";
+import { safeDestructiveDirectory } from "./shared/fs/project-source.ts";
 import { validateAppIdentity } from "./shared/validation/config.ts";
 
 // Level 10 keeps updater bundles compact without level 19's steep CPU cost.
@@ -99,8 +100,12 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   // The packaged unit: a flat app folder on Windows/Linux, an `.app` bundle on macOS.
   const appArtifact = isWindows || isLinux ? result.appName : `${result.appName}.app`;
 
-  const buildDir = join(projectDir, "build");
-  const outDir = join(buildDir, "release");
+  const buildDir = join(result.projectDir, "build");
+  const outDir = safeDestructiveDirectory(
+    result.projectDir,
+    join(buildDir, "release"),
+    "release output directory",
+  );
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
 

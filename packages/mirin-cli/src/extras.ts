@@ -8,9 +8,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 import {
-  assertRegularFile,
+  assertProjectFile,
   canonicalProjectRoot,
   resolveProjectFile,
+  validateOwnedOutputDirectory,
 } from "./shared/fs/project-source.ts";
 
 /** Config shapes (mirrors packages/mirin/src/config; CLI can't import runtime internals). */
@@ -33,16 +34,37 @@ export interface NormalizedWorker {
 }
 
 const SAFE_EXTRA_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const WINDOWS_RESERVED_NAME =
+  /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i;
+const MAX_EXTRA_NAME_LENGTH = 120;
 
-/** Validate a bundle filename segment used by sidecars and extra workers. */
+/** Validate a Windows-portable bundle filename segment used by extra assets. */
 export function safeExtraAssetName(name: string, label: string): string {
-  if (!SAFE_EXTRA_NAME.test(name) || name === "." || name === "..") {
+  if (
+    name.length > MAX_EXTRA_NAME_LENGTH ||
+    !SAFE_EXTRA_NAME.test(name) ||
+    name === "." ||
+    name === ".." ||
+    name.endsWith(".") ||
+    WINDOWS_RESERVED_NAME.test(name)
+  ) {
     throw new Error(
-      `[mirin] invalid ${label} "${name}" — use letters, digits, ".", "_" or "-", ` +
-        "and do not include path separators.",
+      `[mirin] invalid ${label} "${name}" — use at most ${MAX_EXTRA_NAME_LENGTH} letters, ` +
+        'digits, ".", "_" or "-" in one Windows-portable, non-reserved segment.',
     );
   }
   return name;
+}
+
+function assertUniqueExtraAssetNames(names: readonly string[], label: string): void {
+  const seen = new Set<string>();
+  for (const name of names) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) {
+      throw new Error(`[mirin] duplicate ${label} "${name}" under case-insensitive filenames.`);
+    }
+    seen.add(key);
+  }
 }
 
 /** Resolve `config.sidecars` to canonical regular source files under the project root. */
@@ -51,12 +73,19 @@ export function normalizeSidecars(
   sidecars: SidecarConfig | undefined,
 ): NormalizedSidecar[] {
   const root = canonicalProjectRoot(projectDir);
-  return Object.entries(sidecars ?? {}).map(([name, value]) => {
-    const safeName = safeExtraAssetName(name, "sidecar name");
+  const entries = Object.entries(sidecars ?? {}).map(([name, value]) => ({
+    name: safeExtraAssetName(name, "sidecar name"),
+    value,
+  }));
+  assertUniqueExtraAssetNames(
+    entries.map(({ name }) => name),
+    "sidecar name",
+  );
+  return entries.map(({ name, value }) => {
     const spec = typeof value === "string" ? { bin: value } : value;
     return {
-      name: safeName,
-      src: resolveProjectFile(root, spec.bin, `sidecar "${safeName}" path`),
+      name,
+      src: resolveProjectFile(root, spec.bin, `sidecar "${name}" path`),
       entitlements: spec.entitlements ?? [],
     };
   });
@@ -68,27 +97,48 @@ export function normalizeWorkers(
   workers: WorkersConfig | undefined,
 ): NormalizedWorker[] {
   const root = canonicalProjectRoot(projectDir);
-  return Object.entries(workers ?? {}).map(([name, entry]) => {
-    const safeName = safeExtraAssetName(name, "worker name");
-    return {
-      name: safeName,
-      src: resolveProjectFile(root, entry, `worker "${safeName}" entry`),
-    };
-  });
+  const entries = Object.entries(workers ?? {}).map(([name, entry]) => ({
+    name: safeExtraAssetName(name, "worker name"),
+    entry,
+  }));
+  assertUniqueExtraAssetNames(
+    entries.map(({ name }) => name),
+    "worker name",
+  );
+  return entries.map(({ name, entry }) => ({
+    name,
+    src: resolveProjectFile(root, entry, `worker "${name}" entry`),
+  }));
 }
 
-/** Revalidate extra names and regular sources before a bundle directory is removed. */
+/** Revalidate extra names and project-owned sources before bundle cleanup. */
 export function validateBundleExtras(
+  projectDir: string,
   sidecars: readonly { name: string; src: string }[] | undefined,
   workers: Readonly<Record<string, string>> | undefined,
 ): void {
-  for (const sidecar of sidecars ?? []) {
-    const name = safeExtraAssetName(sidecar.name, "sidecar name");
-    assertRegularFile(sidecar.src, `sidecar "${name}"`);
+  const root = canonicalProjectRoot(projectDir);
+  const safeSidecars = (sidecars ?? []).map((sidecar) => ({
+    ...sidecar,
+    name: safeExtraAssetName(sidecar.name, "sidecar name"),
+  }));
+  const safeWorkers = Object.entries(workers ?? {}).map(([name, source]) => ({
+    name: safeExtraAssetName(name, "worker name"),
+    source,
+  }));
+  assertUniqueExtraAssetNames(
+    safeSidecars.map(({ name }) => name),
+    "sidecar name",
+  );
+  assertUniqueExtraAssetNames(
+    safeWorkers.map(({ name }) => name),
+    "worker name",
+  );
+  for (const sidecar of safeSidecars) {
+    assertProjectFile(root, sidecar.src, `sidecar "${sidecar.name}"`);
   }
-  for (const [workerName, source] of Object.entries(workers ?? {})) {
-    const name = safeExtraAssetName(workerName, "worker name");
-    assertRegularFile(source, `worker "${name}" bundle`);
+  for (const worker of safeWorkers) {
+    assertProjectFile(root, worker.source, `worker "${worker.name}" bundle`);
   }
 }
 
@@ -102,17 +152,19 @@ export async function compileWorkers(
   outDir: string,
   minify: boolean,
 ): Promise<Record<string, string>> {
-  const sources = workers.map((worker) => ({
-    ...worker,
-    src: assertRegularFile(worker.src, `worker "${worker.name}" entry`),
-  }));
-  mkdirSync(outDir, { recursive: true });
-  const compiled = sources.map(async ({ name, src }) => {
-    const js = join(outDir, `${name}.js`);
+  const root = canonicalProjectRoot(projectDir);
+  const names = workers.map((worker) => safeExtraAssetName(worker.name, "worker name"));
+  assertUniqueExtraAssetNames(names, "worker name");
+  const output = validateOwnedOutputDirectory(root, outDir, "worker output directory");
+  mkdirSync(output, { recursive: true });
+  const compiled = workers.map(async (worker) => {
+    const name = safeExtraAssetName(worker.name, "worker name");
+    const src = assertProjectFile(root, worker.src, `worker "${name}" entry`);
+    const js = join(output, `${name}.js`);
     if (minify) {
-      await $`bun build ${src} --target=bun --minify --outfile ${js}`.cwd(projectDir);
+      await $`bun build ${src} --target=bun --minify --outfile ${js}`.cwd(root);
     } else {
-      await $`bun build ${src} --target=bun --outfile ${js}`.cwd(projectDir);
+      await $`bun build ${src} --target=bun --outfile ${js}`.cwd(root);
     }
     return { name, js };
   });

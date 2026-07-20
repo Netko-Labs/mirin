@@ -269,12 +269,16 @@ export interface NsisConfig {
   include?: string;
 }
 
-/**
- * Inno Setup installer options — the same knobs as {@link NsisConfig}
- * (perMachine, oneClick, shortcuts, license, publisher, runAfterFinish,
- * installerIcon, and a raw `include` injected as `.iss` instead of NSIS script).
- */
-export type InnoConfig = NsisConfig;
+/** Inno Setup installer options, sharing the common NSIS installer knobs. */
+export interface InnoConfig extends Omit<NsisConfig, "installDir" | "include"> {
+  /**
+   * Default install directory: an absolute Windows path, or a path beginning with
+   * `{autopf}` or `{localappdata}`.
+   */
+  installDir?: string;
+  /** Raw Inno Setup script injected near the top of the generated `.iss` file. */
+  include?: string;
+}
 
 /** A Linux distributable package format `mirin` can emit. */
 export type LinuxPackageFormat = "appimage" | "deb" | "rpm";

@@ -23,7 +23,7 @@ import {
 import { join } from "node:path";
 import { $ } from "bun";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
-import { copyRegularFile } from "../../shared/fs/project-source.ts";
+import { copyProjectFile, safeDestructiveDirectory } from "../../shared/fs/project-source.ts";
 import { validateAppIdentity } from "../../shared/validation/config.ts";
 import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { pruneMacCefLocales } from "../shared/cef-locales.ts";
@@ -41,6 +41,7 @@ const HELPER_TYPES = [
 export interface BundleOptions {
   appName: string; // also the executable stem; helpers are "<appName> Helper"
   bundleId: string;
+  projectDir: string;
   outDir: string;
   hostExe: string; // compiled Bun host binary
   coreDylib: string; // libmirin_core.dylib
@@ -182,14 +183,18 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     channel: opts.channel,
   });
   validateVersionMetadataForBundle(opts.resources?.versionJson, appIdentity);
-  validateBundleExtras(opts.resources?.sidecars, opts.resources?.workers);
+  validateBundleExtras(opts.projectDir, opts.resources?.sidecars, opts.resources?.workers);
   const { appName, bundleId, version } = appIdentity;
   const { cefPath } = opts;
   if (!existsSync(join(cefPath, FRAMEWORK))) {
     throw new Error(`CEF framework not found at ${cefPath} — run: bun scripts/fetch-cef.ts`);
   }
 
-  const app = join(opts.outDir, `${appName}.app`);
+  const app = safeDestructiveDirectory(
+    opts.projectDir,
+    join(opts.outDir, `${appName}.app`),
+    "macOS bundle output directory",
+  );
   const contents = join(app, "Contents");
   const macos = join(contents, "MacOS");
   const frameworks = join(contents, "Frameworks");
@@ -260,7 +265,12 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     mkdirSync(workersDir, { recursive: true });
     for (const [name, src] of Object.entries(opts.resources.workers)) {
       const safeName = safeExtraAssetName(name, "worker name");
-      copyRegularFile(src, join(workersDir, `${safeName}.js`), `worker "${safeName}" bundle`);
+      copyProjectFile(
+        opts.projectDir,
+        src,
+        join(workersDir, `${safeName}.js`),
+        `worker "${safeName}" bundle`,
+      );
     }
   }
   // Sidecar binaries -> Resources/sidecars/<name> (chmod +x; signed below). Paths
@@ -272,7 +282,7 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     for (const sc of opts.resources.sidecars) {
       const safeName = safeExtraAssetName(sc.name, "sidecar name");
       const dest = join(sidecarsDir, safeName);
-      copyRegularFile(sc.src, dest, `sidecar "${safeName}"`);
+      copyProjectFile(opts.projectDir, sc.src, dest, `sidecar "${safeName}"`);
       chmodSync(dest, 0o755);
       sidecarDests.push({ name: safeName, src: dest, entitlements: sc.entitlements });
     }

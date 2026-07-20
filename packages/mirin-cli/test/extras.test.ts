@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -13,7 +14,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildLinuxBundle } from "../src/bundle/linux/app.ts";
-import { normalizeSidecars, normalizeWorkers } from "../src/extras.ts";
+import { normalizeSidecars, normalizeWorkers, safeExtraAssetName } from "../src/extras.ts";
+import { copyProjectFile } from "../src/shared/fs/project-source.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -67,6 +69,58 @@ describe("extra source containment", () => {
       );
     });
   }
+
+  test("revalidates canonical containment immediately before copying", () => {
+    const root = temporaryDirectory();
+    const outside = temporaryDirectory();
+    const source = join(root, "tool");
+    const destination = join(root, "copy");
+    const external = join(outside, "external");
+    writeFileSync(source, "inside");
+    writeFileSync(external, "outside");
+    const [sidecar] = normalizeSidecars(root, { tool: "tool" });
+    if (!sidecar) throw new Error("expected normalized sidecar");
+
+    rmSync(source);
+    symlinkSync(external, source);
+
+    expect(() => copyProjectFile(root, sidecar.src, destination, "sidecar tool")).toThrow(
+      "escapes the project root",
+    );
+    expect(existsSync(destination)).toBe(false);
+  });
+});
+
+describe("extra asset names", () => {
+  test.each([
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    "NUL.txt",
+    "COM1.exe",
+    "lpt9.log",
+    "trailing.",
+    "nested/name",
+    "nested\\name",
+    "name:stream",
+    "a".repeat(121),
+  ])("rejects non-portable name %s", (name) => {
+    expect(() => safeExtraAssetName(name, "asset name")).toThrow("invalid asset name");
+  });
+
+  test("rejects case-insensitive sidecar and worker collisions", () => {
+    const root = temporaryDirectory();
+    writeFileSync(join(root, "one"), "one");
+    writeFileSync(join(root, "two"), "two");
+
+    expect(() => normalizeSidecars(root, { Tool: "one", tool: "two" })).toThrow(
+      "duplicate sidecar name",
+    );
+    expect(() => normalizeWorkers(root, { Worker: "one", worker: "two" })).toThrow(
+      "duplicate worker name",
+    );
+  });
 });
 
 describe("sidecar bundle copies", () => {
@@ -98,6 +152,7 @@ describe("sidecar bundle copies", () => {
       bundleId: "dev.example.safe-app",
       version: "1.2.3",
       channel: "stable",
+      projectDir: root,
       outDir,
       hostExe: host,
       coreDll: core,

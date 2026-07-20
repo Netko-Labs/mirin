@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildLinuxBundle } from "../src/bundle/linux/app.ts";
@@ -82,6 +82,67 @@ describe("bundle sink validation", () => {
     ).rejects.toThrow("invalid sidecar name");
     expect(existsSync(paths.sentinel)).toBe(true);
   });
+
+  test("rejects case-insensitive extra collisions before removing the app folder", async () => {
+    const paths = fixture("Safe App");
+    const sidecar = join(paths.root, "sidecar");
+    writeFileSync(sidecar, "sidecar");
+
+    await expect(
+      buildWindowsBundle({
+        ...paths.common,
+        appName: "Safe App",
+        bundleId: "dev.example.safe-app",
+        version: "1.2.3",
+        channel: "stable",
+        coreDll: paths.core,
+        helperExe: paths.helper,
+        resources: {
+          sidecars: [
+            { name: "Tool", src: sidecar },
+            { name: "tool", src: sidecar },
+          ],
+        },
+      }),
+    ).rejects.toThrow("duplicate sidecar name");
+    expect(existsSync(paths.sentinel)).toBe(true);
+  });
+
+  test("rejects a symlink or junction output root and preserves its sentinel", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mirin-bundle-output-"));
+    temporaryDirectories.push(root);
+    const outside = mkdtempSync(join(tmpdir(), "mirin-bundle-outside-"));
+    temporaryDirectories.push(outside);
+    const sentinel = join(outside, "keep.txt");
+    writeFileSync(sentinel, "keep");
+    const outDir = join(root, "out");
+    symlinkSync(outside, outDir, process.platform === "win32" ? "junction" : "dir");
+    const cefPath = join(root, "cef");
+    mkdirSync(join(cefPath, "locales"), { recursive: true });
+    writeFileSync(join(cefPath, "libcef.dll"), "cef");
+    const host = join(root, "host");
+    const core = join(root, "core");
+    const helper = join(root, "helper");
+    writeFileSync(host, "host");
+    writeFileSync(core, "core");
+    writeFileSync(helper, "helper");
+
+    await expect(
+      buildWindowsBundle({
+        projectDir: root,
+        outDir,
+        appName: "Safe App",
+        bundleId: "dev.example.safe-app",
+        version: "1.2.3",
+        channel: "stable",
+        hostExe: host,
+        coreDll: core,
+        helperExe: helper,
+        cefPath,
+      }),
+    ).rejects.toThrow("symlink or reparse point");
+    expect(existsSync(sentinel)).toBe(true);
+  });
 });
 
 function fixture(appDirectoryName: string): {
@@ -90,6 +151,7 @@ function fixture(appDirectoryName: string): {
   helper: string;
   sentinel: string;
   common: {
+    projectDir: string;
     outDir: string;
     hostExe: string;
     cefPath: string;
@@ -113,6 +175,6 @@ function fixture(appDirectoryName: string): {
     core,
     helper,
     sentinel,
-    common: { outDir, hostExe: host, cefPath: join(root, "missing-cef") },
+    common: { projectDir: root, outDir, hostExe: host, cefPath: join(root, "missing-cef") },
   };
 }
