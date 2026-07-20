@@ -29,6 +29,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, extname, join } from "node:path";
+import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
+import { copyRegularFile } from "../../shared/fs/project-source.ts";
+import { validateAppIdentity } from "../../shared/validation/config.ts";
+import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { copyFlatCefLocales } from "../shared/cef-locales.ts";
 
 /** Source dir (vendor/cef on Linux) must contain libcef.so. */
@@ -43,6 +47,9 @@ const CEF_RUNTIME_EXTRAS = ["vk_swiftshader_icd.json", "libvulkan.so.1", "chrome
 
 export interface LinuxBundleOptions {
   appName: string; // also the host binary stem → <appName>
+  bundleId: string;
+  version: string;
+  channel: string;
   outDir: string;
   hostExe: string; // compiled Bun host (no extension)
   coreDll: string; // libmirin_core.so
@@ -186,7 +193,16 @@ function iconsetPixels(name: string): number {
 export async function buildLinuxBundle(
   opts: LinuxBundleOptions,
 ): Promise<{ app: string; exe: string }> {
-  const { appName, cefPath } = opts;
+  const identity = validateAppIdentity({
+    appName: opts.appName,
+    bundleId: opts.bundleId,
+    version: opts.version,
+    channel: opts.channel,
+  });
+  validateVersionMetadataForBundle(opts.resources?.versionJson, identity);
+  validateBundleExtras(opts.resources?.sidecars, opts.resources?.workers);
+  const { appName } = identity;
+  const { cefPath } = opts;
   if (!existsSync(join(cefPath, CEF_MARKER))) {
     throw new Error(`CEF runtime not found at ${cefPath} — run: bun scripts/fetch-cef.ts`);
   }
@@ -231,16 +247,17 @@ export async function buildLinuxBundle(
       const workersDir = join(res, "workers");
       mkdirSync(workersDir, { recursive: true });
       for (const [name, src] of Object.entries(opts.resources.workers)) {
-        cpSync(src, join(workersDir, `${name}.js`));
+        const safeName = safeExtraAssetName(name, "worker name");
+        copyRegularFile(src, join(workersDir, `${safeName}.js`), `worker "${safeName}" bundle`);
       }
     }
     if (opts.resources.sidecars?.length) {
       const sidecarsDir = join(res, "sidecars");
       mkdirSync(sidecarsDir, { recursive: true });
       for (const sc of opts.resources.sidecars) {
-        if (!existsSync(sc.src)) throw new Error(`sidecar "${sc.name}" not found: ${sc.src}`);
-        const dst = join(sidecarsDir, sc.name);
-        cpSync(sc.src, dst);
+        const safeName = safeExtraAssetName(sc.name, "sidecar name");
+        const dst = join(sidecarsDir, safeName);
+        copyRegularFile(sc.src, dst, `sidecar "${safeName}"`);
         chmodSync(dst, 0o755);
       }
     }

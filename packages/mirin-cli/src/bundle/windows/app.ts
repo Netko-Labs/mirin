@@ -17,7 +17,11 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
+import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
 import { makeWindowsIcon } from "../../icons/windows/index.ts";
+import { copyRegularFile } from "../../shared/fs/project-source.ts";
+import { validateAppIdentity } from "../../shared/validation/config.ts";
+import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { copyFlatCefLocales } from "../shared/cef-locales.ts";
 
 /** Source dir (vendor/cef on Windows) must contain libcef.dll. */
@@ -31,6 +35,9 @@ const CEF_RUNTIME_EXTRAS = ["vk_swiftshader_icd.json"];
 
 export interface WinBundleOptions {
   appName: string; // also the host exe stem → <appName>.exe
+  bundleId: string;
+  version: string;
+  channel: string;
   outDir: string;
   hostExe: string; // compiled Bun host (.exe)
   coreDll: string; // mirin_core.dll
@@ -55,7 +62,16 @@ export interface WinBundleOptions {
 export async function buildWindowsBundle(
   opts: WinBundleOptions,
 ): Promise<{ app: string; exe: string }> {
-  const { appName, cefPath } = opts;
+  const identity = validateAppIdentity({
+    appName: opts.appName,
+    bundleId: opts.bundleId,
+    version: opts.version,
+    channel: opts.channel,
+  });
+  validateVersionMetadataForBundle(opts.resources?.versionJson, identity);
+  validateBundleExtras(opts.resources?.sidecars, opts.resources?.workers);
+  const { appName } = identity;
+  const { cefPath } = opts;
   if (!existsSync(join(cefPath, CEF_MARKER))) {
     throw new Error(`CEF runtime not found at ${cefPath} — run: bun scripts/fetch-cef.ts`);
   }
@@ -91,15 +107,16 @@ export async function buildWindowsBundle(
       const workersDir = join(res, "workers");
       mkdirSync(workersDir, { recursive: true });
       for (const [name, src] of Object.entries(opts.resources.workers)) {
-        cpSync(src, join(workersDir, `${name}.js`));
+        const safeName = safeExtraAssetName(name, "worker name");
+        copyRegularFile(src, join(workersDir, `${safeName}.js`), `worker "${safeName}" bundle`);
       }
     }
     if (opts.resources.sidecars?.length) {
       const sidecarsDir = join(res, "sidecars");
       mkdirSync(sidecarsDir, { recursive: true });
       for (const sc of opts.resources.sidecars) {
-        if (!existsSync(sc.src)) throw new Error(`sidecar "${sc.name}" not found: ${sc.src}`);
-        cpSync(sc.src, join(sidecarsDir, sc.name));
+        const safeName = safeExtraAssetName(sc.name, "sidecar name");
+        copyRegularFile(sc.src, join(sidecarsDir, safeName), `sidecar "${safeName}"`);
       }
     }
   }

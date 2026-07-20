@@ -22,6 +22,10 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
+import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
+import { copyRegularFile } from "../../shared/fs/project-source.ts";
+import { validateAppIdentity } from "../../shared/validation/config.ts";
+import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { pruneMacCefLocales } from "../shared/cef-locales.ts";
 
 const FRAMEWORK = "Chromium Embedded Framework.framework";
@@ -44,8 +48,10 @@ export interface BundleOptions {
   cefPath: string; // dir containing the CEF framework (vendor/cef)
   /** Production CEF locale allowlist. Undefined keeps every locale. */
   cefLocales?: string[];
-  /** App version → Info.plist CFBundleShortVersionString/CFBundleVersion. */
-  version?: string;
+  /** Validated app version → Info.plist CFBundleShortVersionString/CFBundleVersion. */
+  version: string;
+  /** Validated release channel (also checked against version.json when present). */
+  channel: string;
   /** App icon source: a .icns, a .iconset dir, or a square .png. Optional. */
   icon?: string;
   /** Codesign identity; "-" (default) is ad-hoc. Set to a Developer ID to ship. */
@@ -169,7 +175,16 @@ ${body}
 
 /** Build the .app and return the path to its executable. */
 export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string; exe: string }> {
-  const { appName, bundleId, cefPath } = opts;
+  const appIdentity = validateAppIdentity({
+    appName: opts.appName,
+    bundleId: opts.bundleId,
+    version: opts.version,
+    channel: opts.channel,
+  });
+  validateVersionMetadataForBundle(opts.resources?.versionJson, appIdentity);
+  validateBundleExtras(opts.resources?.sidecars, opts.resources?.workers);
+  const { appName, bundleId, version } = appIdentity;
+  const { cefPath } = opts;
   if (!existsSync(join(cefPath, FRAMEWORK))) {
     throw new Error(`CEF framework not found at ${cefPath} — run: bun scripts/fetch-cef.ts`);
   }
@@ -190,7 +205,6 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   // Render the icon (if any) into Resources before writing the plist, so we
   // only set CFBundleIconFile when an icon was actually produced.
   const iconFile = opts.icon ? await writeIcon(opts.icon, join(contents, "Resources")) : undefined;
-  const version = opts.version ?? "0.0.1";
 
   const info: Record<string, PlistValue> = {
     CFBundleDevelopmentRegion: "en",
@@ -245,7 +259,8 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     const workersDir = join(resources, "workers");
     mkdirSync(workersDir, { recursive: true });
     for (const [name, src] of Object.entries(opts.resources.workers)) {
-      cpSync(src, join(workersDir, `${name}.js`));
+      const safeName = safeExtraAssetName(name, "worker name");
+      copyRegularFile(src, join(workersDir, `${safeName}.js`), `worker "${safeName}" bundle`);
     }
   }
   // Sidecar binaries -> Resources/sidecars/<name> (chmod +x; signed below). Paths
@@ -255,11 +270,11 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     const sidecarsDir = join(resources, "sidecars");
     mkdirSync(sidecarsDir, { recursive: true });
     for (const sc of opts.resources.sidecars) {
-      if (!existsSync(sc.src)) throw new Error(`sidecar "${sc.name}" not found: ${sc.src}`);
-      const dest = join(sidecarsDir, sc.name);
-      cpSync(sc.src, dest);
+      const safeName = safeExtraAssetName(sc.name, "sidecar name");
+      const dest = join(sidecarsDir, safeName);
+      copyRegularFile(sc.src, dest, `sidecar "${safeName}"`);
       chmodSync(dest, 0o755);
-      sidecarDests.push({ name: sc.name, src: dest, entitlements: sc.entitlements });
+      sidecarDests.push({ name: safeName, src: dest, entitlements: sc.entitlements });
     }
   }
 

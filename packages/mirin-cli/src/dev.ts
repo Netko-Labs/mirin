@@ -8,7 +8,7 @@
  * 5. launch the app pointed at the Vite URL, with RPC injected into the webview
  */
 
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +26,9 @@ import { buildWindowsBundle } from "./bundle/windows/index.ts";
 const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
 
-import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { compileWorkers, normalizeSidecars, normalizeWorkers } from "./extras.ts";
+import { canonicalProjectRoot } from "./shared/fs/project-source.ts";
+import { resolveAppVersion, validateAppIdentity } from "./shared/validation/config.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
 /** Vite's default port. `mirin dev` probes upward from here for a free one, so a
@@ -34,22 +36,31 @@ import { sweepBuildTemps } from "./temps.ts";
 const DEV_PORT_BASE = 5173;
 
 export async function dev(projectDir = process.cwd()): Promise<number> {
-  const work = join(projectDir, ".mirin");
-  mkdirSync(work, { recursive: true });
-  // `bun build --compile` drops temp *.bun-build files in the cwd; clear any left
-  // behind by a previously interrupted run so they don't pile up in the project.
-  sweepBuildTemps(projectDir);
-
-  // --- load the manifest ---
-  const config = (await import(join(projectDir, "mirin.config.ts"))).default;
-  const appName: string = config.name ?? "Mirin App";
-  const bundleId: string = config.id ?? "dev.mirin.app";
-  const mainEntry = join(projectDir, config.main ?? "main/main.ts");
-  const iconSrc = config.icon ? join(projectDir, config.icon) : undefined;
+  // Load and validate every path-bearing identity and extra source before creating
+  // `.mirin`, sweeping temp files, resolving native artifacts, or compiling code.
+  const root = canonicalProjectRoot(projectDir);
+  const config = (await import(join(root, "mirin.config.ts"))).default;
+  const identity = validateAppIdentity({
+    appName: config.name === undefined ? "Mirin App" : config.name,
+    bundleId: config.id === undefined ? "dev.mirin.app" : config.id,
+    channel: config.release?.channel === undefined ? "stable" : config.release.channel,
+    version: resolveAppVersion(root),
+  });
+  const { appName, bundleId, version, channel } = identity;
+  const mainEntry = join(root, config.main ?? "main/main.ts");
+  const iconSrc = config.icon ? join(root, config.icon) : undefined;
+  const sidecars = normalizeSidecars(root, config.sidecars);
+  const workers = normalizeWorkers(root, config.workers);
   // Linux: resolve the app icon to a concrete PNG the core stamps onto the window
   // as `_NET_WM_ICON` (cosmic dock/taskbar). Passed straight through in dev — no
   // bundling; the file is read from the project at window-create time.
   const linuxIconPng = IS_LINUX && iconSrc ? resolveLinuxIconPng(iconSrc) : undefined;
+
+  const work = join(root, ".mirin");
+  mkdirSync(work, { recursive: true });
+  // `bun build --compile` drops temp *.bun-build files in the cwd; clear any left
+  // behind by a previously interrupted run so they don't pile up in the project.
+  sweepBuildTemps(root);
 
   // --- native artifacts ---
   const artifacts = await resolveArtifacts({ release: false });
@@ -61,22 +72,19 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   const workerJs = join(work, "worker.js");
   const hostTarget =
     process.platform === "win32" && process.arch === "arm64" ? ["--target=bun-windows-x64"] : [];
-  await $`bun build --compile ${hostTarget} ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
-    projectDir,
-  );
-  await $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(projectDir);
+  await $`bun build --compile ${hostTarget} ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(root);
+  await $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(root);
 
   // Extra assets (dev): compile workers into .mirin/workers and symlink sidecar
   // binaries into .mirin/sidecars (no copy/sign in dev — they run unsigned locally).
   const workersDir = join(work, "workers");
-  await compileWorkers(projectDir, config.workers, workersDir, false);
+  await compileWorkers(root, workers, workersDir, false);
   const sidecarsDir = join(work, "sidecars");
   mkdirSync(sidecarsDir, { recursive: true });
-  for (const sc of normalizeSidecars(projectDir, config.sidecars)) {
+  for (const sc of sidecars) {
     const link = join(sidecarsDir, sc.name);
     rmSync(link, { force: true });
-    if (existsSync(sc.src)) symlinkSync(sc.src, link);
-    else console.warn(`[mirin dev] sidecar "${sc.name}" not found: ${sc.src}`);
+    symlinkSync(sc.src, link);
   }
 
   // --- assemble the dev bundle (Windows/Linux app folder, or macOS .app) ---
@@ -84,6 +92,9 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   const { app, exe } = IS_WINDOWS
     ? await buildWindowsBundle({
         appName,
+        bundleId,
+        version,
+        channel,
         outDir: work,
         hostExe,
         coreDll: artifacts.coreDylib,
@@ -94,6 +105,9 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     : IS_LINUX
       ? await buildLinuxBundle({
           appName,
+          bundleId,
+          version,
+          channel,
           outDir: work,
           hostExe,
           coreDll: artifacts.coreDylib,
@@ -104,6 +118,8 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       : await buildAppBundle({
           appName,
           bundleId,
+          version,
+          channel,
           outDir: work,
           hostExe,
           coreDylib: artifacts.coreDylib,
@@ -155,7 +171,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       "--strictPort",
     ],
     {
-      cwd: projectDir,
+      cwd: root,
       stdio: ["ignore", "inherit", "inherit"],
     },
   );
@@ -164,7 +180,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   // --- launch the app ---
   console.log(`[mirin dev] launching ${appName}…`);
   const appProc = Bun.spawn([exe], {
-    cwd: projectDir,
+    cwd: root,
     env: {
       ...process.env,
       MIRIN_CORE: IS_WINDOWS

@@ -54,6 +54,16 @@ app.on("window-all-closed", () => {
 
 Declared windows with no `open` field open automatically at launch, before `ready` fires. `defineConfig` is an identity function that exists for typing/intellisense; the manifest must remain serializable data.
 
+The CLI validates packaging identity before it creates/cleans build directories or
+starts Vite/native work. `name` is one portable ASCII filename segment (letters,
+digits, spaces, `.`, `_`, `(`, `)`, `-`; no Windows device names or trailing
+dot/space), `id` is a reverse-DNS identifier with at least two DNS-style labels,
+`release.channel` is a flat filename-safe segment of at most 64 characters, and
+the package/override version must be strict SemVer. Platform bundle and installer
+sinks repeat the validation before recursive removal. When updates are enabled,
+the CLI emits exactly the validated five-field `version.json` envelope (`version`,
+`channel`, `baseUrl`, `name`, `identifier`) and parses it back before bundling.
+
 `cef.locales` is an optional production-package allowlist using BCP 47 tags.
 Keeping only the languages an app ships can remove tens of megabytes from CEF
 and every updater, installer, and Linux package derived from it. Development

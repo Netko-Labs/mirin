@@ -22,6 +22,11 @@ bun install
 bun run dev
 ```
 
+The scaffold directory/app name must be lowercase kebab-case (`my-app`): letters
+or digits separated by single hyphens. The command validates the name before it
+copies anything, including when a Windows-style target path is supplied to the
+shared scaffold API.
+
 The first `dev`/`build` downloads the Chromium Embedded Framework once
 (~hundreds of MB) into `~/.mirinjs/cef/<version-platform>/`.
 
@@ -69,7 +74,12 @@ locale. In ephemeral CI, cache `~/.mirinjs/cef` by Mirin version and runner
 platform so each target does not download and unpack the same runtime again.
 
 Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
-those files, such as GitHub Releases' `.../releases/latest/download`. Runtime
+those files, such as GitHub Releases' `.../releases/latest/download`. Before any
+build/dev output is created, Mirin requires a portable app `name`, a reverse-DNS
+`id`, a flat bounded `release.channel`, and a strict SemVer package/override
+version. Sidecar and extra-worker sources must resolve to regular files within
+the canonical project root; missing paths, directories, special files, and
+escaping symlinks fail preflight. Runtime
 updates reject non-HTTPS URLs except `http://localhost` / loopback for local
 testing, validate the manifest target, verify SHA-256 hashes, and check the
 archive layout before extraction. Artifact names, versions, and sizes are

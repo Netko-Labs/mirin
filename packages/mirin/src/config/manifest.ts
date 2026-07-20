@@ -78,8 +78,15 @@ export interface WindowConfig {
 }
 
 export interface MirinConfig {
-  /** Reverse-DNS app id, e.g. "dev.peje.hello". */
+  /**
+   * Reverse-DNS app id, e.g. "dev.peje.hello". Uses at least two ASCII DNS-style
+   * labels and is validated before any build/dev output is created.
+   */
   id: string;
+  /**
+   * Portable bundle filename/display name: ASCII letters/digits plus spaces,
+   * `.`, `_`, `(`, `)`, and `-`; no reserved Windows names or trailing dot/space.
+   */
   name: string;
   /**
    * Publisher / company name (e.g. "Netko Labs"). Shown in the Windows installer,
@@ -145,7 +152,9 @@ export interface MirinConfig {
    * root) or a {@link SidecarSpec}. Names must be filename-safe (`A-Z`, `a-z`,
    * `0-9`, `.`, `_`, `-`) and paths must stay under the project root. Each binary is copied into
    * `Contents/Resources/sidecars/<name>`, codesigned (hardened runtime), and —
-   * when notary credentials are set — notarized with the rest of the app.
+   * when notary credentials are set — notarized with the rest of the app. Sources
+   * must resolve to regular files inside the canonical project root; escaping
+   * symlinks, directories, missing paths, and special files are rejected.
    *
    * Prefer a binary already on the user's PATH (`Bun.spawn("git", …)`) or a
    * download-on-first-run when size/licensing matter; bundle only when you need
@@ -309,7 +318,10 @@ export interface LinuxConfig {
 export interface ReleaseConfig {
   /** Flat directory URL hosting `{channel}-{platform}-{arch}-*` update files. */
   baseUrl: string;
-  /** Update channel; baked into artifact names + support dir. Default "stable". */
+  /**
+   * Flat release path/artifact segment (ASCII letters, digits, `.`, `_`, `-`,
+   * maximum 64 characters). Default "stable".
+   */
   channel?: string;
   /** Optional markdown release notes embedded in the update manifest. */
   notes?: string;

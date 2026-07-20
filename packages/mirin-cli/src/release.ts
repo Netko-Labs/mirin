@@ -29,6 +29,7 @@ import {
   releaseArtifactUrl,
   trustedReleaseBaseUrl,
 } from "./release/previous.ts";
+import { validateAppIdentity } from "./shared/validation/config.ts";
 
 // Level 10 keeps updater bundles compact without level 19's steep CPU cost.
 // The native codec uses multiple workers, so this scales across CI runner cores.
@@ -75,6 +76,14 @@ async function sha256File(path: string): Promise<string> {
 
 export async function release(projectDir = process.cwd()): Promise<number> {
   const result = await build(projectDir);
+  // Release paths are destructive and artifact names are externally visible, so
+  // defensively revalidate the BuildResult immediately before deriving either.
+  validateAppIdentity({
+    appName: result.appName,
+    bundleId: result.bundleId,
+    channel: result.channel,
+    version: result.version,
+  });
   if (!result.baseUrl) {
     console.error("[mirin release] no `release.baseUrl` in mirin.config.ts — nothing to publish.");
     return 1;
