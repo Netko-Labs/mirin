@@ -84,10 +84,14 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
 `@mirinjs/win32-{arch}` prebuilt-native package + CLI optional dep; `artifacts.ts`
 installed-mode + CEF release download (platform-generic). `mirin release` (verified)
 emits `{channel}-win32-{arch}-update.json` + `.tar.zst` updater bundle + a real
-**NSIS installer** (`…-setup.exe`, `installer-win.ts`). Verified end-to-end: silent
-install (`/S /D=`) → 252 files + Add/Remove Programs entry, the installed app
-cold-launches (0 GPU failures), silent uninstall removes the folder + registry key.
-Customizable via the `nsis` config (perMachine/oneClick, shortcuts, license,
+**NSIS installer** (`…-setup.exe`, `installer-win.ts`). The generated script keeps
+the owned payload under `$INSTDIR\\app` and the stable `Uninstall.exe` at the root;
+uninstall removes the payload recursively, deletes known shortcuts/registry/uninstaller
+entries, then removes `$INSTDIR` non-recursively so unrelated files survive. Registry
+uninstall commands quote the executable path for install locations containing spaces.
+The earlier layout was verified end-to-end: silent install (`/S /D=`) → 252 files +
+Add/Remove Programs entry, the installed app cold-launches (0 GPU failures), and silent
+uninstall removes its payload + registry key. Customizable via the `nsis` config (perMachine/oneClick, shortcuts, license,
 publisher, runAfterFinish, installerIcon, raw `include`); needs `makensis`, else
 falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
 `%LOCALAPPDATA%` support dir, detached-PowerShell folder swap + relaunch (implemented;

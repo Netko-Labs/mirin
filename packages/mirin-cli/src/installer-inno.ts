@@ -15,12 +15,14 @@ import { isAbsolute, join } from "node:path";
 import { $ } from "bun";
 import type { InnoConfig } from "mirinjs";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
+import { validateAppIdentity } from "./shared/validation/config.ts";
 
 export interface BuildInnoInput {
   appDir: string; // the assembled app folder (build/<App>)
   appName: string;
   exeName: string; // <App>.exe
   version: string;
+  channel: string;
   bundleId: string; // reverse-DNS id → AppId / uninstall key
   outDir: string; // build/release
   fileName: string; // e.g. stable-win32-x64-Anko-setup.exe
@@ -35,15 +37,27 @@ export function hasInno(): boolean {
 
 const resolve = (projectDir: string, p: string) => (isAbsolute(p) ? p : join(projectDir, p));
 /** Escape an Inno directive value: `{` is the constant sigil. */
-const v = (s: string) => s.replace(/\{/g, "{{");
+const v = (value: string): string => {
+  if (/[\0\r\n]/.test(value)) throw new Error("inno: values cannot contain control characters");
+  return value.replace(/\{/g, "{{");
+};
 
 /** Build the installer with `iscc`, returning the setup.exe path. */
 export async function buildInnoInstaller(input: BuildInnoInput): Promise<string> {
-  const { appDir, appName, exeName, version, bundleId, outDir, fileName, options, projectDir } =
-    input;
+  const identity = validateAppIdentity({
+    appName: input.appName,
+    bundleId: input.bundleId,
+    version: input.version,
+    channel: input.channel,
+  });
+  const { appName, bundleId, version } = identity;
+  const { appDir, exeName, outDir, fileName, options, projectDir } = input;
+  if (exeName !== `${appName}.exe`) throw new Error(`inno: exeName must be ${appName}.exe`);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.exe$/.test(fileName) || fileName.length > 255) {
+    throw new Error("inno: fileName must be a flat portable .exe name");
+  }
   const out = join(outDir, fileName);
   rmSync(out, { force: true });
-  if (!fileName.endsWith(".exe")) throw new Error("inno: fileName must end with .exe");
   const baseName = fileName.slice(0, -".exe".length);
 
   const perMachine = options.perMachine === true;

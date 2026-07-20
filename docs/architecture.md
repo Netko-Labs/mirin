@@ -145,8 +145,11 @@ CLIs need none). Spawn at runtime with `app.sidecar(name, { args, … })` — a 
 the child so it's killed on quit. Use `resolveSidecar(name)` when the application needs
 the staged path without launching it, such as installing a user-facing command. Sidecars are separate OS processes and, like the
 Worker, must not touch AppKit/CEF. Sidecar names are validated as single safe filename
-segments (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-`), and source paths must be project-relative
-without escaping the project root.
+segments (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-`). The CLI canonicalizes the project root
+and each source before any build/dev output is touched, rejects lexical or symlink
+escapes plus missing/directory/special sources, and copies production sidecars as new
+regular files before changing destination permissions. This prevents a bundled symlink
+or `chmod` from mutating the project source.
 
 **Extra workers** — `workers: { name: "src/foo.worker.ts" }`. Each entry is bundled by
 the CLI to `Contents/Resources/workers/<name>.js` (alongside the main `worker.js`).
@@ -155,7 +158,7 @@ Resolve one with `resolveWorker(name)` and hand it to `new Worker(...)`
 run off the main thread and **cannot** issue window/native FFI — anything native is
 requested from the app worker. They may `dlopen` the core for pure functions (as the
 updater's codec does), but not UI commands. Worker names and entry paths follow the same
-single-segment / project-root validation as sidecars.
+single-segment, canonical containment, and regular-file validation as sidecars.
 
 Dev (`mirin dev`) stages both under `.mirin/{sidecars,workers}` and points the host at
 them via `MIRIN_SIDECAR_DIR` / `MIRIN_WORKERS_DIR`; prod resolves them in-bundle
@@ -217,11 +220,17 @@ embedded-NSView/OSR model. Consequences:
 **Bundle + distribution.** No `.app`/codesign — a flat app folder: `<App>.exe` (bun
 host) + `mirin_core.dll` + `mirin-helper.exe` + the CEF runtime (libcef.dll, `*.pak`,
 `icudtl.dat`, `locales/`) all beside the exe (so the OS loader resolves libcef), and
-`resources/{ui, worker.js, mirin.manifest.json, version.json}`. `mirin dev`/`build`/
-`release` branch on `process.platform` (`bundle/windows/index.ts`). `mirin release` emits an
-**NSIS installer** (`…-setup.exe` — Program Files / per-user install, Start Menu +
-Desktop shortcuts, uninstaller, Add/Remove Programs; customizable via the `nsis`
-config, `installer-win.ts`; needs `makensis`, falls back to a portable `.zip`) +
+`resources/{ui, worker.js, mirin.manifest.json, version.json}`. The five-field
+`version.json` is serialized and parsed back by CLI-private validation, and every
+platform bundle revalidates app name/id/channel/version plus extra-asset sinks before
+removing its prior output. `mirin dev`/`build`/`release` branch on `process.platform`
+(`bundle/windows/index.ts`). `mirin release` emits an **NSIS installer**
+(`…-setup.exe` — Program Files / per-user install, Start Menu + Desktop shortcuts,
+uninstaller, Add/Remove Programs; customizable via the `nsis` config,
+`installer-win.ts`; needs `makensis`, falls back to a portable `.zip`). Its owned app
+payload lives under `$INSTDIR\\app`; `Uninstall.exe` remains at `$INSTDIR`, and uninstall
+recursively removes only `app`, deletes known shortcuts/registry/uninstaller entries,
+then attempts a non-recursive root removal so unrelated user files survive. It also emits
 a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`; the updater
 swaps the folder via a detached PowerShell relauncher. Runtime updates require
 HTTPS artifact hosts except loopback HTTP for local testing, validate that the
