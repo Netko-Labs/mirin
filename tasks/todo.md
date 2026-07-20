@@ -15,7 +15,7 @@
 - [x] Add transaction, orchestration/failure, apply-script, channel, staged-bundle, pruning, and codec limit coverage.
 - [x] Update updater architecture/API/platform/example documentation.
 - [x] Run targeted and full TypeScript/Rust verification.
-- [ ] Commit in new commits and push normally to `security/updater-transaction-hardening`.
+- [x] Commit in new commits and push normally to `security/updater-transaction-hardening`.
 
 ## Checkpoints
 
