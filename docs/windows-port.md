@@ -93,8 +93,12 @@ falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via c
 `%LOCALAPPDATA%` support dir, bounded/generation-correlated download staging,
 validated real app root + `<App>.exe` + `resources/version.json`, and a detached
 PowerShell folder swap + relaunch. The launch VBScript propagates
-`Win32_Process.Create` failure before the running app quits. The post-exit swap
-still has no durable success acknowledgement and is not field-tested.
+`Win32_Process.Create` failure before the running app quits. Accepted WMI launch is
+the terminal handoff, so checks, downloads, applies, and auto-check scheduling remain
+blocked until exit. Successful helpers remove their generation and launcher files;
+launch failures clean launcher files best-effort, and startup prunes abandoned
+generations. The post-exit swap still has no durable success acknowledgement and is
+not field-tested.
 `publish-all.ts` publishes the host-platform native package. Release-time
 compression uses the standalone `mirin-codec.exe`, which has no CEF or Bun FFI
 dependency.

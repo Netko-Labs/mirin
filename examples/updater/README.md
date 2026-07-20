@@ -13,12 +13,16 @@ the `mirin release` artifacts, hostable on **GitHub Releases** or **any static h
 - The running app's `app.updater` polls `${baseUrl}/${channel}-darwin-${arch}-update.json`,
   accepts only a strictly newer SemVer than the structured embedded `version.json`,
   and downloads a delta patch from its installed version when available (else the
-  full bundle). Checks are single-flight and each download is tied to the checked
-  version/hash generation. The updater enforces declared compressed, patch, and tar
-  sizes; verifies SHA-256; rejects unsafe tar node/link layouts; validates the real
-  staged root, executable, executable mode, and embedded identity; then **swaps the
-  whole `.app`** and relaunches. (A signed/notarized `.app` must be replaced whole —
-  never edited in place.)
+  full bundle). Checks are single-flight, defer during an active download, and each
+  download is tied to the checked version/hash generation. The updater enforces
+  declared compressed and patch sizes plus an 8 GiB reconstructed-tar/decompression
+  ceiling; verifies SHA-256; rejects unsafe tar node/link layouts; validates the real
+  staged root, executable mode, embedded identity, and codesign; then **swaps the whole
+  `.app`** and relaunches. Accepted helper launch is a terminal handoff that blocks
+  further check/download/apply and auto-check work until exit. The helper retains the
+  old app through replacement launch, restores and reopens it if `open` fails, removes
+  successful generation state, and the next startup prunes abandoned generations. (A
+  signed/notarized `.app` must be replaced whole — never edited in place.)
 
 > Production update hosts must use HTTPS. The runtime only allows HTTP for
 > loopback local testing (`localhost`, `127.0.0.1`, `[::1]`). Current manifests
@@ -53,7 +57,9 @@ bun run release          # overwrites build/release with v1.0.1 artifacts
 open /Applications/"Updater Example".app
 ```
 
-The app finds v1.0.1, downloads it with a progress bar, and relaunches into the new version.
+Restart begins the terminal helper handoff. The app finds v1.0.1, downloads it with a
+progress bar, and relaunches into the new version; if the replacement cannot open, the
+helper restores and reopens the installed version.
 
 ## Host on GitHub Releases
 
@@ -68,6 +74,8 @@ builds, runs `mirin release`, codesigns + notarizes (Developer ID), and uploads 
 in `build/release/` as release assets. `…/releases/latest/download/<file>` resolves to the
 newest non-prerelease — so `stable` updates work with zero servers.
 
-Other channels (e.g. `beta`) use a pre-release tag or a separate `baseUrl`/path.
-Keep the uploaded artifact names flat; `app.updater` accepts the filenames emitted
-by `mirin release`.
+Other channels (for example `beta.preview-2`) use a pre-release tag or a separate
+`baseUrl`/path. Channel names use the same safe dotted grammar in release artifact
+prefixes, manifests, embedded identity, URLs, and updater support directories. Keep
+the uploaded artifact names flat; `app.updater` accepts the filenames emitted by
+`mirin release`.

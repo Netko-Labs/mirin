@@ -103,7 +103,7 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 - **Bundle requirement.** CEF on macOS effectively requires the `.app` + helpers structure even during development. `mirin dev` therefore materializes a **dev bundle**: a throwaway `.app` skeleton (ad-hoc signed) whose Resources point at the working tree, so the edit-reload loop doesn't pay a full repackage.
 - **Production locales.** `cef.locales` optionally keeps only selected locale packs in production bundles. Windows/Linux copy matching `locales/*.pak`; macOS retains the matching `.lproj` directory and its grammatical-gender variants before codesigning. Omission preserves the complete CEF runtime.
 - **Release scheduling.** The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. A standalone `mirin-codec` binary performs release-time zstd and bsdiff work without loading CEF or depending on Bun FFI; the runtime core links the same Rust codec library.
-- **Updater transactions.** Packaged apps structurally parse their five-field `version.json` identity, accept only strictly newer SemVer precedence (build metadata does not make a release newer), and single-flight manifest checks. Each accepted manifest receives a generation tied to its version and tar hash; downloads use generation-specific directories, concurrent download/apply calls are rejected, and a recheck or failure invalidates stale staged state. Manifest bodies, compressed artifacts, raw patches, reconstructed tars, entry counts, paths, and link targets have absolute limits. New manifests declare exact compressed sizes, `tarSize`, and patch `uncompressedSize`; bounded additive codec/FFI calls enforce decompression, patch-input, and patch-output ceilings while legacy codec calls remain available for trusted local use. Before apply, Mirin rejects traversal, sparse/special nodes, escaping symlinks/hardlinks, a linked/non-directory root, a missing/non-regular platform executable, missing executable mode on macOS/Linux, and staged `version.json` identity drift. macOS codesign verification follows structural checks. Release tar creation disables macOS AppleDouble sidecars so the archive has one expected root.
+- **Updater transactions.** Packaged apps structurally parse their five-field `version.json` identity, including a safe dotted channel used consistently in artifact prefixes and support-directory paths, accept only strictly newer SemVer precedence (build metadata does not make a release newer), and single-flight manifest checks. Each accepted manifest receives a generation tied to its version and tar hash; downloads use generation-specific directories, checks are deferred while a download is active, and concurrent download/apply calls are rejected. Failure releases the transaction latch before nonthrowing best-effort cleanup, completed helpers remove their generation work directory, and startup prunes abandoned strict `generation-*` directories without following symlinks. Once the detached apply helper is accepted, the transaction enters an irreversible terminal handoff: manual checks/downloads/applies and auto-check scheduling remain blocked until process exit. Manifest bodies, compressed artifacts, raw patches, reconstructed tars, entry counts, paths, and link targets have absolute limits; reconstructed tar/decompression output is capped at 8 GiB while compressed artifacts, patches, subprocess output, and archive structure remain independently bounded. New manifests declare exact compressed sizes, `tarSize`, and patch `uncompressedSize`; bounded additive codec/FFI calls enforce decompression, patch-input, and patch-output ceilings while legacy codec calls remain available for trusted local use. Before apply, Mirin rejects traversal, sparse/special nodes, escaping symlinks/hardlinks, a linked/non-directory root, a missing/non-regular platform executable, and staged `version.json` identity drift. macOS requires executable mode and codesign verification; Linux extracts with permission preservation and ensures owner execute only after validating the regular host executable. The macOS helper keeps the old app backup until the replacement opens, then deletes it; an open failure restores and reopens the old app. Release tar creation disables macOS AppleDouble sidecars so the archive has one expected root.
 
 ## 6. Repository layout
 
@@ -226,11 +226,14 @@ config, `installer-win.ts`; needs `makensis`, falls back to a portable `.zip`) +
 a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`; the updater
 swaps the folder via a detached PowerShell relauncher. The pre-quit VBScript now
 returns the `Win32_Process.Create` status, so the running app quits only after WMI
-accepts the detached helper. Runtime updates require HTTPS artifact hosts except
-loopback HTTP for local testing, enforce the bounded generation transaction above,
-verify SHA-256 hashes, and validate the extracted root, executable, and embedded
-identity before apply. The post-exit folder swap remains asynchronous and has no
-durable success acknowledgement. Consumers
+accepts the detached helper. That acceptance is the terminal handoff point: updater
+operations and auto-check scheduling remain blocked through process exit. Successful
+helpers remove their generation and temporary launcher files; launch failures clean
+temporary files best-effort, and the next startup prunes abandoned generations.
+Runtime updates require HTTPS artifact hosts except loopback HTTP for local testing,
+enforce the bounded generation transaction above, verify SHA-256 hashes, and validate
+the extracted root, executable, and embedded identity before apply. The post-exit
+folder swap remains asynchronous and has no durable success acknowledgement. Consumers
 install the prebuilt `@mirinjs/win32-{arch}` native package + a CEF release download
 (no Rust).
 Build prereqs: cmake + ninja (for `cef-dll-sys`'s C++ wrapper) + MSVC.
@@ -291,7 +294,11 @@ port **owns no native toolkit window**:
   `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`), all beside the host
   with an `$ORIGIN` rpath so `libcef.so` resolves without `LD_LIBRARY_PATH`, plus
   `resources/{ui, worker.js, mirin.manifest.json, version.json, icon.png}`. `mirin dev`/
-  `build`/`release` branch on `process.platform` (`bundle/linux/index.ts`). Packaging
-  (AppImage / `.deb` / `.rpm`) is landing this release — see `docs/linux-port.md` §L5.
+  `build`/`release` branch on `process.platform` (`bundle/linux/index.ts`). Updater tar
+  extraction uses `tar -xpf`; structural validation rejects linked/special executables
+  before ensuring owner execute on the regular host file. Detached relaunch enters the
+  terminal handoff and removes the successful generation, while startup prunes abandoned
+  generations. Packaging (AppImage / `.deb` / `.rpm`) is landing this release — see
+  `docs/linux-port.md` §L5.
 
 Full status and rationale: `docs/linux-port.md`.

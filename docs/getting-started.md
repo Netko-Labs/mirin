@@ -69,17 +69,24 @@ locale. In ephemeral CI, cache `~/.mirinjs/cef` by Mirin version and runner
 platform so each target does not download and unpack the same runtime again.
 
 Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
-those files, such as GitHub Releases' `.../releases/latest/download`. Runtime
-updates reject non-HTTPS URLs except `http://localhost` / loopback for local
+those files, such as GitHub Releases' `.../releases/latest/download`. Safe dotted
+channels such as `beta.preview-2` are supported; the same validated channel is used
+in artifact prefixes, manifests, embedded identity, URLs, and updater support paths.
+Runtime updates reject non-HTTPS URLs except `http://localhost` / loopback for local
 testing, validate the manifest target, and accept only strictly newer SemVer
-precedence. Checks are single-flight; downloads and applies are guarded operations
-correlated to a version/hash generation, so a recheck cannot apply an older staged
-bundle. Manifest bodies, downloads, decompressed patches, reconstructed tars,
-archive entries, and path/link lengths are bounded. SHA-256, archive node/link
-safety, the real staged root and platform executable, executable mode on
-macOS/Linux, and staged `version.json` identity are all verified before apply.
-Set `release.notes` to embed markdown release notes in the update manifest for app
-update UIs.
+precedence. Checks are single-flight and defer while a download is active; downloads
+and applies are guarded operations correlated to a version/hash generation. Accepted
+helper launch is a terminal handoff, so manual updater work and auto-check scheduling
+remain blocked until the process exits. Failed operations release their latch before
+best-effort cleanup, successful helpers remove their generation directory, and startup
+prunes abandoned generations. Manifest bodies, downloads, decompressed patches,
+archive entries, and path/link lengths are bounded; reconstructed tar/decompression
+output has an 8 GiB ceiling. SHA-256, archive node/link safety, the real staged root
+and platform executable, and staged `version.json` identity are verified before apply.
+macOS verifies executable mode and codesign; Linux extracts with permission
+preservation and ensures owner execute on the validated regular executable. Set
+`release.notes` to embed markdown release notes in the update manifest for app update
+UIs.
 
 Current `mirin release` manifests add required `tarSize` and patch
 `uncompressedSize` bounds. Older Mirin runtimes ignore these additive fields and

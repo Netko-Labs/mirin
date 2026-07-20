@@ -170,12 +170,14 @@ lib + helper + m1-smoke (`.cargo/config.toml` rustflags), so `libcef.so` resolve
 **no `LD_LIBRARY_PATH`** — a fully self-contained bundle. **Verified:** the standalone
 `build/Anko/Anko` cold-launches with a clean env → renders Anko's UI from **`app://`**
 with the typed RPC data plane connected; `ldd` confirms `libcef.so` resolves via
-`$ORIGIN`. The portable-folder updater now requires a real staged root, regular
-`<App>` executable with an existing execute bit, matching
-`resources/version.json`, bounded manifest/download/codec output, and safe tar
-entry/link types before launching the existing asynchronous folder swap. This does
-not redesign Linux updates around deb/rpm/AppImage package managers; that remains
-out of scope.
+`$ORIGIN`. The portable-folder updater extracts with `tar -xpf`, requires a real
+staged root and regular `<App>` executable, then ensures owner execute only after
+that validation. It also requires matching `resources/version.json`, bounded
+manifest/download/codec output with an 8 GiB reconstructed-tar/decompression ceiling,
+and safe tar entry/link types before launching the asynchronous folder swap. Accepted
+helper launch is a terminal handoff; successful helpers remove their generation and
+startup prunes abandoned generations. This does not redesign Linux updates around
+deb/rpm/AppImage package managers; that remains out of scope.
 
 ### L4 — App-shell native features — 🚧 PARTIAL
 `examples/kitchen-sink` renders and runs the full "Native feature tour" over RPC.

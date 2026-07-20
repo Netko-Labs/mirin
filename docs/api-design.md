@@ -184,13 +184,23 @@ off the main-process API:
   extra workers declared in `mirin.config.ts`; config names are safe filename
   segments and source paths are project-relative.
 - `app.updater` for packaged apps built with `release.baseUrl`. `checkForUpdate()`
-  is single-flight and reports only releases with strictly newer SemVer precedence;
-  equal versions, downgrades, and build-metadata-only changes return `null`.
-  `download()` and `applyAndRelaunch()` reject concurrent operations, and rechecking
-  invalidates older staged generations. Malformed embedded `version.json` metadata
-  disables the updater. Downloads require generated size bounds and are not
-  considered staged until archive structure, platform executable, executable mode
-  (macOS/Linux), embedded identity, integrity, and platform signature checks pass.
+  is single-flight, resolves `null` rather than starting a check while downloading or
+  applying, and reports only releases with strictly newer SemVer precedence; equal
+  versions, downgrades, and build-metadata-only changes return `null`. `download()` and
+  `applyAndRelaunch()` reject concurrent operations. Once a detached apply helper is
+  accepted, the updater enters a terminal handoff: checks, downloads, applies, and
+  auto-check scheduling remain blocked until process exit. Malformed embedded
+  `version.json` metadata disables the updater. `release.channel` supports validated
+  safe dotted names consistently across build/release output, embedded identity,
+  manifest matching, artifact names, and support directories. Downloads require
+  generated size bounds; reconstructed tar/decompression output is capped at 8 GiB,
+  with compressed artifacts, patches, archive structure, and subprocess output bounded
+  separately. A download is not staged until archive structure, platform executable,
+  embedded identity, integrity, and platform signature checks pass. macOS verifies
+  executable mode and codesign; Linux preserves archive permissions and ensures owner
+  execute on the validated regular host executable. Failed operations release latches
+  before best-effort cleanup, successful helpers remove their generation directory, and
+  startup prunes abandoned generations.
 
 Still future: multi-webview-per-window (BrowserView equivalent), user preload
 scripts, session/cookie controls, payload encryption or a CEF IPC replacement for
