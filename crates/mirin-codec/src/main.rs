@@ -1,4 +1,7 @@
-use mirin_codec::{bsdiff_file, bspatch_file, zstd_compress_file, zstd_decompress_file};
+use mirin_codec::{
+    bsdiff_file, bspatch_file, bspatch_file_bounded, zstd_compress_file, zstd_decompress_file,
+    zstd_decompress_file_bounded,
+};
 use std::env;
 use std::io;
 
@@ -6,6 +9,12 @@ fn argument<'a>(args: &'a [String], index: usize, usage: &str) -> io::Result<&'a
     args.get(index)
         .map(String::as_str)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, usage))
+}
+
+fn byte_limit(value: &str) -> io::Result<u64> {
+    value
+        .parse::<u64>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid byte limit"))
 }
 
 fn run() -> io::Result<()> {
@@ -28,6 +37,11 @@ fn run() -> io::Result<()> {
             argument(&args, 1, "missing source path")?,
             argument(&args, 2, "missing destination path")?,
         ),
+        "decompress-bounded" => zstd_decompress_file_bounded(
+            argument(&args, 1, "missing source path")?,
+            argument(&args, 2, "missing destination path")?,
+            byte_limit(argument(&args, 3, "missing output byte limit")?)?,
+        ),
         "diff" => bsdiff_file(
             argument(&args, 1, "missing old path")?,
             argument(&args, 2, "missing new path")?,
@@ -37,6 +51,14 @@ fn run() -> io::Result<()> {
             argument(&args, 1, "missing old path")?,
             argument(&args, 2, "missing patch path")?,
             argument(&args, 3, "missing new path")?,
+        ),
+        "patch-bounded" => bspatch_file_bounded(
+            argument(&args, 1, "missing old path")?,
+            argument(&args, 2, "missing patch path")?,
+            argument(&args, 3, "missing new path")?,
+            byte_limit(argument(&args, 4, "missing old input byte limit")?)?,
+            byte_limit(argument(&args, 5, "missing patch input byte limit")?)?,
+            byte_limit(argument(&args, 6, "missing output byte limit")?)?,
         ),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,

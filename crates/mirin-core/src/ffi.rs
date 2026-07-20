@@ -212,6 +212,18 @@ pub extern "C" fn mirin_zstd_decompress_file(src: *const c_char, dst: *const c_c
 }
 
 #[no_mangle]
+pub extern "C" fn mirin_zstd_decompress_file_bounded(
+    src: *const c_char,
+    dst: *const c_char,
+    max_output_bytes: u64,
+) -> c_int {
+    match engine::codec::zstd_decompress_file_bounded(&cstr(src), &cstr(dst), max_output_bytes) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn mirin_bsdiff_file(
     old: *const c_char,
     new: *const c_char,
@@ -230,6 +242,28 @@ pub extern "C" fn mirin_bspatch_file(
     new: *const c_char,
 ) -> c_int {
     match engine::codec::bspatch_file(&cstr(old), &cstr(patch), &cstr(new)) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mirin_bspatch_file_bounded(
+    old: *const c_char,
+    patch: *const c_char,
+    new: *const c_char,
+    max_old_bytes: u64,
+    max_patch_bytes: u64,
+    max_output_bytes: u64,
+) -> c_int {
+    match engine::codec::bspatch_file_bounded(
+        &cstr(old),
+        &cstr(patch),
+        &cstr(new),
+        max_old_bytes,
+        max_patch_bytes,
+        max_output_bytes,
+    ) {
         Ok(()) => 0,
         Err(_) => 1,
     }
