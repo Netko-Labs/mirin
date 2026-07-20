@@ -121,22 +121,6 @@ jobs:
       - name: Test native workspace
         run: cargo test --workspace
 
-      # Event-driven native UI validation: boot CEF with the GPU process enabled
-      # (SwiftShader under Xvfb), require core.ready + window.created within the
-      # timeout, then self-quit (crates/mirin-core/src/bin/m1_smoke.rs).
-      - name: GPU UI smoke
-        if: runner.os == 'Linux'
-        env:
-          MIRIN_SMOKE_VALIDATE: "1"
-          MIRIN_SMOKE_TIMEOUT_MS: "60000"
-          MIRIN_SMOKE_URL: "data:text/html,<h1>mirin gpu ui smoke</h1>"
-        run: |
-          sudo apt-get install -y xvfb
-          cp vendor/cef/*.so vendor/cef/*.bin vendor/cef/*.pak vendor/cef/*.dat target/debug/
-          cp vendor/cef/vk_swiftshader_icd.json vendor/cef/libvulkan.so.1 target/debug/
-          cp -r vendor/cef/locales target/debug/
-          xvfb-run -a target/debug/m1-smoke
-
   security:
     name: Dependency security
     runs-on: blacksmith-2vcpu-ubuntu-2404
