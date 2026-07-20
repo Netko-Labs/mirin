@@ -136,7 +136,7 @@ pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
 #[cfg(target_os = "linux")]
 pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
     let mut client = CLIENT.with(|c| c.borrow().clone());
-    let mut extra_info = browser_extra_info(id);
+    let mut extra_info = browser_extra_info(id, &opts.url);
     let url = CefString::from(opts.url.as_str());
     let browser_settings = BrowserSettings {
         background_color: 0xFF_FF_FF_FF,
@@ -182,7 +182,7 @@ fn create_browser(
     client: Option<&mut Client>,
     transparent: bool,
 ) {
-    let mut extra_info = browser_extra_info(id);
+    let mut extra_info = browser_extra_info(id, url);
     let browser_settings = BrowserSettings {
         background_color: if transparent { 0 } else { 0xFF_FF_FF_FF },
         ..Default::default()
@@ -198,7 +198,7 @@ fn create_browser(
     );
 }
 
-fn browser_extra_info(id: u32) -> Option<DictionaryValue> {
+fn browser_extra_info(id: u32, initial_url: &str) -> Option<DictionaryValue> {
     let mut extra_info = dictionary_value_create();
     if let Some(dict) = extra_info.as_mut() {
         dict.set_int(
@@ -211,6 +211,10 @@ fn browser_extra_info(id: u32) -> Option<DictionaryValue> {
             Some(&CefString::from(token.as_str())),
         );
         dict.set_int(Some(&CefString::from("windowId")), id as i32);
+        dict.set_string(
+            Some(&CefString::from("initialUrl")),
+            Some(&CefString::from(initial_url)),
+        );
     }
     extra_info
 }

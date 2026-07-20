@@ -2,14 +2,20 @@ use std::sync::atomic::Ordering;
 
 use super::config::{WindowMaterial, WindowOpts};
 use super::handlers::MirinHandler;
-use super::state::NEXT_WINDOW_ID;
+use super::state::{self, NEXT_WINDOW_ID};
 use super::tasks;
 
 /// Allocate a window id and request creation on the UI thread. Returns the id
 /// synchronously.
 pub fn create_window(opts: WindowOpts) -> u32 {
+    if !state::begin_window_creation() {
+        return 0;
+    }
     let id = NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed);
-    tasks::post_create_window(id, opts);
+    if !tasks::post_create_window(id, opts) {
+        state::finish_window_creation();
+        return 0;
+    }
     id
 }
 
@@ -17,15 +23,11 @@ pub fn close_window(id: u32) {
     tasks::post_window_command(id, tasks::WindowCommand::Close, None);
 }
 
-#[cfg(target_os = "windows")]
 pub fn request_window_close(window_id: u32) {
     if let Some(handler) = MirinHandler::instance() {
         MirinHandler::close_browser_for_window(&handler, window_id);
     }
 }
-
-#[cfg(not(target_os = "windows"))]
-pub fn request_window_close(_window_id: u32) {}
 
 pub fn load_url(id: u32, url: String) {
     tasks::post_window_command(id, tasks::WindowCommand::LoadUrl, Some(url));
@@ -36,8 +38,9 @@ pub fn set_title(id: u32, title: String) {
 }
 
 pub fn quit() {
+    state::request_quit();
     if let Some(handler) = MirinHandler::instance() {
-        MirinHandler::close_all_browsers(&handler, false);
+        MirinHandler::request_quit(&handler);
     } else {
         tasks::post_quit();
     }

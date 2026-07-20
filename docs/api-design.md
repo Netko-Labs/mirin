@@ -52,7 +52,13 @@ app.on("window-all-closed", () => {
 });
 ```
 
-Declared windows with no `open` field open automatically at launch, before `ready` fires. `defineConfig` is an identity function that exists for typing/intellisense; the manifest must remain serializable data.
+Declared windows with no `open` field open automatically at launch. `ready`
+fires only after every automatic window has emitted native `window.created`;
+`app.windows.open(...)` uses the same event correlation and resolves with its
+handle at that point. This guarantees a live native browser, but does not promise
+first paint or an established renderer RPC socket. `defineConfig` is an identity
+function that exists for typing/intellisense; the manifest must remain
+serializable data.
 
 `cef.locales` is an optional production-package allowlist using BCP 47 tags.
 Keeping only the languages an app ships can remove tens of megabytes from CEF
@@ -76,8 +82,16 @@ const scratch = await app.windows.open({
   name: "scratch",                            // optional; enables get("scratch")
   title: "Scratch", width: 400, height: 300, url: "app://ui/scratch.html",
 });
-await scratch.close();
+await scratch.loadUrl("app://ui/other.html"); // Vite URL in dev; app:// in builds
+await scratch.close();                         // closes only this window
 ```
+
+`loadUrl()` navigates the handle's existing browser. In development it uses the
+same Vite URL resolution as initial window creation (including the requested
+query/hash); in a packaged app it loads the requested `app://` or HTTP(S) URL.
+Closing a handle or using a native close gesture affects only that window.
+`app.quit()` remains the all-window path and also terminates apps that currently
+have zero windows.
 
 Principles:
 - Every imperative API takes the *same options object* as its declarative twin. Nothing is config-only or runtime-only.
@@ -164,7 +178,13 @@ app.windows.get("main").rpc.progress.emit({ pct: 80 });
 app.rpc.progress.broadcast({ pct: 80 });
 ```
 
-Implementation notes (see architecture.md §4): JSON frames over a token-authenticated localhost WebSocket; handlers run in the Bun Worker.
+Implementation notes (see architecture.md §4): JSON frames over a
+token-authenticated localhost WebSocket; handlers run in the Bun Worker.
+`window.mirin` is a privileged capability injected only into the top-level
+`app:`, `http:`, or `https:` origin resolved for that window at creation.
+Subframes and cross-origin navigations do not receive it. A transport disconnect
+rejects all outstanding calls; sent requests are not replayed on reconnect, and
+only later calls use the replacement connection.
 
 ## 4. Shipped feature families
 

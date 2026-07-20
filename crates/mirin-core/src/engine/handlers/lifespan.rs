@@ -10,13 +10,24 @@ wrap_life_span_handler! {
 
     impl LifeSpanHandler {
         fn on_after_created(&self, browser: Option<&mut Browser>) {
-            self.inner.lock().expect("lock").on_after_created(browser);
+            let browser_to_close = {
+                self.inner
+                    .lock()
+                    .expect("lock")
+                    .on_after_created(browser)
+            };
+            if let Some(browser) = browser_to_close {
+                if let Some(host) = browser.host() {
+                    host.close_browser(0);
+                }
+            }
         }
         fn do_close(&self, browser: Option<&mut Browser>) -> i32 {
             self.inner.lock().expect("lock").do_close(browser).into()
         }
         fn on_before_close(&self, browser: Option<&mut Browser>) {
-            self.inner.lock().expect("lock").on_before_close(browser);
+            let outcome = self.inner.lock().expect("lock").on_before_close(browser);
+            MirinHandler::complete_before_close(outcome);
         }
     }
 }

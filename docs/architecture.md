@@ -70,12 +70,18 @@ mirin_app_quit()
 
 Options cross the boundary as JSON for the MVP. It's measurably slower than a binary layout and we don't care yet; these are low-frequency control calls. Revisit only with profiles in hand.
 
-**Events (Rust → Bun).** Rust delivers events (window closed, webview ready, RPC payloads from webviews) through a `JSCallback` (threadsafe) registered at startup, carrying a JSON-encoded event. The TS runtime dispatches to typed emitters. If `JSCallback` throughput or threading proves flaky, fallback design: a `socketpair` between core and Worker with a length-prefixed JSON frame protocol — same envelope, different pipe.
+**Events (Rust → Bun).** Rust appends JSON events such as `core.ready`,
+`window.created`, and `window.closed` to a process-global queue. The Worker drains
+that queue through `mirin_poll_event` every 8 ms and dispatches by the event's
+`type`. Polling is required because the host main thread is blocked inside
+`mirin_run`; a bun:ffi callback invoked from that thread does not enter the
+Worker's event loop. RPC payloads remain on the WebSocket data plane instead of
+this low-frequency lifecycle queue.
 
-**Envelope** (both directions where applicable):
+**Event shape:**
 
 ```json
-{ "v": 1, "kind": "event" | "cmd", "type": "window.closed", "target": 3, "payload": { } }
+{ "type": "window.closed", "id": 3 }
 ```
 
 ## 4. Webview ↔ Bun IPC
@@ -87,13 +93,19 @@ Two planes:
 **Data plane (developer RPC).** The typed RPC system (`docs/api-design.md` §3) runs over a **localhost WebSocket** hosted by the Bun Worker:
 
 1. At startup the Worker opens a `Bun.serve` WebSocket server on an ephemeral port and generates a random per-session token.
-2. Rust passes `port`+`token`+`webviewId` into each webview's preload environment.
-3. The preload bootstrap (injected by `mirin-helper`'s render-process handler at V8-context creation, before any page script runs) connects and authenticates, then exposes `window.mirin` to page code.
-4. RPC frames are JSON over that socket.
+2. Rust passes `port` + `token` + `webviewId` and the browser's resolved initial URL through CEF `extra_info`.
+3. `mirin-helper` parses the initial URL into a normalized `app:`, `http:`, or `https:` origin. At V8-context creation it injects the bootstrap only into the main frame and only when the current document still matches that origin. Subframes, opaque or malformed URLs, and cross-origin navigations receive no `window.mirin` capability.
+4. The bootstrap connects and authenticates, then RPC frames are JSON over that socket.
 
 Rationale: this avoids routing the data plane through CEF process messages → browser process → FFI → Worker (three hops, two serializations), and electrobun ships the same shape in production. The token gates the localhost port; payload encryption (AES-256-GCM as electrobun does) is **deferred post-MVP** — note that any local process can sniff loopback in theory, so this is a known, accepted MVP gap.
 
-Preload injection is renderer-side: `mirin-helper` implements CEF's render-process handler and evaluates the (build-time-bundled) preload bootstrap in `on_context_created`. The bootstrap is part of mirin, not user-supplied, for the MVP; user preloads come later.
+Preload injection is renderer-side: `mirin-helper` implements CEF's render-process handler and evaluates the build-time-bundled bootstrap in `on_context_created` only after the top-level trusted-origin check. The initial origin remains the capability boundary for the browser's lifetime: same-origin loads may receive the bridge again, while a cross-origin redirect or navigation does not. The bootstrap is part of mirin, not user-supplied, for the MVP; user preloads come later.
+
+A socket disconnect rejects and clears every outstanding renderer RPC promise.
+Requests already sent are never replayed after reconnect because they may have
+executed in the Worker; calls made after the disconnect may use the new
+connection. This gives failures at-most-once transport behavior instead of
+leaving promises pending forever.
 
 ## 5. CEF integration
 
@@ -103,6 +115,23 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 - **Bundle requirement.** CEF on macOS effectively requires the `.app` + helpers structure even during development. `mirin dev` therefore materializes a **dev bundle**: a throwaway `.app` skeleton (ad-hoc signed) whose Resources point at the working tree, so the edit-reload loop doesn't pay a full repackage.
 - **Production locales.** `cef.locales` optionally keeps only selected locale packs in production bundles. Windows/Linux copy matching `locales/*.pak`; macOS retains the matching `.lproj` directory and its grammatical-gender variants before codesigning. Omission preserves the complete CEF runtime.
 - **Release scheduling.** The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. A standalone `mirin-codec` binary performs release-time zstd and bsdiff work without loading CEF or depending on Bun FFI; the runtime core links the same Rust codec library.
+
+### Window lifecycle guarantees
+
+The shared `MirinHandler` owns the browser list and browser-id → window-id map.
+Per-window close and navigation snapshot the matching `Browser` while holding the
+handler mutex, release the mutex, and only then call CEF. `close_browser` and
+`Frame::load_url` may re-enter lifecycle handlers, so they must never run under
+that lock. Native close gestures route through the same targeted browser close;
+only explicit app quit closes every browser.
+
+`app.windows.open()` resolves when the matching native `window.created` event is
+observed, not when the create command is merely queued. Automatic manifest
+windows are all awaited before `app.ready` fires. Explicit quit records a
+process-wide quit request: a zero-window app exits immediately, queued creation
+tasks are canceled, and a browser that completes creation during the race is
+closed before the message loop exits. The loop ends only when both live browsers
+and pending creations are zero.
 
 ## 6. Repository layout
 

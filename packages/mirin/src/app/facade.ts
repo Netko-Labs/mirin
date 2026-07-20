@@ -12,6 +12,7 @@ import type { Updater } from "../updater/index.ts";
 import { updater } from "../updater/index.ts";
 import { Emitter } from "./lib/emitter.ts";
 import { normalizeMaterial } from "./lib/material.ts";
+import { openAutomaticWindows, WindowCreationTracker } from "./lib/window-lifecycle.ts";
 import type {
   AppEvents,
   BroadcastEmitters,
@@ -38,8 +39,9 @@ export class WindowHandle extends Emitter<WindowEvents> {
     runtime().core.windowSetTitle(this.id, title);
   }
 
+  /** Navigate this window. In dev, app URLs resolve through the Vite server. */
   async loadUrl(url: string): Promise<void> {
-    runtime().core.windowLoadUrl(this.id, url);
+    runtime().core.windowLoadUrl(this.id, resolveUrl(url));
   }
 
   async close(): Promise<void> {
@@ -141,6 +143,7 @@ function rpcEmitters(send: (method: string, payload: unknown) => void): RpcEmitt
 class Windows {
   #byName = new Map<string, WindowHandle>();
   #byId = new Map<number, WindowHandle>();
+  #creations = new WindowCreationTracker();
 
   get(name: string): WindowHandle {
     const win = this.#byName.get(name);
@@ -157,6 +160,7 @@ class Windows {
     return this.#byId.get(id);
   }
 
+  /** Create a window and resolve after native CEF browser creation completes. */
   async open(options: WindowOpenOptions | string): Promise<WindowHandle> {
     const opts = typeof options === "string" ? manifestWindow(options) : options;
     const id = runtime().core.windowCreate(
@@ -166,8 +170,10 @@ class Windows {
         material: normalizeMaterial(opts.material),
       }),
     );
+    if (id === 0) throw new Error("native window creation was not accepted");
     const handle = new WindowHandle(id, opts.name);
     this.#register(handle);
+    await this.#creations.waitFor(id);
     return handle;
   }
 
@@ -181,7 +187,12 @@ class Windows {
     return this.#byId.get(id);
   }
   /** @internal */
+  _created(id: number): void {
+    this.#creations.markCreated(id);
+  }
+  /** @internal */
   _remove(id: number): void {
+    this.#creations.reject(id, new Error(`window ${id} closed before creation completed`));
     const handle = this.#byId.get(id);
     if (handle) {
       this.#byId.delete(id);
@@ -277,11 +288,14 @@ const WINDOW_EVENTS = ["focus", "blur", "moved", "resized"] as const;
 
 export function wireAppEvents(): void {
   onNativeEvent("core.ready", () => {
-    for (const cfg of runtime().manifestWindows) {
-      if (cfg.open === "manual") continue;
-      void app.windows.open(cfg as WindowOpenOptions);
-    }
-    app._emit("ready", undefined);
+    void openAutomaticWindows(runtime().manifestWindows, (cfg) =>
+      app.windows.open(cfg as WindowOpenOptions),
+    ).then(() => app._emit("ready", undefined));
+  });
+
+  onNativeEvent("window.created", (event: NativeEvent) => {
+    const id = event.id as number | undefined;
+    if (id != null) app.windows._created(id);
   });
 
   onNativeEvent("window.closed", (event: NativeEvent) => {

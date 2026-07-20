@@ -48,14 +48,17 @@ export function runtime(): Runtime {
   return current;
 }
 
-/** Dev: every window loads the Vite server. Production: its manifest app:// URL.
- *  Any query/hash on the requested URL (e.g. "#devtools") is preserved so
- *  hash-routed sub-windows reach the right view through the dev server too. */
-export function resolveUrl(url: string): string {
-  const devUrl = current?.devUrl;
+/** Resolve a requested window URL against an optional Vite development URL. */
+export function resolveUrlWithDevServer(url: string, devUrl?: string): string {
   if (!devUrl) return url;
   const suffix = url.match(/[?#].*$/)?.[0] ?? "";
   return devUrl + suffix;
+}
+
+/** Dev: every window load uses the Vite server. Production: use the requested URL.
+ *  Query/hash suffixes are preserved so routed sub-windows keep their view. */
+export function resolveUrl(url: string): string {
+  return resolveUrlWithDevServer(url, current?.devUrl);
 }
 
 // ---- native event dispatch ----

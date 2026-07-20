@@ -26,12 +26,12 @@ Targets macOS 13+ (arm64 first, x64 builds once CI exists).
 - C ABI (lib.rs): `mirin_run`, `mirin_poll_event`, `mirin_set_rpc_endpoint`, `mirin_is_ready`, `mirin_window_create/close/load_url/set_title`, `mirin_app_quit`. Window registry keyed by id; close events route back by mapping browser→window.
 - `packages/mirin`: `app` singleton + `WindowHandle`, manifest-driven window opening on `core.ready`, typed events. Host bootstrap (`host.ts`) `bun build --compile`d into the bundle's `Contents/MacOS/<exe>`.
 - **Exit criteria — met:** manifest window opens from config; `app.on("ready")` fires; `window.closed`/`window-all-closed` deliver; quit tears everything down with **zero orphan helpers** (verified 6→0).
-- *Deferred:* per-window `loadUrl` on a live browser (needs the window→browser map exercised; M2.x).
+- **Lifecycle hardening:** `WindowHandle.close()` and the red button/Cmd-W target only that window; `loadUrl()` navigates the mapped live browser; explicit quit exits zero-window apps and safely wins races with browser creation. Browser close/navigation calls snapshot the target under the handler lock and run after releasing it.
 
 ### M3 — Typed RPC — ✅ DONE (dev transport)
-- Preload bootstrap injected by `mirin-helper`'s render-process handler at V8-context creation, using rpc port/token/window-id from per-browser `extra_info`. Token-authenticated localhost WebSocket data plane to the Bun Worker (`RpcServer`).
-- `mirin/rpc` router + `mirin/client` with full inference; typed `query`/`mutation` round-trips and `event` push main→webview.
-- **Exit criteria — met:** the React example round-trips a typed `greet` query and receives live typed `tick` push events; the socket is token-gated.
+- Preload bootstrap injected by `mirin-helper`'s render-process handler at V8-context creation, using RPC port/token/window-id plus the resolved initial URL from per-browser `extra_info`. Injection is restricted to the main frame while its current `app:`, `http:`, or `https:` origin matches that initial origin; subframes and cross-origin navigations receive no bridge.
+- `mirin/rpc` router + `mirin/client` with full inference; typed `query`/`mutation` round-trips and `event` push main→webview. Disconnect rejects pending calls and never replays requests that may already have executed; later calls reconnect normally.
+- **Exit criteria — met:** the React example round-trips a typed `greet` query and receives live typed `tick` push events; the socket is token-gated and the bridge is top-level-origin scoped.
 - *Deferred:* `app://` scheme handler (dev loads the Vite URL directly for HMR; `app://` is needed for `mirin build`); payload encryption.
 
 ### M4 — Developer experience — ✅ DONE (dev loop)
@@ -68,7 +68,7 @@ Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dial
 - **Global shortcuts** — Carbon `RegisterEventHotKey` (system-wide, no accessibility prompt). Verified: the Spotlight panel is summoned by ⌘⇧J. (Avoid combos other apps claim — ⌘⇧Space is 1Password's.)
 - **Dialogs** — `NSOpenPanel`/`NSSavePanel`/`NSAlert`, run modally on the UI thread; async via a `requestId` echoed in `dialog.result`. Code-complete; interactively untested (AX can't coordinate-click the webview) but uses the proven RPC + event pipeline.
 - **Clipboard** — `NSPasteboard` text read/write (sync, off the UI thread).
-- **Window controls + multi-window** — minimize/maximize/restore/fullscreen/focus/show/hide/center/alwaysOnTop; `window.focus/blur/moved/resized` events; `app.windows.open()`.
+- **Window controls + multi-window** — minimize/maximize/restore/fullscreen/focus/show/hide/center/alwaysOnTop; `window.focus/blur/moved/resized` events; `app.windows.open()` awaits its matching `window.created`, automatic windows are all created before `app.ready`, and close/load operations stay scoped to the requested window.
 - **Custom title bar + frameless** — `titleBarStyle: "hiddenInset" | "hidden"`, `transparent`, `alwaysOnTop`, `movableByBackground`, `visible:false`. CEF ignores `-webkit-app-region`, so a transparent `TitleBarDragView` (overriding `mouseDownCanMoveWindow`) is overlaid on the title strip for real dragging. Verified via the kitchen-sink (draggable custom title bar) and Spotlight (borderless translucent panel, traffic lights hidden, clear background).
 - **Examples** — `examples/kitchen-sink` (all features) and `examples/spotlight` (hotkey-summoned frameless command palette: type-to-filter over RPC, Esc to dismiss, resident).
 
@@ -84,6 +84,6 @@ Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dial
 1. Dialogs interactive test harness; updater runtime swap field testing across signed/notarized installs
 2. Payload encryption on the RPC plane, or a CEF-IPC RPC transport (message router) to avoid loopback-origin policy friction entirely
 3. User preload scripts; session/cookie controls
-4. Multi-webview windows (BrowserView equivalent); per-window `loadUrl`
+4. Multi-webview windows (BrowserView equivalent)
 5. Linux port
 6. Windows WebView2 option
