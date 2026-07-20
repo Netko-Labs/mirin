@@ -142,6 +142,9 @@ fleet, clean self-exit (code 0), zero orphan helpers via the autoquit →
 `close_all_browsers` → `on_before_close` → `quit_message_loop` path. The window-button
 close routes through `WindowDelegate::can_close` → `try_close_browser`. Uses the CEF
 namespace sandbox (unprivileged userns; no setuid `chrome-sandbox`).
+CI regression coverage: the `GPU UI smoke` step in `ci.yml` runs `m1-smoke` under
+Xvfb with `MIRIN_SMOKE_VALIDATE=1` — event-driven (`core.ready` + `window.created`
+→ self-quit) with the GPU process enabled, instead of the blind autoquit timer.
 
 ### L2 — `mirin dev` runs Anko — ✅ DONE
 CLI wired for Linux: `artifacts.ts` (linux `libmirin_core.so`, `mirin-helper`,
