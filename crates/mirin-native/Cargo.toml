@@ -12,6 +12,11 @@ description = "mirin native (alpha): GPU-rendered native UI for mirin apps, buil
 
 [dependencies]
 gpui = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [[example]]
 name = "hello"
+
+[[example]]
+name = "counter"

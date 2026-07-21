@@ -1,9 +1,20 @@
-//! Root window: open a GPU-rendered GPUI window hosting the mirin root view.
+//! Window shell: open a GPU-rendered GPUI window that renders a driver-owned
+//! element tree, applies streamed tree updates, and reports interaction events.
+
+use std::sync::mpsc;
+use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
+    prelude::*, px, size, App, Application, Bounds, Context, SharedString, TitlebarOptions, Window,
+    WindowBounds, WindowOptions,
 };
+
+use crate::events::{EventSender, NativeUiEvent};
+use crate::render::render_node;
+use crate::tree::NodeSpec;
+
+/// How often the update task drains the driver's tree channel.
+const UPDATE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 
 /// Options for the alpha native-UI window. All fields have sensible defaults.
 #[derive(Debug, Clone)]
@@ -23,35 +34,28 @@ impl Default for NativeUiOptions {
     }
 }
 
-/// The placeholder root view rendered while the crate is a windowing spike.
+/// The root view: renders whatever tree the driver last sent.
 struct RootView {
-    title: SharedString,
+    tree: NodeSpec,
+    events: EventSender,
 }
 
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_2()
-            .size_full()
-            .bg(rgb(0x111114))
-            .text_color(rgb(0xf4f4f5))
-            .child(div().text_2xl().child(self.title.clone()))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0x9f9fa8))
-                    .child("GPU-rendered by GPUI — no web engine in this window"),
-            )
+        render_node(&self.tree, &self.events)
     }
 }
 
-/// Open the native window and hand the calling thread to GPUI's event loop.
-/// Blocks until the app quits. Call on the process main thread.
-pub fn run(options: NativeUiOptions) {
+/// Open the native window rendering `initial_tree` and hand the calling thread
+/// to GPUI's event loop. Blocks until the app quits; call on the process main
+/// thread. New trees sent on `updates` replace the rendered tree (last write
+/// wins); node interactions are reported on `events`.
+pub fn run(
+    options: NativeUiOptions,
+    initial_tree: NodeSpec,
+    updates: mpsc::Receiver<NodeSpec>,
+    events: mpsc::Sender<NativeUiEvent>,
+) {
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
         let window_options = WindowOptions {
@@ -62,14 +66,43 @@ pub fn run(options: NativeUiOptions) {
             }),
             ..Default::default()
         };
-        let title = options.title.clone();
-        let opened = cx.open_window(window_options, |_window, cx| cx.new(|_| RootView { title }));
-        match opened {
-            Ok(_handle) => cx.activate(true),
+        let event_sender = EventSender::new(events);
+        let opened = cx.open_window(window_options, |_window, cx| {
+            cx.new(|_| RootView {
+                tree: initial_tree,
+                events: event_sender,
+            })
+        });
+        let window = match opened {
+            Ok(window) => window,
             Err(error) => {
                 eprintln!("[mirin-native] failed to open window: {error}");
                 cx.quit();
+                return;
             }
-        }
+        };
+        cx.activate(true);
+
+        // Apply driver updates: poll the channel on the foreground executor and
+        // swap the root tree (coalescing to the newest one) when it changes.
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor().timer(UPDATE_POLL_INTERVAL).await;
+                let mut latest = None;
+                while let Ok(tree) = updates.try_recv() {
+                    latest = Some(tree);
+                }
+                let Some(tree) = latest else { continue };
+                let applied = window.update(cx, |view, _window, cx| {
+                    view.tree = tree;
+                    cx.notify();
+                });
+                if applied.is_err() {
+                    // Window is gone; nothing left to drive.
+                    return;
+                }
+            }
+        })
+        .detach();
     });
 }
