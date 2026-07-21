@@ -52,6 +52,7 @@ packages/
   mirin/            public runtime package (`mirinjs`)
   mirin-cli/        CLI package (`@mirinjs/cli`)
   create-mirin/     scaffold package
+  mirin-native/     alpha React renderer for the GPUI native-UI crate
   native-*/         prebuilt core, codec, and CEF helper packages
 examples/
   hello-react/      minimal happy-path app

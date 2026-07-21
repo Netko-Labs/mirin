@@ -20,3 +20,7 @@ name = "hello"
 
 [[example]]
 name = "counter"
+
+[[bin]]
+name = "mirin-native-host"
+path = "src/bin/host.rs"

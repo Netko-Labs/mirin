@@ -60,6 +60,8 @@ the same change.
   typed app APIs.
 - `packages/mirin-cli` - dev/build/release/init tooling.
 - `packages/create-mirin` - project scaffold package.
+- `packages/mirin-native` - alpha React renderer targeting the GPUI native-UI
+  crate (write normal React, rendered as native GPU UI).
 - `packages/native-*` - prebuilt native packages.
 - `examples/*` - real apps used for behavior checks and feature demos.
 - `docs/*` - architecture, API, platform, getting-started, and convention docs.

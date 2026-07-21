@@ -1,0 +1,46 @@
+{
+  "name": "@mirinjs/native",
+  "version": "0.1.0-alpha.1",
+  "description": "mirin native (alpha): write normal React with flexbox layout, rendered as native GPU UI via GPUI — no webview.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/Netko-Labs/mirin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netko-Labs/mirin.git",
+    "directory": "packages/mirin-native"
+  },
+  "bugs": "https://github.com/Netko-Labs/mirin/issues",
+  "keywords": [
+    "bun",
+    "desktop",
+    "react",
+    "gpui",
+    "native-ui",
+    "react-native"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "react-reconciler": "^0.33.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "react": "^19.2.0",
+    "@types/react": "^19.2.0",
+    "@types/react-reconciler": "^0.32.0"
+  }
+}

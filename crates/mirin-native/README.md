@@ -67,14 +67,25 @@ Platform notes:
   (`libxkbcommon-dev libxkbcommon-x11-dev` to build).
 - Windows: renders via DirectX.
 
+## React driver
+
+`packages/mirin-native` (`@mirinjs/native`) is the real driver: a custom React
+renderer whose `<View>`/`<Text>` host components commit to this element tree.
+It talks to the `mirin-native-host` binary (`src/bin/host.rs`) over stdio
+NDJSON — trees in on stdin, events out on stdout — so normal React drives this
+window today:
+
+```sh
+cargo build --bin mirin-native-host
+cd ../../packages/mirin-native && bun demo/counter.tsx
+```
+
 ## Integration plan (not yet built)
 
-1. React reconciler package (`packages/mirin-native`): a custom renderer whose
-   host components (`<View>`, `<Text>`, …) commit to this element tree, diffed
-   updates serialized across the boundary.
-2. Expose the renderer through the flat C ABI pattern (`mirin_native_*`
-   symbols); events through the polled queue, correlated by node id.
-3. Thread ownership decision: GPUI, like CEF, wants the process main thread —
+1. Expose the renderer through the flat C ABI pattern (`mirin_native_*`
+   symbols) instead of stdio; events through the polled queue, correlated by
+   node id.
+2. Thread ownership decision: GPUI, like CEF, wants the process main thread —
    the two cannot both own it, so a native-UI app mode (or subprocess) must be
    chosen and recorded in `docs/architecture.md` before any FFI lands.
 
