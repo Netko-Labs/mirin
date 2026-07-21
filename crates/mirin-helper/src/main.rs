@@ -3,8 +3,8 @@
 //! (docs/architecture.md §1). Adapted from cef-rs's cefsimple_helper.
 //!
 //! Renderer role: inject the `window.mirin` RPC bootstrap at V8-context creation
-//! (docs/architecture.md §4), using the rpc port/token/window-id passed per
-//! browser via `extra_info` from the browser process.
+//! (docs/architecture.md §4), using the RPC endpoint and trusted initial origin
+//! passed per browser via `extra_info` from the browser process.
 
 // On Windows, link as a GUI-subsystem binary so CEF's helper subprocesses (GPU,
 // renderer, utility, …) never pop a console window. Without this, a GUI-subsystem
@@ -13,78 +13,23 @@
 // logging still flows where the host points it.
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod origin;
+
 use cef::{args::Args, *};
+use origin::TrustedOrigin;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// JS bootstrap defining `window.mirin` (the transport `mirin/client` expects).
 /// `__PORT__` / `__TOKEN__` / `__WEBVIEW__` are substituted per browser.
-const BOOTSTRAP: &str = r#"(function(){
-  if (window.mirin) return;
-  var PORT=__PORT__, TOKEN="__TOKEN__", WEBVIEW=__WEBVIEW__;
-  var ws, ready=false, queue=[], nextId=1, pending={}, listeners={};
-  function connect(){
-    var url="ws://127.0.0.1:"+PORT+"/?token="+encodeURIComponent(TOKEN)+"&webview="+WEBVIEW;
-    try { ws=new WebSocket(url); }
-    catch(e){ console.error("[mirin] rpc connect failed: "+e); return; }
-    ws.onopen=function(){ ready=true; for(var i=0;i<queue.length;i++) ws.send(queue[i]); queue=[]; };
-    ws.onmessage=function(ev){
-      var m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
-      if(m.kind==="response"){ var p=pending[m.id]; if(p){ delete pending[m.id]; m.ok?p.resolve(m.result):p.reject(new Error(m.error||"rpc error")); } }
-      else if(m.kind==="event"){ var ls=listeners[m.method]||[]; for(var j=0;j<ls.length;j++){ try{ ls[j](m.payload); }catch(e){} } }
-    };
-    ws.onclose=function(){ ready=false; setTimeout(connect,500); };
-    ws.onerror=function(){ try{ ws.close(); }catch(e){} };
-  }
-  function send(o){ var s=JSON.stringify(o); if(ready) ws.send(s); else queue.push(s); }
-  window.mirin={
-    webviewId: WEBVIEW,
-    call:function(method,input){ var id=nextId++; return new Promise(function(res,rej){ pending[id]={resolve:res,reject:rej}; send({kind:"request",id:id,method:method,input:input}); }); },
-    onEvent:function(method,listener){ (listeners[method]=listeners[method]||[]).push(listener); return function(){ var ls=listeners[method]||[]; var i=ls.indexOf(listener); if(i>=0) ls.splice(i,1); }; },
-    control:function(action,extra){ var o={kind:"control",action:action}; if(extra){ for(var k in extra) o[k]=extra[k]; } send(o); }
-  };
-  // Custom title bar dragging: the webview consumes mouse input, so the native
-  // window proc can't hit-test the title bar. Forward each left mousedown's
-  // viewport coords; native checks them against the `-webkit-app-region` regions
-  // CEF reports (with a top-strip fallback) and starts an OS window-move if it's a
-  // drag area. (CEF doesn't expose -webkit-app-region via getComputedStyle, so we
-  // defer to its authoritative regions rather than guessing in JS.)
-  try {
-    // Window-edge resize: the CEF child fills the client area, so the parent's
-    // native WM_NCHITTEST can't see edge hits. Detect edge proximity here, show the
-    // resize cursor, and forward the Win32 hit-test code so native hands off to the
-    // OS resize loop. HT codes: L10 R11 T12 TL13 TR14 B15 BL16 BR17.
-    var RB = 6;
-    function edgeHt(e){
-      var w=window.innerWidth, h=window.innerHeight, x=e.clientX, y=e.clientY;
-      var l=x<=RB, r=x>=w-RB, t=y<=RB, b=y>=h-RB;
-      if(t&&l)return 13; if(t&&r)return 14; if(b&&l)return 16; if(b&&r)return 17;
-      if(l)return 10; if(r)return 11; if(t)return 12; if(b)return 15;
-      return 0;
-    }
-    var RC={10:"ew-resize",11:"ew-resize",12:"ns-resize",15:"ns-resize",13:"nwse-resize",17:"nwse-resize",14:"nesw-resize",16:"nesw-resize"};
-    var hasCursor=false;
-    document.addEventListener("mousemove", function(e){
-      var ht=edgeHt(e);
-      if(ht){ document.documentElement.style.cursor=RC[ht]; hasCursor=true; }
-      else if(hasCursor){ document.documentElement.style.cursor=""; hasCursor=false; }
-    }, true);
-    document.addEventListener("mousedown", function(e){
-      if (e.button === 0) {
-        // `ht` != 0 resizes from that edge/corner; otherwise `detail` (click count)
-        // lets native start a title-bar drag or toggle maximize on a double-click.
-        send({kind:"control",action:"window.maybeStartDrag",x:Math.round(e.clientX),y:Math.round(e.clientY),detail:e.detail,ht:edgeHt(e)});
-      }
-    }, true);
-  } catch(e) {}
-  connect();
-})();"#;
+const BOOTSTRAP: &str = include_str!("bootstrap.js");
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct RpcEndpoint {
     port: i32,
     token: String,
     webview: i32,
+    initial_origin: Option<TrustedOrigin>,
 }
 
 thread_local! {
@@ -158,10 +103,14 @@ wrap_render_process_handler! {
             extra_info: Option<&mut DictionaryValue>,
         ) {
             let (Some(browser), Some(dict)) = (browser, extra_info) else { return };
+            let initial_url = CefString::from(&dict.string(Some(&CefString::from("initialUrl"))))
+                .to_string();
             let endpoint = RpcEndpoint {
                 port: dict.int(Some(&CefString::from("rpcPort"))),
-                token: CefString::from(&dict.string(Some(&CefString::from("rpcToken")))).to_string(),
+                token: CefString::from(&dict.string(Some(&CefString::from("rpcToken"))))
+                    .to_string(),
                 webview: dict.int(Some(&CefString::from("windowId"))),
+                initial_origin: TrustedOrigin::parse(&initial_url),
             };
             ENDPOINTS.with(|e| e.borrow_mut().insert(browser.identifier(), endpoint));
         }
@@ -173,8 +122,17 @@ wrap_render_process_handler! {
             _context: Option<&mut V8Context>,
         ) {
             let (Some(browser), Some(frame)) = (browser, frame) else { return };
+            if frame.is_main() == 0 {
+                return;
+            }
+
             let endpoint = ENDPOINTS.with(|e| e.borrow().get(&browser.identifier()).cloned());
             let Some(endpoint) = endpoint else { return };
+            let Some(initial_origin) = endpoint.initial_origin else { return };
+            let current_url = CefString::from(&frame.url()).to_string();
+            if !initial_origin.matches_url(&current_url) {
+                return;
+            }
 
             let script = BOOTSTRAP
                 .replace("__PORT__", &endpoint.port.to_string())

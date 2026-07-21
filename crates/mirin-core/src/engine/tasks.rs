@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use super::config::{WindowMaterial, WindowOpts};
 use super::handlers::MirinHandler;
+use super::state;
 use super::window::create_window_on_ui;
 #[cfg(target_os = "macos")]
 use super::window::material_opts;
@@ -17,9 +18,9 @@ use crate::mac;
 #[cfg(target_os = "windows")]
 use crate::win;
 
-pub(crate) fn post_create_window(id: u32, opts: WindowOpts) {
+pub(crate) fn post_create_window(id: u32, opts: WindowOpts) -> bool {
     let mut task = CreateWindowTask::new(id, RefCell::new(Some(opts)));
-    post_task(ThreadId::UI, Some(&mut task));
+    post_task(ThreadId::UI, Some(&mut task)) != 0
 }
 
 pub(crate) fn post_window_command(id: u32, command: WindowCommand, arg: Option<String>) {
@@ -29,6 +30,16 @@ pub(crate) fn post_window_command(id: u32, command: WindowCommand, arg: Option<S
 
 pub(crate) fn post_close_all_browsers(inner: Arc<Mutex<MirinHandler>>, force_close: bool) {
     let mut task = CloseAllBrowsers::new(inner, force_close);
+    post_task(ThreadId::UI, Some(&mut task));
+}
+
+pub(crate) fn post_request_quit(inner: Arc<Mutex<MirinHandler>>) {
+    let mut task = RequestQuitTask::new(inner);
+    post_task(ThreadId::UI, Some(&mut task));
+}
+
+pub(crate) fn post_finish_quit_if_idle(inner: Arc<Mutex<MirinHandler>>) {
+    let mut task = FinishQuitIfIdleTask::new(inner);
     post_task(ThreadId::UI, Some(&mut task));
 }
 
@@ -78,9 +89,27 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            let Some(handler) = MirinHandler::instance() else {
+                state::finish_window_creation(self.id);
+                return;
+            };
+            if state::quit_requested() {
+                MirinHandler::fail_window_creation(
+                    &handler,
+                    self.id,
+                    "application quit before window creation",
+                );
+                return;
+            }
             #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             if let Some(opts) = self.opts.borrow_mut().take() {
-                create_window_on_ui(self.id, opts);
+                if !create_window_on_ui(self.id, opts) {
+                    MirinHandler::fail_window_creation(
+                        &handler,
+                        self.id,
+                        "native browser creation failed",
+                    );
+                }
             }
         }
     }
@@ -95,30 +124,32 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
-            let _id = self.id;
+            let id = self.id;
             match self.command {
                 WindowCommand::Close => {
                     if let Some(handler) = MirinHandler::instance() {
-                        MirinHandler::close_all_browsers(&handler, false);
+                        MirinHandler::close_browser_for_window(&handler, id);
                     }
                 }
                 WindowCommand::LoadUrl => {
-                    if let Some(_url) = self.arg.borrow().as_ref() {
-                        // M2: load_url on a specific browser; needs window->browser map.
+                    if let Some(url) = self.arg.borrow().as_ref() {
+                        if let Some(handler) = MirinHandler::instance() {
+                            MirinHandler::load_url_for_window(&handler, id, url);
+                        }
                     }
                 }
                 WindowCommand::SetTitle => {
                     #[cfg(target_os = "macos")]
                     if let Some(title) = self.arg.borrow().as_ref() {
-                        mac::set_window_title(_id, title);
+                        mac::set_window_title(id, title);
                     }
                     #[cfg(target_os = "windows")]
                     if let Some(title) = self.arg.borrow().as_ref() {
-                        win::set_window_title(_id, title);
+                        win::set_window_title(id, title);
                     }
                     #[cfg(target_os = "linux")]
                     if let Some(title) = self.arg.borrow().as_ref() {
-                        linux::set_window_title(_id, title);
+                        linux::set_window_title(id, title);
                     }
                 }
             }
@@ -139,15 +170,43 @@ wrap_task! {
 }
 
 wrap_task! {
+    struct RequestQuitTask {
+        inner: Arc<Mutex<MirinHandler>>,
+    }
+    impl Task {
+        fn execute(&self) {
+            MirinHandler::request_quit(&self.inner);
+        }
+    }
+}
+
+wrap_task! {
+    struct FinishQuitIfIdleTask {
+        inner: Arc<Mutex<MirinHandler>>,
+    }
+    impl Task {
+        fn execute(&self) {
+            debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            MirinHandler::finish_quit_if_idle(&self.inner);
+        }
+    }
+}
+
+wrap_task! {
     struct QuitTask {}
     impl Task {
         fn execute(&self) {
-            #[cfg(target_os = "macos")]
-            mac::close_all_windows();
-            #[cfg(target_os = "windows")]
-            win::close_all_windows();
-            #[cfg(target_os = "linux")]
-            linux::close_all_windows();
+            if let Some(handler) = MirinHandler::instance() {
+                MirinHandler::request_quit(&handler);
+            } else {
+                #[cfg(target_os = "macos")]
+                mac::close_all_windows();
+                #[cfg(target_os = "windows")]
+                win::close_all_windows();
+                #[cfg(target_os = "linux")]
+                linux::close_all_windows();
+                quit_message_loop();
+            }
         }
     }
 }

@@ -127,7 +127,7 @@ fn clamp_on_screen(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
 
 /// Create a mirin-owned top-level window registered under `id`, returning the
 /// HWND and the client-area bounds for `WindowInfo::set_as_child`. UI thread only.
-pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
+pub fn create_window(params: &WindowParams) -> Option<(*mut c_void, cef::Rect)> {
     ensure_class_registered();
 
     let client_w = params.width.max(params.min_width) as i32;
@@ -186,7 +186,9 @@ pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
             std::ptr::null(),
         )
     };
-    assert!(!hwnd.is_null(), "CreateWindowExW failed");
+    if hwnd.is_null() {
+        return None;
+    }
 
     registry::register_window(params.id, hwnd);
 
@@ -237,5 +239,5 @@ pub fn create_window(params: &WindowParams) -> (*mut c_void, cef::Rect) {
         width: client_w,
         height: client_h,
     };
-    (hwnd, bounds)
+    Some((hwnd, bounds))
 }

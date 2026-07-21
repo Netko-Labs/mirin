@@ -15,7 +15,9 @@ pub use controls::{
 };
 pub use create::create_window;
 pub use drag::{add_titlebar_drag, set_draggable_regions};
-pub use lifecycle::{close_all_windows, close_window, frame_of, is_zoomed, set_position};
+pub use lifecycle::{
+    close_all_windows, close_window, discard_window, frame_of, is_zoomed, set_position,
+};
 pub use state::window_id_for_view;
 pub use traffic_lights::set_traffic_light_position;
 pub use types::{DragRegion, TitleBarStyle, WindowParams};

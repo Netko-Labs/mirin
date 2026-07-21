@@ -119,6 +119,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test native workspace
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/vendor/cef
         run: cargo test --workspace
 
   security:
