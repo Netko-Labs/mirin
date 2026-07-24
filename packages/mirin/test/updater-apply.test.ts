@@ -1,7 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { Buffer } from "node:buffer";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  formatProcessIdentity,
+  parseProcessIdentity,
+  processIdentity,
+  type UpdateProcessIdentity,
+} from "../src/update-process.ts";
 import {
   assertLinuxInstallCanApply,
   renderLinuxApplyShell,
@@ -40,9 +56,11 @@ describe("Windows updater launcher", () => {
       ready: "C:\\State\\.update-ready-42-token",
       activated: "C:\\Updates\\generation\\.apply-helper-activated",
       armed: "C:\\Updates\\generation\\.apply-helper-armed",
+      phase: "C:\\State\\.update-phase-42-token",
       swapTool: "C:\\Updates\\generation\\.mirin-atomic-swap.exe",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
+      parentToken: "parent-token",
     });
     const launch = script.indexOf("Start-Process -FilePath");
     const readiness = script.indexOf("Replacement did not report ready", launch);
@@ -61,19 +79,24 @@ describe("Windows updater launcher", () => {
     expect(script).not.toContain(
       "Move-Item -LiteralPath 'C:\\Apps\\[beta]\\.Mirin.mirin-new-42-token' -Destination 'C:\\Apps\\[beta]\\Mirin'",
     );
-    expect(script).toContain("Replacement readiness receipt has the wrong process id");
-    expect(script).toContain("$readyPid -ne [string]$newProcess.Id");
+    expect(script).toContain("Replacement readiness receipt has the wrong process identity");
+    expect(script).toContain("$readyProcess -ne $readyIdentity");
     const activated = script.indexOf(".apply-helper-activated");
     const armed = script.indexOf(".apply-helper-armed");
     expect(activated).toBeGreaterThan(0);
     expect(activated).toBeLessThan(
       script.indexOf("Application exited before updater helper activation"),
     );
-    expect(script.indexOf("Updater helper activation has the wrong process id")).toBeGreaterThan(
-      activated,
-    );
+    expect(
+      script.indexOf("Updater helper activation has the wrong process identity"),
+    ).toBeGreaterThan(activated);
     expect(armed).toBeGreaterThan(activated);
-    expect(armed).toBeLessThan(script.indexOf("$parentDeadline"));
+    expect(armed).toBeLessThan(script.indexOf("wait-process"));
+    expect(script).toContain("durable-write");
+    expect(script).toContain("swap-pending");
+    expect(script).toContain("backup-pending");
+    expect(script).toContain("committed");
+    expect(script).toContain("terminate-process");
     const rollback = script.indexOf("if ($parentExited -and $canRestore)");
     const rollbackCleanup = script.indexOf(
       "Remove-Item -LiteralPath 'C:\\Updates\\generation' -Recurse",
@@ -102,6 +125,217 @@ describe("Windows updater launcher", () => {
       expect(parsed.exitCode).toBe(0);
     }
   });
+
+  test("executes WMI PID publication and TxF rollback after an injected post-exchange failure", async () => {
+    if (process.platform !== "win32") return;
+    const codec = windowsCodec();
+    const root = mkdtempSync(join(tmpdir(), "mirin-windows-apply-integration-"));
+    const app = join(root, "Mirin");
+    const staged = join(root, ".Mirin.mirin-new-test");
+    const backup = join(root, "Mirin.mirin-old-test");
+    const state = join(root, "state");
+    const work = join(root, "work");
+    const marker = join(state, ".update-handoff.json");
+    const phase = join(state, ".update-phase-test");
+    const ready = join(state, ".update-ready-test");
+    const activated = join(work, ".apply-helper-activated");
+    const armed = join(work, ".apply-helper-armed");
+    const script = join(root, "apply.ps1");
+    const launchVbs = join(root, "launch.vbs");
+    const helperPidFile = join(work, ".apply-helper.pid");
+    const executable = join(app, "Mirin.exe");
+    const powershell = join(
+      process.env.SystemRoot as string,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    );
+    mkdirSync(app);
+    mkdirSync(staged);
+    mkdirSync(state);
+    mkdirSync(work);
+    writeFileSync(join(app, "old-sentinel"), "old");
+    writeFileSync(join(staged, "new-sentinel"), "new");
+    copyFileSync(powershell, executable);
+    copyFileSync(powershell, join(staged, "Mirin.exe"));
+    writeFileSync(marker, "{}");
+    runTestCodec(codec, ["durable-write", phase, "prepared"]);
+
+    const parent = Bun.spawn(
+      ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"],
+      { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    );
+    const parentIdentity = await waitForTestIdentity(parent.pid, codec);
+    writeFileSync(
+      script,
+      renderWindowsApplyPowerShell({
+        runningApp: app,
+        staged,
+        workDir: work,
+        executable,
+        backup,
+        helperFiles: [script, launchVbs],
+        marker,
+        ready,
+        activated,
+        armed,
+        phase,
+        swapTool: codec,
+        token: "42-00000000-0000-0000-0000-000000000000",
+        pid: parent.pid,
+        parentToken: parentIdentity.token,
+        parentWaitMs: 5_000,
+        failurePoint: "after-exchange",
+      }),
+    );
+    writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperPidFile));
+
+    try {
+      const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs]);
+      expect(await launcher.exited).toBe(0);
+      const helperPid = Number(readFileSync(helperPidFile, "utf8"));
+      const helperIdentity = await waitForTestIdentity(helperPid, codec);
+      runTestCodec(codec, ["durable-write", activated, formatProcessIdentity(helperIdentity)]);
+      await waitForFile(armed);
+      expect(parseProcessIdentity(readFileSync(armed, "utf8"))).toEqual(helperIdentity);
+      runTestCodec(codec, ["terminate-process", String(parentIdentity.pid), parentIdentity.token]);
+      expect(await waitForProcessExit(helperIdentity, codec)).toBe(true);
+      expect(existsSync(join(app, "old-sentinel"))).toBe(true);
+      expect(existsSync(join(app, "new-sentinel"))).toBe(false);
+      expect(existsSync(staged)).toBe(false);
+      expect(existsSync(backup)).toBe(false);
+    } finally {
+      const currentParent = processIdentity(parent.pid, codec);
+      if (currentParent?.token === parentIdentity.token) {
+        runTestCodec(codec, [
+          "terminate-process",
+          String(parentIdentity.pid),
+          parentIdentity.token,
+        ]);
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("commits only after a real replacement publishes its exact readiness identity", async () => {
+    if (process.platform !== "win32") return;
+    const codec = windowsCodec();
+    const root = mkdtempSync(join(tmpdir(), "mirin-windows-apply-success-"));
+    const app = join(root, "Mirin");
+    const staged = join(root, ".Mirin.mirin-new-test");
+    const backup = join(root, "Mirin.mirin-old-test");
+    const state = join(root, "state");
+    const work = join(root, "work");
+    const marker = join(state, ".update-handoff.json");
+    const phase = join(state, ".update-phase-test");
+    const ready = join(state, ".update-ready-test");
+    const replacementReceipt = join(state, ".replacement-identity");
+    const activated = join(work, ".apply-helper-activated");
+    const armed = join(work, ".apply-helper-armed");
+    const script = join(root, "apply.ps1");
+    const launchVbs = join(root, "launch.vbs");
+    const helperPidFile = join(work, ".apply-helper.pid");
+    const executable = join(app, "Mirin.exe");
+    const powershell = join(
+      process.env.SystemRoot as string,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    );
+    mkdirSync(app);
+    mkdirSync(staged);
+    mkdirSync(state);
+    mkdirSync(work);
+    writeFileSync(join(app, "old-sentinel"), "old");
+    writeFileSync(join(staged, "new-sentinel"), "new");
+    copyFileSync(powershell, executable);
+    copyFileSync(powershell, join(staged, "Mirin.exe"));
+    writeFileSync(marker, "{}");
+    runTestCodec(codec, ["durable-write", phase, "prepared"]);
+
+    const replacementCommand = [
+      `$tool=${powerShellLiteral(codec)}`,
+      "$token=(& $tool process-token ([string]$PID)).Trim()",
+      "$identity=[string]$PID+'|'+$token",
+      `& $tool durable-write ${powerShellLiteral(ready)} $identity`,
+      `& $tool durable-write ${powerShellLiteral(replacementReceipt)} $identity`,
+      "Start-Sleep -Seconds 30",
+    ].join(";");
+    const encodedCommand = Buffer.from(replacementCommand, "utf16le").toString("base64");
+    const parent = Bun.spawn(
+      ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"],
+      { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    );
+    const parentIdentity = await waitForTestIdentity(parent.pid, codec);
+    writeFileSync(
+      script,
+      renderWindowsApplyPowerShell({
+        runningApp: app,
+        staged,
+        workDir: work,
+        executable,
+        backup,
+        helperFiles: [script, launchVbs],
+        marker,
+        ready,
+        activated,
+        armed,
+        phase,
+        swapTool: codec,
+        token: "42-00000000-0000-0000-0000-000000000000",
+        pid: parent.pid,
+        parentToken: parentIdentity.token,
+        parentWaitMs: 5_000,
+        readyWaitMs: 5_000,
+        launchArguments: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand],
+      }),
+    );
+    writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperPidFile));
+
+    let replacementIdentity: UpdateProcessIdentity | undefined;
+    try {
+      const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs]);
+      expect(await launcher.exited).toBe(0);
+      const helperPid = Number(readFileSync(helperPidFile, "utf8"));
+      const helperIdentity = await waitForTestIdentity(helperPid, codec);
+      runTestCodec(codec, ["durable-write", activated, formatProcessIdentity(helperIdentity)]);
+      await waitForFile(armed);
+      runTestCodec(codec, ["terminate-process", String(parentIdentity.pid), parentIdentity.token]);
+      expect(await waitForProcessExit(helperIdentity, codec)).toBe(true);
+      replacementIdentity = parseProcessIdentity(readFileSync(replacementReceipt, "utf8"));
+      expect(processIdentity(replacementIdentity.pid, codec)?.token).toBe(
+        replacementIdentity.token,
+      );
+      expect(existsSync(join(app, "new-sentinel"))).toBe(true);
+      expect(existsSync(join(app, "old-sentinel"))).toBe(false);
+      expect(existsSync(staged)).toBe(false);
+      expect(existsSync(backup)).toBe(false);
+      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(phase)).toBe(false);
+    } finally {
+      if (
+        replacementIdentity &&
+        processIdentity(replacementIdentity.pid, codec)?.token === replacementIdentity.token
+      ) {
+        runTestCodec(codec, [
+          "terminate-process",
+          String(replacementIdentity.pid),
+          replacementIdentity.token,
+        ]);
+      }
+      const currentParent = processIdentity(parent.pid, codec);
+      if (currentParent?.token === parentIdentity.token) {
+        runTestCodec(codec, [
+          "terminate-process",
+          String(parentIdentity.pid),
+          parentIdentity.token,
+        ]);
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 describe("POSIX updater helpers", () => {
@@ -115,13 +349,15 @@ describe("POSIX updater helpers", () => {
       ready: "/tmp/state/.update-ready-42-token",
       activated: "/tmp/generation/.apply-helper-activated",
       armed: "/tmp/generation/.apply-helper-armed",
+      phase: "/tmp/state/.update-phase-42-token",
       swapTool: "/tmp/generation/.mirin-atomic-swap",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
+      parentToken: "parent-token",
     });
     const launch = script.indexOf('nohup "$EXE"');
     const readiness = script.indexOf('[ -f "$READY" ]', launch);
-    const deleteBackup = script.indexOf('rm -rf "$OLD"', readiness);
+    const deleteBackup = script.indexOf('durable-remove-directory "$OLD"', readiness);
     const restoreBackup = script.indexOf('"$SWAP" atomic-swap "$APP" "$RESTORE"', launch);
     const reopenOld = script.indexOf("relaunch_old", restoreBackup);
     expect(launch).toBeGreaterThan(0);
@@ -130,15 +366,15 @@ describe("POSIX updater helpers", () => {
     expect(restoreBackup).toBeGreaterThan(launch);
     expect(reopenOld).toBeGreaterThan(restoreBackup);
     expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
-    expect(script).toContain('if [ "$READY_PID" = "$NEW_PID" ]');
-    expect(script).toContain('kill -KILL "$NEW_PID"');
+    expect(script).toContain('if [ "$READY_PROCESS" = "$READY_IDENTITY" ]');
+    expect(script).toContain('terminate-process "$NEW_PID" "$NEW_TOKEN"');
     expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
-    expect(script).toContain('kill -KILL "$PID"');
-    expect(script).toContain('elif [ "$ACCEPTED" -eq 1 ]; then');
+    expect(script).toContain('terminate-process "$PID" "$PARENT_TOKEN"');
+    expect(script).toContain('elif [ "$ACCEPTED" -eq 0 ]; then');
     expect(script).not.toContain('mv "$APP" "$OLD"');
     expect(script).not.toContain('mv "$NEW" "$APP"');
-    expect(script.indexOf('test "$ACTIVATED_PID" = "$$"')).toBeLessThan(
-      script.indexOf('printf "%s" "$$" > "$ARMED_TMP"'),
+    expect(script.indexOf('test "$ACTIVATED_IDENTITY" = "$SELF_IDENTITY"')).toBeLessThan(
+      script.indexOf('"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"'),
     );
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
@@ -155,23 +391,27 @@ describe("POSIX updater helpers", () => {
       ready: "/tmp/state/.update-ready-42-token",
       activated: "/tmp/generation/.apply-helper-activated",
       armed: "/tmp/generation/.apply-helper-armed",
+      phase: "/tmp/state/.update-phase-42-token",
       swapTool: "/tmp/generation/.mirin-atomic-swap",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
+      parentToken: "parent-token",
     });
     const launch = script.indexOf("setsid ");
     const readiness = script.indexOf('[ -f "$READY" ]', launch);
     expect(launch).toBeGreaterThan(0);
     expect(readiness).toBeGreaterThan(launch);
-    expect(script.indexOf('kill -0 "$NEW_PID"', launch)).toBeGreaterThan(launch);
-    expect(script.indexOf('"$SWAP" atomic-swap "$APP" "$RESTORE"', launch)).toBeGreaterThan(launch);
-    expect(script.indexOf('rm -rf "$OLD"', readiness)).toBeGreaterThan(readiness);
-    expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
-    expect(script.indexOf('printf "%s" "$$" > "$ARMED_TMP"')).toBeLessThan(
-      script.indexOf('while [ "$i" -lt 150 ] && kill -0 "$PID"'),
+    expect(script.indexOf('process_matches "$NEW_PID" "$NEW_TOKEN"', launch)).toBeGreaterThan(
+      launch,
     );
-    expect(script.indexOf('test "$ACTIVATED_PID" = "$$"')).toBeLessThan(
-      script.indexOf('printf "%s" "$$" > "$ARMED_TMP"'),
+    expect(script.indexOf('"$SWAP" atomic-swap "$APP" "$RESTORE"', launch)).toBeGreaterThan(launch);
+    expect(script.indexOf('durable-remove-directory "$OLD"', readiness)).toBeGreaterThan(readiness);
+    expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
+    expect(script.indexOf('"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"')).toBeLessThan(
+      script.indexOf('wait-process "$PID" "$PARENT_TOKEN"'),
+    );
+    expect(script.indexOf('test "$ACTIVATED_IDENTITY" = "$SELF_IDENTITY"')).toBeLessThan(
+      script.indexOf('"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"'),
     );
     expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
     if (process.platform !== "win32") {
@@ -208,9 +448,11 @@ describe("POSIX updater helpers", () => {
           ready: join(root, ".update-ready"),
           activated: join(workDir, ".apply-helper-activated"),
           armed: join(workDir, ".apply-helper-armed"),
+          phase: join(root, ".update-phase"),
           swapTool,
           token: "42-00000000-0000-0000-0000-000000000000",
           pid: 2_147_483_647,
+          parentToken: "token-2147483647",
         }),
       ]);
 
@@ -233,6 +475,7 @@ describe("POSIX updater helpers", () => {
     const ready = join(root, ".update-ready-42-token");
     const activated = join(workDir, ".apply-helper-activated");
     const armed = join(workDir, ".apply-helper-armed");
+    const phase = join(root, ".update-phase-42-token");
     const swapTool = join(workDir, ".mirin-atomic-swap");
     const executable = join(runningApp, "Contents", "MacOS", "Mirin");
     const stagedExecutable = join(staged, "Contents", "MacOS", "Mirin");
@@ -245,6 +488,7 @@ describe("POSIX updater helpers", () => {
       writeFileSync(join(runningApp, "old-sentinel"), "old");
       writeFileSync(join(staged, "new-sentinel"), "new");
       writeFileSync(marker, "{}");
+      writeFileSync(phase, "prepared");
       chmodSync(executable, 0o755);
       chmodSync(stagedExecutable, 0o755);
       writeTestSwapTool(swapTool);
@@ -263,16 +507,18 @@ describe("POSIX updater helpers", () => {
         ready,
         activated,
         armed,
+        phase,
         swapTool,
         token: "42-00000000-0000-0000-0000-000000000000",
         pid: parent.pid,
+        parentToken: `token-${parent.pid}`,
       });
       const helper = Bun.spawn(["/bin/sh", "-c", script], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
       });
-      writeFileSync(activated, String(helper.pid));
+      writeFileSync(activated, `${helper.pid}|token-${helper.pid}`);
       parent.kill();
       await parent.exited;
       expect(await helper.exited).not.toBe(0);
@@ -311,13 +557,92 @@ function writeTestSwapTool(path: string): void {
     path,
     [
       "#!/bin/sh",
-      'test "$1" = atomic-swap',
-      'temporary="$2.mirin-test-swap"',
-      'mv "$2" "$temporary"',
-      'mv "$3" "$2"',
-      'mv "$temporary" "$3"',
+      "set -eu",
+      'operation="$1"; shift',
+      'case "$operation" in',
+      "  process-token)",
+      '    kill -0 "$1" 2>/dev/null',
+      '    printf "token-%s\\n" "$1"',
+      "    ;;",
+      "  wait-process)",
+      '    pid="$1"; token="$2"; i=0',
+      '    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 500 ]; do i=$((i + 1)); sleep 0.01; done',
+      '    ! kill -0 "$pid" 2>/dev/null',
+      "    ;;",
+      "  terminate-process)",
+      '    pid="$1"; token="$2"',
+      '    if [ "$token" = "token-$pid" ] && kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; fi',
+      "    ;;",
+      "  durable-write)",
+      '    temporary="$1.tmp.$$"; printf "%s" "$2" > "$temporary"; mv "$temporary" "$1"',
+      "    ;;",
+      "  durable-move)",
+      '    mv "$1" "$2"',
+      "    ;;",
+      "  durable-remove-directory)",
+      '    rm -rf "$1"',
+      "    ;;",
+      "  atomic-swap)",
+      '    temporary="$1.mirin-test-swap"',
+      '    mv "$1" "$temporary"',
+      '    mv "$2" "$1"',
+      '    mv "$temporary" "$2"',
+      "    ;;",
+      "  *) exit 1 ;;",
+      "esac",
       "",
     ].join("\n"),
   );
   chmodSync(path, 0o755);
+}
+
+function windowsCodec(): string {
+  const build = Bun.spawnSync(["cargo", "build", "-p", "mirin-codec"], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  if (build.exitCode !== 0) throw new Error("could not build Windows updater codec test helper");
+  return join(process.cwd(), "target", "debug", "mirin-codec.exe");
+}
+
+function powerShellLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function runTestCodec(codec: string, args: string[]): void {
+  const result = Bun.spawnSync([codec, ...args], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  if (result.exitCode !== 0) throw new Error(`test codec failed: ${args[0]}`);
+}
+
+async function waitForTestIdentity(pid: number, codec: string): Promise<UpdateProcessIdentity> {
+  for (let index = 0; index < 200; index += 1) {
+    const identity = processIdentity(pid, codec);
+    if (identity) return identity;
+    await Bun.sleep(25);
+  }
+  throw new Error("test process identity was unavailable");
+}
+
+async function waitForFile(path: string): Promise<void> {
+  for (let index = 0; index < 200; index += 1) {
+    if (existsSync(path)) return;
+    await Bun.sleep(25);
+  }
+  throw new Error(`timed out waiting for ${path}`);
+}
+
+async function waitForProcessExit(
+  identity: UpdateProcessIdentity,
+  codec: string,
+): Promise<boolean> {
+  for (let index = 0; index < 400; index += 1) {
+    if (processIdentity(identity.pid, codec)?.token !== identity.token) return true;
+    await Bun.sleep(25);
+  }
+  return false;
 }

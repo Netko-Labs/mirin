@@ -20,8 +20,15 @@ function isWithin(root: string, candidate: string): boolean {
 }
 
 function regularFile(path: string, label: string): void {
-  const link = lstatSync(path);
-  if (link.isSymbolicLink() || !link.isFile()) throw new Error(`${label} is not a regular file`);
+  try {
+    const link = lstatSync(path);
+    if (link.isSymbolicLink() || !link.isFile()) {
+      throw new Error(`${label} is not a regular file`);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === `${label} is not a regular file`) throw error;
+    throw new Error(`${label} is missing`, { cause: error });
+  }
 }
 
 function validateExtractedTree(root: string): void {
@@ -71,23 +78,43 @@ export function validateStagedBundle(options: StagedValidationOptions): VersionI
           staged,
           options.platform === "win32" ? `${options.installed.name}.exe` : options.installed.name,
         );
+  const codec =
+    options.platform === "darwin"
+      ? join(staged, "Contents", "MacOS", "mirin-codec")
+      : join(staged, options.platform === "win32" ? "mirin-codec.exe" : "mirin-codec");
   const versionPath = join(resources, "version.json");
   regularFile(executable, "staged update executable");
+  regularFile(codec, "staged updater recovery codec");
   regularFile(versionPath, "staged update version metadata");
 
   const realExecutable = realpathSync(executable);
+  const realCodec = realpathSync(codec);
   const realVersion = realpathSync(versionPath);
-  if (!isWithin(staged, realExecutable) || !isWithin(staged, realVersion)) {
+  if (
+    !isWithin(staged, realExecutable) ||
+    !isWithin(staged, realCodec) ||
+    !isWithin(staged, realVersion)
+  ) {
     throw new Error("staged update identity files escape the bundle");
   }
   const executableMode = statSync(executable).mode;
+  const codecMode = statSync(codec).mode;
   if (options.platform === "linux") {
     if ((executableMode & 0o100) === 0) chmodSync(executable, executableMode | 0o100);
     if ((statSync(executable).mode & 0o100) === 0) {
       throw new Error("staged update executable is not owner-executable");
     }
-  } else if (options.platform === "darwin" && (executableMode & 0o111) === 0) {
-    throw new Error("staged update executable is not executable");
+    if ((codecMode & 0o100) === 0) chmodSync(codec, codecMode | 0o100);
+    if ((statSync(codec).mode & 0o100) === 0) {
+      throw new Error("staged updater recovery codec is not owner-executable");
+    }
+  } else if (options.platform === "darwin") {
+    if ((executableMode & 0o111) === 0) {
+      throw new Error("staged update executable is not executable");
+    }
+    if ((codecMode & 0o111) === 0) {
+      throw new Error("staged updater recovery codec is not executable");
+    }
   }
 
   const stagedVersion = readVersionJsonFile(versionPath);

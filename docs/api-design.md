@@ -254,7 +254,8 @@ off the main-process API:
   `mirinjs` runtime versions. Multi-instance processes hold compatible shared
   locks, so they cannot overlap an exclusive updater-capable process. Once a
   validated output is first copied and revalidated beside the install. After the
-  detached apply helper writes a PID-bound armed acknowledgement, the updater enters a terminal handoff:
+  detached apply helper writes an OS-creation-identity-bound armed
+  acknowledgement, the updater enters a terminal handoff:
   checks, downloads, applies, and auto-check scheduling remain blocked until
   process exit. Native terminal shutdown is requested before synchronous
   `complete` status listeners run. A private handoff reservation blocks ordinary launches after the
@@ -263,8 +264,11 @@ off the main-process API:
   swap tool on the install filesystem; unsupported volumes fail without entering
   terminal state. The helper atomically exchanges complete old/new directories,
   so interruption never removes the canonical launch path. The backup remains
-  until that exact launched PID atomically publishes a Worker/native readiness
-  receipt. Every recoverable post-exit failure atomically rolls back and reopens
+  until that exact launched process durably publishes a Worker/native readiness
+  receipt. The phase journal lives outside the replaceable app; a later launch
+  claims an inactive pre-commit transaction and rolls it back before loading the
+  native core/Worker, or completes cleanup for a committed transaction. Every
+  recoverable post-exit failure atomically rolls back and reopens
   the prior install; parent/replacement termination is bounded, while unconfirmed
   termination or rollback preserves terminal ownership and both trees. Managed Linux
   AppImage/deb/rpm payloads omit updater metadata and update through their package
@@ -274,8 +278,9 @@ off the main-process API:
   signature verification happens before JSON parsing, and every redirect hop must
   satisfy the HTTPS-or-loopback policy and a bounded request deadline. Embedded and
   staged `version.json` files are size-bounded before allocation/decoding.
-  Before the helper may arm, the parent atomically records its exact PID in the
-  reservation and publishes a PID-bound activation acknowledgement. A helper
+  Before the helper may arm, the parent durably records its PID plus OS creation
+  identity in the reservation and publishes an identity-bound activation
+  acknowledgement. A helper
   without that acknowledgement exits without swapping. Armed acknowledgement and
   replacement readiness use temp-file-plus-rename publication. An accepted helper
   forces and confirms parent termination after the graceful-shutdown deadline;
@@ -290,7 +295,7 @@ off the main-process API:
   8 GiB, in-memory patch inputs at 512 MiB combined, and release bsdiff sources at
   128 MiB each. Larger deltas fall back to the full bundle. Compressed artifacts,
   archive structure, and subprocess output are bounded separately. A download is not
-  staged until archive structure, platform executable,
+  staged until archive structure, platform executable, recovery codec,
   embedded identity, integrity, and platform signature checks pass. macOS verifies
   executable mode, the installed app's stable designated code requirement, and
   codesign. Ad-hoc local builds use the pinned manifest key plus codesign validity

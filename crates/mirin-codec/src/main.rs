@@ -1,10 +1,13 @@
 use mirin_codec::{
-    atomic_swap_directories, bsdiff_file, bspatch_file, bspatch_file_bounded, zstd_compress_file,
-    zstd_decompress_file, zstd_decompress_file_bounded,
+    atomic_swap_directories, bsdiff_file, bspatch_file, bspatch_file_bounded,
+    durable_move_directory, durable_remove_directory, durable_remove_file, durable_write,
+    process_token, sync_tree, terminate_process, validate_atomic_swap_directories,
+    wait_for_process_exit, zstd_compress_file, zstd_decompress_file, zstd_decompress_file_bounded,
 };
 use std::env;
 use std::io;
 use std::path::Path;
+use std::time::Duration;
 
 fn argument<'a>(args: &'a [String], index: usize, usage: &str) -> io::Result<&'a str> {
     args.get(index)
@@ -16,6 +19,14 @@ fn byte_limit(value: &str) -> io::Result<u64> {
     value
         .parse::<u64>()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid byte limit"))
+}
+
+fn process_id(value: &str) -> io::Result<u32> {
+    value
+        .parse::<u32>()
+        .ok()
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid process id"))
 }
 
 fn run() -> io::Result<()> {
@@ -64,6 +75,45 @@ fn run() -> io::Result<()> {
         "atomic-swap" => atomic_swap_directories(
             Path::new(argument(&args, 1, "missing first directory")?),
             Path::new(argument(&args, 2, "missing second directory")?),
+        ),
+        "validate-swap" => validate_atomic_swap_directories(
+            Path::new(argument(&args, 1, "missing first directory")?),
+            Path::new(argument(&args, 2, "missing second directory")?),
+        ),
+        "sync-tree" => sync_tree(Path::new(argument(&args, 1, "missing tree path")?)),
+        "durable-write" => durable_write(
+            Path::new(argument(&args, 1, "missing destination path")?),
+            argument(&args, 2, "missing durable contents")?.as_bytes(),
+        ),
+        "durable-move" => durable_move_directory(
+            Path::new(argument(&args, 1, "missing source directory")?),
+            Path::new(argument(&args, 2, "missing destination directory")?),
+        ),
+        "durable-remove-directory" => {
+            durable_remove_directory(Path::new(argument(&args, 1, "missing directory path")?))
+        }
+        "durable-remove-file" => {
+            durable_remove_file(Path::new(argument(&args, 1, "missing file path")?))
+        }
+        "process-token" => {
+            println!(
+                "{}",
+                process_token(process_id(argument(&args, 1, "missing process id")?)?)?
+            );
+            Ok(())
+        }
+        "wait-process" => wait_for_process_exit(
+            process_id(argument(&args, 1, "missing process id")?)?,
+            argument(&args, 2, "missing process token")?,
+            Duration::from_millis(byte_limit(argument(
+                &args,
+                3,
+                "missing process wait timeout",
+            )?)?),
+        ),
+        "terminate-process" => terminate_process(
+            process_id(argument(&args, 1, "missing process id")?)?,
+            argument(&args, 2, "missing process token")?,
         ),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,

@@ -1,4 +1,3 @@
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
@@ -12,33 +11,80 @@ static SWAP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// The updater probes this operation before terminal handoff. Unsupported
 /// filesystems therefore fail while the installed app is still running.
 pub fn atomic_swap_directories(left: &Path, right: &Path) -> io::Result<()> {
-    validate_directory(left)?;
-    validate_directory(right)?;
-    if left == right {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "atomic swap paths must be different",
-        ));
-    }
-    if left.parent() != right.parent() || left.parent().is_none() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "atomic swap paths must be siblings",
-        ));
-    }
-
-    platform_atomic_swap(left, right)
+    validate_atomic_swap_directories(left, right)?;
+    platform_atomic_swap(left, right)?;
+    crate::durable_fs::sync_parent(left)
 }
 
-fn validate_directory(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.file_type().is_dir() {
+pub fn validate_atomic_swap_directories(left: &Path, right: &Path) -> io::Result<()> {
+    crate::durable_fs::validate_real_directory(left)?;
+    crate::durable_fs::validate_real_directory(right)?;
+    crate::durable_fs::validate_siblings(left, right)?;
+    validate_same_filesystem(left, right)
+}
+
+#[cfg(unix)]
+fn validate_same_filesystem(left: &Path, right: &Path) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    if std::fs::metadata(left)?.dev() != std::fs::metadata(right)?.dev() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "atomic swap path must be a real directory",
+            "atomic swap directories are on different filesystems",
         ));
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn validate_same_filesystem(left: &Path, right: &Path) -> io::Result<()> {
+    if directory_volume_serial(left)? != directory_volume_serial(right)? {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "atomic swap directories are on different volumes",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn directory_volume_serial(path: &Path) -> io::Result<u32> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        OPEN_EXISTING,
+    };
+
+    let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: path is a live NUL-terminated UTF-16 buffer.
+    let handle = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
+    // SAFETY: handle is valid and information points to writable storage.
+    let result = unsafe { GetFileInformationByHandle(handle, information.as_mut_ptr()) };
+    // SAFETY: handle is exclusively owned here.
+    unsafe {
+        CloseHandle(handle);
+    }
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: GetFileInformationByHandle reported success.
+    Ok(unsafe { information.assume_init() }.dwVolumeSerialNumber)
 }
 
 #[cfg(target_os = "linux")]
@@ -192,6 +238,7 @@ fn unused_swap_path(_parent: &Path) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]

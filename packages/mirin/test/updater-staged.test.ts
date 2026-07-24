@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -33,6 +34,7 @@ function createLinuxStage(version = "1.1.0"): {
   extractionRoot: string;
   staged: string;
   executable: string;
+  codec: string;
 } {
   const root = mkdtempSync(join(tmpdir(), "mirin-staged-test-"));
   const extractionRoot = join(root, "extract");
@@ -42,8 +44,11 @@ function createLinuxStage(version = "1.1.0"): {
   const executable = join(staged, installed.name);
   writeFileSync(executable, "#!/bin/sh\n");
   chmodSync(executable, 0o755);
+  const codec = join(staged, "mirin-codec");
+  writeFileSync(codec, "#!/bin/sh\n");
+  chmodSync(codec, 0o755);
   writeFileSync(join(resources, "version.json"), JSON.stringify({ ...installed, version }), "utf8");
-  return { root, extractionRoot, staged, executable };
+  return { root, extractionRoot, staged, executable, codec };
 }
 
 function createMacStage(version = "1.1.0"): {
@@ -62,6 +67,9 @@ function createMacStage(version = "1.1.0"): {
   mkdirSync(join(frameworkVersion, "Resources"), { recursive: true });
   writeFileSync(executable, "#!/bin/sh\n");
   chmodSync(executable, 0o755);
+  const codec = join(contents, "MacOS", "mirin-codec");
+  writeFileSync(codec, "#!/bin/sh\n");
+  chmodSync(codec, 0o755);
   writeFileSync(join(resources, "version.json"), JSON.stringify({ ...installed, version }), "utf8");
   writeFileSync(join(frameworkVersion, "Resources", "fixture.txt"), "framework");
   symlinkSync("A", join(framework, "Versions", "Current"));
@@ -91,6 +99,17 @@ describe("staged update bundle validation", () => {
           expectedVersion: "1.2.0",
         }),
       ).toThrow("identity does not match");
+
+      rmSync(stage.codec);
+      expect(() =>
+        validateStagedBundle({
+          staged: stage.staged,
+          extractionRoot: stage.extractionRoot,
+          platform: "linux",
+          installed,
+          expectedVersion: "1.1.0",
+        }),
+      ).toThrow("recovery codec");
     } finally {
       rmSync(stage.root, { recursive: true, force: true });
     }
@@ -106,6 +125,8 @@ describe("staged update bundle validation", () => {
         platform: "linux",
         installed,
         expectedVersion: "1.1.0",
+        ownerIdentity: { pid: process.pid, token: "test-owner" },
+        syncTree: async () => {},
       });
       expect(statSync(stage.executable).mode & 0o100).toBe(0o100);
 
@@ -139,6 +160,8 @@ describe("staged update bundle validation", () => {
         platform: "linux",
         installed,
         expectedVersion: "1.1.0",
+        ownerIdentity: { pid: process.pid, token: "test-owner" },
+        syncTree: async () => {},
       });
       expect(dirname(sibling)).toBe(dirname(install));
       expect(
@@ -168,6 +191,8 @@ describe("staged update bundle validation", () => {
         installed,
         expectedVersion: "1.1.0",
         verifyMacIdentity: async () => {},
+        ownerIdentity: { pid: process.pid, token: "test-owner" },
+        syncTree: async () => {},
       });
       const framework = join(
         sibling,
@@ -190,15 +215,49 @@ describe("staged update bundle validation", () => {
     const prefix = `.${installed.name}.mirin-new-`;
     const nowMs = 1_800_000_000_000;
     const currentSession = "a".repeat(32);
-    const owned = (pid: number, session: string, createdAtMs: number, uuid: string) =>
-      join(parent, `${prefix}${pid}-${session}-${createdAtMs}-${uuid}`);
-    const abandoned = owned(300, "c".repeat(32), nowMs, "11111111-1111-1111-1111-111111111111");
-    const live = owned(200, "d".repeat(32), nowMs, "22222222-2222-2222-2222-222222222222");
-    const current = owned(100, currentSession, nowMs, "33333333-3333-3333-3333-333333333333");
-    const reusedCurrent = owned(100, "b".repeat(32), nowMs, "55555555-5555-5555-5555-555555555555");
+    const owned = (
+      pid: number,
+      session: string,
+      token: string,
+      createdAtMs: number,
+      uuid: string,
+    ) =>
+      join(
+        parent,
+        `${prefix}${pid}-${session}-${createHash("sha256").update(token).digest("hex")}-${createdAtMs}-${uuid}`,
+      );
+    const abandoned = owned(
+      300,
+      "c".repeat(32),
+      "abandoned-token",
+      nowMs,
+      "11111111-1111-1111-1111-111111111111",
+    );
+    const live = owned(
+      200,
+      "d".repeat(32),
+      "live-token",
+      nowMs,
+      "22222222-2222-2222-2222-222222222222",
+    );
+    const current = owned(
+      100,
+      currentSession,
+      "current-token",
+      nowMs,
+      "33333333-3333-3333-3333-333333333333",
+    );
+    const reusedCurrent = owned(
+      100,
+      "b".repeat(32),
+      "reused-token",
+      nowMs,
+      "55555555-5555-5555-5555-555555555555",
+    );
     const agedLive = owned(
       201,
       "e".repeat(32),
+      "aged-token",
       nowMs - MAX_INSTALL_SIBLING_AGE_MS - 1,
       "66666666-6666-6666-6666-666666666666",
     );
@@ -228,7 +287,7 @@ describe("staged update bundle validation", () => {
         hasLiveHelper: true,
         currentPid: 100,
         currentSession,
-        isProcessAlive: () => false,
+        getProcessIdentity: () => undefined,
         nowMs,
       });
       expect(existsSync(abandoned)).toBe(true);
@@ -240,7 +299,12 @@ describe("staged update bundle validation", () => {
         platform: "linux",
         currentPid: 100,
         currentSession,
-        isProcessAlive: (pid) => pid === 100 || pid === 200 || pid === 201,
+        getProcessIdentity: (pid) =>
+          pid === 200
+            ? { pid, token: "live-token" }
+            : pid === 201
+              ? { pid, token: "aged-token" }
+              : undefined,
         nowMs,
       });
       expect(existsSync(abandoned)).toBe(false);

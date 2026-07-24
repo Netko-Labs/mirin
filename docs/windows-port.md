@@ -95,7 +95,7 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
   → 0 GPU failures + clean close. `MIRIN_ANGLE=<backend>` still overrides; single-GPU
   machines keep Chromium's D3D11 default.
 
-### W5 — Distribution — ✅ DONE (updater swap unverified)
+### W5 — Distribution — ✅ DONE (updater swap covered by Windows x64 CI)
 `@mirinjs/win32-{arch}` prebuilt-native package + CLI optional dep; `artifacts.ts`
 installed-mode + CEF release download (platform-generic). `mirin release` (verified)
 emits `{channel}-win32-{arch}-update.json` + `.tar.zst` updater bundle + a real
@@ -125,12 +125,13 @@ rendering `.iss`. Anko's
 `%LOCALAPPDATA%` support dir, bounded/generation-correlated download staging,
 validated real app root + `<App>.exe` + `resources/version.json`, and a detached
 PowerShell folder swap + relaunch. WMI launches PowerShell directly and records its
-actual PID before the running app quits, so startup cleanup cannot delete its generation
+PID plus Windows process-creation time before the running app quits, so startup cleanup cannot delete its generation
 and a failed marker write can terminate the complete helper. Accepted WMI launch is the
 terminal handoff, so checks, downloads, applies, and auto-check scheduling remain blocked
 until exit; native terminal shutdown is requested before synchronous completion listeners.
-The parent records the PowerShell PID in the reservation before publishing its
-PID-bound activation; PowerShell refuses to arm or swap without that activation.
+The parent durably records the PowerShell process identity in the reservation
+before publishing its identity-bound activation; PowerShell refuses to arm or
+swap without that activation.
 Process-wide terminal/apply latches stop every updater instance's auto-checks, while
 process-wide generation allocation keeps public updater instances from sharing work.
 Successful helpers remove their generation and launcher files; launch failures
@@ -139,18 +140,21 @@ live app/helper work. Mirin's first internal `ready` listener writes replacement
 readiness before user listeners, then asynchronously prunes exact dead-owner install-side
 staging siblings with session ownership and bounded live-PID leases.
 Non-current generation-owner PIDs share the same bounded lease.
-The validated payload is first copied and revalidated beside
-the install. The bundled `mirin-codec.exe` is copied into helper work and probes a
-TxF directory transaction on that exact volume before terminal handoff. PowerShell
+The validated payload, including `mirin-codec.exe`, is first copied, revalidated,
+and recursively flushed beside the install. The bundled codec is copied into
+helper work, rejects reparse-point operands, compares the actual directory volume
+identities, and probes a TxF directory transaction before terminal handoff. PowerShell
 uses literal paths, atomically commits the three namespace renames that exchange
 the complete app trees, keeps the canonical launch path present through interruption,
 rejects stale backup collisions, atomically rolls back, verifies restoration, and
 removes its generation work before relaunching the restored app.
 A private handoff reservation admits only the helper's token-bearing target after
-the old PID releases its OS lock and expires after a bounded 24-hour stale lease.
+the old process releases its OS lock. Process handles and creation times bind
+wait, termination, cleanup ownership, arming, and readiness so PID reuse cannot
+authorize a different process.
 PowerShell keeps the backup until
-that exact replacement PID acquires the exclusive lock and writes a Worker/native
-readiness receipt; every post-exit failure stops it, restores the old
+that exact replacement process acquires the exclusive lock and writes a durable
+Worker/native readiness receipt; every post-exit failure stops it, restores the old
 folder, clears the reservation, and relaunches the prior executable. If graceful
 parent shutdown reaches its deadline, PowerShell forces and confirms termination
 before swapping; unconfirmed helper/replacement termination or rollback preserves
@@ -158,8 +162,14 @@ the reservation and both trees. Armed and readiness PIDs are published by atomic
 rename so polling never consumes partial contents. Runtime manifests
 require a pinned Ed25519 signature, and every redirect hop is subject to the
 HTTPS-or-loopback rule. `publish-all.ts` publishes the host-platform native package.
-The bundled standalone `mirin-codec.exe` provides both updater atomic exchange and
-release-time compression without a CEF or Bun FFI dependency.
+The external phase journal is written through before each namespace transition.
+After helper death or reboot, bootstrap reconciles it before loading the native
+core: pre-commit targets roll back through an external PowerShell helper and
+committed targets finish backup cleanup. Windows x64 CI executes both a real WMI
+launch with injected failure immediately after TxF exchange and a successful
+replacement/readiness commit path. The bundled standalone `mirin-codec.exe`
+provides both updater atomic exchange and release-time compression without a CEF
+or Bun FFI dependency.
 
 Windows arm64 currently uses an x64 host/core/CEF compatibility payload because
 Bun's native Windows arm64 runtime does not provide `bun:ffi`. Windows 11 ARM runs

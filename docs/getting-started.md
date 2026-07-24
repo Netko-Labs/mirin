@@ -138,20 +138,25 @@ a terminal handoff, so manual updater work and auto-check scheduling remain
 blocked until the process exits; native shutdown is requested before synchronous
 `complete` listeners run. This latch and auto-check shutdown are shared by every
 public `Updater` instance. Before that handoff, the validated tree is copied
-and revalidated beside the install. The parent atomically records the helper PID
-in the reservation and publishes a PID-bound activation acknowledgement; only
+and revalidated beside the install, including its bundled recovery codec, then
+recursively flushed. The parent durably records the helper PID plus OS creation
+identity in the reservation and publishes an identity-bound activation acknowledgement; only
 then may the helper arm and treat parent death as swap authorization.
-The bundled native swap tool is first probed on the exact install filesystem; an
-unsupported volume fails before terminal handoff. The helper atomically exchanges
+The bundled native swap tool first validates the real app/stage operands and is
+probed on the exact install filesystem; an unsupported mount, reparse point, or
+volume fails before terminal handoff. The helper durably journals each phase and atomically exchanges
 the complete old and staged directories, keeping the canonical launch path present
 through interruption, and forces/confirms parent termination if graceful shutdown
 exceeds its deadline. An activated helper whose death cannot be confirmed retains
 the reservation and recovery trees.
-The helper reserves the next launch for its token-bearing target with a bounded
-24-hour lease that recovers safely from stale PID reuse, and retains the
-backup until that exact PID acquires the exclusive lock and atomically publishes
-Worker/native readiness; timeout or early exit atomically restores and relaunches
-the old install.
+The helper reserves the next launch for its token-bearing target and binds all
+ownership, wait, termination, and readiness decisions to OS process creation
+identity rather than a reusable PID. It retains the backup until that exact
+process acquires the exclusive lock and durably publishes Worker/native readiness;
+timeout or early exit atomically restores and relaunches the old install. If the
+helper dies or the machine restarts, the next host launch claims the external
+phase journal before loading native runtime files, rolls back any pre-commit
+target through an external helper, or finishes committed backup cleanup.
 AppImage/deb/rpm payloads omit updater metadata and update through their
 package channel. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation

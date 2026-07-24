@@ -80,6 +80,11 @@
 - [x] Atomically publish helper arming and replacement readiness receipts.
 - [x] Force and confirm parent termination after an accepted graceful-shutdown deadline.
 - [x] Confirm activated-helper death before abandoning ownership or preserve all recovery state.
+- [x] Flush the complete install-side stage and durably order namespace and journal transitions.
+- [x] Recover inactive pre-commit or committed transactions during host bootstrap after helper death or reboot.
+- [x] Bind ownership, waiting, termination, arming, and readiness to OS process creation identity.
+- [x] Validate the real swap operands' device/volume identity and reject Windows reparse points.
+- [x] Exercise real Windows WMI/PowerShell/TxF rollback and successful readiness commit paths in CI.
 
 ## Checkpoints
 
@@ -259,3 +264,20 @@
   `x86_64-pc-windows-msvc`; the full Windows workspace remains covered by CI
   because its existing C dependencies require Windows SDK headers unavailable on
   the macOS host.
+- Nineteenth clean-context review remediation: recursively flush install-side
+  stages, durably journal every helper namespace transition, reconcile inactive
+  transactions before native runtime loading, use OS creation identities and
+  handle-based wait/termination, validate the actual swap operands, and execute
+  real Windows rollback and commit helpers in CI.
+- Nineteenth-review focused verification: updater handoff/apply/staging/cleanup
+  coverage passed 23 tests; codec clippy with warnings denied and 12 codec tests
+  passed. The Windows-gated codec modules cross-compiled warning-free for
+  `x86_64-pc-windows-msvc`; full workspace and native-platform verification
+  follows before commit.
+- Nineteenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 251
+  tests with the two expected Windows lifecycle skips on macOS; `git diff
+  --check` passed.
+- Nineteenth-review full Rust: `cargo fmt --all --check`, workspace clippy with
+  warnings denied, and workspace tests passed (26 tests across codec, core, and
+  helper).

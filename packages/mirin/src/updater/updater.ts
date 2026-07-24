@@ -1,11 +1,21 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadCodec } from "../codec.ts";
 import { runtime } from "../runtime.ts";
+import { formatProcessIdentity, processIdentity } from "../update-process.ts";
 import { applyUpdateAndRelaunch, assertLinuxInstallCanApply } from "./lib/apply.ts";
 import { verifyArchiveLayout } from "./lib/archive.ts";
 import {
+  GENERATION_OWNER_FILE,
   hasLiveApplyHelper,
   pruneGenerationDirectories,
   removePathBestEffort,
@@ -202,6 +212,15 @@ export class Updater {
         mkdirSync(updatesDir, { recursive: true });
         rmSync(workDir, { recursive: true, force: true });
         mkdirSync(workDir, { recursive: true });
+        const generationOwner = processIdentity(process.pid);
+        if (!generationOwner) {
+          throw new Error("could not bind updater generation to the current process");
+        }
+        writeFileSync(
+          join(workDir, GENERATION_OWNER_FILE),
+          formatProcessIdentity(generationOwner),
+          { encoding: "utf8", flag: "wx", mode: 0o600 },
+        );
 
         const codec = loadCodec(this.#corePath());
         const base = this.#baseUrl(installed);

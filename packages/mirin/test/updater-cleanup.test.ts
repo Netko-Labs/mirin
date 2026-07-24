@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   APPLY_HELPER_PID_FILE,
+  GENERATION_OWNER_FILE,
   hasLiveApplyHelper,
   MAX_APPLY_HELPER_AGE_MS,
   MAX_GENERATION_OWNER_AGE_MS,
@@ -69,13 +70,14 @@ describe("updater generation cleanup", () => {
     for (const directory of [current, reusedPid, live, abandoned]) {
       mkdirSync(directory);
     }
+    writeFileSync(join(live, GENERATION_OWNER_FILE), "200|live-token");
     const liveMtimeMs = statSync(live).mtimeMs;
 
     try {
       await pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
-        isProcessAlive: (pid) => pid === 200,
+        isOwnerAlive: (identity) => identity.pid === 200 && identity.token === "live-token",
         nowMs: liveMtimeMs,
       });
       expect(existsSync(current)).toBe(true);
@@ -86,7 +88,7 @@ describe("updater generation cleanup", () => {
       await pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
-        isProcessAlive: (pid) => pid === 200,
+        isOwnerAlive: (identity) => identity.pid === 200 && identity.token === "live-token",
         nowMs: liveMtimeMs + MAX_GENERATION_OWNER_AGE_MS + 1,
       });
       expect(existsSync(current)).toBe(true);
@@ -116,27 +118,27 @@ describe("updater generation cleanup", () => {
     mkdirSync(generation, { recursive: true });
     mkdirSync(reusedHelperGeneration);
     const helperMarker = join(generation, APPLY_HELPER_PID_FILE);
-    writeFileSync(helperMarker, "400");
-    writeFileSync(join(reusedHelperGeneration, APPLY_HELPER_PID_FILE), "100");
+    writeFileSync(helperMarker, "400|helper-token");
+    writeFileSync(join(reusedHelperGeneration, APPLY_HELPER_PID_FILE), "100|reused-token");
     const markerMtimeMs = statSync(helperMarker).mtimeMs;
 
     try {
       expect(
         await hasLiveApplyHelper(updates, {
           currentPid: 400,
-          isProcessAlive: (pid) => pid === 400,
+          isProcessAlive: (identity) => identity.pid === 400,
         }),
       ).toBe(false);
       expect(
         await hasLiveApplyHelper(updates, {
           currentPid: 100,
-          isProcessAlive: (pid) => pid === 400,
+          isProcessAlive: (identity) => identity.pid === 400 && identity.token === "helper-token",
         }),
       ).toBe(true);
       await pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
-        isProcessAlive: (pid) => pid === 100 || pid === 400,
+        isHelperAlive: (identity) => identity.pid === 400 && identity.token === "helper-token",
       });
       expect(existsSync(generation)).toBe(true);
       expect(existsSync(reusedHelperGeneration)).toBe(false);
@@ -145,14 +147,14 @@ describe("updater generation cleanup", () => {
       expect(
         await hasLiveApplyHelper(updates, {
           currentPid: 100,
-          isProcessAlive: (pid) => pid === 400,
+          isProcessAlive: (identity) => identity.pid === 400,
           nowMs: expiredNowMs,
         }),
       ).toBe(false);
       await pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
-        isProcessAlive: (pid) => pid === 400,
+        isHelperAlive: (identity) => identity.pid === 400,
         nowMs: expiredNowMs,
       });
       expect(existsSync(generation)).toBe(false);

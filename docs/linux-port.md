@@ -178,17 +178,19 @@ lib + helper + m1-smoke (`.cargo/config.toml` rustflags), so `libcef.so` resolve
 `build/Anko/Anko` cold-launches with a clean env → renders Anko's UI from **`app://`**
 with the typed RPC data plane connected; `ldd` confirms `libcef.so` resolves via
 `$ORIGIN`. The portable-folder updater extracts with `tar -xpf`, requires a real
-staged root and regular `<App>` executable, then ensures owner execute only after
-that validation. It also requires matching `resources/version.json`, bounded
+staged root plus regular `<App>` and `mirin-codec` executables, then ensures owner
+execute only after that validation. It also requires matching `resources/version.json`, bounded
 manifest/download/codec output with an 8 GiB streaming reconstructed-tar/decompression
 ceiling and a 512 MiB combined in-memory patch-input ceiling,
 and safe tar entry/link types before launching the asynchronous folder swap. Before
-handoff the runtime copies and revalidates the payload beside the portable install,
-copies the bundled `mirin-codec` into helper work, and probes
-`renameat2(RENAME_EXCHANGE)` on that exact volume before the helper acknowledges
-its prerequisites. Its token-bearing successor must
-acquire the exclusive app lock; the helper retains its unique backup until that exact
-PID atomically reports Worker/native readiness. Complete directory exchange keeps
+handoff the runtime copies, revalidates, and recursively flushes the payload beside
+the portable install, copies the bundled `mirin-codec` into helper work, compares
+the real operands' device identities, and probes `renameat2(RENAME_EXCHANGE)` on
+that exact filesystem before the helper acknowledges
+its prerequisites. Its token-bearing successor must acquire the exclusive app
+lock; the helper retains its unique backup until that exact process durably
+reports Worker/native readiness. PIDfds plus boot/start-time identities bind
+ownership, waiting, termination, and receipts. Complete directory exchange keeps
 the canonical launch path present through interruption. Early exit or timeout uses
 bounded termination and atomic rollback before verifying and relaunching the old app;
 unconfirmed termination or rollback preserves terminal ownership and both trees.
@@ -196,10 +198,13 @@ An accepted helper forces and confirms parent termination after the graceful
 deadline rather than discarding the transaction. Native shutdown begins before synchronous updater completion
 listeners. The parent records the shell helper PID in the reservation before
 publishing its PID-bound activation, and an unactivated helper cannot swap after a
-parent crash. Process-wide terminal/apply latches stop all updater-instance
+parent crash. Each namespace transition is preceded by an external durable phase
+journal. After helper death or reboot, the next host launch reconciles it before
+loading the core/Worker, rolling a pre-commit target back through an external
+helper or completing committed cleanup. Process-wide terminal/apply latches stop all updater-instance
 auto-checks, while process-wide generation allocation keeps their work disjoint.
-Handoff reservations expire after a bounded 24-hour stale
-lease so reused process IDs cannot block launch indefinitely. Startup prunes abandoned generations
+Exact creation identities prevent reused process IDs from retaining or crossing a
+handoff reservation. Startup prunes abandoned generations
 and, after its first internal `ready` listener writes replacement readiness ahead of
 user listeners, asynchronously prunes exact dead-owner install-side staging
 siblings with session ownership and bounded live-PID leases. Non-current generation

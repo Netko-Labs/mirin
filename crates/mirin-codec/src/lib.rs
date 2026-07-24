@@ -1,6 +1,8 @@
 //! Updater codec shared by the app runtime and the standalone release helper.
 
 mod atomic_swap;
+mod durable_fs;
+mod process_identity;
 
 use qbsdiff::{Bsdiff, Bspatch};
 use std::ffi::OsString;
@@ -10,7 +12,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-pub use atomic_swap::atomic_swap_directories;
+pub use atomic_swap::{atomic_swap_directories, validate_atomic_swap_directories};
+pub use durable_fs::{
+    durable_move_directory, durable_remove_directory, durable_remove_file, durable_write, sync_tree,
+};
+pub use process_identity::{
+    process_matches, process_token, terminate_process, wait_for_process_exit,
+};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const MAX_ZSTD_WINDOW_LOG: u32 = 27;
