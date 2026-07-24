@@ -75,7 +75,7 @@ Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dial
 ### M7 — Scaffold, release artifacts, updater — ✅ DONE
 - `bun create mirinjs` + `mirin init`: shared scaffold package (`create-mirinjs`) with the React/Vite/RPC starter.
 - Installed-mode native artifacts: `@mirinjs/darwin-arm64` optional package + matching CEF release download into `~/.mirinjs/cef/<version-platform>`; no Rust toolchain needed for consumers.
-- `mirin release` (macOS): Developer-ID signing/notarization when credentials are present, DMG installer, flat update manifest, full `.tar.zst` bundle, and best-effort bsdiff delta patch from the previously published release.
+- `mirin release` (macOS): Developer-ID signing/notarization when credentials are present, private exclusive entitlement files, Apple-compatible numeric plist versions derived from the full updater SemVer, atomic bundle/release output replacement, DMG installer, flat update manifest, full `.tar.zst` bundle, and best-effort bsdiff delta patch from the previously published release.
 - `app.updater`: packaged-app check/download/apply flow, version/channel identity from `Resources/version.json`, SHA-256 verification for downloads and reconstructed tars, archive layout validation before extraction, macOS codesign verification, whole-`.app` swap + relaunch.
 - Security constraints: runtime update URLs must be HTTPS except loopback HTTP for local testing; manifests must match channel/platform/arch; artifact names are flat files produced by `mirin release`.
 - **Example:** `examples/updater` demonstrates local self-hosting and GitHub Releases.

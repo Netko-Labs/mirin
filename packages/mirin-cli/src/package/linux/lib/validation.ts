@@ -1,3 +1,4 @@
+import { assertProjectIcon } from "../../../shared/fs/project-source.ts";
 import type { LinuxPackageFormat, LinuxPackageInput } from "../types.ts";
 import { LINUX_FORMATS } from "./defaults.ts";
 
@@ -17,6 +18,7 @@ export function safeLinuxPackageInput(input: LinuxPackageInput): LinuxPackageInp
     appName: safeAppBinaryName(input.appName),
     bundleId: safeLinuxIdentifier(input.bundleId),
     version: safePackageVersion(input.version),
+    icon: input.icon ? assertProjectIcon(input.projectDir, input.icon, "app icon") : undefined,
   };
 }
 

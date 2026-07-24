@@ -54,10 +54,32 @@ app.on("window-all-closed", () => {
 
 Declared windows with no `open` field open automatically at launch, before `ready` fires. `defineConfig` is an identity function that exists for typing/intellisense; the manifest must remain serializable data.
 
+The CLI validates packaging identity before it creates/cleans build directories or
+starts Vite/native work. `name` is one portable ASCII filename segment (letters,
+digits, spaces, `.`, `_`, `(`, `)`, `-`; no Windows device names or trailing
+dot/space), `id` is a reverse-DNS identifier with at least two DNS-style labels,
+`release.channel` is a flat filename-safe segment of at most 64 characters:
+alphanumeric runs separated by single `.`, `_`, or `-` characters, excluding
+Windows device names. The package/override version must be strict SemVer. macOS
+keeps that full SemVer in updater metadata, writes its numeric
+`major.minor.patch` core to `CFBundleShortVersionString`, and maps
+`dev`/`preview`, `alpha`, `beta`, and `rc` prereleases to Apple's
+`d`/`a`/`b`/`fc` build suffixes. Apple bundle components are limited to 4/2/2
+digits, the major version must be nonzero, and prerelease iterations must be 1–255.
+Platform bundle and installer sinks repeat validation before recursive removal.
+When updates are enabled,
+the CLI emits exactly the validated five-field `version.json` envelope (`version`,
+`channel`, `baseUrl`, `name`, `identifier`) and parses it back before bundling.
+
 `cef.locales` is an optional production-package allowlist using BCP 47 tags.
 Keeping only the languages an app ships can remove tens of megabytes from CEF
 and every updater, installer, and Linux package derived from it. Development
 bundles retain the complete downloaded runtime.
+
+Bundle and release assembly use unique sibling staging directories. A failed
+copy, icon conversion, signing, notarization, or package operation leaves the
+previous successful canonical output intact; the staged directory replaces it
+only after the complete operation succeeds.
 
 `app://` is mirin's bundled-asset scheme, served from the app bundle through a CEF scheme handler (dev mode points it at the working tree).
 

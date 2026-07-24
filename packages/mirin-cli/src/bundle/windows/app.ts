@@ -15,9 +15,18 @@
  * what mirin-core derives at runtime (engine::derive_subprocess_path, host.ts).
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
+import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
 import { makeWindowsIcon } from "../../icons/windows/index.ts";
+import { writeAtomicOutputDirectory } from "../../shared/fs/atomic-output.ts";
+import {
+  assertProjectIcon,
+  copyProjectFile,
+  safeDestructiveDirectory,
+} from "../../shared/fs/project-source.ts";
+import { validateAppIdentity } from "../../shared/validation/config.ts";
+import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { copyFlatCefLocales } from "../shared/cef-locales.ts";
 
 /** Source dir (vendor/cef on Windows) must contain libcef.dll. */
@@ -31,6 +40,10 @@ const CEF_RUNTIME_EXTRAS = ["vk_swiftshader_icd.json"];
 
 export interface WinBundleOptions {
   appName: string; // also the host exe stem → <appName>.exe
+  bundleId: string;
+  version: string;
+  channel: string;
+  projectDir: string;
   outDir: string;
   hostExe: string; // compiled Bun host (.exe)
   coreDll: string; // mirin_core.dll
@@ -55,56 +68,86 @@ export interface WinBundleOptions {
 export async function buildWindowsBundle(
   opts: WinBundleOptions,
 ): Promise<{ app: string; exe: string }> {
-  const { appName, cefPath } = opts;
+  const identity = validateAppIdentity({
+    appName: opts.appName,
+    bundleId: opts.bundleId,
+    version: opts.version,
+    channel: opts.channel,
+  });
+  validateVersionMetadataForBundle(opts.resources?.versionJson, identity);
+  validateBundleExtras(opts.projectDir, opts.resources?.sidecars, opts.resources?.workers);
+  const icon = opts.icon ? assertProjectIcon(opts.projectDir, opts.icon, "app icon") : undefined;
+  const { appName } = identity;
+  const { cefPath } = opts;
   if (!existsSync(join(cefPath, CEF_MARKER))) {
     throw new Error(`CEF runtime not found at ${cefPath} — run: bun scripts/fetch-cef.ts`);
   }
 
-  const app = join(opts.outDir, appName);
-  rmSync(app, { recursive: true, force: true });
-  mkdirSync(app, { recursive: true });
+  const app = safeDestructiveDirectory(
+    opts.projectDir,
+    join(opts.outDir, appName),
+    "Windows bundle output directory",
+  );
+  await writeAtomicOutputDirectory(
+    opts.projectDir,
+    app,
+    "Windows bundle output directory",
+    async (staging) => {
+      const exe = join(staging, `${appName}.exe`);
+      cpSync(opts.hostExe, exe);
+      cpSync(opts.coreDll, join(staging, "mirin_core.dll"));
+      cpSync(opts.helperExe, join(staging, "mirin-helper.exe"));
 
-  const exe = join(app, `${appName}.exe`);
-  cpSync(opts.hostExe, exe);
-  cpSync(opts.coreDll, join(app, "mirin_core.dll"));
-  cpSync(opts.helperExe, join(app, "mirin-helper.exe"));
+      copyCefRuntime(cefPath, staging, opts.cefLocales);
 
-  copyCefRuntime(cefPath, app, opts.cefLocales);
+      // App icon → <App>/icon.ico, loaded at runtime by the core and set as the window icon.
+      if (icon) makeWindowsIcon(icon, join(staging, "icon.ico"));
 
-  // App icon → <App>/icon.ico, loaded at runtime by the core and set as the window
-  // icon (taskbar / Alt-Tab / title). Sits beside the exe so the core finds it.
-  if (opts.icon) makeWindowsIcon(opts.icon, join(app, "icon.ico"));
-
-  // Production resources (dev passes none — paths come from env + the Vite URL).
-  if (opts.resources) {
-    const res = join(app, "resources");
-    mkdirSync(res, { recursive: true });
-    if (opts.resources.uiDir) cpSync(opts.resources.uiDir, join(res, "ui"), { recursive: true });
-    if (opts.resources.workerJs) cpSync(opts.resources.workerJs, join(res, "worker.js"));
-    if (opts.resources.manifestJson != null) {
-      writeFileSync(join(res, "mirin.manifest.json"), opts.resources.manifestJson);
-    }
-    if (opts.resources.versionJson != null) {
-      writeFileSync(join(res, "version.json"), opts.resources.versionJson);
-    }
-    if (opts.resources.workers && Object.keys(opts.resources.workers).length) {
-      const workersDir = join(res, "workers");
-      mkdirSync(workersDir, { recursive: true });
-      for (const [name, src] of Object.entries(opts.resources.workers)) {
-        cpSync(src, join(workersDir, `${name}.js`));
+      // Production resources (dev passes none — paths come from env + the Vite URL).
+      if (opts.resources) {
+        const res = join(staging, "resources");
+        mkdirSync(res, { recursive: true });
+        if (opts.resources.uiDir) {
+          cpSync(opts.resources.uiDir, join(res, "ui"), { recursive: true });
+        }
+        if (opts.resources.workerJs) cpSync(opts.resources.workerJs, join(res, "worker.js"));
+        if (opts.resources.manifestJson != null) {
+          writeFileSync(join(res, "mirin.manifest.json"), opts.resources.manifestJson);
+        }
+        if (opts.resources.versionJson != null) {
+          writeFileSync(join(res, "version.json"), opts.resources.versionJson);
+        }
+        if (opts.resources.workers && Object.keys(opts.resources.workers).length) {
+          const workersDir = join(res, "workers");
+          mkdirSync(workersDir, { recursive: true });
+          for (const [name, src] of Object.entries(opts.resources.workers)) {
+            const safeName = safeExtraAssetName(name, "worker name");
+            copyProjectFile(
+              opts.projectDir,
+              src,
+              join(workersDir, `${safeName}.js`),
+              `worker "${safeName}" bundle`,
+            );
+          }
+        }
+        if (opts.resources.sidecars?.length) {
+          const sidecarsDir = join(res, "sidecars");
+          mkdirSync(sidecarsDir, { recursive: true });
+          for (const sc of opts.resources.sidecars) {
+            const safeName = safeExtraAssetName(sc.name, "sidecar name");
+            copyProjectFile(
+              opts.projectDir,
+              sc.src,
+              join(sidecarsDir, safeName),
+              `sidecar "${safeName}"`,
+            );
+          }
+        }
       }
-    }
-    if (opts.resources.sidecars?.length) {
-      const sidecarsDir = join(res, "sidecars");
-      mkdirSync(sidecarsDir, { recursive: true });
-      for (const sc of opts.resources.sidecars) {
-        if (!existsSync(sc.src)) throw new Error(`sidecar "${sc.name}" not found: ${sc.src}`);
-        cpSync(sc.src, join(sidecarsDir, sc.name));
-      }
-    }
-  }
+    },
+  );
 
-  return { app, exe };
+  return { app, exe: join(app, `${appName}.exe`) };
 }
 
 /** Copy the CEF runtime (dlls, paks, snapshot, icu data, locales) into `dest`. */
