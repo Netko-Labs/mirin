@@ -254,6 +254,25 @@ describe("update handoff reservations", () => {
     expect(decision.recovery?.replacementPath).toBe(fixture.handoff.replacementPath);
   });
 
+  test("fails safe when a launched replacement has only a pending identity guard", () => {
+    const fixture = interruptedTransaction("launching");
+    const recoveryOwner = { pid: process.pid, token: "pending-replacement-recovery-owner" };
+    writeFileSync(fixture.handoff.replacementPath, "pending:789");
+
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        fixture.resources,
+        false,
+        undefined,
+        () => recoveryOwner,
+        fixture.state,
+      ),
+    ).toEqual({ blocked: true });
+    expect(readFileSync(fixture.handoff.replacementPath, "utf8")).toBe("pending:789");
+    expect(existsSync(fixture.handoff.markerPath)).toBe(true);
+  });
+
   test("recovers a crash between durable marker and phase creation", () => {
     const root = temporaryDirectory();
     const state = join(root, "state");

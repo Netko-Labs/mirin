@@ -288,8 +288,15 @@ off the main-process API:
   Before the helper may arm, it durably self-publishes its PID plus OS creation
   identity; the parent validates that receipt, records it in the reservation,
   and publishes an identity-bound activation acknowledgement. A helper
-  without that acknowledgement exits without swapping. Armed acknowledgement and
-  replacement identity/readiness use temp-file-plus-rename publication. After a
+  without that acknowledgement exits without swapping. Every activation write
+  attempt is treated as potentially visible even when its final durability sync
+  reports failure, so the parent releases ownership only after confirmed exact
+  helper exit. Armed acknowledgement and replacement identity/readiness use
+  temp-file-plus-rename publication. Before reading a launched target's exact
+  identity, the helper durably writes an intentionally unreadable pending-PID
+  guard. If identity lookup fails, the helper waits on its owned process handle
+  or child until exit before rollback; if the helper crashes first, startup sees
+  the guard and blocks recovery fail-safe. After a
   successful commit, terminal cleanup durably removes the ownership marker before
   the phase and receipts, so a partial cleanup cannot strand the target behind a
   marker with no recoverable phase. An accepted helper

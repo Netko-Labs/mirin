@@ -170,12 +170,20 @@ readers never accept a partial or PID-reused receipt. Immediately after spawning
 the target, the helper durably publishes its exact creation identity; the target
 republishes the same identity before readiness. Startup treats a valid live
 replacement receipt as active, and a recovery helper confirms exit or performs
-handle-bound exact termination before exchanging its files away. If arming fails after
-activation, the parent performs bounded exact-process termination and abandons the
-reservation only after confirmed helper death; otherwise the helper keeps terminal
-ownership and all recovery files. Apply ownership and terminal state are process-wide: all public
-`Updater` instances stop auto-check timers and reject new work once any instance
-hands off, while in-flight work rechecks terminal state at asynchronous boundaries.
+handle-bound exact termination before exchanging its files away. A replacement
+that launched but has no queryable exact identity is first protected by a durable,
+intentionally unreadable pending-PID guard. The owning helper waits on its process
+handle or child until exit before rollback; if that helper crashes, startup
+blocks recovery on the unreadable guard rather than exchanging files beneath an
+unidentified process. Because activation replacement can become visible before
+its final parent-directory sync reports failure, every activation publication
+attempt is treated as potentially accepted. If activation or arming fails, the
+parent performs bounded exact-process termination and abandons the reservation
+only after confirmed helper death; otherwise the helper keeps terminal ownership
+and all recovery files. Apply ownership and terminal state are process-wide: all
+public `Updater` instances stop auto-check timers and reject new work once any
+instance hands off, while in-flight work rechecks terminal state at asynchronous
+boundaries.
 After commit or rollback, the helper durably removes the ownership marker before
 the phase and replacement/readiness receipts. Therefore a crash or selective
 cleanup failure either leaves a complete recoverable journal or leaves no marker

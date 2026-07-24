@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { prepareUpdateHandoff } from "../src/update-handoff.ts";
 import {
   formatProcessIdentity,
   parseProcessIdentity,
@@ -24,6 +25,7 @@ import {
   renderMacApplyShell,
   renderWindowsApplyPowerShell,
   renderWindowsLaunchVbs,
+  spawnShellSwap,
 } from "../src/updater/lib/apply.ts";
 
 describe("Windows updater launcher", () => {
@@ -81,6 +83,11 @@ describe("Windows updater launcher", () => {
     );
     expect(script).toContain("Replacement readiness receipt has the wrong process identity");
     expect(script).toContain("$readyProcess -ne $readyIdentity");
+    expect(script).toContain("$replacementGuard='pending:'");
+    expect(script).toContain("Could not guard unidentified replacement process");
+    expect(script).toContain("if ([string]::IsNullOrWhiteSpace($newToken))");
+    expect(script).toContain("$newProcess.WaitForExit()");
+    expect(script).toContain("$canRestore=($terminationSucceeded -and $newProcess.HasExited)");
     const activated = script.indexOf(".apply-helper-activated");
     const armed = script.indexOf(".apply-helper-armed");
     expect(activated).toBeGreaterThan(0);
@@ -237,6 +244,169 @@ describe("Windows updater launcher", () => {
     }
   }, 30_000);
 
+  test("preserves the transaction when a live replacement identity lookup fails", async () => {
+    if (process.platform !== "win32") return;
+    const codec = windowsCodec();
+    const root = mkdtempSync(join(tmpdir(), "mirin-windows-replacement-token-failure-"));
+    const app = join(root, "Mirin");
+    const staged = join(root, ".Mirin.mirin-new-test");
+    const backup = join(root, "Mirin.mirin-old-test");
+    const state = join(root, "state");
+    const work = join(root, "work");
+    const marker = join(state, ".update-handoff.json");
+    const phase = join(state, ".update-phase-test");
+    const ready = join(state, ".update-ready-test");
+    const replacementReceipt = join(state, ".replacement-test-identity");
+    const replacementGuard = join(
+      state,
+      ".update-replacement-42-00000000-0000-0000-0000-000000000000",
+    );
+    const activated = join(work, ".apply-helper-activated");
+    const armed = join(work, ".apply-helper-armed");
+    const script = join(root, "apply.ps1");
+    const launchVbs = join(root, "launch.vbs");
+    const helperPidFile = join(work, ".apply-helper.pid");
+    const helperLaunchPidFile = join(work, ".apply-helper-launch.pid");
+    const powershell = join(
+      process.env.SystemRoot as string,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    );
+    const executable = powershell;
+    mkdirSync(app);
+    mkdirSync(staged);
+    mkdirSync(state);
+    mkdirSync(work);
+    writeFileSync(join(app, "old-sentinel"), "old");
+    writeFileSync(join(staged, "new-sentinel"), "new");
+    copyFileSync(codec, join(app, "Mirin.exe"));
+    copyFileSync(powershell, join(staged, "Mirin.exe"));
+    writeFileSync(marker, "{}");
+    runTestCodec(codec, ["durable-write", phase, "prepared"]);
+
+    const replacementCommand = [
+      "if ([string]::IsNullOrWhiteSpace($env:MIRIN_UPDATE_HANDOFF_TOKEN)) { exit 0 }",
+      `$tool=${powerShellLiteral(codec)}`,
+      "$token=(& $tool process-token ([string]$PID)).Trim()",
+      "$identity=[string]$PID+'|'+$token",
+      `& $tool durable-write ${powerShellLiteral(replacementReceipt)} $identity`,
+      "Start-Sleep -Seconds 30",
+    ].join(";");
+    const encodedCommand = Buffer.from(replacementCommand, "utf16le").toString("base64");
+    const parent = Bun.spawn(
+      ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"],
+      { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    );
+    const parentIdentity = await waitForTestIdentity(parent.pid, codec);
+    writeFileSync(
+      script,
+      renderWindowsApplyPowerShell({
+        runningApp: app,
+        staged,
+        workDir: work,
+        executable,
+        backup,
+        helperFiles: [script, launchVbs],
+        marker,
+        ready,
+        activated,
+        armed,
+        phase,
+        swapTool: codec,
+        token: "42-00000000-0000-0000-0000-000000000000",
+        pid: parent.pid,
+        parentToken: parentIdentity.token,
+        parentWaitMs: 5_000,
+        launchArguments: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand],
+        failurePoint: "replacement-token",
+      }),
+    );
+    writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperLaunchPidFile));
+
+    let helperIdentity: UpdateProcessIdentity | undefined;
+    let replacementIdentity: UpdateProcessIdentity | undefined;
+    try {
+      const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs]);
+      expect(await launcher.exited).toBe(0);
+      const helperPid = Number(readFileSync(helperLaunchPidFile, "utf8"));
+      await waitForFile(helperPidFile);
+      helperIdentity = parseProcessIdentity(readFileSync(helperPidFile, "utf8"));
+      expect(helperIdentity.pid).toBe(helperPid);
+      runTestCodec(codec, ["durable-write", activated, formatProcessIdentity(helperIdentity)]);
+      await waitForFile(armed);
+      runTestCodec(codec, ["terminate-process", String(parentIdentity.pid), parentIdentity.token]);
+      await waitForFile(replacementReceipt);
+      replacementIdentity = parseProcessIdentity(readFileSync(replacementReceipt, "utf8"));
+      await waitForFile(replacementGuard);
+      expect(processIdentity(replacementIdentity.pid, codec)?.token).toBe(
+        replacementIdentity.token,
+      );
+      expect(processIdentity(helperIdentity.pid, codec)?.token).toBe(helperIdentity.token);
+      expect(readFileSync(replacementGuard, "utf8")).toBe(`pending:${replacementIdentity.pid}`);
+      expect(existsSync(join(app, "new-sentinel"))).toBe(true);
+      expect(existsSync(join(app, "old-sentinel"))).toBe(false);
+      expect(existsSync(join(backup, "old-sentinel"))).toBe(true);
+      expect(existsSync(staged)).toBe(false);
+      expect(existsSync(marker)).toBe(true);
+      expect(readFileSync(phase, "utf8")).toBe("launching");
+      expect(existsSync(work)).toBe(true);
+
+      runTestCodec(codec, [
+        "terminate-process",
+        String(replacementIdentity.pid),
+        replacementIdentity.token,
+      ]);
+      expect(await waitForProcessExit(replacementIdentity, codec)).toBe(true);
+      expect(await waitForProcessExit(helperIdentity, codec)).toBe(true);
+      expect(existsSync(join(app, "old-sentinel"))).toBe(true);
+      expect(existsSync(join(app, "new-sentinel"))).toBe(false);
+      expect(existsSync(staged)).toBe(false);
+      expect(existsSync(backup)).toBe(false);
+      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(phase)).toBe(false);
+      expect(existsSync(replacementGuard)).toBe(false);
+    } finally {
+      if (!replacementIdentity && existsSync(replacementReceipt)) {
+        try {
+          replacementIdentity = parseProcessIdentity(readFileSync(replacementReceipt, "utf8"));
+        } catch {}
+      }
+      if (!replacementIdentity && existsSync(replacementGuard)) {
+        const guardedPid = /^pending:(\d+)$/.exec(readFileSync(replacementGuard, "utf8"))?.[1];
+        if (guardedPid) replacementIdentity = processIdentity(Number(guardedPid), codec);
+      }
+      if (
+        replacementIdentity &&
+        processIdentity(replacementIdentity.pid, codec)?.token === replacementIdentity.token
+      ) {
+        runTestCodec(codec, [
+          "terminate-process",
+          String(replacementIdentity.pid),
+          replacementIdentity.token,
+        ]);
+      }
+      if (helperIdentity && !(await waitForProcessExit(helperIdentity, codec))) {
+        runTestCodec(codec, [
+          "terminate-process",
+          String(helperIdentity.pid),
+          helperIdentity.token,
+        ]);
+        await waitForProcessExit(helperIdentity, codec);
+      }
+      const currentParent = processIdentity(parent.pid, codec);
+      if (currentParent?.token === parentIdentity.token) {
+        runTestCodec(codec, [
+          "terminate-process",
+          String(parentIdentity.pid),
+          parentIdentity.token,
+        ]);
+      }
+      await removeTestRoot(root);
+    }
+  }, 30_000);
+
   test("commits only after a real replacement publishes its exact readiness identity", async () => {
     if (process.platform !== "win32") return;
     const codec = windowsCodec();
@@ -365,6 +535,81 @@ describe("Windows updater launcher", () => {
 });
 
 describe("POSIX updater helpers", () => {
+  test("preserves ownership when activation becomes visible before durability fails", async () => {
+    if (process.platform === "win32") return;
+    const root = mkdtempSync(join(tmpdir(), "mirin-helper-activation-failure-"));
+    const runningApp = join(root, "Mirin.app");
+    const staged = join(root, ".Mirin.app.mirin-new");
+    const state = join(root, "state");
+    const workDir = join(root, "work");
+    const swapTool = join(workDir, ".mirin-atomic-swap");
+    const helperIdentityPath = join(workDir, ".apply-helper.pid");
+    const activated = join(workDir, ".apply-helper-activated");
+    const observed = join(workDir, ".activation-observed");
+    let helperIdentity: UpdateProcessIdentity | undefined;
+    try {
+      mkdirSync(runningApp);
+      mkdirSync(staged);
+      mkdirSync(state);
+      mkdirSync(workDir);
+      writeFileSync(join(runningApp, "old-sentinel"), "old");
+      writeFileSync(join(staged, "new-sentinel"), "new");
+      writeTestSwapTool(swapTool, {
+        visibleWriteFailurePath: activated,
+        denyTermination: true,
+      });
+      const handoff = prepareUpdateHandoff(
+        "dev.example.activation-failure",
+        "2.0.0",
+        state,
+        Date.now(),
+        {
+          sourceVersion: "1.0.0",
+          runningApp,
+          staged,
+        },
+        { pid: process.pid, token: "activation-failure-owner" },
+      );
+      const helperScript = [
+        "set -eu",
+        `SWAP=${posixLiteral(swapTool)}`,
+        `IDENTITY=${posixLiteral(helperIdentityPath)}`,
+        `ACTIVATED=${posixLiteral(activated)}`,
+        `OBSERVED=${posixLiteral(observed)}`,
+        'SELF_TOKEN=$("$SWAP" process-token "$$")',
+        '"$SWAP" durable-write "$IDENTITY" "$$|$SELF_TOKEN"',
+        'while [ ! -f "$ACTIVATED" ]; do sleep 0.01; done',
+        'printf observed > "$OBSERVED"',
+        "sleep 30",
+      ].join("\n");
+
+      await expect(spawnShellSwap(helperScript, workDir, handoff)).rejects.toThrow(
+        "updater helper ownership could not be released safely",
+      );
+      await waitForFile(observed);
+      helperIdentity = parseProcessIdentity(readFileSync(helperIdentityPath, "utf8"));
+      expect(processIdentity(helperIdentity.pid, swapTool)?.token).toBe(helperIdentity.token);
+      expect(existsSync(handoff.markerPath)).toBe(true);
+      expect(existsSync(handoff.phasePath as string)).toBe(true);
+      expect(existsSync(staged)).toBe(true);
+      expect(existsSync(workDir)).toBe(true);
+    } finally {
+      if (!helperIdentity && existsSync(helperIdentityPath)) {
+        try {
+          helperIdentity = parseProcessIdentity(readFileSync(helperIdentityPath, "utf8"));
+        } catch {}
+      }
+      if (
+        helperIdentity &&
+        processIdentity(helperIdentity.pid, swapTool)?.token === helperIdentity.token
+      ) {
+        process.kill(helperIdentity.pid, "SIGKILL");
+        await waitForProcessExit(helperIdentity, swapTool);
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("macOS retains the backup through open and restores and reopens on failure", () => {
     const script = renderMacApplyShell({
       runningApp: "/Applications/Mirin App.app",
@@ -394,6 +639,7 @@ describe("POSIX updater helpers", () => {
     expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
     expect(script).toContain('if [ "$READY_PROCESS" = "$READY_IDENTITY" ]');
     expect(script).toContain('terminate-process "$NEW_PID" "$NEW_TOKEN"');
+    expect(script).toContain('if [ -z "$NEW_TOKEN" ]; then wait "$NEW_PID"');
     expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
     expect(script).toContain('terminate-process "$PID" "$PARENT_TOKEN"');
     expect(script).toContain('elif [ "$ACCEPTED" -eq 0 ]; then');
@@ -402,6 +648,16 @@ describe("POSIX updater helpers", () => {
     expect(script.indexOf('test "$ACTIVATED_IDENTITY" = "$SELF_IDENTITY"')).toBeLessThan(
       script.indexOf('"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"'),
     );
+    const replacementGuard = script.indexOf(
+      '"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"',
+      launch,
+    );
+    const replacementIdentity = script.indexOf(
+      '"$SWAP" durable-write "$REPLACEMENT" "$READY_IDENTITY"',
+      replacementGuard,
+    );
+    expect(replacementGuard).toBeGreaterThan(launch);
+    expect(replacementIdentity).toBeGreaterThan(replacementGuard);
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
     }
@@ -440,6 +696,8 @@ describe("POSIX updater helpers", () => {
       script.indexOf('"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"'),
     );
     expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
+    expect(script).toContain('"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"');
+    expect(script).toContain('if [ -z "$NEW_TOKEN" ]; then wait "$NEW_PID"');
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
     }
@@ -578,7 +836,16 @@ describe("POSIX updater helpers", () => {
   });
 });
 
-function writeTestSwapTool(path: string): void {
+function writeTestSwapTool(
+  path: string,
+  options: {
+    visibleWriteFailurePath?: string;
+    denyTermination?: boolean;
+  } = {},
+): void {
+  const visibleWriteFailurePath = options.visibleWriteFailurePath
+    ? posixLiteral(options.visibleWriteFailurePath)
+    : undefined;
   writeFileSync(
     path,
     [
@@ -596,11 +863,15 @@ function writeTestSwapTool(path: string): void {
       '    ! kill -0 "$pid" 2>/dev/null',
       "    ;;",
       "  terminate-process)",
+      ...(options.denyTermination ? ["    exit 1"] : []),
       '    pid="$1"; token="$2"',
       '    if [ "$token" = "token-$pid" ] && kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; fi',
       "    ;;",
       "  durable-write)",
       '    temporary="$1.tmp.$$"; printf "%s" "$2" > "$temporary"; mv "$temporary" "$1"',
+      ...(visibleWriteFailurePath
+        ? [`    if [ "$1" = ${visibleWriteFailurePath} ]; then exit 1; fi`]
+        : []),
       "    ;;",
       "  durable-move)",
       '    mv "$1" "$2"',
@@ -623,6 +894,10 @@ function writeTestSwapTool(path: string): void {
     ].join("\n"),
   );
   chmodSync(path, 0o755);
+}
+
+function posixLiteral(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 function windowsCodec(): string {

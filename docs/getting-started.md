@@ -146,6 +146,11 @@ recursively flushed. The helper first durably self-publishes its PID plus OS
 creation identity; the parent validates that receipt, records it in the
 reservation, and publishes an identity-bound activation acknowledgement. Only
 then may the helper arm and treat parent death as swap authorization.
+An activation attempt is treated as potentially visible even if its final
+durability sync reports failure; ownership is released only after exact helper
+exit. Likewise, a launched replacement with no queryable exact identity prevents
+rollback until its exit can be confirmed. A durable pending-PID guard keeps
+startup recovery fail-safe if the owning helper crashes before that confirmation.
 The bundled native swap tool first validates the real app/stage operands and is
 probed on the exact install filesystem; an unsupported mount, reparse point, or
 volume fails before terminal handoff. The helper durably journals each phase and atomically exchanges

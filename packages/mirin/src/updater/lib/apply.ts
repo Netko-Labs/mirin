@@ -68,7 +68,7 @@ interface WindowsScriptOptions extends ShellScriptOptions {
   launchArguments?: string[];
   parentWaitMs?: number;
   readyWaitMs?: number;
-  failurePoint?: "after-exchange";
+  failurePoint?: "after-exchange" | "replacement-token";
 }
 
 class PreservedHelperOwnershipError extends Error {
@@ -208,8 +208,18 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "  } finally {",
     `    Remove-Item -LiteralPath Env:${UPDATE_HANDOFF_TOKEN_ENV} -ErrorAction SilentlyContinue`,
     "  }",
-    `  $newToken=(& ${psq(options.swapTool)} process-token ([string]$newProcess.Id)).Trim()`,
-    "  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($newToken)) { throw 'Could not identify replacement process' }",
+    "  $replacementGuard='pending:'+[string]$newProcess.Id",
+    ...durableDynamicWrite(
+      replacementIdentity,
+      "$replacementGuard",
+      "Could not guard unidentified replacement process",
+    ),
+    ...(options.failurePoint === "replacement-token"
+      ? ["  throw 'Injected replacement identity lookup failure'"]
+      : [
+          `  $newToken=(& ${psq(options.swapTool)} process-token ([string]$newProcess.Id)).Trim()`,
+          "  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($newToken)) { throw 'Could not identify replacement process' }",
+        ]),
     "  $readyIdentity=[string]$newProcess.Id+'|'+$newToken",
     ...durableDynamicWrite(
       replacementIdentity,
@@ -264,9 +274,21 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "  $rollbackFailure=$null",
     "  try {",
     "    $canRestore=$true",
-    "    if ($null -ne $newProcess -and $null -ne $newToken -and -not $newProcess.HasExited) {",
-    `      & ${psq(options.swapTool)} terminate-process ([string]$newProcess.Id) $newToken`,
-    "      $canRestore=($LASTEXITCODE -eq 0)",
+    "    if ($null -ne $newProcess) {",
+    "      $newProcess.Refresh()",
+    "      if (-not $newProcess.HasExited) {",
+    "        if ([string]::IsNullOrWhiteSpace($newToken)) {",
+    "          $newProcess.WaitForExit()",
+    "          $newProcess.Refresh()",
+    "          $canRestore=$newProcess.HasExited",
+    "        }",
+    "        else {",
+    `          & ${psq(options.swapTool)} terminate-process ([string]$newProcess.Id) $newToken`,
+    "          $terminationSucceeded=($LASTEXITCODE -eq 0)",
+    "          $newProcess.Refresh()",
+    "          $canRestore=($terminationSucceeded -and $newProcess.HasExited)",
+    "        }",
+    "      }",
     "    }",
     "    if ($parentExited -and $canRestore) {",
     "      $restorePath=$null",
@@ -293,7 +315,7 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     `      & ${psq(options.swapTool)} ${psq("durable-remove-file")} ${psq(options.phase)}`,
     "      if ($LASTEXITCODE -ne 0) { throw 'Could not durably clear rolled-back updater phase' }",
     `      Remove-Item -LiteralPath ${psq(options.workDir)} -Recurse -Force -ErrorAction SilentlyContinue`,
-    `      Start-Process -FilePath ${psq(options.executable)} -WorkingDirectory ${psq(options.runningApp)} -ErrorAction Stop`,
+    `      Start-Process -FilePath ${psq(options.executable)}${launchArguments} -WorkingDirectory ${psq(options.runningApp)} -ErrorAction Stop`,
     "    }",
     "    elseif ($parentExited -or $accepted) {",
     "      $preserveOwnership=$true",
@@ -362,7 +384,7 @@ function renderPosixApplyShell(
     'process_matches() { observed=$("$SWAP" process-token "$1" 2>/dev/null) || return 1; [ "$observed" = "$2" ]; }',
     "stop_replacement() {",
     '  if [ -z "$NEW_PID" ]; then return 0; fi',
-    '  if [ -z "$NEW_TOKEN" ]; then return 1; fi',
+    '  if [ -z "$NEW_TOKEN" ]; then wait "$NEW_PID" 2>/dev/null || true; return 0; fi',
     '  "$SWAP" terminate-process "$NEW_PID" "$NEW_TOKEN" || return 1',
     '  wait "$NEW_PID" 2>/dev/null || true',
     "  return 0",
@@ -444,6 +466,7 @@ function renderPosixApplyShell(
       : []),
     '"$SWAP" durable-write "$PHASE" launching',
     "launch_new",
+    '"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"',
     "i=0",
     'while [ "$i" -lt 100 ]; do',
     '  NEW_TOKEN=$("$SWAP" process-token "$NEW_PID" 2>/dev/null) && break',
@@ -573,17 +596,18 @@ async function applyWindows(
     }
     const helperPid = parseHelperPid(readFileSync(helperLaunchPidFile, "utf8"));
     let helperIdentity: UpdateProcessIdentity | undefined;
-    let activationPublished = false;
+    let activationAttempted = false;
     try {
       helperIdentity = await waitForHelperIdentity(helperPidFile, helperPid, swapTool);
-      authorizeHelperSwap(handoff, helperIdentity, activated, swapTool);
-      activationPublished = true;
+      activateUpdateHandoff(handoff, helperIdentity);
+      activationAttempted = true;
+      signalHelperActivation(activated, helperIdentity, swapTool);
       await waitForHelperArmed(armed, helperIdentity, swapTool);
     } catch (error) {
       if (
         helperIdentity &&
         !(await terminateExactProcess(helperIdentity, swapTool)) &&
-        activationPublished
+        activationAttempted
       ) {
         throw new PreservedHelperOwnershipError(error);
       }
@@ -670,7 +694,7 @@ async function applyMac(
   );
 }
 
-async function spawnShellSwap(
+export async function spawnShellSwap(
   script: string,
   workDir: string,
   handoff: PreparedUpdateHandoff,
@@ -681,7 +705,7 @@ async function spawnShellSwap(
     stderr: "ignore",
   });
   const swapTool = join(workDir, ".mirin-atomic-swap");
-  let activationPublished = false;
+  let activationAttempted = false;
   let helperIdentity: UpdateProcessIdentity | undefined;
   try {
     helperIdentity = await waitForHelperIdentity(
@@ -689,35 +713,20 @@ async function spawnShellSwap(
       helper.pid,
       swapTool,
     );
-    authorizeHelperSwap(
-      handoff,
-      helperIdentity,
-      join(workDir, APPLY_HELPER_ACTIVATED_FILE),
-      swapTool,
-    );
-    activationPublished = true;
+    activateUpdateHandoff(handoff, helperIdentity);
+    activationAttempted = true;
+    signalHelperActivation(join(workDir, APPLY_HELPER_ACTIVATED_FILE), helperIdentity, swapTool);
     await waitForHelperArmed(join(workDir, APPLY_HELPER_ARMED_FILE), helperIdentity, swapTool);
   } catch (error) {
     const terminated =
       helperIdentity === undefined || (await terminateExactProcess(helperIdentity, swapTool));
-    if (!terminated && activationPublished) {
+    if (!terminated && activationAttempted) {
       helper.unref();
       throw new PreservedHelperOwnershipError(error);
     }
     throw error;
   }
   helper.unref();
-}
-
-/** Publish activation only after the durable reservation identifies this helper. */
-function authorizeHelperSwap(
-  handoff: PreparedUpdateHandoff,
-  helper: UpdateProcessIdentity,
-  activatedPath: string,
-  swapTool: string,
-): void {
-  activateUpdateHandoff(handoff, helper);
-  signalHelperActivation(activatedPath, helper, swapTool);
 }
 
 function signalHelperActivation(

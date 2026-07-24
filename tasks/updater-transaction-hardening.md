@@ -323,3 +323,18 @@
   Cross-checking the Windows target from macOS reached the C dependencies but
   requires a Windows SDK, so the exact Windows compile/test remains covered by
   CI.
+- Twenty-second clean-context review remediation: treat every helper activation
+  publication attempt as potentially visible until exact helper exit is
+  confirmed, and preserve Windows transaction ownership when a launched live
+  replacement has no exact creation token. Added a POSIX
+  visible-write/failing-durability fault test and a real Windows
+  live-child/token-lookup failure integration.
+- The replacement identity lookup remediation now publishes an intentionally
+  unreadable pending-PID guard before querying the exact token. The helper waits
+  for an unidentified owned child to exit before rollback; if the helper crashes,
+  startup blocks on the guard instead of restoring files beneath the child.
+- Twenty-second-remediation verification: `bun run typecheck` passed;
+  `bun run fmt-lint` passed with the repository's existing 52 warnings;
+  `bun run test` passed 259 tests with the two expected non-Windows skips;
+  `cargo fmt --all --check`, workspace clippy with warnings denied, all 26
+  Rust workspace tests, and `git diff --check` passed.
