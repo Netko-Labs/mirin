@@ -191,7 +191,10 @@ its prerequisites. Its token-bearing successor must acquire the exclusive app
 lock; the helper retains its unique backup until that exact process durably
 reports Worker/native readiness. PIDfds plus boot/start-time identities bind
 ownership, waiting, termination, and receipts. Complete directory exchange keeps
-the canonical launch path present through interruption. Early exit or timeout uses
+the canonical launch path present through interruption. A visible exchange whose
+parent sync fails has its own codec status; the helper marks it swapped, retries
+the sync, and rolls back or preserves both trees instead of deleting the old app.
+Early exit or timeout uses
 bounded termination and atomic rollback before verifying and relaunching the old app;
 unconfirmed termination or rollback preserves terminal ownership and both trees.
 An accepted helper forces and confirms parent termination after the graceful

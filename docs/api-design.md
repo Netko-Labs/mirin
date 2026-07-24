@@ -300,7 +300,12 @@ off the main-process API:
   the guard and blocks recovery fail-safe. Recovery ownership keeps the original
   journal as a claim while publishing a complete canonical marker atomically and
   without replacement; an invalid marker beside any claim is restored or blocks
-  rather than failing open. After a
+  rather than failing open. A visible atomic exchange whose parent sync fails has
+  a distinct codec status, so apply and recovery retry durability and preserve
+  the journal plus both trees if that retry fails. Install-side sibling names use
+  a bounded app-basename hash prefix while legacy full-name siblings remain
+  recoverable. Windows recovery changes its working directory outside the
+  installed tree before waiting and exchanging. After a
   successful commit, terminal cleanup durably removes the ownership marker before
   the phase and receipts, so a partial cleanup cannot strand the target behind a
   marker with no recoverable phase. An accepted helper

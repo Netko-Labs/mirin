@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-pub use atomic_swap::{atomic_swap_directories, validate_atomic_swap_directories};
+pub use atomic_swap::{
+    atomic_swap_directories, is_atomic_swap_durability_error, validate_atomic_swap_directories,
+    ATOMIC_SWAP_DURABILITY_EXIT_CODE,
+};
 pub use durable_fs::{
     durable_move_directory, durable_remove_directory, durable_remove_file, durable_write,
     sync_parent, sync_tree,

@@ -6,14 +6,55 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(windows)]
 static SWAP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Process exit status used when the directory exchange completed but syncing
+/// its parent directory failed.
+pub const ATOMIC_SWAP_DURABILITY_EXIT_CODE: i32 = 2;
+
+#[derive(Debug)]
+struct AtomicSwapDurabilityError(io::Error);
+
+impl std::fmt::Display for AtomicSwapDurabilityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "atomic swap completed but parent directory sync failed: {}",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for AtomicSwapDurabilityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+pub fn is_atomic_swap_durability_error(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<AtomicSwapDurabilityError>())
+        .is_some()
+}
+
 /// Atomically exchange two real sibling directories.
 ///
 /// The updater probes this operation before terminal handoff. Unsupported
 /// filesystems therefore fail while the installed app is still running.
 pub fn atomic_swap_directories(left: &Path, right: &Path) -> io::Result<()> {
+    atomic_swap_directories_with_sync(left, right, crate::durable_fs::sync_parent)
+}
+
+fn atomic_swap_directories_with_sync(
+    left: &Path,
+    right: &Path,
+    sync: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     validate_atomic_swap_directories(left, right)?;
     platform_atomic_swap(left, right)?;
-    crate::durable_fs::sync_parent(left)
+    sync(left).map_err(|error| {
+        let kind = error.kind();
+        io::Error::new(kind, AtomicSwapDurabilityError(error))
+    })
 }
 
 pub fn validate_atomic_swap_directories(left: &Path, right: &Path) -> io::Result<()> {
@@ -262,6 +303,34 @@ mod tests {
 
         assert!(left.is_dir());
         assert!(right.is_dir());
+        assert!(left.join("new").is_file());
+        assert!(right.join("old").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn classifies_parent_sync_failure_after_the_exchange() {
+        let root = std::env::temp_dir().join(format!(
+            "mirin-atomic-swap-sync-failure-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time must be valid")
+                .as_nanos()
+        ));
+        let left = root.join("left");
+        let right = root.join("right");
+        fs::create_dir_all(&left).unwrap();
+        fs::create_dir_all(&right).unwrap();
+        fs::write(left.join("old"), b"old").unwrap();
+        fs::write(right.join("new"), b"new").unwrap();
+
+        let error = atomic_swap_directories_with_sync(&left, &right, |_| {
+            Err(io::Error::other("injected parent sync failure"))
+        })
+        .unwrap_err();
+
+        assert!(is_atomic_swap_durability_error(&error));
         assert!(left.join("new").is_file());
         assert!(right.join("old").is_file());
         fs::remove_dir_all(root).unwrap();

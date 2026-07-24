@@ -39,6 +39,15 @@ export const EXCLUSIVE_UPDATER_CAPABILITY = "exclusive-app-lock-v1";
 export const UPDATE_HANDOFF_TOKEN_ENV = "MIRIN_UPDATE_HANDOFF_TOKEN";
 export const MAX_UPDATE_HANDOFF_AGE_MS = 24 * 60 * 60 * 1000;
 
+export function installSiblingPrefix(runningApp: string): string {
+  const appHash = createHash("sha256").update(basename(runningApp)).digest("hex").slice(0, 16);
+  return `.mirin-new-${appHash}-`;
+}
+
+export function legacyInstallSiblingPrefix(runningApp: string): string {
+  return `.${basename(runningApp)}.mirin-new-`;
+}
+
 interface UpdateHandoffMarker {
   token: string;
   targetVersion: string;
@@ -535,9 +544,14 @@ function markerTransactionIsValid(
     process.platform === "darwin" ? resolve(resourcesDir, "..", "..") : resolve(resourcesDir, "..");
   if (resolve(marker.runningApp) !== runningApp) return false;
   const parent = dirname(runningApp);
-  const name = basename(runningApp);
   if (dirname(marker.staged) !== parent || dirname(marker.backup) !== parent) return false;
-  if (!basename(marker.staged).startsWith(`.${name}.mirin-new-`)) return false;
+  const stagedName = basename(marker.staged);
+  if (
+    !stagedName.startsWith(installSiblingPrefix(runningApp)) &&
+    !stagedName.startsWith(legacyInstallSiblingPrefix(runningApp))
+  ) {
+    return false;
+  }
   if (marker.backup !== `${runningApp}.mirin-old-${marker.token}`) return false;
   return (
     resolve(marker.phasePath) === resolve(stateDirectory, `${PHASE_FILE_PREFIX}${marker.token}`)

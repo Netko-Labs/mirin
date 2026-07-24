@@ -148,6 +148,13 @@ uses literal paths, atomically commits the three namespace renames that exchange
 the complete app trees, keeps the canonical launch path present through interruption,
 rejects stale backup collisions, atomically rolls back, verifies restoration, and
 removes its generation work before relaunching the restored app.
+The codec distinguishes a committed exchange with a failed parent sync from a
+pre-exchange failure. PowerShell records that the swap is visible, retries the
+sync, and preserves the journal and both trees if durability remains uncertain.
+Recovery PowerShell starts in the temporary directory so its inherited current
+directory cannot pin the installed tree. If WMI cannot publish the helper PID,
+the unactivated helper self-expires; the launcher never terminates a raw numeric
+PID that might already have been reused.
 A private handoff reservation admits only the helper's token-bearing target after
 the old process releases its OS lock. Process handles and creation times bind
 wait, termination, cleanup ownership, arming, and readiness so PID reuse cannot

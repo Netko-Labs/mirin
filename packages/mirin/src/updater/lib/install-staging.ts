@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
 import { cpSync, lstatSync, rmSync } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-import { MAX_UPDATE_HANDOFF_AGE_MS } from "../../update-handoff.ts";
+import { dirname, join } from "node:path";
+import {
+  installSiblingPrefix,
+  legacyInstallSiblingPrefix,
+  MAX_UPDATE_HANDOFF_AGE_MS,
+} from "../../update-handoff.ts";
 import { processIdentity, type UpdateProcessIdentity } from "../../update-process.ts";
 import type { VersionInfo } from "../types.ts";
 import { type UpdatePlatform, validateStagedBundle } from "./staged.ts";
@@ -61,7 +65,7 @@ export async function prepareInstallSibling(
   const ownerTokenHash = createHash("sha256").update(owner.token).digest("hex");
   const staged = join(
     parent,
-    `.${basename(runningApp)}.mirin-new-${process.pid}-${UPDATER_PROCESS_SESSION}-${ownerTokenHash}-${Date.now()}-${crypto.randomUUID()}`,
+    `${installSiblingPrefix(runningApp)}${process.pid}-${UPDATER_PROCESS_SESSION}-${ownerTokenHash}-${Date.now()}-${crypto.randomUUID()}`,
   );
   try {
     cpSync(options.downloadedStage, staged, {
@@ -111,7 +115,7 @@ export async function pruneInstallSiblingDirectories(
 ): Promise<void> {
   const runningApp = runningAppPath(options.resourcesDir, options.platform);
   const parent = dirname(runningApp);
-  const prefix = `.${basename(runningApp)}.mirin-new-`;
+  const prefixes = [installSiblingPrefix(runningApp), legacyInstallSiblingPrefix(runningApp)];
   let entries: string[];
   try {
     entries = await readdir(parent);
@@ -120,7 +124,8 @@ export async function pruneInstallSiblingDirectories(
   }
 
   for (const entry of entries) {
-    if (!entry.startsWith(prefix)) continue;
+    const prefix = prefixes.find((candidate) => entry.startsWith(candidate));
+    if (!prefix) continue;
     const suffix = entry.slice(prefix.length);
     const identifiedOwner = IDENTIFIED_INSTALL_SIBLING_SUFFIX.exec(suffix);
     const legacyOwned = identifiedOwner ? null : LEGACY_OWNED_INSTALL_SIBLING_SUFFIX.exec(suffix);

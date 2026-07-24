@@ -350,3 +350,16 @@
   passed 260 tests with the two expected non-Windows skips, and
   `cargo fmt --all --check`, workspace clippy with warnings denied, all 26 Rust
   workspace tests, and `git diff --check` passed.
+- Twenty-fourth clean-context review remediation: classify native directory
+  exchanges that became visible before parent-directory sync failure, retry
+  durability in apply/rollback/recovery, and preserve ownership plus both trees
+  if it remains uncertain. Windows recovery now leaves the installed current
+  directory before exchange, the WMI launcher no longer terminates an
+  unverified numeric PID when PID publication fails, and fixed-size hashed
+  install-sibling prefixes keep maximum-length app names below filesystem
+  component limits while retaining legacy cleanup/recovery compatibility.
+- Twenty-fourth-remediation verification: `bun run fmt-lint` passed with the
+  repository's existing 52 warnings, `bun run typecheck` passed, and `bun run
+  test` passed 263 tests with the two expected Windows installer skips.
+  `cargo fmt --all --check`, workspace clippy with warnings denied, all 27 Rust
+  workspace tests, and `git diff --check` passed.

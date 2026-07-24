@@ -146,6 +146,9 @@ recursively flushed. The helper first durably self-publishes its PID plus OS
 creation identity; the parent validates that receipt, records it in the
 reservation, and publishes an identity-bound activation acknowledgement. Only
 then may the helper arm and treat parent death as swap authorization.
+The install-side sibling uses a fixed app-name hash prefix, so even the maximum
+portable app name leaves the full ownership component below common filesystem
+limits; startup also recognizes the former full-name prefix.
 An activation attempt is treated as potentially visible even if its final
 durability sync reports failure; ownership is released only after exact helper
 exit. Likewise, a durable ambiguity guard is published before replacement launch,
@@ -158,7 +161,9 @@ The bundled native swap tool first validates the real app/stage operands and is
 probed on the exact install filesystem; an unsupported mount, reparse point, or
 volume fails before terminal handoff. The helper durably journals each phase and atomically exchanges
 the complete old and staged directories, keeping the canonical launch path present
-through interruption. Linux and Windows force and confirm handle-bound parent
+through interruption. A distinct codec status identifies an exchange that became
+visible before its parent sync failed; apply, rollback, and recovery retry that
+sync and otherwise retain the journal and both trees. Linux and Windows force and confirm handle-bound parent
 termination if graceful shutdown exceeds its deadline. macOS declines unsafe
 numeric-PID forced signaling and preserves the transaction when exact
 termination is unavailable. An activated helper whose death cannot be confirmed

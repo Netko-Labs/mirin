@@ -160,6 +160,11 @@ cannot arm two rollback helpers and interrupted claiming can reconstruct the
 journal. A source-version canonical tree is safe to clean even when a crash
 happened between initial marker and phase-file creation.
 
+Install-side sibling components start with a fixed 16-hex hash of the installed
+app basename rather than embedding the potentially 120-character basename. The
+complete ownership name therefore stays below common 255-byte component limits,
+while cleanup and recovery continue to recognize the former full-name prefix.
+
 Helper acceptance is a two-way barrier. The helper first durably
 self-publishes its PID and OS creation identity. The parent validates that
 receipt, records the helper in the launch reservation, then publishes an
@@ -192,6 +197,13 @@ the phase and replacement/readiness receipts. Therefore a crash or selective
 cleanup failure either leaves a complete recoverable journal or leaves no marker
 that can block the already-settled canonical app.
 
+The codec reports status 2 only when an atomic directory exchange became visible
+but its parent-directory sync failed. Apply, rollback, and recovery mark that
+exchange as completed and retry `sync-parent`; if durability remains uncertain,
+they preserve ownership and both trees instead of deleting either side. Windows
+recovery also changes to the temporary directory before waiting or exchanging,
+so its inherited current-directory handle cannot pin the installed tree.
+
 Linux opens its pidfd before validating the boot/start token, and Windows
 validates creation time through the same process handle used for waiting or
 termination. Windows token queries also require that handle to remain
@@ -204,10 +216,10 @@ transaction and both trees for recovery instead of risking a recycled PID.
 Mirin's first internal `ready` listener writes any replacement-readiness receipt
 synchronously before user `ready` listeners run. It defers only startup cleanup,
 which uses asynchronous filesystem operations and keeps recursive deletion off the
-helper's 30-second readiness path and the app event loop. The
-`.mirin-new-<pid>-<uuid>` form
-above is recognized as a legacy owned sibling; new siblings use
-`.mirin-new-<pid>-<session>-<creation-token-hash>-<createdAt>-<uuid>`.
+helper's 30-second readiness path and the app event loop. The former
+`.<app-name>.mirin-new-<pid>-<uuid>` form is recognized as a legacy owned
+sibling; new siblings use
+`.mirin-new-<app-name-hash16>-<pid>-<session>-<creation-token-hash>-<createdAt>-<uuid>`.
 Current-process ownership must match its session, while non-current owners must
 match the recorded OS creation identity within the bounded cleanup lease.
 Generation owners use the same exact identity plus bounded modification-time

@@ -36,6 +36,8 @@ import {
 } from "./cleanup.ts";
 import { IS_LINUX, IS_WINDOWS, psq, sh } from "./platform.ts";
 
+const ATOMIC_SWAP_DURABILITY_EXIT_CODE = 2;
+
 interface ApplyOptions {
   resourcesDir: string;
   staged: string;
@@ -95,13 +97,11 @@ export function renderWindowsLaunchVbs(powershellScript: string, helperPidFile?:
       "Dim pidFile",
       `Set pidFile = CreateObject("Scripting.FileSystemObject").CreateTextFile("${path}", False)`,
       "If Err.Number <> 0 Then",
-      `  GetObject("winmgmts:Win32_Process.Handle='" & CStr(pid) & "'").Terminate`,
       "  WScript.Quit 1",
       "End If",
       "pidFile.Write CStr(pid)",
       "pidFile.Close",
       "If Err.Number <> 0 Then",
-      `  GetObject("winmgmts:Win32_Process.Handle='" & CStr(pid) & "'").Terminate`,
       "  WScript.Quit 1",
       "End If",
       "On Error GoTo 0",
@@ -181,11 +181,15 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "  $parentExited=$true",
     `  Remove-Item -LiteralPath ${psq(options.ready)} -Force -ErrorAction SilentlyContinue`,
     ...codec(["durable-write", options.phase, "swap-pending"], "Could not journal updater swap"),
-    ...codec(
-      ["atomic-swap", options.runningApp, options.staged],
-      "Could not atomically exchange the installed app",
-    ),
-    "  $swapped=$true",
+    `  & ${psq(options.swapTool)} atomic-swap ${psq(options.runningApp)} ${psq(options.staged)}`,
+    "  $swapExit=$LASTEXITCODE",
+    `  if ($swapExit -eq ${ATOMIC_SWAP_DURABILITY_EXIT_CODE}) {`,
+    "    $swapped=$true",
+    `    & ${psq(options.swapTool)} sync-parent ${psq(options.runningApp)}`,
+    "    if ($LASTEXITCODE -ne 0) { throw 'Could not make updater swap durable' }",
+    "  }",
+    "  elseif ($swapExit -ne 0) { throw 'Could not atomically exchange the installed app' }",
+    "  else { $swapped=$true }",
     ...(options.failurePoint === "after-exchange"
       ? ["  throw 'Injected updater failure after exchange'"]
       : []),
@@ -300,7 +304,12 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     `      elseif ($swapped -and (Test-Path -LiteralPath ${psq(options.staged)} -PathType Container)) { $restorePath=${psq(options.staged)} }`,
     "      if ($null -ne $restorePath) {",
     `        & ${psq(options.swapTool)} atomic-swap ${psq(options.runningApp)} $restorePath`,
-    "        if ($LASTEXITCODE -ne 0) { throw 'Update rollback exchange failed' }",
+    "        $rollbackSwapExit=$LASTEXITCODE",
+    `        if ($rollbackSwapExit -eq ${ATOMIC_SWAP_DURABILITY_EXIT_CODE}) {`,
+    `          & ${psq(options.swapTool)} sync-parent ${psq(options.runningApp)}`,
+    "          if ($LASTEXITCODE -ne 0) { throw 'Update rollback durability failed' }",
+    "        }",
+    "        elseif ($rollbackSwapExit -ne 0) { throw 'Update rollback exchange failed' }",
     `        & ${psq(options.swapTool)} durable-remove-directory $restorePath`,
     "        if ($LASTEXITCODE -ne 0) { throw 'Update rollback cleanup failed' }",
     "      }",
@@ -412,7 +421,11 @@ function renderPosixApplyShell(
     '      if [ -d "$OLD" ]; then RESTORE="$OLD";',
     '      elif [ "$SWAPPED" -eq 1 ] && [ -d "$NEW" ]; then RESTORE="$NEW"; fi',
     '      if [ -n "$RESTORE" ]; then',
-    '        "$SWAP" atomic-swap "$APP" "$RESTORE" || restored=0',
+    "        rollback_swap_status=0",
+    '        "$SWAP" atomic-swap "$APP" "$RESTORE" || rollback_swap_status=$?',
+    `        if [ "$rollback_swap_status" -eq ${ATOMIC_SWAP_DURABILITY_EXIT_CODE} ]; then`,
+    '          "$SWAP" sync-parent "$APP" || restored=0',
+    '        elif [ "$rollback_swap_status" -ne 0 ]; then restored=0; fi',
     '        if [ "$restored" -eq 1 ]; then "$SWAP" durable-remove-directory "$RESTORE" || restored=0; fi',
     "      fi",
     '      if [ "$restored" -eq 1 ] && [ -x "$EXE" ]; then',
@@ -460,8 +473,15 @@ function renderPosixApplyShell(
     "PARENT_EXITED=1",
     'rm -f "$READY"',
     '"$SWAP" durable-write "$PHASE" swap-pending',
-    '"$SWAP" atomic-swap "$APP" "$NEW"',
-    "SWAPPED=1",
+    "swap_status=0",
+    '"$SWAP" atomic-swap "$APP" "$NEW" || swap_status=$?',
+    `if [ "$swap_status" -eq ${ATOMIC_SWAP_DURABILITY_EXIT_CODE} ]; then`,
+    "  SWAPPED=1",
+    '  "$SWAP" sync-parent "$APP"',
+    'elif [ "$swap_status" -ne 0 ]; then exit "$swap_status"',
+    "else",
+    "  SWAPPED=1",
+    "fi",
     '"$SWAP" durable-write "$PHASE" backup-pending',
     '"$SWAP" durable-move "$NEW" "$OLD"',
     '"$SWAP" durable-write "$PHASE" backed-up',

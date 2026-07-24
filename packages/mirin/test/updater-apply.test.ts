@@ -40,8 +40,8 @@ describe("Windows updater launcher", () => {
     expect(script).toContain("If status <> 0 Then WScript.Quit status");
     expect(script).toContain("CreateTextFile");
     expect(script).toContain(".apply-helper.pid");
-    expect(script).toContain("Win32_Process.Handle=");
-    expect(script).toContain(".Terminate");
+    expect(script).not.toContain("Win32_Process.Handle=");
+    expect(script).not.toContain(".Terminate");
     expect(script).toContain("WScript.Quit 0");
     expect(script).toContain('""Update""');
   });
@@ -76,6 +76,12 @@ describe("Windows updater launcher", () => {
     expect(script.indexOf("C:\\State\\.update-handoff.json", readiness)).toBeGreaterThan(readiness);
     expect(script).toContain("Updater backup path already exists");
     expect(script).toContain("atomic-swap");
+    expect(script).toContain("if ($swapExit -eq 2)");
+    expect(script).toContain("if ($rollbackSwapExit -eq 2)");
+    expect(script).toContain("sync-parent");
+    expect(script.indexOf("$swapped=$true")).toBeLessThan(
+      script.indexOf("Could not make updater swap durable"),
+    );
     expect(script).toContain("Application could not be terminated for updater handoff");
     expect(script).toContain("$preserveOwnership=$true");
     expect(script).not.toContain(
@@ -647,6 +653,9 @@ describe("POSIX updater helpers", () => {
     expect(script).toContain('terminate-process "$NEW_PID" "$NEW_TOKEN"');
     expect(script).toContain('if [ -z "$NEW_TOKEN" ]; then wait "$NEW_PID"');
     expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
+    expect(script).toContain('if [ "$swap_status" -eq 2 ]');
+    expect(script).toContain('if [ "$rollback_swap_status" -eq 2 ]');
+    expect(script).toContain('"$SWAP" sync-parent "$APP"');
     expect(script).toContain('terminate-process "$PID" "$PARENT_TOKEN"');
     expect(script).toContain('elif [ "$ACCEPTED" -eq 0 ]; then');
     expect(script).not.toContain('mv "$APP" "$OLD"');
@@ -707,6 +716,9 @@ describe("POSIX updater helpers", () => {
       script.indexOf('"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"'),
     );
     expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
+    expect(script).toContain('if [ "$swap_status" -eq 2 ]');
+    expect(script).toContain('if [ "$rollback_swap_status" -eq 2 ]');
+    expect(script).toContain('"$SWAP" sync-parent "$APP"');
     expect(script).toContain('"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"');
     expect(script).toContain('if [ -z "$NEW_TOKEN" ]; then wait "$NEW_PID"');
     const prelaunchGuard = script.indexOf('"$SWAP" durable-write "$REPLACEMENT" "pending:launch"');
@@ -763,7 +775,7 @@ describe("POSIX updater helpers", () => {
     }
   });
 
-  test("an accepted helper restores the old app after replacement startup fails", async () => {
+  test("restores the old app when an exchange is visible before durability fails", async () => {
     if (process.platform === "win32") return;
     const root = mkdtempSync(join(tmpdir(), "mirin-helper-rollback-"));
     const runningApp = join(root, "Mirin.app");
@@ -789,7 +801,7 @@ describe("POSIX updater helpers", () => {
       writeFileSync(phase, "prepared");
       chmodSync(executable, 0o755);
       chmodSync(stagedExecutable, 0o755);
-      writeTestSwapTool(swapTool);
+      writeTestSwapTool(swapTool, { postSwapDurabilityFailureOnce: true });
 
       const parent = Bun.spawn(["/bin/sh", "-c", "sleep 30"], {
         stdin: "ignore",
@@ -855,6 +867,7 @@ function writeTestSwapTool(
   options: {
     visibleWriteFailurePath?: string;
     denyTermination?: boolean;
+    postSwapDurabilityFailureOnce?: boolean;
   } = {},
 ): void {
   const visibleWriteFailurePath = options.visibleWriteFailurePath
@@ -896,11 +909,24 @@ function writeTestSwapTool(
       "  durable-remove-file)",
       '    rm -f "$1"',
       "    ;;",
+      "  sync-parent)",
+      ...(options.postSwapDurabilityFailureOnce
+        ? ['    if [ -f "$0.mirin-test-sync-failure" ]; then exit 1; fi']
+        : []),
+      "    ;;",
       "  atomic-swap)",
       '    temporary="$1.mirin-test-swap"',
       '    mv "$1" "$temporary"',
       '    mv "$2" "$1"',
       '    mv "$temporary" "$2"',
+      ...(options.postSwapDurabilityFailureOnce
+        ? [
+            '    if [ ! -f "$0.mirin-test-sync-failure" ]; then',
+            '      : > "$0.mirin-test-sync-failure"',
+            "      exit 2",
+            "    fi",
+          ]
+        : []),
       "    ;;",
       "  *) exit 1 ;;",
       "esac",

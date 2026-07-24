@@ -16,6 +16,7 @@ import {
   abandonUpdateHandoff,
   activateUpdateHandoff,
   inspectUpdateHandoff,
+  installSiblingPrefix,
   prepareUpdateHandoff,
   signalUpdateReady,
 } from "../src/update-handoff.ts";
@@ -392,7 +393,7 @@ function interruptedTransaction(phase: "backed-up" | "launching" | "committed") 
   const state = join(root, "state");
   const app = join(root, "Mirin");
   const resources = resourcesAt(app, "1.0.0");
-  const staged = join(root, ".Mirin.mirin-new-test");
+  const staged = join(root, `${installSiblingPrefix(app)}test`);
   resourcesAt(staged, "2.0.0");
   const handoff = prepareUpdateHandoff(
     "dev.example.app",

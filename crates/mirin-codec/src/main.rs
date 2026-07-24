@@ -1,8 +1,9 @@
 use mirin_codec::{
     atomic_swap_directories, bsdiff_file, bspatch_file, bspatch_file_bounded,
     durable_move_directory, durable_remove_directory, durable_remove_file, durable_write,
-    process_token, sync_parent, sync_tree, terminate_process, validate_atomic_swap_directories,
-    wait_for_process_exit, zstd_compress_file, zstd_decompress_file, zstd_decompress_file_bounded,
+    is_atomic_swap_durability_error, process_token, sync_parent, sync_tree, terminate_process,
+    validate_atomic_swap_directories, wait_for_process_exit, zstd_compress_file,
+    zstd_decompress_file, zstd_decompress_file_bounded, ATOMIC_SWAP_DURABILITY_EXIT_CODE,
 };
 use std::env;
 use std::io;
@@ -126,6 +127,10 @@ fn run() -> io::Result<()> {
 fn main() {
     if let Err(error) = run() {
         eprintln!("mirin-codec: {error}");
-        std::process::exit(1);
+        std::process::exit(if is_atomic_swap_durability_error(&error) {
+            ATOMIC_SWAP_DURABILITY_EXIT_CODE
+        } else {
+            1
+        });
     }
 }

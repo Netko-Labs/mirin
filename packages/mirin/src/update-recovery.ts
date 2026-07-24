@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { activateUpdateRecovery, type UpdateHandoffRecovery } from "./update-handoff.ts";
 import {
@@ -21,6 +22,7 @@ import {
 import { psq, sh } from "./updater/lib/platform.ts";
 
 const WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+const ATOMIC_SWAP_DURABILITY_EXIT_CODE = 2;
 
 export function finalizeCommittedUpdateRecovery(recovery: UpdateHandoffRecovery): void {
   if (recovery.mode !== "commit") {
@@ -98,7 +100,7 @@ export function launchRollbackUpdateRecovery(
             "-File",
             script,
           ],
-          { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+          { cwd: tmpdir(), stdin: "ignore", stdout: "ignore", stderr: "ignore" },
         )
       : Bun.spawn(["/bin/sh", script], {
           stdin: "ignore",
@@ -134,7 +136,7 @@ export function launchRollbackUpdateRecovery(
   helper.unref();
 }
 
-function renderPosixRecovery(
+export function renderPosixRecovery(
   recovery: UpdateHandoffRecovery,
   tool: string,
   executableRelative: string,
@@ -189,7 +191,12 @@ function renderPosixRecovery(
           "fi",
         ]
       : []),
-    '"$TOOL" atomic-swap "$APP" "$RESTORE"',
+    "swap_status=0",
+    '"$TOOL" atomic-swap "$APP" "$RESTORE" || swap_status=$?',
+    `if [ "$swap_status" -eq ${ATOMIC_SWAP_DURABILITY_EXIT_CODE} ]; then`,
+    '  "$TOOL" sync-parent "$APP"',
+    'elif [ "$swap_status" -ne 0 ]; then exit "$swap_status"',
+    "fi",
     '"$TOOL" durable-remove-directory "$RESTORE"',
     ...recovery.claimPaths.map(
       (path) => `if [ -f ${sh(path)} ]; then "$TOOL" durable-remove-file ${sh(path)}; fi`,
@@ -208,7 +215,7 @@ function renderPosixRecovery(
   ].join("\n");
 }
 
-function renderWindowsRecovery(
+export function renderWindowsRecovery(
   recovery: UpdateHandoffRecovery,
   tool: string,
   executableRelative: string,
@@ -221,6 +228,7 @@ function renderWindowsRecovery(
   const restorePath = recovery.restorePath as string;
   return [
     "$ErrorActionPreference='Stop'",
+    "Set-Location -LiteralPath $env:TEMP",
     `$tool=${psq(tool)}`,
     "$selfToken=(& $tool process-token ([string]$PID)).Trim()",
     "$selfIdentity=[string]$PID+'|'+$selfToken",
@@ -255,7 +263,12 @@ function renderWindowsRecovery(
         ]
       : []),
     `& $tool atomic-swap ${psq(recovery.runningApp)} ${psq(restorePath)}`,
-    "if ($LASTEXITCODE -ne 0) { throw 'Could not restore previous app' }",
+    "$swapExit=$LASTEXITCODE",
+    `if ($swapExit -eq ${ATOMIC_SWAP_DURABILITY_EXIT_CODE}) {`,
+    `  & $tool sync-parent ${psq(recovery.runningApp)}`,
+    "  if ($LASTEXITCODE -ne 0) { throw 'Could not make restored app durable' }",
+    "}",
+    "elseif ($swapExit -ne 0) { throw 'Could not restore previous app' }",
     `& $tool durable-remove-directory ${psq(restorePath)}`,
     "if ($LASTEXITCODE -ne 0) { throw 'Could not remove failed replacement' }",
     ...recovery.claimPaths.map(

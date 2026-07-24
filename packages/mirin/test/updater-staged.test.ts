@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { installSiblingPrefix, legacyInstallSiblingPrefix } from "../src/update-handoff.ts";
 import {
   MAX_INSTALL_SIBLING_AGE_MS,
   prepareInstallSibling,
@@ -29,7 +30,10 @@ const installed = {
   identifier: "com.example.mirin",
 };
 
-function createLinuxStage(version = "1.1.0"): {
+function createLinuxStage(
+  version = "1.1.0",
+  identity: typeof installed = installed,
+): {
   root: string;
   extractionRoot: string;
   staged: string;
@@ -38,16 +42,16 @@ function createLinuxStage(version = "1.1.0"): {
 } {
   const root = mkdtempSync(join(tmpdir(), "mirin-staged-test-"));
   const extractionRoot = join(root, "extract");
-  const staged = join(extractionRoot, installed.name);
+  const staged = join(extractionRoot, identity.name);
   const resources = join(staged, "resources");
   mkdirSync(resources, { recursive: true });
-  const executable = join(staged, installed.name);
+  const executable = join(staged, identity.name);
   writeFileSync(executable, "#!/bin/sh\n");
   chmodSync(executable, 0o755);
   const codec = join(staged, "mirin-codec");
   writeFileSync(codec, "#!/bin/sh\n");
   chmodSync(codec, 0o755);
-  writeFileSync(join(resources, "version.json"), JSON.stringify({ ...installed, version }), "utf8");
+  writeFileSync(join(resources, "version.json"), JSON.stringify({ ...identity, version }), "utf8");
   return { root, extractionRoot, staged, executable, codec };
 }
 
@@ -207,12 +211,39 @@ describe("staged update bundle validation", () => {
     }
   });
 
+  test("bounds the install sibling component for the maximum portable app name", async () => {
+    const longInstalled = { ...installed, name: "A".repeat(120) };
+    const stage = createLinuxStage("1.1.0", longInstalled);
+    const install = join(stage.root, "install", longInstalled.name);
+    const resources = join(install, "resources");
+    mkdirSync(resources, { recursive: true });
+    try {
+      const sibling = await prepareInstallSibling({
+        resourcesDir: resources,
+        downloadedStage: stage.staged,
+        platform: "linux",
+        installed: longInstalled,
+        expectedVersion: "1.1.0",
+        ownerIdentity: { pid: process.pid, token: "test-owner" },
+        syncTree: async () => {},
+      });
+
+      expect(
+        new TextEncoder().encode(sibling.slice(dirname(sibling).length + 1)).byteLength,
+      ).toBeLessThanOrEqual(255);
+      expect(sibling.slice(dirname(sibling).length + 1)).toStartWith(installSiblingPrefix(install));
+    } finally {
+      rmSync(stage.root, { recursive: true, force: true });
+    }
+  });
+
   test("prunes leased install siblings without trusting a reused startup PID", async () => {
     const root = mkdtempSync(join(tmpdir(), "mirin-install-staging-cleanup-"));
     const install = join(root, "install", installed.name);
     const resources = join(install, "resources");
     const parent = dirname(install);
-    const prefix = `.${installed.name}.mirin-new-`;
+    const prefix = installSiblingPrefix(install);
+    const legacyPrefix = legacyInstallSiblingPrefix(install);
     const nowMs = 1_800_000_000_000;
     const currentSession = "a".repeat(32);
     const owned = (
@@ -261,7 +292,7 @@ describe("staged update bundle validation", () => {
       nowMs - MAX_INSTALL_SIBLING_AGE_MS - 1,
       "66666666-6666-6666-6666-666666666666",
     );
-    const legacyCurrent = join(parent, `${prefix}100-77777777-7777-7777-7777-777777777777`);
+    const legacyCurrent = join(parent, `${legacyPrefix}100-77777777-7777-7777-7777-777777777777`);
     const unrelated = join(parent, `${prefix}300-not-a-uuid`);
     const outside = join(root, "outside");
     const linked = join(parent, `${prefix}400-44444444-4444-4444-4444-444444444444`);
