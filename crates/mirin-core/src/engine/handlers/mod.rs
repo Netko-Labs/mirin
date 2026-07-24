@@ -221,17 +221,9 @@ impl MirinHandler {
     /// explicit quit after the exact reservation disappears.
     pub fn fail_window_creation(this: &Arc<Mutex<Self>>, window_id: u32, error: &str) {
         debug_assert_ne!(currently_on(ThreadId::UI), 0);
-        if !state::finish_window_creation(window_id) {
+        if !state::fail_window_creation(window_id, error) {
             return;
         }
-        emit_event(
-            &serde_json::json!({
-                "type": "window.create-failed",
-                "id": window_id,
-                "error": error,
-            })
-            .to_string(),
-        );
         Self::finish_quit_if_idle(this);
     }
 

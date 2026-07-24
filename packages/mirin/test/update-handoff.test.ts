@@ -17,6 +17,7 @@ import {
   activateUpdateHandoff,
   inspectUpdateHandoff,
   installSiblingPrefix,
+  instanceStateComponent,
   prepareUpdateHandoff,
   signalUpdateReady,
 } from "../src/update-handoff.ts";
@@ -32,6 +33,21 @@ afterEach(() => {
 });
 
 describe("update handoff reservations", () => {
+  test("compacts maximum-length Windows state components deterministically", () => {
+    const maximum = `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(41)}`;
+    const other = `${maximum.slice(0, -1)}e`;
+    const component = instanceStateComponent(maximum, false, "win32");
+
+    expect(maximum).toHaveLength(233);
+    expect(component).toMatch(/^app-[0-9a-f]{32}$/);
+    expect(component).toHaveLength(36);
+    expect(instanceStateComponent(maximum, false, "win32")).toBe(component);
+    expect(instanceStateComponent(other, false, "win32")).not.toBe(component);
+    expect(instanceStateComponent(maximum, true, "win32")).toBe(`${component}-dev`);
+    expect(instanceStateComponent("dev.example.app", false, "win32")).toBe("dev.example.app");
+    expect(instanceStateComponent(maximum, false, "linux")).toBe(maximum);
+  });
+
   test("blocks the old version and admits only the staged target while the helper lives", () => {
     const root = temporaryDirectory();
     const state = join(root, "state");

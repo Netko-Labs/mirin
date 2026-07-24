@@ -90,7 +90,10 @@ wrap_task! {
         fn execute(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
             let Some(handler) = MirinHandler::instance() else {
-                state::finish_window_creation(self.id);
+                state::fail_window_creation(
+                    self.id,
+                    "native handler unavailable before window creation",
+                );
                 return;
             };
             if state::quit_requested() {

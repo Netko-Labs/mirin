@@ -377,3 +377,13 @@
   regression and Windows boot-GUID query remain additionally enforced by their
   native CI jobs; the local Windows cross-check reached the existing missing-SDK
   C dependency boundary.
+- Twenty-sixth clean-context review remediation: route an accepted window
+  creation task that runs before the CEF handler exists through the correlated
+  `window.create-failed` event, and compact long Windows updater-state
+  identifiers to a deterministic bounded hash component so maximum valid bundle
+  IDs do not exceed legacy native path limits.
+- Twenty-sixth-remediation verification: `bun run fmt-lint` passed with the
+  repository's existing 52 warnings, `bun run typecheck` passed, and `bun run
+  test` passed 269 tests with the two expected Windows installer skips.
+  `cargo fmt --all --check`, workspace clippy with warnings denied, all 29 local
+  Rust workspace tests, and `git diff --check` passed.

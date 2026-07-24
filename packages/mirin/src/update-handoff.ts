@@ -30,6 +30,7 @@ const RECOVERY_CLAIM_PREFIX = ".update-recovery-claim-";
 const MAX_HANDOFF_BYTES = 4096;
 const MAX_PHASE_BYTES = 32;
 const MAX_VERSION_BYTES = 16 * 1024;
+const MAX_UNCOMPACTED_WINDOWS_STATE_COMPONENT = 40;
 const HANDOFF_TOKEN = /^[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const READY_FILE = /^\.update-ready-[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const RECOVERY_CLAIM =
@@ -124,26 +125,34 @@ export interface UpdateHandoffDecision {
 
 /** Keep updater reservations beside the native app lock, outside replaceable app files. */
 export function instanceStateDirectory(identifier: string, dev = false): string {
+  const component = instanceStateComponent(identifier, dev);
+  if (process.platform === "darwin") {
+    return join(process.env.HOME ?? "/tmp", "Library", "Application Support", "mirin", component);
+  }
+  if (process.platform === "win32") {
+    const base = process.env.LOCALAPPDATA ?? process.env.TEMP ?? "C:\\Temp";
+    return join(base, "mirin", component);
+  }
+  const base = process.env.XDG_CACHE_HOME || join(process.env.HOME ?? "/tmp", ".cache");
+  return join(base, "mirin", component);
+}
+
+export function instanceStateComponent(
+  identifier: string,
+  dev = false,
+  platform: NodeJS.Platform = process.platform,
+): string {
   const safeIdentifier =
     Array.from(identifier)
       .map((character) => (/[\p{L}\p{N}._-]/u.test(character) ? character : "_"))
       .join("") || "app";
   const suffix = dev ? "-dev" : "";
-  if (process.platform === "darwin") {
-    return join(
-      process.env.HOME ?? "/tmp",
-      "Library",
-      "Application Support",
-      "mirin",
-      `${safeIdentifier}${suffix}`,
-    );
+  const uncompacted = `${safeIdentifier}${suffix}`;
+  if (platform === "win32" && uncompacted.length > MAX_UNCOMPACTED_WINDOWS_STATE_COMPONENT) {
+    const digest = createHash("sha256").update(identifier).digest("hex").slice(0, 32);
+    return `app-${digest}${suffix}`;
   }
-  if (process.platform === "win32") {
-    const base = process.env.LOCALAPPDATA ?? process.env.TEMP ?? "C:\\Temp";
-    return join(base, "mirin", `${safeIdentifier}${suffix}`);
-  }
-  const base = process.env.XDG_CACHE_HOME || join(process.env.HOME ?? "/tmp", ".cache");
-  return join(base, "mirin", `${safeIdentifier}${suffix}`);
+  return uncompacted;
 }
 
 export function prepareUpdateHandoff(

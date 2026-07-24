@@ -58,8 +58,10 @@ if any automatic window reports `window.create-failed`, `ready` does not fire an
 Mirin requests orderly application quit. `app.windows.open(...)` uses the same
 event correlation, resolving with its handle on success or rejecting and
 unregistering that handle on failure. This guarantees a live native browser, but
-does not promise first paint or an established renderer RPC socket. `defineConfig` is an identity
-function that exists for typing/intellisense; the manifest must remain
+does not promise first paint or an established renderer RPC socket. A top-level
+open whose UI task runs before the native browser handler exists rejects through
+the same correlated failure event rather than remaining pending. `defineConfig`
+is an identity function that exists for typing/intellisense; the manifest must remain
 serializable data.
 
 The CLI validates packaging identity before it creates/cleans build directories or
@@ -69,7 +71,10 @@ dot/space), `id` is a reverse-DNS identifier of at most 233 total characters
 with at least two DNS-style labels,
 `release.channel` is a flat filename-safe segment of at most 64 characters:
 alphanumeric runs separated by single `.`, `_`, or `-` characters, excluding
-Windows device names. The package/override version must be strict SemVer. macOS
+Windows device names. Windows updater-state path components longer than 40
+characters use a deterministic 128-bit hash form, so the full accepted
+identifier length does not overflow recovery claim paths. The package/override
+version must be strict SemVer. macOS
 keeps that full SemVer in updater metadata, writes its numeric
 `major.minor.patch` core to `CFBundleShortVersionString`, and maps
 `dev`/`preview`, `alpha`, `beta`, and `rc` prereleases to Apple's

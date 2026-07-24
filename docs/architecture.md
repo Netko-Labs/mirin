@@ -210,6 +210,10 @@ exchange as completed and retry `sync-parent`; if durability remains uncertain,
 they preserve ownership and both trees instead of deleting either side. Windows
 recovery also changes to the temporary directory before waiting or exchanging,
 so its inherited current-directory handle cannot pin the installed tree.
+Windows updater-state components longer than 40 characters use a deterministic
+128-bit SHA-256 prefix form. This bounds the app-controlled part of recovery
+claim paths below legacy `MAX_PATH` constraints while preserving existing
+support paths for ordinary identifiers.
 
 Linux opens its pidfd before validating the boot/start token and rejects zombie
 or dead `/proc` states as exited even while an unreaped PID entry remains. Windows
@@ -251,7 +255,9 @@ observed, not when the create command is merely queued. Pending creations are
 reserved by Mirin window id; popup and DevTools callbacks cannot consume those
 reservations. Synchronous platform/CEF creation failure tears down partial native
 and OSR state, releases that exact id, and emits `window.create-failed`, which
-rejects and unregisters the matching TypeScript handle.
+rejects and unregisters the matching TypeScript handle. A creation task that
+reaches the UI thread before CEF has installed `MirinHandler` follows the same
+correlated failure path instead of silently releasing its reservation.
 
 Automatic manifest windows are all awaited before `app.ready` fires. A failure
 prevents `ready` and requests orderly application quit. Pre-ready macOS Dock

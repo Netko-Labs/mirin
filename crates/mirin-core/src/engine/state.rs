@@ -98,6 +98,23 @@ pub(crate) fn finish_window_creation(id: u32) -> bool {
         .release(id)
 }
 
+/// Release an accepted browser creation and queue its correlated failure exactly
+/// once. This also works before CEF installs the shared browser handler.
+pub(crate) fn fail_window_creation(id: u32, error: &str) -> bool {
+    if !finish_window_creation(id) {
+        return false;
+    }
+    super::events::emit_event(
+        &serde_json::json!({
+            "type": "window.create-failed",
+            "id": id,
+            "error": error,
+        })
+        .to_string(),
+    );
+    true
+}
+
 pub(crate) fn pending_window_creations() -> usize {
     PENDING_WINDOW_CREATIONS
         .lock()
@@ -143,7 +160,8 @@ pub fn wm_class() -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use super::WindowCreationReservations;
+    use super::{begin_window_creation, fail_window_creation, WindowCreationReservations};
+    use crate::engine::events::take_event_for_test;
 
     #[test]
     fn creation_reservations_release_only_the_matching_window() {
@@ -168,5 +186,26 @@ mod tests {
         assert!(reservations.reserve(7));
         assert!(!reservations.reserve(7));
         assert_eq!(reservations.len(), 1);
+    }
+
+    #[test]
+    fn failed_creation_without_a_handler_emits_its_correlated_result_once() {
+        while take_event_for_test().is_some() {}
+        let id = u32::MAX - 1;
+        assert!(begin_window_creation(id));
+        assert!(fail_window_creation(
+            id,
+            "native handler unavailable before window creation"
+        ));
+        let event: serde_json::Value =
+            serde_json::from_str(&take_event_for_test().expect("missing failure event")).unwrap();
+        assert_eq!(event["type"], "window.create-failed");
+        assert_eq!(event["id"], id);
+        assert_eq!(
+            event["error"],
+            "native handler unavailable before window creation"
+        );
+        assert!(!fail_window_creation(id, "duplicate failure"));
+        assert!(take_event_for_test().is_none());
     }
 }
