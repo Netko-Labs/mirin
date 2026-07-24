@@ -1,6 +1,10 @@
 use std::io;
 use std::time::Duration;
 
+pub fn boot_token() -> io::Result<String> {
+    platform_boot_token()
+}
+
 pub fn process_token(pid: u32) -> io::Result<String> {
     if pid == 0 {
         return Err(io::Error::new(
@@ -24,13 +28,41 @@ pub fn terminate_process(pid: u32, expected: &str) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn platform_process_token(pid: u32) -> io::Result<String> {
+fn platform_boot_token() -> io::Result<String> {
     let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
+    let boot_id = boot_id.trim();
+    if boot_id.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Linux boot id is empty",
+        ));
+    }
+    Ok(boot_id.to_owned())
+}
+
+#[cfg(target_os = "linux")]
+fn platform_process_token(pid: u32) -> io::Result<String> {
+    let boot_id = platform_boot_token()?;
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
     let close = stat.rfind(')').ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidData, "malformed Linux process stat")
     })?;
     let fields: Vec<&str> = stat[close + 1..].split_whitespace().collect();
+    match fields.first().copied() {
+        Some("Z" | "X" | "x") => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "process has exited",
+            ));
+        }
+        Some(_) => {}
+        None => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Linux process stat is incomplete",
+            ));
+        }
+    }
     let start = fields.get(19).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -43,7 +75,32 @@ fn platform_process_token(pid: u32) -> io::Result<String> {
             "Linux process start time is invalid",
         )
     })?;
-    Ok(format!("{}:{start}", boot_id.trim()))
+    Ok(format!("{boot_id}:{start}"))
+}
+
+#[cfg(target_os = "macos")]
+fn platform_boot_token() -> io::Result<String> {
+    let mut boot_time = std::mem::MaybeUninit::<libc::timeval>::zeroed();
+    let mut length = std::mem::size_of::<libc::timeval>();
+    let mut name = [libc::CTL_KERN, libc::KERN_BOOTTIME];
+    // SAFETY: name selects kern.boottime and boot_time points to writable
+    // timeval storage whose byte length is supplied through length.
+    let result = unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            name.len() as libc::c_uint,
+            boot_time.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 || length != std::mem::size_of::<libc::timeval>() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: sysctl reported that it initialized a complete timeval.
+    let boot_time = unsafe { boot_time.assume_init() };
+    Ok(format!("{}:{}", boot_time.tv_sec, boot_time.tv_usec))
 }
 
 #[cfg(target_os = "macos")]
@@ -68,6 +125,43 @@ fn platform_process_token(pid: u32) -> io::Result<String> {
         "{}:{}",
         info.pbi_start_tvsec, info.pbi_start_tvusec
     ))
+}
+
+#[cfg(windows)]
+fn platform_boot_token() -> io::Result<String> {
+    use windows_sys::Wdk::System::SystemInformation::NtQuerySystemInformation;
+
+    // SYSTEM_BOOT_ENVIRONMENT_INFORMATION starts with a 16-byte boot GUID.
+    // Keeping the complete documented buffer size avoids depending on Rust
+    // layout for the following firmware type and boot flags.
+    const SYSTEM_BOOT_ENVIRONMENT_INFORMATION: i32 = 90;
+    let mut information = [0_u8; 32];
+    let mut returned = 0_u32;
+    // SAFETY: information is writable for the supplied byte length and
+    // return-length points to an initialized u32.
+    let status = unsafe {
+        NtQuerySystemInformation(
+            SYSTEM_BOOT_ENVIRONMENT_INFORMATION,
+            information.as_mut_ptr().cast(),
+            information.len() as u32,
+            &mut returned,
+        )
+    };
+    if status < 0 {
+        return Err(io::Error::other(format!(
+            "could not query Windows boot identity (NTSTATUS {status:#x})"
+        )));
+    }
+    if information[..16].iter().all(|byte| *byte == 0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows boot identity is empty",
+        ));
+    }
+    Ok(information[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 #[cfg(windows)]
@@ -425,6 +519,51 @@ mod tests {
         assert_eq!(process_token(pid).unwrap(), token);
         assert!(process_matches(pid, &token));
         assert!(!process_matches(pid, "not-this-process"));
+    }
+
+    #[test]
+    fn current_boot_token_is_stable() {
+        let token = boot_token().unwrap();
+        assert!(!token.is_empty());
+        assert_eq!(boot_token().unwrap(), token);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unreaped_zombie_is_not_a_live_process_identity() {
+        let child = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut child = ChildGuard(Some(child));
+        let pid = child.0.as_ref().unwrap().id();
+        let became_zombie = (0..200).any(|_| {
+            let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    let close = stat.rfind(')')?;
+                    stat[close + 1..]
+                        .split_whitespace()
+                        .next()
+                        .map(str::to_owned)
+                });
+            if state.as_deref() == Some("Z") {
+                true
+            } else {
+                thread::sleep(Duration::from_millis(10));
+                false
+            }
+        });
+        assert!(became_zombie, "child must remain as an unreaped zombie");
+        assert_eq!(
+            process_token(pid).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        child.0.as_mut().unwrap().wait().unwrap();
+        child.0 = None;
     }
 
     #[test]

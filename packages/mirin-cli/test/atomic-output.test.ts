@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -12,7 +13,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  AtomicOutputDurabilityError,
   type AtomicOutputOperations,
+  createAtomicOutputOperations,
   pruneStaleAtomicOutputBackups,
   removeAtomicOutputDirectoryBestEffort,
   writeAtomicOutputDirectory,
@@ -73,6 +76,91 @@ describe("atomic output directories", () => {
 
     expect(readFileSync(join(output, "version.txt"), "utf8")).toBe("new");
     expect(stageEntries(root)).toEqual([]);
+  });
+
+  test("retries the parent sync after a codec reports a visible exchange", async () => {
+    const root = temporaryDirectory();
+    const output = join(root, "build", "app");
+    await writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
+      writeFileSync(join(staging, "version.txt"), "old");
+    });
+    let parentSynced = false;
+    const visibleSwapOperations: AtomicOutputOperations = {
+      ...testOperations,
+      syncParent() {
+        parentSynced = true;
+      },
+      atomicSwap(left, right) {
+        testOperations.atomicSwap(left, right);
+        return "visible";
+      },
+    };
+
+    await writeAtomicOutputDirectory(
+      root,
+      output,
+      "test output",
+      visibleSwapOperations,
+      (staging) => {
+        writeFileSync(join(staging, "version.txt"), "new");
+      },
+    );
+
+    expect(parentSynced).toBe(true);
+    expect(readFileSync(join(output, "version.txt"), "utf8")).toBe("new");
+    expect(stageEntries(root)).toEqual([]);
+  });
+
+  test("preserves both outputs when a visible exchange cannot be synced", async () => {
+    const root = temporaryDirectory();
+    const output = join(root, "build", "app");
+    await writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
+      writeFileSync(join(staging, "version.txt"), "old");
+    });
+    const uncertainSwapOperations: AtomicOutputOperations = {
+      ...testOperations,
+      syncParent() {
+        throw new Error("injected parent sync failure");
+      },
+      atomicSwap(left, right) {
+        testOperations.atomicSwap(left, right);
+        return "visible";
+      },
+    };
+
+    await expect(
+      writeAtomicOutputDirectory(
+        root,
+        output,
+        "test output",
+        uncertainSwapOperations,
+        (staging) => {
+          writeFileSync(join(staging, "version.txt"), "new");
+        },
+      ),
+    ).rejects.toBeInstanceOf(AtomicOutputDurabilityError);
+
+    expect(readFileSync(join(output, "version.txt"), "utf8")).toBe("new");
+    const preserved = stageEntries(root);
+    expect(preserved).toHaveLength(1);
+    expect(readFileSync(join(root, "build", preserved[0] as string, "version.txt"), "utf8")).toBe(
+      "old",
+    );
+  });
+
+  test("classifies codec exit 2 as a visible atomic exchange", () => {
+    const calls: string[][] = [];
+    const operations = createAtomicOutputOperations("test-codec", (command) => {
+      calls.push(command);
+      return { exitCode: command[1] === "atomic-swap" ? 2 : 0 };
+    });
+
+    expect(operations.atomicSwap("/left", "/right")).toBe("visible");
+    operations.syncParent?.("/left");
+    expect(calls).toEqual([
+      ["test-codec", "atomic-swap", "/left", "/right"],
+      ["test-codec", "sync-parent", "/left"],
+    ]);
   });
 
   test("does not report a committed output as failed when backup cleanup fails", () => {
@@ -182,5 +270,7 @@ function temporaryDirectory(): string {
 function stageEntries(root: string): string[] {
   const build = join(root, "build");
   if (!existsSync(build)) return [];
-  return Array.from(new Bun.Glob(".*.mirin-{stage,backup}-*").scanSync({ cwd: build }));
+  return readdirSync(build).filter(
+    (entry) => entry.includes(".mirin-stage-") || entry.includes(".mirin-backup-"),
+  );
 }

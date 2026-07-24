@@ -146,6 +146,10 @@ output uses a durable sibling move. The old tree remains under its exact owned
 stage name until non-fatal cleanup; later runs prune only aged dead-owner
 stage/backup directories. For compatibility with the former two-move scheme, a
 missing canonical output restores the newest exact dead-owner backup first.
+If the codec reports that an output exchange is visible but its parent sync
+failed, the CLI retries `sync-parent` before cleanup. Continued sync failure
+returns an explicit durability error while retaining the new canonical output
+and the previous output under its owned stage name.
 
 Recovery claim acquisition precedes native-core loading and is a single-winner
 namespace operation. The contender atomically moves the journal to a claim whose
@@ -174,15 +178,18 @@ allowing parent death to authorize a swap. A crash before activation cannot swap
 the install, while a crash after activation leaves the live helper represented in
 the reservation. Arming and replacement readiness are each published durably, so
 readers never accept a partial or PID-reused receipt. Before launching the
-target, the helper durably publishes an intentionally unreadable ambiguity guard,
+target, the helper durably publishes a boot-identity-bound ambiguity guard,
 narrows it to a pending PID after spawn, and then replaces it with the exact
 creation identity; the target republishes that identity before readiness.
 Startup treats a valid live replacement receipt as active, and a recovery helper
 confirms exit or performs handle-bound exact termination before exchanging its
 files away. If identity lookup fails, the owning helper waits on its process
 handle or child until exit before rollback. If that helper crashes at any launch
-boundary, startup blocks recovery on the unreadable guard rather than exchanging
-files beneath a potentially live unidentified process. Because activation
+boundary, startup blocks recovery on a same-boot guard rather than exchanging
+files beneath a potentially live unidentified process. A guard from an earlier
+boot cannot represent a surviving process and is therefore reconciled through
+the normal single-winner recovery path; failure to query current boot identity
+remains fail-safe. Because activation
 replacement can become visible before
 its final parent-directory sync reports failure, every activation publication
 attempt is treated as potentially accepted. If activation or arming fails, the
@@ -204,7 +211,8 @@ they preserve ownership and both trees instead of deleting either side. Windows
 recovery also changes to the temporary directory before waiting or exchanging,
 so its inherited current-directory handle cannot pin the installed tree.
 
-Linux opens its pidfd before validating the boot/start token, and Windows
+Linux opens its pidfd before validating the boot/start token and rejects zombie
+or dead `/proc` states as exited even while an unreaped PID entry remains. Windows
 validates creation time through the same process handle used for waiting or
 termination. Windows token queries also require that handle to remain
 unsignaled, because an exited process object can stay queryable while another

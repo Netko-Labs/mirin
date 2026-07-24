@@ -20,6 +20,7 @@ import {
   isProcessToken,
   parseProcessIdentity,
   processIdentity,
+  systemBootToken,
   type UpdateProcessIdentity,
 } from "./update-process.ts";
 
@@ -33,6 +34,7 @@ const HANDOFF_TOKEN = /^[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const READY_FILE = /^\.update-ready-[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const RECOVERY_CLAIM =
   /^\.update-recovery-claim-([1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})--([1-9]\d*)-([0-9a-f]{64})$/;
+const PENDING_REPLACEMENT = /^pending:([0-9A-Za-z._:-]{1,128}):(launch|[1-9]\d*)$/;
 
 export const HOST_RUNTIME_PROTOCOL = 1;
 export const EXCLUSIVE_UPDATER_CAPABILITY = "exclusive-app-lock-v1";
@@ -69,6 +71,12 @@ interface RecoveryClaim {
   ownerPid: number;
   ownerTokenHash: string;
 }
+
+type ReplacementState =
+  | { kind: "missing" }
+  | { kind: "identity"; identity: UpdateProcessIdentity }
+  | { kind: "pending"; bootToken: string }
+  | { kind: "invalid" };
 
 export interface PreparedUpdateHandoff extends UpdateHandoffMarker {
   markerPath: string;
@@ -258,6 +266,7 @@ export function inspectUpdateHandoff(
     processIdentity(pid, bundledCodecPath()),
   directory = instanceStateDirectory(identifier, dev),
   nowMs = Date.now(),
+  getBootToken: () => string | undefined = () => systemBootToken(bundledCodecPath()),
 ): UpdateHandoffDecision {
   const markerPath = join(directory, HANDOFF_FILE);
   if (!existsSync(markerPath)) {
@@ -282,15 +291,39 @@ export function inspectUpdateHandoff(
 
   const readyPath = join(directory, `.update-ready-${marker.token}`);
   const replacementPath = replacementIdentityPath(directory, marker.token);
-  const replacement = readProcessIdentityReceipt(replacementPath);
-  const replacementStateIsUnreadable = existsSync(replacementPath) && !replacement;
+  const replacementState = readReplacementState(replacementPath);
+  let bootTokenRead = false;
+  let currentBootToken: string | undefined;
+  const replacementIsActive = (state: ReplacementState): boolean => {
+    if (state.kind === "invalid") return true;
+    if (state.kind === "identity") {
+      return getProcessIdentity(state.identity.pid)?.token === state.identity.token;
+    }
+    if (state.kind === "pending") {
+      if (!bootTokenRead) {
+        try {
+          const observedBootToken = getBootToken();
+          currentBootToken =
+            observedBootToken !== undefined && isProcessToken(observedBootToken)
+              ? observedBootToken
+              : undefined;
+        } catch {
+          currentBootToken = undefined;
+        }
+        bootTokenRead = true;
+      }
+      // A same-boot guard could still represent an unidentified child. If the
+      // current boot cannot be established, retain that fail-safe ambiguity.
+      return currentBootToken === undefined || currentBootToken === state.bootToken;
+    }
+    return false;
+  };
   const active =
     getProcessIdentity(marker.ownerPid)?.token === marker.ownerToken ||
     (marker.helperPid !== undefined &&
       marker.helperToken !== undefined &&
       getProcessIdentity(marker.helperPid)?.token === marker.helperToken) ||
-    replacementStateIsUnreadable ||
-    (replacement !== undefined && getProcessIdentity(replacement.pid)?.token === replacement.token);
+    replacementIsActive(replacementState);
   const launchedTarget =
     launchToken === marker.token && installedVersion(resourcesDir) === marker.targetVersion;
   if (active) {
@@ -320,17 +353,13 @@ export function inspectUpdateHandoff(
   marker = claimedMarker;
   const claimPaths = recoveryClaimPaths(directory, marker.token);
   const claimedReplacementPath = replacementIdentityPath(directory, marker.token);
-  const claimedReplacement = readProcessIdentityReceipt(claimedReplacementPath);
-  const claimedReplacementStateIsUnreadable =
-    existsSync(claimedReplacementPath) && !claimedReplacement;
+  const claimedReplacementState = readReplacementState(claimedReplacementPath);
   const claimedActive =
     getProcessIdentity(marker.ownerPid)?.token === marker.ownerToken ||
     (marker.helperPid !== undefined &&
       marker.helperToken !== undefined &&
       getProcessIdentity(marker.helperPid)?.token === marker.helperToken) ||
-    claimedReplacementStateIsUnreadable ||
-    (claimedReplacement !== undefined &&
-      getProcessIdentity(claimedReplacement.pid)?.token === claimedReplacement.token);
+    replacementIsActive(claimedReplacementState);
   const claimedReadyPath = join(directory, `.update-ready-${marker.token}`);
   const claimedTarget =
     launchToken === marker.token && installedVersion(resourcesDir) === marker.targetVersion;
@@ -407,7 +436,9 @@ export function inspectUpdateHandoff(
       backup: marker.backup,
       ...(restorePath ? { restorePath } : {}),
       owner,
-      ...(claimedReplacement ? { replacement: claimedReplacement } : {}),
+      ...(claimedReplacementState.kind === "identity"
+        ? { replacement: claimedReplacementState.identity }
+        : {}),
       claimPaths,
     },
   };
@@ -581,13 +612,28 @@ function readPhase(path: string): UpdateHandoffPhase | undefined {
   }
 }
 
-function readProcessIdentityReceipt(path: string): UpdateProcessIdentity | undefined {
+function readReplacementState(path: string): ReplacementState {
+  let metadata: ReturnType<typeof lstatSync>;
   try {
-    const metadata = lstatSync(path);
-    if (!metadata.isFile() || metadata.size <= 0 || metadata.size > 256) return undefined;
-    return parseProcessIdentity(readFileSync(path, "utf8"));
+    metadata = lstatSync(path);
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT"
+      ? { kind: "missing" }
+      : { kind: "invalid" };
+  }
+  if (!metadata.isFile() || metadata.size <= 0 || metadata.size > 256) {
+    return { kind: "invalid" };
+  }
+  try {
+    const contents = readFileSync(path, "utf8").trim();
+    try {
+      return { kind: "identity", identity: parseProcessIdentity(contents) };
+    } catch {
+      const pending = PENDING_REPLACEMENT.exec(contents);
+      return pending ? { kind: "pending", bootToken: pending[1] as string } : { kind: "invalid" };
+    }
   } catch {
-    return undefined;
+    return { kind: "invalid" };
   }
 }
 

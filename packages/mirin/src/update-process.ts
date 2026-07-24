@@ -34,6 +34,21 @@ export function processIdentity(
   }
 }
 
+export function systemBootToken(codec = bundledCodecPath()): string | undefined {
+  try {
+    const result = Bun.spawnSync([codec, "boot-token"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (result.exitCode !== 0 || result.stdout.byteLength > 256) return undefined;
+    const token = result.stdout.toString().trim();
+    return PROCESS_TOKEN.test(token) ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function processIdentityMatches(
   expected: UpdateProcessIdentity,
   codec = bundledCodecPath(),

@@ -286,7 +286,7 @@ describe("update handoff reservations", () => {
   });
 
   test("fails safe when replacement launch or identity publication is pending", () => {
-    for (const guard of ["pending:launch", "pending:789"]) {
+    for (const guard of ["pending:current-boot:launch", "pending:current-boot:789"]) {
       const fixture = interruptedTransaction("launching");
       const recoveryOwner = { pid: process.pid, token: "pending-replacement-recovery-owner" };
       writeFileSync(fixture.handoff.replacementPath, guard);
@@ -299,11 +299,54 @@ describe("update handoff reservations", () => {
           undefined,
           () => recoveryOwner,
           fixture.state,
+          Date.now(),
+          () => "current-boot",
         ),
       ).toEqual({ blocked: true });
       expect(readFileSync(fixture.handoff.replacementPath, "utf8")).toBe(guard);
       expect(existsSync(fixture.handoff.markerPath)).toBe(true);
     }
+  });
+
+  test("recovers a pending replacement guard after the machine boot changes", () => {
+    const fixture = interruptedTransaction("launching");
+    const recoveryOwner = { pid: process.pid, token: "reboot-recovery-owner" };
+    writeFileSync(fixture.handoff.replacementPath, "pending:previous-boot:789");
+
+    const decision = inspectUpdateHandoff(
+      "dev.example.app",
+      fixture.resources,
+      false,
+      undefined,
+      () => recoveryOwner,
+      fixture.state,
+      Date.now(),
+      () => "current-boot",
+    );
+
+    expect(decision.blocked).toBe(false);
+    expect(decision.recovery?.mode).toBe("rollback");
+    expect(decision.recovery?.replacement).toBeUndefined();
+    expect(decision.recovery?.replacementPath).toBe(fixture.handoff.replacementPath);
+  });
+
+  test("retains a pending guard when current boot identity cannot be read", () => {
+    const fixture = interruptedTransaction("launching");
+    const recoveryOwner = { pid: process.pid, token: "unknown-boot-recovery-owner" };
+    writeFileSync(fixture.handoff.replacementPath, "pending:guarded-boot:launch");
+
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        fixture.resources,
+        false,
+        undefined,
+        () => recoveryOwner,
+        fixture.state,
+        Date.now(),
+        () => undefined,
+      ),
+    ).toEqual({ blocked: true });
   });
 
   test("recovers a crash between durable marker and phase creation", () => {

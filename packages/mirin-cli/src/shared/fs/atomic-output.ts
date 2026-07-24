@@ -12,23 +12,38 @@ import { basename, dirname, join } from "node:path";
 import { safeDestructiveDirectory } from "./project-source.ts";
 
 const STALE_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
+const ATOMIC_SWAP_DURABILITY_EXIT_CODE = 2;
 const OWNED_BACKUP_SUFFIX =
   /^([1-9]\d*)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface AtomicOutputOperations {
   syncTree(path: string): void;
+  syncParent?(path: string): void;
   validateSwap(left: string, right: string): void;
-  atomicSwap(left: string, right: string): void;
+  atomicSwap(left: string, right: string): "durable" | "visible" | undefined;
   durableMove(source: string, destination: string): void;
 }
 
-export function createAtomicOutputOperations(codec: string): AtomicOutputOperations {
-  const run = (operation: string, ...paths: string[]) => {
-    const result = Bun.spawnSync([codec, operation, ...paths], {
+export class AtomicOutputDurabilityError extends Error {
+  constructor(cause?: unknown) {
+    super("atomic output replacement is visible but its parent directory could not be synced", {
+      cause,
+    });
+    this.name = "AtomicOutputDurabilityError";
+  }
+}
+
+export function createAtomicOutputOperations(
+  codec: string,
+  runCodec: (command: string[]) => { exitCode: number } = (command) =>
+    Bun.spawnSync(command, {
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
-    });
+    }),
+): AtomicOutputOperations {
+  const run = (operation: string, ...paths: string[]) => {
+    const result = runCodec([codec, operation, ...paths]);
     if (result.exitCode !== 0) {
       throw new Error(`codec ${operation} failed for atomic output`);
     }
@@ -37,11 +52,19 @@ export function createAtomicOutputOperations(codec: string): AtomicOutputOperati
     syncTree(path) {
       run("sync-tree", path);
     },
+    syncParent(path) {
+      run("sync-parent", path);
+    },
     validateSwap(left, right) {
       run("validate-swap", left, right);
     },
     atomicSwap(left, right) {
-      run("atomic-swap", left, right);
+      const result = runCodec([codec, "atomic-swap", left, right]);
+      if (result.exitCode === ATOMIC_SWAP_DURABILITY_EXIT_CODE) return "visible";
+      if (result.exitCode !== 0) {
+        throw new Error("codec atomic-swap failed for atomic output");
+      }
+      return "durable";
     },
     durableMove(source, destination) {
       run("durable-move", source, destination);
@@ -218,6 +241,7 @@ export async function writeAtomicOutputDirectory<T>(
     `${label} staging directory`,
   );
   mkdirSync(staging);
+  let preserveStaging = false;
 
   try {
     const result = await write(staging);
@@ -227,7 +251,20 @@ export async function writeAtomicOutputDirectory<T>(
 
     if (existsSync(finalDirectory)) {
       operations.validateSwap(finalDirectory, staging);
-      operations.atomicSwap(finalDirectory, staging);
+      const swapOutcome = operations.atomicSwap(finalDirectory, staging);
+      if (swapOutcome === "visible") {
+        // The exchange already placed the new output at finalDirectory and the
+        // previous output at staging. Preserve both until a parent sync proves
+        // the namespace transition durable.
+        preserveStaging = true;
+        if (!operations.syncParent) throw new AtomicOutputDurabilityError();
+        try {
+          operations.syncParent(finalDirectory);
+        } catch (error) {
+          throw new AtomicOutputDurabilityError(error);
+        }
+        preserveStaging = false;
+      }
       removeAtomicOutputDirectoryBestEffort(staging, `${label} committed previous output`);
     } else {
       operations.durableMove(staging, finalDirectory);
@@ -235,6 +272,8 @@ export async function writeAtomicOutputDirectory<T>(
 
     return result;
   } finally {
-    removeAtomicOutputDirectoryBestEffort(staging, `${label} staging directory`);
+    if (!preserveStaging) {
+      removeAtomicOutputDirectoryBestEffort(staging, `${label} staging directory`);
+    }
   }
 }

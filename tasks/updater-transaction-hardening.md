@@ -363,3 +363,17 @@
   test` passed 263 tests with the two expected Windows installer skips.
   `cargo fmt --all --check`, workspace clippy with warnings denied, all 27 Rust
   workspace tests, and `git diff --check` passed.
+- Twenty-fifth clean-context review remediation: bind prelaunch and pending-PID
+  replacement guards to a cross-platform boot identity so same-boot ambiguity
+  remains fail-safe but reboot-stale guards can recover; classify Linux zombie
+  and dead process states as exited; and teach CLI bundle/release output swaps to
+  retry durability after codec status 2 while preserving both output trees if
+  the retry fails.
+- Twenty-fifth-remediation verification: `bun run fmt-lint` passed with the
+  repository's existing 52 warnings, `bun run typecheck` passed, and `bun run
+  test` passed 268 tests with the two expected Windows installer skips.
+  `cargo fmt --all --check`, workspace clippy with warnings denied, all 28 local
+  Rust workspace tests, and `git diff --check` passed. The Linux unreaped-zombie
+  regression and Windows boot-GUID query remain additionally enforced by their
+  native CI jobs; the local Windows cross-check reached the existing missing-SDK
+  C dependency boundary.

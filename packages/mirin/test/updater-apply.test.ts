@@ -65,7 +65,7 @@ describe("Windows updater launcher", () => {
       parentToken: "parent-token",
     });
     const launch = script.indexOf("Start-Process -FilePath");
-    const prelaunchGuard = script.indexOf("pending:launch");
+    const prelaunchGuard = script.indexOf("$bootToken+':launch'");
     const readiness = script.indexOf("Replacement did not report ready", launch);
     expect(launch).toBeGreaterThan(0);
     expect(prelaunchGuard).toBeGreaterThan(0);
@@ -92,7 +92,7 @@ describe("Windows updater launcher", () => {
     );
     expect(script).toContain("Replacement readiness receipt has the wrong process identity");
     expect(script).toContain("$readyProcess -ne $readyIdentity");
-    expect(script).toContain("$replacementGuard='pending:'");
+    expect(script).toContain("$replacementGuard='pending:'+$bootToken+':'");
     expect(script).toContain("Could not guard replacement launch");
     expect(script).toContain("Could not guard unidentified replacement process");
     expect(script).toContain("if ([string]::IsNullOrWhiteSpace($newToken))");
@@ -354,7 +354,9 @@ describe("Windows updater launcher", () => {
         replacementIdentity.token,
       );
       expect(processIdentity(helperIdentity.pid, codec)?.token).toBe(helperIdentity.token);
-      expect(readFileSync(replacementGuard, "utf8")).toBe(`pending:${replacementIdentity.pid}`);
+      expect(readFileSync(replacementGuard, "utf8")).toMatch(
+        new RegExp(`^pending:[0-9A-Za-z._:-]{1,128}:${replacementIdentity.pid}$`),
+      );
       expect(existsSync(join(app, "new-sentinel"))).toBe(true);
       expect(existsSync(join(app, "old-sentinel"))).toBe(false);
       expect(existsSync(join(backup, "old-sentinel"))).toBe(true);
@@ -384,7 +386,9 @@ describe("Windows updater launcher", () => {
         } catch {}
       }
       if (!replacementIdentity && existsSync(replacementGuard)) {
-        const guardedPid = /^pending:(\d+)$/.exec(readFileSync(replacementGuard, "utf8"))?.[1];
+        const guardedPid = /^pending:[0-9A-Za-z._:-]{1,128}:([1-9]\d*)$/.exec(
+          readFileSync(replacementGuard, "utf8"),
+        )?.[1];
         if (guardedPid) replacementIdentity = processIdentity(Number(guardedPid), codec);
       }
       if (
@@ -664,10 +668,12 @@ describe("POSIX updater helpers", () => {
       script.indexOf('"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"'),
     );
     const replacementGuard = script.indexOf(
-      '"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"',
+      '"$SWAP" durable-write "$REPLACEMENT" "pending:$BOOT_TOKEN:$NEW_PID"',
       actualLaunch,
     );
-    const prelaunchGuard = script.indexOf('"$SWAP" durable-write "$REPLACEMENT" "pending:launch"');
+    const prelaunchGuard = script.indexOf(
+      '"$SWAP" durable-write "$REPLACEMENT" "pending:$BOOT_TOKEN:launch"',
+    );
     const replacementIdentity = script.indexOf(
       '"$SWAP" durable-write "$REPLACEMENT" "$READY_IDENTITY"',
       replacementGuard,
@@ -719,9 +725,11 @@ describe("POSIX updater helpers", () => {
     expect(script).toContain('if [ "$swap_status" -eq 2 ]');
     expect(script).toContain('if [ "$rollback_swap_status" -eq 2 ]');
     expect(script).toContain('"$SWAP" sync-parent "$APP"');
-    expect(script).toContain('"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"');
+    expect(script).toContain('"$SWAP" durable-write "$REPLACEMENT" "pending:$BOOT_TOKEN:$NEW_PID"');
     expect(script).toContain('if [ -z "$NEW_TOKEN" ]; then wait "$NEW_PID"');
-    const prelaunchGuard = script.indexOf('"$SWAP" durable-write "$REPLACEMENT" "pending:launch"');
+    const prelaunchGuard = script.indexOf(
+      '"$SWAP" durable-write "$REPLACEMENT" "pending:$BOOT_TOKEN:launch"',
+    );
     expect(prelaunchGuard).toBeGreaterThan(0);
     expect(prelaunchGuard).toBeLessThan(actualLaunch);
     if (process.platform !== "win32") {
@@ -880,6 +888,9 @@ function writeTestSwapTool(
       "set -eu",
       'operation="$1"; shift',
       'case "$operation" in',
+      "  boot-token)",
+      '    printf "test-boot-token\\n"',
+      "    ;;",
       "  process-token)",
       '    kill -0 "$1" 2>/dev/null',
       '    printf "token-%s\\n" "$1"',

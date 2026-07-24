@@ -151,11 +151,13 @@ portable app name leaves the full ownership component below common filesystem
 limits; startup also recognizes the former full-name prefix.
 An activation attempt is treated as potentially visible even if its final
 durability sync reports failure; ownership is released only after exact helper
-exit. Likewise, a durable ambiguity guard is published before replacement launch,
-narrowed to its PID after spawn, and replaced by its exact identity. A target
+exit. Likewise, a durable boot-identity-bound ambiguity guard is published before
+replacement launch, narrowed to its PID after spawn, and replaced by its exact identity. A target
 with no queryable identity prevents rollback until its exit can be confirmed, and
-the guard keeps startup recovery fail-safe if the owning helper crashes at any
-launch boundary. Recovery markers are atomically published without replacement;
+the guard keeps startup recovery fail-safe if the owning helper crashes during
+the same boot. After a reboot the guard is provably stale and normal journal
+recovery resumes; failure to read boot identity remains fail-safe. Recovery
+markers are atomically published without replacement;
 a surviving recovery claim prevents a torn marker from failing open.
 The bundled native swap tool first validates the real app/stage operands and is
 probed on the exact install filesystem; an unsupported mount, reparse point, or

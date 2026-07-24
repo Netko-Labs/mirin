@@ -21,7 +21,7 @@ pub use durable_fs::{
     sync_parent, sync_tree,
 };
 pub use process_identity::{
-    process_matches, process_token, terminate_process, wait_for_process_exit,
+    boot_token, process_matches, process_token, terminate_process, wait_for_process_exit,
 };
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);

@@ -1,5 +1,5 @@
 use mirin_codec::{
-    atomic_swap_directories, bsdiff_file, bspatch_file, bspatch_file_bounded,
+    atomic_swap_directories, boot_token, bsdiff_file, bspatch_file, bspatch_file_bounded,
     durable_move_directory, durable_remove_directory, durable_remove_file, durable_write,
     is_atomic_swap_durability_error, process_token, sync_parent, sync_tree, terminate_process,
     validate_atomic_swap_directories, wait_for_process_exit, zstd_compress_file,
@@ -102,6 +102,10 @@ fn run() -> io::Result<()> {
                 "{}",
                 process_token(process_id(argument(&args, 1, "missing process id")?)?)?
             );
+            Ok(())
+        }
+        "boot-token" => {
+            println!("{}", boot_token()?);
             Ok(())
         }
         "wait-process" => wait_for_process_exit(
