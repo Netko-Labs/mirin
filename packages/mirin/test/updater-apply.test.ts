@@ -40,6 +40,7 @@ describe("Windows updater launcher", () => {
       ready: "C:\\State\\.update-ready-42-token",
       activated: "C:\\Updates\\generation\\.apply-helper-activated",
       armed: "C:\\Updates\\generation\\.apply-helper-armed",
+      swapTool: "C:\\Updates\\generation\\.mirin-atomic-swap.exe",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
     });
@@ -51,6 +52,15 @@ describe("Windows updater launcher", () => {
     expect(script.indexOf("C:\\Apps\\[beta]\\Mirin.old", launch)).toBeGreaterThan(launch);
     expect(script.indexOf("C:\\State\\.update-handoff.json", readiness)).toBeGreaterThan(readiness);
     expect(script).toContain("Updater backup path already exists");
+    expect(script).toContain("atomic-swap");
+    expect(script).toContain("Application could not be terminated for updater handoff");
+    expect(script).toContain("$preserveOwnership=$true");
+    expect(script).not.toContain(
+      "Move-Item -LiteralPath 'C:\\Apps\\[beta]\\Mirin' -Destination 'C:\\Apps\\[beta]\\Mirin.old'",
+    );
+    expect(script).not.toContain(
+      "Move-Item -LiteralPath 'C:\\Apps\\[beta]\\.Mirin.mirin-new-42-token' -Destination 'C:\\Apps\\[beta]\\Mirin'",
+    );
     expect(script).toContain("Replacement readiness receipt has the wrong process id");
     expect(script).toContain("$readyPid -ne [string]$newProcess.Id");
     const activated = script.indexOf(".apply-helper-activated");
@@ -105,14 +115,15 @@ describe("POSIX updater helpers", () => {
       ready: "/tmp/state/.update-ready-42-token",
       activated: "/tmp/generation/.apply-helper-activated",
       armed: "/tmp/generation/.apply-helper-armed",
+      swapTool: "/tmp/generation/.mirin-atomic-swap",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
     });
     const launch = script.indexOf('nohup "$EXE"');
     const readiness = script.indexOf('[ -f "$READY" ]', launch);
     const deleteBackup = script.indexOf('rm -rf "$OLD"', readiness);
-    const restoreBackup = script.indexOf('mv "$OLD" "$APP"', launch);
-    const reopenOld = script.indexOf("then relaunch_old", restoreBackup);
+    const restoreBackup = script.indexOf('"$SWAP" atomic-swap "$APP" "$RESTORE"', launch);
+    const reopenOld = script.indexOf("relaunch_old", restoreBackup);
     expect(launch).toBeGreaterThan(0);
     expect(readiness).toBeGreaterThan(launch);
     expect(deleteBackup).toBeGreaterThan(readiness);
@@ -121,8 +132,13 @@ describe("POSIX updater helpers", () => {
     expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
     expect(script).toContain('if [ "$READY_PID" = "$NEW_PID" ]');
     expect(script).toContain('kill -KILL "$NEW_PID"');
+    expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
+    expect(script).toContain('kill -KILL "$PID"');
+    expect(script).toContain('elif [ "$ACCEPTED" -eq 1 ]; then');
+    expect(script).not.toContain('mv "$APP" "$OLD"');
+    expect(script).not.toContain('mv "$NEW" "$APP"');
     expect(script.indexOf('test "$ACTIVATED_PID" = "$$"')).toBeLessThan(
-      script.indexOf('printf "%s" "$$" > "$ARMED"'),
+      script.indexOf('printf "%s" "$$" > "$ARMED_TMP"'),
     );
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
@@ -139,6 +155,7 @@ describe("POSIX updater helpers", () => {
       ready: "/tmp/state/.update-ready-42-token",
       activated: "/tmp/generation/.apply-helper-activated",
       armed: "/tmp/generation/.apply-helper-armed",
+      swapTool: "/tmp/generation/.mirin-atomic-swap",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
     });
@@ -147,15 +164,16 @@ describe("POSIX updater helpers", () => {
     expect(launch).toBeGreaterThan(0);
     expect(readiness).toBeGreaterThan(launch);
     expect(script.indexOf('kill -0 "$NEW_PID"', launch)).toBeGreaterThan(launch);
-    expect(script.indexOf('mv "$OLD" "$APP"', launch)).toBeGreaterThan(launch);
+    expect(script.indexOf('"$SWAP" atomic-swap "$APP" "$RESTORE"', launch)).toBeGreaterThan(launch);
     expect(script.indexOf('rm -rf "$OLD"', readiness)).toBeGreaterThan(readiness);
     expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
-    expect(script.indexOf('printf "%s" "$$" > "$ARMED"')).toBeLessThan(
-      script.indexOf('while kill -0 "$PID"'),
+    expect(script.indexOf('printf "%s" "$$" > "$ARMED_TMP"')).toBeLessThan(
+      script.indexOf('while [ "$i" -lt 150 ] && kill -0 "$PID"'),
     );
     expect(script.indexOf('test "$ACTIVATED_PID" = "$$"')).toBeLessThan(
-      script.indexOf('printf "%s" "$$" > "$ARMED"'),
+      script.indexOf('printf "%s" "$$" > "$ARMED_TMP"'),
     );
+    expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
     }
@@ -168,6 +186,7 @@ describe("POSIX updater helpers", () => {
     const staged = join(root, ".Mirin.app.mirin-new");
     const workDir = join(root, "work");
     const marker = join(root, ".update-handoff.json");
+    const swapTool = join(workDir, ".mirin-atomic-swap");
     try {
       mkdirSync(runningApp);
       mkdirSync(staged);
@@ -175,6 +194,7 @@ describe("POSIX updater helpers", () => {
       writeFileSync(join(runningApp, "old-sentinel"), "old");
       writeFileSync(join(staged, "new-sentinel"), "new");
       writeFileSync(marker, "{}");
+      writeTestSwapTool(swapTool);
 
       const helper = Bun.spawn([
         "/bin/sh",
@@ -188,6 +208,7 @@ describe("POSIX updater helpers", () => {
           ready: join(root, ".update-ready"),
           activated: join(workDir, ".apply-helper-activated"),
           armed: join(workDir, ".apply-helper-armed"),
+          swapTool,
           token: "42-00000000-0000-0000-0000-000000000000",
           pid: 2_147_483_647,
         }),
@@ -212,6 +233,7 @@ describe("POSIX updater helpers", () => {
     const ready = join(root, ".update-ready-42-token");
     const activated = join(workDir, ".apply-helper-activated");
     const armed = join(workDir, ".apply-helper-armed");
+    const swapTool = join(workDir, ".mirin-atomic-swap");
     const executable = join(runningApp, "Contents", "MacOS", "Mirin");
     const stagedExecutable = join(staged, "Contents", "MacOS", "Mirin");
     try {
@@ -225,6 +247,7 @@ describe("POSIX updater helpers", () => {
       writeFileSync(marker, "{}");
       chmodSync(executable, 0o755);
       chmodSync(stagedExecutable, 0o755);
+      writeTestSwapTool(swapTool);
 
       const parent = Bun.spawn(["/bin/sh", "-c", "sleep 30"], {
         stdin: "ignore",
@@ -240,6 +263,7 @@ describe("POSIX updater helpers", () => {
         ready,
         activated,
         armed,
+        swapTool,
         token: "42-00000000-0000-0000-0000-000000000000",
         pid: parent.pid,
       });
@@ -281,3 +305,19 @@ describe("POSIX updater helpers", () => {
     ).not.toThrow();
   });
 });
+
+function writeTestSwapTool(path: string): void {
+  writeFileSync(
+    path,
+    [
+      "#!/bin/sh",
+      'test "$1" = atomic-swap',
+      'temporary="$2.mirin-test-swap"',
+      'mv "$2" "$temporary"',
+      'mv "$3" "$2"',
+      'mv "$temporary" "$3"',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(path, 0o755);
+}

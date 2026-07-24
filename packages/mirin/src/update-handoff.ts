@@ -164,11 +164,17 @@ export function signalUpdateReady(readyPath: string): void {
   if (!READY_FILE.test(basename(readyPath))) {
     throw new Error("invalid updater readiness path");
   }
-  writeFileSync(readyPath, String(process.pid), {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
+  const temporary = `${readyPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, String(process.pid), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    renameSync(temporary, readyPath);
+  } finally {
+    removeFileBestEffort(temporary);
+  }
 }
 
 function serializeMarker(marker: UpdateHandoffMarker): string {

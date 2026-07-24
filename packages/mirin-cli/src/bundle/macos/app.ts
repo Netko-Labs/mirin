@@ -4,6 +4,7 @@
  *   <App>.app/Contents/
  *     MacOS/<exe>                 compiled Bun host
  *     MacOS/libmirin_core.dylib   loaded by the host via bun:ffi
+ *     MacOS/mirin-codec           atomic updater swap + release codecs
  *     Frameworks/Chromium Embedded Framework.framework
  *     Frameworks/<exe> Helper[ (Type)].app   x5   (mirin-helper)
  *
@@ -51,6 +52,7 @@ export interface BundleOptions {
   outDir: string;
   hostExe: string; // compiled Bun host binary
   coreDylib: string; // libmirin_core.dylib
+  codecBin: string; // mirin-codec (atomic updater swap + release codecs)
   helperBin: string; // compiled mirin-helper binary
   cefPath: string; // dir containing the CEF framework (vendor/cef)
   /** Production CEF locale allowlist. Undefined keeps every locale. */
@@ -248,6 +250,9 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
 
       cpSync(opts.hostExe, join(macos, appName));
       cpSync(opts.coreDylib, join(macos, "libmirin_core.dylib"));
+      const codec = join(macos, "mirin-codec");
+      cpSync(opts.codecBin, codec);
+      chmodSync(codec, 0o755);
 
       // Render the icon (if any) into Resources before writing the plist, so we
       // only set CFBundleIconFile when an icon was actually produced.
@@ -401,6 +406,8 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
           await sign(cef);
           // 3. our FFI core dylib.
           await sign(join(macos, "libmirin_core.dylib"));
+          // 3a. the standalone updater swap helper.
+          await sign(codec);
           // 3b. sidecars: hardened runtime + timestamp; per-binary entitlements only
           //     when the spec asks (most CLIs need none — over-entitling is a smell).
           for (const sc of sidecarDests) {
@@ -428,6 +435,7 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
       } else {
         // Ad-hoc: enough to launch locally; not distributable or notarizable.
         await $`codesign --force --sign ${identity} ${cef}`.quiet();
+        await $`codesign --force --sign ${identity} ${codec}`.quiet();
         for (const sc of sidecarDests) {
           await $`codesign --force --sign ${identity} ${sc.src}`.quiet();
         }

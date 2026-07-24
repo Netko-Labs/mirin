@@ -141,10 +141,17 @@ public `Updater` instance. Before that handoff, the validated tree is copied
 and revalidated beside the install. The parent atomically records the helper PID
 in the reservation and publishes a PID-bound activation acknowledgement; only
 then may the helper arm and treat parent death as swap authorization.
+The bundled native swap tool is first probed on the exact install filesystem; an
+unsupported volume fails before terminal handoff. The helper atomically exchanges
+the complete old and staged directories, keeping the canonical launch path present
+through interruption, and forces/confirms parent termination if graceful shutdown
+exceeds its deadline. An activated helper whose death cannot be confirmed retains
+the reservation and recovery trees.
 The helper reserves the next launch for its token-bearing target with a bounded
 24-hour lease that recovers safely from stale PID reuse, and retains the
-backup until that exact PID acquires the exclusive lock and reports Worker/native
-readiness; timeout or early exit restores and relaunches the old install.
+backup until that exact PID acquires the exclusive lock and atomically publishes
+Worker/native readiness; timeout or early exit atomically restores and relaunches
+the old install.
 AppImage/deb/rpm payloads omit updater metadata and update through their
 package channel. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation

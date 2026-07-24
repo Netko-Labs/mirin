@@ -1,5 +1,7 @@
 //! Updater codec shared by the app runtime and the standalone release helper.
 
+mod atomic_swap;
+
 use qbsdiff::{Bsdiff, Bspatch};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -7,6 +9,8 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
+
+pub use atomic_swap::atomic_swap_directories;
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const MAX_ZSTD_WINDOW_LOG: u32 = 27;

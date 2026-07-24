@@ -140,19 +140,26 @@ readiness before user listeners, then asynchronously prunes exact dead-owner ins
 staging siblings with session ownership and bounded live-PID leases.
 Non-current generation-owner PIDs share the same bounded lease.
 The validated payload is first copied and revalidated beside
-the install. The swap uses literal PowerShell paths, a unique backup, rejects stale
-backup collisions, removes partial replacements before rollback, verifies
-restoration, and removes its generation work before relaunching the restored app.
+the install. The bundled `mirin-codec.exe` is copied into helper work and probes a
+TxF directory transaction on that exact volume before terminal handoff. PowerShell
+uses literal paths, atomically commits the three namespace renames that exchange
+the complete app trees, keeps the canonical launch path present through interruption,
+rejects stale backup collisions, atomically rolls back, verifies restoration, and
+removes its generation work before relaunching the restored app.
 A private handoff reservation admits only the helper's token-bearing target after
 the old PID releases its OS lock and expires after a bounded 24-hour stale lease.
 PowerShell keeps the backup until
 that exact replacement PID acquires the exclusive lock and writes a Worker/native
 readiness receipt; every post-exit failure stops it, restores the old
-folder, clears the reservation, and relaunches the prior executable. Runtime manifests
+folder, clears the reservation, and relaunches the prior executable. If graceful
+parent shutdown reaches its deadline, PowerShell forces and confirms termination
+before swapping; unconfirmed helper/replacement termination or rollback preserves
+the reservation and both trees. Armed and readiness PIDs are published by atomic
+rename so polling never consumes partial contents. Runtime manifests
 require a pinned Ed25519 signature, and every redirect hop is subject to the
 HTTPS-or-loopback rule. `publish-all.ts` publishes the host-platform native package.
-Release-time compression uses the standalone `mirin-codec.exe`, which has no CEF or Bun
-FFI dependency.
+The bundled standalone `mirin-codec.exe` provides both updater atomic exchange and
+release-time compression without a CEF or Bun FFI dependency.
 
 Windows arm64 currently uses an x64 host/core/CEF compatibility payload because
 Bun's native Windows arm64 runtime does not provide `bun:ffi`. Windows 11 ARM runs

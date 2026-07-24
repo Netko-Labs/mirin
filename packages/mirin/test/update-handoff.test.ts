@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -61,6 +69,8 @@ describe("update handoff reservations", () => {
 
     signalUpdateReady(handoff.readyPath);
     expect(existsSync(handoff.readyPath)).toBe(true);
+    expect(readFileSync(handoff.readyPath, "utf8")).toBe(String(process.pid));
+    expect(readdirSync(state).some((entry) => entry.endsWith(".tmp"))).toBe(false);
     abandonUpdateHandoff(handoff);
     expect(existsSync(handoff.markerPath)).toBe(false);
     expect(existsSync(handoff.readyPath)).toBe(false);

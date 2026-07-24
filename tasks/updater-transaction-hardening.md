@@ -75,6 +75,11 @@
 - [x] Keep public updater-instance generation work directories disjoint.
 - [x] Require parent activation before a detached helper may arm or swap.
 - [x] Share apply and terminal latches across every public updater instance.
+- [x] Probe a packaged native atomic directory exchange before terminal handoff.
+- [x] Keep the canonical launch path present through interruption and atomic rollback.
+- [x] Atomically publish helper arming and replacement readiness receipts.
+- [x] Force and confirm parent termination after an accepted graceful-shutdown deadline.
+- [x] Confirm activated-helper death before abandoning ownership or preserve all recovery state.
 
 ## Checkpoints
 
@@ -239,3 +244,18 @@
   tests with the two expected Windows lifecycle skips on macOS; focused handoff,
   apply, cleanup, lifecycle, and transaction coverage passed 23 tests; `git diff
   --check` passed.
+- Eighteenth clean-context review remediation: bundle and preflight the native
+  atomic swap tool, use OS-level directory exchange so the canonical path is
+  never absent, force/confirm accepted parent shutdown, atomically publish armed
+  and readiness receipts, and retain terminal ownership plus recovery trees when
+  activated-helper termination cannot be confirmed.
+- Eighteenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 246
+  tests with the two expected Windows lifecycle skips on macOS; focused updater,
+  handoff, and bundle coverage passed 38 tests; `git diff --check` passed.
+- Eighteenth-review local Rust: `cargo fmt --all --check`, workspace clippy with
+  warnings denied, and workspace tests passed (22 tests across codec, core, and
+  helper). The native atomic-swap module also cross-compiled warning-free for
+  `x86_64-pc-windows-msvc`; the full Windows workspace remains covered by CI
+  because its existing C dependencies require Windows SDK headers unavailable on
+  the macOS host.

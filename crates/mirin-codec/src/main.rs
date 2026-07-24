@@ -1,9 +1,10 @@
 use mirin_codec::{
-    bsdiff_file, bspatch_file, bspatch_file_bounded, zstd_compress_file, zstd_decompress_file,
-    zstd_decompress_file_bounded,
+    atomic_swap_directories, bsdiff_file, bspatch_file, bspatch_file_bounded, zstd_compress_file,
+    zstd_decompress_file, zstd_decompress_file_bounded,
 };
 use std::env;
 use std::io;
+use std::path::Path;
 
 fn argument<'a>(args: &'a [String], index: usize, usage: &str) -> io::Result<&'a str> {
     args.get(index)
@@ -59,6 +60,10 @@ fn run() -> io::Result<()> {
             byte_limit(argument(&args, 4, "missing old input byte limit")?)?,
             byte_limit(argument(&args, 5, "missing patch input byte limit")?)?,
             byte_limit(argument(&args, 6, "missing output byte limit")?)?,
+        ),
+        "atomic-swap" => atomic_swap_directories(
+            Path::new(argument(&args, 1, "missing first directory")?),
+            Path::new(argument(&args, 2, "missing second directory")?),
         ),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,

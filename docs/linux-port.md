@@ -184,11 +184,16 @@ manifest/download/codec output with an 8 GiB streaming reconstructed-tar/decompr
 ceiling and a 512 MiB combined in-memory patch-input ceiling,
 and safe tar entry/link types before launching the asynchronous folder swap. Before
 handoff the runtime copies and revalidates the payload beside the portable install,
-and the helper acknowledges its prerequisites. Its token-bearing successor must
+copies the bundled `mirin-codec` into helper work, and probes
+`renameat2(RENAME_EXCHANGE)` on that exact volume before the helper acknowledges
+its prerequisites. Its token-bearing successor must
 acquire the exclusive app lock; the helper retains its unique backup until that exact
-PID reports Worker/native readiness. Early exit or timeout uses bounded termination,
-removes the partial replacement, clears the reservation, restores, verifies, and
-relaunches the old app. Native shutdown begins before synchronous updater completion
+PID atomically reports Worker/native readiness. Complete directory exchange keeps
+the canonical launch path present through interruption. Early exit or timeout uses
+bounded termination and atomic rollback before verifying and relaunching the old app;
+unconfirmed termination or rollback preserves terminal ownership and both trees.
+An accepted helper forces and confirms parent termination after the graceful
+deadline rather than discarding the transaction. Native shutdown begins before synchronous updater completion
 listeners. The parent records the shell helper PID in the reservation before
 publishing its PID-bound activation, and an unactivated helper cannot swap after a
 parent crash. Process-wide terminal/apply latches stop all updater-instance

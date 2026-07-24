@@ -6,6 +6,7 @@
  *   <App>/
  *     <App>.exe                compiled Bun host (process.execPath)
  *     mirin_core.dll           loaded by the host via bun:ffi
+ *     mirin-codec.exe          atomic updater swap + release codecs
  *     mirin-helper.exe         CEF subprocess (browser_subprocess_path)
  *     libcef.dll, *.pak, icudtl.dat, v8_context_snapshot.bin, locales/, …  (CEF runtime)
  *     resources/               (production only — dev serves from the Vite URL)
@@ -47,6 +48,7 @@ export interface WinBundleOptions {
   outDir: string;
   hostExe: string; // compiled Bun host (.exe)
   coreDll: string; // mirin_core.dll
+  codecBin: string; // mirin-codec.exe (atomic updater swap + release codecs)
   helperExe: string; // mirin-helper.exe
   cefPath: string; // dir containing the Windows CEF runtime (vendor/cef)
   /** Production CEF locale allowlist. Undefined keeps every locale. */
@@ -96,6 +98,7 @@ export async function buildWindowsBundle(
       const exe = join(staging, `${appName}.exe`);
       cpSync(opts.hostExe, exe);
       cpSync(opts.coreDll, join(staging, "mirin_core.dll"));
+      cpSync(opts.codecBin, join(staging, "mirin-codec.exe"));
       cpSync(opts.helperExe, join(staging, "mirin-helper.exe"));
 
       copyCefRuntime(cefPath, staging, opts.cefLocales);

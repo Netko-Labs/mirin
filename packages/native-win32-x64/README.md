@@ -2,6 +2,6 @@
 
 Prebuilt [mirin](https://github.com/Netko-Labs/mirin) native binaries for Windows
 x64: `mirin_core.dll` (the FFI core, `dlopen`ed by the host), `mirin-codec.exe`
-(the release-time updater codec), and `mirin-helper.exe` (the CEF subprocess).
+(the atomic updater swap and release codec), and `mirin-helper.exe` (the CEF subprocess).
 Installed automatically as an optional dependency of
 `@mirinjs/cli` on Windows; the CEF runtime is fetched separately on first build.

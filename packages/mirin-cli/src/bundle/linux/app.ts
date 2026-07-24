@@ -6,6 +6,7 @@
  *   <App>/
  *     <App>                    compiled Bun host (process.execPath)
  *     libmirin_core.so         loaded by the host via bun:ffi
+ *     mirin-codec              atomic updater swap + release codecs
  *     mirin-helper             CEF subprocess (browser_subprocess_path)
  *     libcef.so, libEGL.so, libGLESv2.so, *.pak, icudtl.dat,
  *     v8_context_snapshot.bin, locales/, chrome-sandbox, …  (CEF runtime)
@@ -58,6 +59,7 @@ export interface LinuxBundleOptions {
   outDir: string;
   hostExe: string; // compiled Bun host (no extension)
   coreDll: string; // libmirin_core.so
+  codecBin: string; // mirin-codec (atomic updater swap + release codecs)
   helperExe: string; // mirin-helper
   cefPath: string; // dir containing the Linux CEF runtime (vendor/cef)
   /** Production CEF locale allowlist. Undefined keeps every locale. */
@@ -227,6 +229,9 @@ export async function buildLinuxBundle(
       cpSync(opts.hostExe, exe);
       chmodSync(exe, 0o755);
       cpSync(opts.coreDll, join(staging, "libmirin_core.so"));
+      const codec = join(staging, "mirin-codec");
+      cpSync(opts.codecBin, codec);
+      chmodSync(codec, 0o755);
       const helper = join(staging, "mirin-helper");
       cpSync(opts.helperExe, helper);
       chmodSync(helper, 0o755);

@@ -259,9 +259,14 @@ off the main-process API:
   process exit. Native terminal shutdown is requested before synchronous
   `complete` status listeners run. A private handoff reservation blocks ordinary launches after the
   OS lock is released; only the helper's token-bearing target may proceed, and it
-  must acquire the exclusive lock. The backup remains until that exact launched
-  PID writes a Worker/native readiness receipt. Every post-exit failure rolls back
-  and reopens the prior install; POSIX replacement termination is bounded. Managed Linux
+  must acquire the exclusive lock. Before arming, Mirin probes the bundled native
+  swap tool on the install filesystem; unsupported volumes fail without entering
+  terminal state. The helper atomically exchanges complete old/new directories,
+  so interruption never removes the canonical launch path. The backup remains
+  until that exact launched PID atomically publishes a Worker/native readiness
+  receipt. Every recoverable post-exit failure atomically rolls back and reopens
+  the prior install; parent/replacement termination is bounded, while unconfirmed
+  termination or rollback preserves terminal ownership and both trees. Managed Linux
   AppImage/deb/rpm payloads omit updater metadata and update through their package
   channel. Malformed embedded `version.json` metadata,
   including its Ed25519 public-key trust anchor, disables
@@ -271,7 +276,10 @@ off the main-process API:
   staged `version.json` files are size-bounded before allocation/decoding.
   Before the helper may arm, the parent atomically records its exact PID in the
   reservation and publishes a PID-bound activation acknowledgement. A helper
-  without that acknowledgement exits without swapping. Apply and terminal state
+  without that acknowledgement exits without swapping. Armed acknowledgement and
+  replacement readiness use temp-file-plus-rename publication. An accepted helper
+  forces and confirms parent termination after the graceful-shutdown deadline;
+  it never discards the transaction merely because that deadline elapsed. Apply and terminal state
   are shared by every public `Updater` instance, including auto-check shutdown.
   `release.channel` supports validated safe
   dotted names consistently across build/release output, embedded identity, manifest

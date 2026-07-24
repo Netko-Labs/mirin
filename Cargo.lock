@@ -1122,7 +1122,9 @@ dependencies = [
 name = "mirin-codec"
 version = "0.1.0-alpha.18"
 dependencies = [
+ "libc",
  "qbsdiff",
+ "windows-sys 0.61.2",
  "zstd",
 ]
 

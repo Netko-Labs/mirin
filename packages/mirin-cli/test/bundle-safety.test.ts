@@ -25,6 +25,7 @@ describe("bundle sink validation", () => {
         version: "1.2.3",
         channel: "stable",
         coreDll: paths.core,
+        codecBin: paths.codec,
         helperExe: paths.helper,
       }),
     ).rejects.toThrow("invalid app id");
@@ -41,6 +42,7 @@ describe("bundle sink validation", () => {
         version: "1.2.3",
         channel: "../beta",
         coreDll: paths.core,
+        codecBin: paths.codec,
         helperExe: paths.helper,
       }),
     ).rejects.toThrow("invalid release channel");
@@ -57,6 +59,7 @@ describe("bundle sink validation", () => {
         version: "1.2",
         channel: "stable",
         coreDylib: paths.core,
+        codecBin: paths.codec,
         helperBin: paths.helper,
       }),
     ).rejects.toThrow("invalid app version");
@@ -76,6 +79,7 @@ describe("bundle sink validation", () => {
         version: "1.2.3",
         channel: "stable",
         coreDll: paths.core,
+        codecBin: paths.codec,
         helperExe: paths.helper,
         resources: { sidecars: [{ name: "../escape", src: sidecar }] },
       }),
@@ -96,6 +100,7 @@ describe("bundle sink validation", () => {
         version: "1.2.3",
         channel: "stable",
         coreDll: paths.core,
+        codecBin: paths.codec,
         helperExe: paths.helper,
         resources: {
           sidecars: [
@@ -123,9 +128,11 @@ describe("bundle sink validation", () => {
     const host = join(root, "host");
     const core = join(root, "core");
     const helper = join(root, "helper");
+    const codec = join(root, "codec");
     writeFileSync(host, "host");
     writeFileSync(core, "core");
     writeFileSync(helper, "helper");
+    writeFileSync(codec, "codec");
 
     await expect(
       buildWindowsBundle({
@@ -137,6 +144,7 @@ describe("bundle sink validation", () => {
         channel: "stable",
         hostExe: host,
         coreDll: core,
+        codecBin: codec,
         helperExe: helper,
         cefPath,
       }),
@@ -159,6 +167,7 @@ describe("bundle sink validation", () => {
         version: "1.2.3",
         channel: "stable",
         coreDll: paths.core,
+        codecBin: paths.codec,
         helperExe: paths.helper,
         icon,
       }),
@@ -170,12 +179,14 @@ describe("bundle sink validation", () => {
 function fixture(appDirectoryName: string): {
   root: string;
   core: string;
+  codec: string;
   helper: string;
   sentinel: string;
   common: {
     projectDir: string;
     outDir: string;
     hostExe: string;
+    codecBin: string;
     cefPath: string;
   };
 } {
@@ -188,15 +199,24 @@ function fixture(appDirectoryName: string): {
   writeFileSync(sentinel, "keep");
   const host = join(root, "host");
   const core = join(root, "core");
+  const codec = join(root, "codec");
   const helper = join(root, "helper");
   writeFileSync(host, "host");
   writeFileSync(core, "core");
+  writeFileSync(codec, "codec");
   writeFileSync(helper, "helper");
   return {
     root,
     core,
+    codec,
     helper,
     sentinel,
-    common: { projectDir: root, outDir, hostExe: host, cefPath: join(root, "missing-cef") },
+    common: {
+      projectDir: root,
+      outDir,
+      hostExe: host,
+      codecBin: codec,
+      cefPath: join(root, "missing-cef"),
+    },
   };
 }

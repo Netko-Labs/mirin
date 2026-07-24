@@ -135,9 +135,11 @@ describe("sidecar bundle copies", () => {
     const host = join(root, "host");
     const core = join(root, "libmirin_core.so");
     const helper = join(root, "mirin-helper");
+    const codec = join(root, "mirin-codec");
     writeFileSync(host, "host");
     writeFileSync(core, "core");
     writeFileSync(helper, "helper");
+    writeFileSync(codec, "codec");
 
     const source = join(binDir, "tool");
     const link = join(binDir, "tool-link");
@@ -156,16 +158,20 @@ describe("sidecar bundle copies", () => {
       outDir,
       hostExe: host,
       coreDll: core,
+      codecBin: codec,
       helperExe: helper,
       cefPath,
       resources: { sidecars: [sidecar] },
     });
 
     const bundled = join(app, "resources", "sidecars", "tool");
+    const bundledCodec = join(app, "mirin-codec");
     expect(lstatSync(bundled).isFile()).toBe(true);
     expect(lstatSync(bundled).isSymbolicLink()).toBe(false);
     expect(statSync(source).mode & 0o777).toBe(0o640);
     expect(statSync(bundled).mode & 0o777).toBe(0o755);
+    expect(lstatSync(bundledCodec).isFile()).toBe(true);
+    expect(statSync(bundledCodec).mode & 0o777).toBe(0o755);
   });
 });
 

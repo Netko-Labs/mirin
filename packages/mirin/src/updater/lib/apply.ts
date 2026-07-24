@@ -1,4 +1,16 @@
-import { lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  constants as fsConstants,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -33,6 +45,7 @@ interface ShellScriptOptions {
   ready: string;
   activated: string;
   armed: string;
+  swapTool: string;
   token: string;
   pid?: number;
   backup?: string;
@@ -42,6 +55,13 @@ interface WindowsScriptOptions extends ShellScriptOptions {
   executable: string;
   backup: string;
   helperFiles: string[];
+}
+
+class PreservedHelperOwnershipError extends Error {
+  constructor(cause: unknown) {
+    super("updater helper ownership could not be released safely", { cause });
+    this.name = "PreservedHelperOwnershipError";
+  }
 }
 
 export function renderWindowsLaunchVbs(powershellScript: string, helperPidFile?: string): string {
@@ -83,12 +103,16 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
   return [
     "$ErrorActionPreference='Stop'",
     "Set-Location -LiteralPath $env:TEMP",
+    "$accepted=$false",
     "$parentExited=$false",
+    "$swapped=$false",
+    "$preserveOwnership=$false",
     "$newProcess=$null",
     "try {",
     `  if (Test-Path -LiteralPath ${psq(options.backup)}) { throw 'Updater backup path already exists' }`,
     `  if (-not (Test-Path -LiteralPath ${psq(options.runningApp)} -PathType Container)) { throw 'Installed app path is unavailable' }`,
     `  if (-not (Test-Path -LiteralPath ${psq(options.staged)} -PathType Container)) { throw 'Install-filesystem stage is unavailable' }`,
+    `  if (-not (Test-Path -LiteralPath ${psq(options.swapTool)} -PathType Leaf)) { throw 'Atomic updater swap tool is unavailable' }`,
     "  $activationDeadline=(Get-Date).AddSeconds(5)",
     "  while ($true) {",
     `    if (Test-Path -LiteralPath ${psq(options.activated)} -PathType Leaf) {`,
@@ -100,17 +124,27 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "    if ((Get-Date) -ge $activationDeadline) { throw 'Updater helper was not activated' }",
     "    Start-Sleep -Milliseconds 25",
     "  }",
-    `  [System.IO.File]::WriteAllText(${psq(options.armed)},[string]$PID,[System.Text.Encoding]::ASCII)`,
+    `  $armedTemp=${psq(`${options.armed}.tmp`)}+'.'+[string]$PID`,
+    "  [System.IO.File]::WriteAllText($armedTemp,[string]$PID,[System.Text.Encoding]::ASCII)",
+    `  Move-Item -LiteralPath $armedTemp -Destination ${psq(options.armed)} -ErrorAction Stop`,
+    "  $accepted=$true",
     "  $parentDeadline=(Get-Date).AddSeconds(30)",
     `  while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) {`,
-    "    if ((Get-Date) -ge $parentDeadline) { throw 'Application did not exit for updater handoff' }",
+    "    if ((Get-Date) -ge $parentDeadline) {",
+    `      Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`,
+    "      $forcedDeadline=(Get-Date).AddSeconds(5)",
+    `      while ((Get-Process -Id ${pid} -ErrorAction SilentlyContinue) -and (Get-Date) -lt $forcedDeadline) { Start-Sleep -Milliseconds 100 }`,
+    `      if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { throw 'Application could not be terminated for updater handoff' }`,
+    "      break",
+    "    }",
     "    Start-Sleep -Milliseconds 200",
     "  }",
     "  $parentExited=$true",
     `  Remove-Item -LiteralPath ${psq(options.ready)} -Force -ErrorAction SilentlyContinue`,
-    `  for ($i=0; $i -lt 50; $i++) { try { Move-Item -LiteralPath ${psq(options.runningApp)} -Destination ${psq(options.backup)} -ErrorAction Stop } catch {}; if ((Test-Path -LiteralPath ${psq(options.backup)}) -and -not (Test-Path -LiteralPath ${psq(options.runningApp)})) { break }; Start-Sleep -Milliseconds 200 }`,
-    `  if ((Test-Path -LiteralPath ${psq(options.runningApp)}) -or -not (Test-Path -LiteralPath ${psq(options.backup)})) { throw 'Could not unlock the existing app' }`,
-    `  Move-Item -LiteralPath ${psq(options.staged)} -Destination ${psq(options.runningApp)} -ErrorAction Stop`,
+    `  & ${psq(options.swapTool)} atomic-swap ${psq(options.runningApp)} ${psq(options.staged)}`,
+    "  if ($LASTEXITCODE -ne 0) { throw 'Could not atomically exchange the installed app' }",
+    "  $swapped=$true",
+    `  Move-Item -LiteralPath ${psq(options.staged)} -Destination ${psq(options.backup)} -ErrorAction Stop`,
     `  $env:${UPDATE_HANDOFF_TOKEN_ENV}=${psq(options.token)}`,
     "  try {",
     `    $newProcess=Start-Process -FilePath ${psq(options.executable)} -WorkingDirectory ${psq(options.runningApp)} -PassThru`,
@@ -147,9 +181,13 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "      $canRestore=$newProcess.WaitForExit(5000)",
     "    }",
     "    if ($parentExited -and $canRestore) {",
-    `      if (Test-Path -LiteralPath ${psq(options.backup)}) {`,
-    `        Remove-Item -LiteralPath ${psq(options.runningApp)} -Recurse -Force -ErrorAction SilentlyContinue`,
-    `        Move-Item -LiteralPath ${psq(options.backup)} -Destination ${psq(options.runningApp)} -ErrorAction Stop`,
+    "      $restorePath=$null",
+    `      if (Test-Path -LiteralPath ${psq(options.backup)} -PathType Container) { $restorePath=${psq(options.backup)} }`,
+    `      elseif ($swapped -and (Test-Path -LiteralPath ${psq(options.staged)} -PathType Container)) { $restorePath=${psq(options.staged)} }`,
+    "      if ($null -ne $restorePath) {",
+    `        & ${psq(options.swapTool)} atomic-swap ${psq(options.runningApp)} $restorePath`,
+    "        if ($LASTEXITCODE -ne 0) { throw 'Update rollback exchange failed' }",
+    "        Remove-Item -LiteralPath $restorePath -Recurse -Force -ErrorAction SilentlyContinue",
     "      }",
     `      if ((Test-Path -LiteralPath ${psq(options.backup)}) -or -not (Test-Path -LiteralPath ${psq(options.executable)} -PathType Leaf)) { throw 'Update rollback failed' }`,
     `      Remove-Item -LiteralPath ${psq(options.staged)} -Recurse -Force -ErrorAction SilentlyContinue`,
@@ -157,15 +195,21 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     `      Remove-Item -LiteralPath ${psq(options.workDir)} -Recurse -Force -ErrorAction SilentlyContinue`,
     `      Start-Process -FilePath ${psq(options.executable)} -WorkingDirectory ${psq(options.runningApp)} -ErrorAction Stop`,
     "    }",
-    "    if (-not $parentExited) {",
+    "    elseif ($parentExited -or $accepted) {",
+    "      $preserveOwnership=$true",
+    "    }",
+    "    else {",
     `      Remove-Item -LiteralPath ${psq(options.staged)} -Recurse -Force -ErrorAction SilentlyContinue`,
     `      Remove-Item -LiteralPath ${psq(options.workDir)} -Recurse -Force -ErrorAction SilentlyContinue`,
     "    }",
     "  } catch {",
     "    $rollbackFailure=$_",
+    "    $preserveOwnership=$true",
     "  }",
-    `  Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.activated)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
-    `  Remove-Item -LiteralPath ${helperFiles} -Force -ErrorAction SilentlyContinue`,
+    "  if (-not $preserveOwnership) {",
+    `    Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.activated)},${psq(options.armed)},$armedTemp -Force -ErrorAction SilentlyContinue`,
+    `    Remove-Item -LiteralPath ${helperFiles} -Force -ErrorAction SilentlyContinue`,
+    "  }",
     "  if ($null -ne $rollbackFailure) { throw $rollbackFailure }",
     "  throw $failure",
     "}",
@@ -196,13 +240,18 @@ function renderPosixApplyShell(
     `READY=${sh(options.ready)}`,
     `ACTIVATED=${sh(options.activated)}`,
     `ARMED=${sh(options.armed)}`,
+    `SWAP=${sh(options.swapTool)}`,
     `TOKEN=${sh(options.token)}`,
     `PID=${options.pid ?? process.pid}`,
     `OLD=${sh(options.backup ?? `${options.runningApp}.mirin-old-${options.pid ?? process.pid}`)}`,
     `EXE=${sh(options.executable)}`,
     "PARENT_EXITED=0",
+    "ACCEPTED=0",
+    "SWAPPED=0",
+    "PRESERVE_OWNERSHIP=0",
     "NEW_PID=",
-    'cleanup_handoff() { rm -f "$HANDOFF" "$READY" "$ACTIVATED" "$ARMED"; }',
+    'ARMED_TMP="$ARMED.tmp.$$"',
+    'cleanup_handoff() { rm -f "$HANDOFF" "$READY" "$ACTIVATED" "$ARMED" "$ARMED_TMP"; }',
     "stop_replacement() {",
     '  if [ -z "$NEW_PID" ] || ! kill -0 "$NEW_PID" 2>/dev/null; then',
     '    if [ -n "$NEW_PID" ]; then wait "$NEW_PID" 2>/dev/null || true; fi',
@@ -239,17 +288,26 @@ function renderPosixApplyShell(
     '  if [ "$PARENT_EXITED" -eq 1 ]; then',
     "    if stop_replacement; then",
     "      restored=1",
-    '      if [ -e "$OLD" ]; then',
-    '        rm -rf "$APP" || restored=0',
-    '        if [ "$restored" -eq 1 ]; then mv "$OLD" "$APP" || restored=0; fi',
+    "      RESTORE=",
+    '      if [ -d "$OLD" ]; then RESTORE="$OLD";',
+    '      elif [ "$SWAPPED" -eq 1 ] && [ -d "$NEW" ]; then RESTORE="$NEW"; fi',
+    '      if [ -n "$RESTORE" ]; then',
+    '        "$SWAP" atomic-swap "$APP" "$RESTORE" || restored=0',
+    '        if [ "$restored" -eq 1 ]; then rm -rf "$RESTORE" 2>/dev/null || true; fi',
     "      fi",
-    '      rm -rf "$NEW" 2>/dev/null || true',
-    "      cleanup_handoff",
-    '      if [ "$restored" -eq 1 ] && [ -x "$EXE" ]; then relaunch_old; fi',
-    '      if [ "$restored" -eq 1 ]; then rm -rf "$WORK" 2>/dev/null || true; fi',
+    '      if [ "$restored" -eq 1 ] && [ -x "$EXE" ]; then',
+    '        rm -rf "$NEW" 2>/dev/null || true',
+    "        cleanup_handoff",
+    "        relaunch_old",
+    '        rm -rf "$WORK" 2>/dev/null || true',
+    "      else",
+    "        PRESERVE_OWNERSHIP=1",
+    "      fi",
     "    else",
-    "      cleanup_handoff",
+    "      PRESERVE_OWNERSHIP=1",
     "    fi",
+    '  elif [ "$ACCEPTED" -eq 1 ]; then',
+    "    PRESERVE_OWNERSHIP=1",
     "  else",
     '    rm -rf "$NEW" "$WORK" 2>/dev/null || true',
     "    cleanup_handoff",
@@ -261,6 +319,7 @@ function renderPosixApplyShell(
     'test ! -e "$OLD"',
     'test -d "$APP"',
     'test -d "$NEW"',
+    'test -x "$SWAP"',
     ...(platform === "linux" ? ["command -v setsid >/dev/null 2>&1"] : []),
     "i=0",
     "while :; do",
@@ -275,17 +334,32 @@ function renderPosixApplyShell(
     "  i=$((i + 1))",
     "  sleep 0.05",
     "done",
-    'printf "%s" "$$" > "$ARMED"',
+    'printf "%s" "$$" > "$ARMED_TMP"',
+    'mv "$ARMED_TMP" "$ARMED"',
+    "ACCEPTED=1",
     "i=0",
-    'while kill -0 "$PID" 2>/dev/null; do',
-    '  if [ "$i" -ge 150 ]; then exit 1; fi',
+    'while [ "$i" -lt 150 ] && kill -0 "$PID" 2>/dev/null; do',
     "  i=$((i + 1))",
     "  sleep 0.2",
     "done",
+    'if kill -0 "$PID" 2>/dev/null; then kill "$PID" 2>/dev/null || true; fi',
+    "i=0",
+    'while [ "$i" -lt 50 ] && kill -0 "$PID" 2>/dev/null; do',
+    "  i=$((i + 1))",
+    "  sleep 0.1",
+    "done",
+    'if kill -0 "$PID" 2>/dev/null; then kill -KILL "$PID" 2>/dev/null || true; fi',
+    "i=0",
+    'while [ "$i" -lt 50 ] && kill -0 "$PID" 2>/dev/null; do',
+    "  i=$((i + 1))",
+    "  sleep 0.1",
+    "done",
+    'kill -0 "$PID" 2>/dev/null && exit 1',
     "PARENT_EXITED=1",
     'rm -f "$READY"',
-    'mv "$APP" "$OLD"',
-    'mv "$NEW" "$APP"',
+    '"$SWAP" atomic-swap "$APP" "$NEW"',
+    "SWAPPED=1",
+    'mv "$NEW" "$OLD"',
     ...(platform === "darwin"
       ? ['xattr -r -d com.apple.quarantine "$APP" 2>/dev/null || true']
       : []),
@@ -321,6 +395,10 @@ export async function applyUpdateAndRelaunch(options: ApplyOptions): Promise<voi
     }
     await applyMac(options, handoff);
   } catch (error) {
+    // An activated helper whose death cannot be confirmed still owns the
+    // terminal handoff. Its reservation and recovery trees must remain intact,
+    // and the caller must continue with terminal shutdown.
+    if (error instanceof PreservedHelperOwnershipError) return;
     abandonUpdateHandoff(handoff);
     throw error;
   }
@@ -340,6 +418,11 @@ async function applyWindows(
   const helperPidFile = join(workDir, APPLY_HELPER_PID_FILE);
   const activated = join(workDir, APPLY_HELPER_ACTIVATED_FILE);
   const armed = join(workDir, APPLY_HELPER_ARMED_FILE);
+  const swapTool = await prepareAtomicSwapTool(
+    join(runningApp, "mirin-codec.exe"),
+    runningApp,
+    workDir,
+  );
   writeFileSync(
     script,
     renderWindowsApplyPowerShell({
@@ -353,6 +436,7 @@ async function applyWindows(
       ready: handoff.readyPath,
       activated,
       armed,
+      swapTool,
       token,
     }),
     "utf8",
@@ -370,18 +454,19 @@ async function applyWindows(
       throw new Error(`failed to launch Windows updater via WMI (${exitCode})`);
     }
     const helperPid = parseHelperPid(readFileSync(helperPidFile, "utf8"));
+    let activationPublished = false;
     try {
       authorizeHelperSwap(handoff, helperPid, activated);
+      activationPublished = true;
       await waitForHelperArmed(armed, helperPid);
     } catch (error) {
-      try {
-        process.kill(helperPid);
-      } catch {
-        // The helper may already have exited; reservation cleanup still follows.
+      if (!(await terminateProcess(helperPid)) && activationPublished) {
+        throw new PreservedHelperOwnershipError(error);
       }
       throw error;
     }
   } catch (error) {
+    if (error instanceof PreservedHelperOwnershipError) throw error;
     for (const file of helperFiles) removePathBestEffort(file);
     throw error;
   }
@@ -396,6 +481,11 @@ async function applyLinux(
   const backup = `${runningApp}.mirin-old-${handoff.token}`;
   const activated = join(workDir, APPLY_HELPER_ACTIVATED_FILE);
   const armed = join(workDir, APPLY_HELPER_ARMED_FILE);
+  const swapTool = await prepareAtomicSwapTool(
+    join(runningApp, "mirin-codec"),
+    runningApp,
+    workDir,
+  );
   await spawnShellSwap(
     renderLinuxApplyShell({
       runningApp,
@@ -407,6 +497,7 @@ async function applyLinux(
       ready: handoff.readyPath,
       activated,
       armed,
+      swapTool,
       token: handoff.token,
     }),
     workDir,
@@ -423,6 +514,11 @@ async function applyMac(
   const backup = `${runningApp}.mirin-old-${handoff.token}`;
   const activated = join(workDir, APPLY_HELPER_ACTIVATED_FILE);
   const armed = join(workDir, APPLY_HELPER_ARMED_FILE);
+  const swapTool = await prepareAtomicSwapTool(
+    join(runningApp, "Contents", "MacOS", "mirin-codec"),
+    runningApp,
+    workDir,
+  );
   await spawnShellSwap(
     renderMacApplyShell({
       runningApp,
@@ -434,6 +530,7 @@ async function applyMac(
       ready: handoff.readyPath,
       activated,
       armed,
+      swapTool,
       token: handoff.token,
     }),
     workDir,
@@ -451,6 +548,7 @@ async function spawnShellSwap(
     stdout: "ignore",
     stderr: "ignore",
   });
+  let activationPublished = false;
   try {
     writeFileSync(join(workDir, APPLY_HELPER_PID_FILE), String(helper.pid), {
       encoding: "utf8",
@@ -458,9 +556,13 @@ async function spawnShellSwap(
       mode: 0o600,
     });
     authorizeHelperSwap(handoff, helper.pid, join(workDir, APPLY_HELPER_ACTIVATED_FILE));
+    activationPublished = true;
     await waitForHelperArmed(join(workDir, APPLY_HELPER_ARMED_FILE), helper.pid);
   } catch (error) {
-    helper.kill();
+    if (!(await terminateSpawnedHelper(helper)) && activationPublished) {
+      helper.unref();
+      throw new PreservedHelperOwnershipError(error);
+    }
     throw error;
   }
   helper.unref();
@@ -539,6 +641,89 @@ function processIsAlive(pid: number): boolean {
   } catch (error) {
     return !(error instanceof Error && "code" in error && error.code === "ESRCH");
   }
+}
+
+async function prepareAtomicSwapTool(
+  bundledTool: string,
+  runningApp: string,
+  workDir: string,
+): Promise<string> {
+  const metadata = lstatSync(bundledTool);
+  if (!metadata.isFile()) throw new Error("installed atomic updater swap tool is invalid");
+  const tool = join(workDir, IS_WINDOWS ? ".mirin-atomic-swap.exe" : ".mirin-atomic-swap");
+  copyFileSync(bundledTool, tool, fsConstants.COPYFILE_EXCL);
+  if (!IS_WINDOWS) chmodSync(tool, 0o700);
+
+  const probe = mkdtempSync(join(dirname(runningApp), ".mirin-atomic-swap-probe-"));
+  try {
+    const left = join(probe, "left");
+    const right = join(probe, "right");
+    mkdirSync(left);
+    mkdirSync(right);
+    writeFileSync(join(left, "left"), "left", { flag: "wx", mode: 0o600 });
+    writeFileSync(join(right, "right"), "right", { flag: "wx", mode: 0o600 });
+    const process = Bun.spawn([tool, "atomic-swap", left, right], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    if ((await process.exited) !== 0) {
+      throw new Error("install filesystem does not support atomic updater swaps");
+    }
+    if (!existsSync(join(left, "right")) || !existsSync(join(right, "left"))) {
+      throw new Error("atomic updater swap probe returned an invalid result");
+    }
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+  return tool;
+}
+
+async function terminateSpawnedHelper(helper: ReturnType<typeof Bun.spawn>): Promise<boolean> {
+  try {
+    helper.kill();
+  } catch {
+    // It may already have exited.
+  }
+  if (await subprocessExitedWithin(helper, 2000)) return true;
+  try {
+    helper.kill(9);
+  } catch {
+    // A concurrent exit is confirmed below.
+  }
+  return subprocessExitedWithin(helper, 5000);
+}
+
+async function subprocessExitedWithin(
+  helper: ReturnType<typeof Bun.spawn>,
+  timeoutMs: number,
+): Promise<boolean> {
+  return Promise.race([helper.exited.then(() => true), Bun.sleep(timeoutMs).then(() => false)]);
+}
+
+async function terminateProcess(pid: number): Promise<boolean> {
+  if (!processIsAlive(pid)) return true;
+  try {
+    process.kill(pid);
+  } catch {
+    // A concurrent exit is confirmed by polling.
+  }
+  if (await processExitedWithin(pid, 2000)) return true;
+  try {
+    process.kill(pid, 9);
+  } catch {
+    // A concurrent exit is confirmed by polling.
+  }
+  return processExitedWithin(pid, 5000);
+}
+
+async function processExitedWithin(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processIsAlive(pid)) return true;
+    await Bun.sleep(25);
+  }
+  return !processIsAlive(pid);
 }
 
 /**
