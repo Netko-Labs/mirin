@@ -27,7 +27,10 @@ import lib), `default_cache_dir` (`%LOCALAPPDATA%`), `derive_subprocess_path`
 shared process-lifetime app-file handle; single-instance mode also acquires the
 bundle-ID-scoped named mutex for compatibility and existing-window activation.
 The matching bundle-specific Win32 window class prevents activation from
-foregrounding an unrelated Mirin app.
+foregrounding an unrelated Mirin app. Identifiers that would exceed Win32 class
+or AppUserModelID limits are reduced to a deterministic bounded prefix plus a
+SHA-256-derived suffix, and class-registration failure aborts window creation
+instead of caching a false success.
 Only a protocol-compatible Worker's exclusive capability reaches the updater
 apply path. `cargo build --workspace`
 warning-clean. **The `cef` crate compiles and links on Windows** — the project's

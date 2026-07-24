@@ -58,6 +58,8 @@
 - [x] Bound POSIX replacement termination and preserve recoverable trees if it cannot stop.
 - [x] Copy and revalidate the staged app beside the install before terminal handoff.
 - [x] Scope Windows existing-window activation to the bundle-specific window class.
+- [x] Observe concurrent installer rejection immediately so atomic cleanup always runs.
+- [x] Bound long Win32 identities and fail closed when window-class registration fails.
 
 ## Checkpoints
 
@@ -148,3 +150,16 @@
   warnings denied, and workspace tests passed (19 tests across codec, core, and
   helper). Windows window-class identity and generated PowerShell parsing remain
   enforced by the Windows x64 CI job.
+- Eighth clean-context review remediation: observed installer rejection at task
+  creation so Bun cannot bypass release cleanup, bounded long Win32 identities
+  with a deterministic SHA-256-derived suffix, and failed closed when window
+  class registration fails.
+- Eighth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 237
+  tests with the two expected Windows lifecycle skips on macOS; `git diff
+  --check` passed.
+- Eighth-review local Rust: `cargo fmt --all --check`, workspace clippy with
+  warnings denied, and workspace tests passed (19 tests). A macOS-to-MSVC check
+  could not pass the existing native C dependencies without Windows SDK headers;
+  Windows compilation and the maximum-length identity test remain enforced by
+  the Windows x64 CI job.

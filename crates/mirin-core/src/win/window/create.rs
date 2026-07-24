@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
-use windows_sys::Win32::Foundation::HINSTANCE;
+use windows_sys::Win32::Foundation::{GetLastError, HINSTANCE};
 use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::MARGINS;
@@ -93,9 +93,9 @@ fn app_icon() -> Option<HICON> {
 }
 
 /// Register the mirin window class once. Idempotent.
-fn ensure_class_registered() {
+fn ensure_class_registered() -> bool {
     if CLASS_REGISTERED.with(|r| *r.borrow()) {
-        return;
+        return true;
     }
     let name = class_name();
     let wc = WNDCLASSW {
@@ -112,8 +112,14 @@ fn ensure_class_registered() {
         lpszClassName: name.as_ptr(),
     };
     // SAFETY: `wc` + its class name outlive this call.
-    unsafe { RegisterClassW(&wc) };
+    if unsafe { RegisterClassW(&wc) } == 0 {
+        // SAFETY: read immediately after the failed Win32 call on this thread.
+        let error = unsafe { GetLastError() };
+        eprintln!("[mirin] failed to register the window class (Win32 error {error})");
+        return false;
+    }
     CLASS_REGISTERED.with(|r| *r.borrow_mut() = true);
+    true
 }
 
 /// Center a `w`x`h` window on the primary monitor.
@@ -149,7 +155,9 @@ fn clamp_on_screen(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
 /// Create a mirin-owned top-level window registered under `id`, returning the
 /// HWND and the client-area bounds for `WindowInfo::set_as_child`. UI thread only.
 pub fn create_window(params: &WindowParams) -> Option<(*mut c_void, cef::Rect)> {
-    ensure_class_registered();
+    if !ensure_class_registered() {
+        return None;
+    }
 
     let client_w = params.width.max(params.min_width) as i32;
     let client_h = params.height.max(params.min_height) as i32;

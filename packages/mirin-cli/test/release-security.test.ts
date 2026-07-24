@@ -11,6 +11,7 @@ import { validateReleaseVersion } from "../src/release/semver.ts";
 import {
   assertDeltaSourcesFitMemoryBudget,
   MAX_RELEASE_DELTA_SOURCE_BYTES,
+  settleConcurrentReleaseTask,
   validateReleaseManifestBytes,
 } from "../src/release.ts";
 
@@ -160,5 +161,17 @@ describe("release manifest output bounds", () => {
     expect(() => validateReleaseManifestBytes(new Uint8Array(256 * 1024 + 1))).toThrow(
       "release manifest exceeds",
     );
+  });
+});
+
+describe("parallel release work", () => {
+  test("observes installer rejection immediately as an always-settled result", async () => {
+    const failure = new Error("installer failed");
+    const rejected = settleConcurrentReleaseTask(Promise.reject(failure));
+    const fulfilled = settleConcurrentReleaseTask(Promise.resolve("installer"));
+
+    await Bun.sleep(10);
+    expect(await rejected).toEqual({ status: "rejected", reason: failure });
+    expect(await fulfilled).toEqual({ status: "fulfilled", value: "installer" });
   });
 });

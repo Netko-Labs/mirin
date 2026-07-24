@@ -73,6 +73,13 @@ export function validateReleaseManifestBytes(bytes: Uint8Array): void {
   }
 }
 
+export function settleConcurrentReleaseTask<T>(task: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return task.then(
+    (value): PromiseFulfilledResult<T> => ({ status: "fulfilled", value }),
+    (reason): PromiseRejectedResult => ({ status: "rejected", reason }),
+  );
+}
+
 interface ReleaseCodec {
   compress(src: string, dst: string, level: number): void;
   decompressBounded(src: string, dst: string, maxOutputBytes: number): void;
@@ -157,16 +164,18 @@ export async function release(projectDir = process.cwd()): Promise<number> {
 
       // Installer/package tooling runs in child processes and reads the assembled app.
       // Start it now so it overlaps updater compression and delta generation below.
-      const installerBuild = buildReleaseInstaller({
-        result,
-        buildDir,
-        outDir,
-        appArtifact,
-        prefix,
-        safeName,
-        isWindows,
-        isLinux,
-      });
+      const installerBuild = settleConcurrentReleaseTask(
+        buildReleaseInstaller({
+          result,
+          buildDir,
+          outDir,
+          appArtifact,
+          prefix,
+          safeName,
+          isWindows,
+          isLinux,
+        }),
+      );
 
       try {
         // Release tooling runs in plain Bun, including Windows arm64 builds where
@@ -298,7 +307,9 @@ export async function release(projectDir = process.cwd()): Promise<number> {
           `${signUpdateManifest(manifestBytes, updatePublicKey)}\n`,
         );
 
-        const { installerName, installerSize } = await installerBuild;
+        const installerResult = await installerBuild;
+        if (installerResult.status === "rejected") throw installerResult.reason;
+        const { installerName, installerSize } = installerResult.value;
 
         const mb = (n: number) => (n / 1e6).toFixed(1);
         console.log("\n[mirin release] done → build/release/");
@@ -315,11 +326,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
         // Installer/package work shares the staging directory. Even when updater
         // generation fails first, settle it before atomic cleanup can remove paths
         // still owned by a child process. Preserve the original failure if both fail.
-        try {
-          await installerBuild;
-        } catch {
-          // The successful path observes this rejection at its primary await above.
-        }
+        await installerBuild;
       }
     },
   );
