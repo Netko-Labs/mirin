@@ -42,6 +42,7 @@ import {
   SingleFlight,
   type StagedGeneration,
   UpdateTransactionState,
+  updaterSupportPathComponents,
 } from "./lib/transaction.ts";
 import { artifactUrl, fetchTrustedUpdateUrl, trustedBaseUrl } from "./lib/urls.ts";
 import { readVersionJsonFile } from "./lib/version.ts";
@@ -599,7 +600,7 @@ function pruneTarCacheBestEffort(tarsDir: string, keepFile: string): void {
 function supportDir(version: VersionInfo): string {
   if (IS_WINDOWS) {
     const base = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-    return join(base, version.identifier, version.channel);
+    return join(base, ...updaterSupportPathComponents(version.identifier, version.channel));
   }
   if (IS_LINUX) {
     const base = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");

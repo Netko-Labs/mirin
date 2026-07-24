@@ -28,9 +28,22 @@ describe("updater generation cleanup", () => {
     const unrelated = join(updates, "notes");
     const outside = join(root, "outside");
     const linked = join(updates, "generation-2-1.2.4-bbbbbbbbbbbbbbbb");
+    const compact = join(
+      updates,
+      generationDirectoryName(
+        {
+          generation: Number.MAX_SAFE_INTEGER,
+          version: `1.0.0-${"v".repeat(122)}`,
+          tarHash: "c".repeat(64),
+        },
+        { pid: 3, session: "d".repeat(32) },
+        "win32",
+      ),
+    );
     mkdirSync(abandoned, { recursive: true });
     mkdirSync(unrelated);
     mkdirSync(outside);
+    mkdirSync(compact);
     writeFileSync(join(outside, APPLY_HELPER_PID_FILE), "999");
     symlinkSync(outside, linked, "dir");
 
@@ -38,6 +51,7 @@ describe("updater generation cleanup", () => {
       expect(await hasLiveApplyHelper(updates, { isProcessAlive: () => true })).toBe(false);
       await pruneGenerationDirectories(updates);
       expect(existsSync(abandoned)).toBe(false);
+      expect(existsSync(compact)).toBe(false);
       expect(existsSync(unrelated)).toBe(true);
       expect(existsSync(linked)).toBe(true);
       expect(existsSync(outside)).toBe(true);
@@ -55,6 +69,18 @@ describe("updater generation cleanup", () => {
       updates,
       generationDirectoryName(snapshot, { pid: 100, session: "b".repeat(32) }),
     );
+    const currentCompact = join(
+      updates,
+      generationDirectoryName(
+        {
+          generation: Number.MAX_SAFE_INTEGER,
+          version: `1.0.0-${"v".repeat(122)}`,
+          tarHash: "a".repeat(64),
+        },
+        { pid: 100, session: "b".repeat(32) },
+        "win32",
+      ),
+    );
     const reusedPid = join(
       updates,
       generationDirectoryName(snapshot, { pid: 100, session: "c".repeat(32) }),
@@ -67,7 +93,7 @@ describe("updater generation cleanup", () => {
       updates,
       generationDirectoryName(snapshot, { pid: 300, session: "e".repeat(32) }),
     );
-    for (const directory of [current, reusedPid, live, abandoned]) {
+    for (const directory of [current, currentCompact, reusedPid, live, abandoned]) {
       mkdirSync(directory);
     }
     writeFileSync(join(live, GENERATION_OWNER_FILE), "200|live-token");
@@ -81,6 +107,7 @@ describe("updater generation cleanup", () => {
         nowMs: liveMtimeMs,
       });
       expect(existsSync(current)).toBe(true);
+      expect(existsSync(currentCompact)).toBe(true);
       expect(existsSync(live)).toBe(true);
       expect(existsSync(reusedPid)).toBe(false);
       expect(existsSync(abandoned)).toBe(false);
@@ -92,6 +119,7 @@ describe("updater generation cleanup", () => {
         nowMs: liveMtimeMs + MAX_GENERATION_OWNER_AGE_MS + 1,
       });
       expect(existsSync(current)).toBe(true);
+      expect(existsSync(currentCompact)).toBe(true);
       expect(existsSync(live)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });

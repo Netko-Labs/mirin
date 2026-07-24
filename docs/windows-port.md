@@ -123,8 +123,9 @@ paths or `{autopf}`/`{localappdata}` prefixes and escapes literal filesystem pat
 rendering `.iss`. Anko's
 `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
 `%LOCALAPPDATA%` support dir, bounded/generation-correlated download staging,
-deterministic 128-bit compaction for identifier components longer than 40
-characters so maximum-length valid bundle IDs do not overflow recovery paths,
+deterministic 128-bit compaction for long recovery identifiers plus over-budget
+updater identifier/channel hierarchies and generation identities, so maximum
+valid configuration does not overflow recovery or apply work paths,
 validated real app root + `<App>.exe` + `resources/version.json`, and a detached
 PowerShell folder swap + relaunch. WMI launches PowerShell directly and records its
 PID plus Windows process-creation time before the running app quits, so startup cleanup cannot delete its generation

@@ -85,6 +85,7 @@
 - [x] Bind ownership, waiting, termination, arming, and readiness to OS process creation identity.
 - [x] Validate the real swap operands' device/volume identity and reject Windows reparse points.
 - [x] Exercise real Windows WMI/PowerShell/TxF rollback and successful readiness commit paths in CI.
+- [x] Bound maximum accepted Windows updater support and generation work paths.
 
 ## Checkpoints
 
@@ -385,5 +386,15 @@
 - Twenty-sixth-remediation verification: `bun run fmt-lint` passed with the
   repository's existing 52 warnings, `bun run typecheck` passed, and `bun run
   test` passed 269 tests with the two expected Windows installer skips.
+  `cargo fmt --all --check`, workspace clippy with warnings denied, all 29 local
+  Rust workspace tests, and `git diff --check` passed.
+- Twenty-seventh clean-context review remediation: preserve ordinary Windows
+  updater locations while moving over-budget identifier/channel support paths
+  into a reserved deterministic 128-bit namespace, compact over-budget
+  generation identity into a bounded owner/session form, and recognize both
+  formats during live-owner/helper startup cleanup.
+- Twenty-seventh-remediation verification: `bun run fmt-lint` passed with the
+  repository's existing 52 warnings, `bun run typecheck` passed, and `bun run
+  test` passed 271 tests with the two expected Windows installer skips.
   `cargo fmt --all --check`, workspace clippy with warnings denied, all 29 local
   Rust workspace tests, and `git diff --check` passed.

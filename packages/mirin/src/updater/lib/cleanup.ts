@@ -11,7 +11,7 @@ import { UPDATER_PROCESS_SESSION } from "./transaction.ts";
 
 const LEGACY_GENERATION_DIRECTORY = /^generation-[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.+-]*-[a-f0-9]{16}$/;
 const OWNED_GENERATION_DIRECTORY =
-  /^generation-([1-9]\d*)-([a-f0-9]{32})-[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.+-]*-[a-f0-9]{16}$/;
+  /^generation-([1-9]\d*)-([a-f0-9]{32})-(?:[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.+-]*-[a-f0-9]{16}|g[a-f0-9]{32})$/;
 export const APPLY_HELPER_PID_FILE = ".apply-helper.pid";
 export const APPLY_HELPER_LAUNCH_PID_FILE = ".apply-helper-launch.pid";
 export const APPLY_HELPER_ACTIVATED_FILE = ".apply-helper-activated";

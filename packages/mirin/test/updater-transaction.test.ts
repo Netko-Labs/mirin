@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { win32 } from "node:path";
 import {
   assertDownloadCanStart,
   generationDirectoryName,
   SingleFlight,
   UpdateTransactionState,
+  updaterSupportPathComponents,
 } from "../src/updater/lib/transaction.ts";
 import { assertUpdaterApplyAllowed } from "../src/updater/updater.ts";
 
@@ -66,6 +68,72 @@ describe("updater transaction generations", () => {
         { pid: 42, session: "d".repeat(32) },
       ),
     ).toBe(`generation-42-${"d".repeat(32)}-7-2.0.0-beta.1-${"c".repeat(16)}`);
+  });
+
+  test("bounds maximum valid Windows updater work paths deterministically", () => {
+    const identifier = `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(41)}`;
+    const channel = "c".repeat(64);
+    const version = `1.0.0-${"v".repeat(122)}`;
+    const owner = { pid: Number.MAX_SAFE_INTEGER, session: "d".repeat(32) };
+    const support = updaterSupportPathComponents(identifier, channel, "win32");
+    const generation = generationDirectoryName(
+      { generation: Number.MAX_SAFE_INTEGER, version, tarHash: "e".repeat(64) },
+      owner,
+      "win32",
+    );
+    const workPath = win32.join(
+      "C:\\Users\\ordinary-user\\AppData\\Local",
+      ...support,
+      "updates",
+      generation,
+      "extract",
+    );
+
+    expect(identifier).toHaveLength(233);
+    expect(channel).toHaveLength(64);
+    expect(version).toHaveLength(128);
+    expect(support).toEqual([".mirin-compact", expect.stringMatching(/^[a-f0-9]{32}$/)]);
+    expect(updaterSupportPathComponents(identifier, channel, "win32")).toEqual(support);
+    expect(
+      updaterSupportPathComponents(`${identifier.slice(0, -1)}e`, channel, "win32"),
+    ).not.toEqual(support);
+    expect(generation).toMatch(
+      new RegExp(`^generation-${Number.MAX_SAFE_INTEGER}-${"d".repeat(32)}-g[a-f0-9]{32}$`),
+    );
+    expect(
+      generationDirectoryName(
+        { generation: Number.MAX_SAFE_INTEGER, version, tarHash: "e".repeat(64) },
+        owner,
+        "win32",
+      ),
+    ).toBe(generation);
+    expect(
+      generationDirectoryName(
+        { generation: Number.MAX_SAFE_INTEGER - 1, version, tarHash: "e".repeat(64) },
+        owner,
+        "win32",
+      ),
+    ).not.toBe(generation);
+    expect(workPath.length).toBeLessThan(200);
+  });
+
+  test("preserves ordinary and non-Windows updater work path names", () => {
+    const snapshot = { generation: 7, version: "2.0.0-beta.1", tarHash: "c".repeat(64) };
+    const owner = { pid: 42, session: "d".repeat(32) };
+    const generation = `generation-42-${"d".repeat(32)}-7-2.0.0-beta.1-${"c".repeat(16)}`;
+
+    expect(updaterSupportPathComponents("dev.example.app", "stable", "win32")).toEqual([
+      "dev.example.app",
+      "stable",
+    ]);
+    expect(updaterSupportPathComponents("a".repeat(41), "stable", "linux")).toEqual([
+      "a".repeat(41),
+      "stable",
+    ]);
+    expect(generationDirectoryName(snapshot, owner, "win32")).toBe(generation);
+    expect(
+      generationDirectoryName({ ...snapshot, version: `1.0.0-${"v".repeat(122)}` }, owner, "linux"),
+    ).toContain(`1.0.0-${"v".repeat(122)}`);
   });
 
   test("allocates distinct generations across public updater instances", () => {

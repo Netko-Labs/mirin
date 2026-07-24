@@ -1,4 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+const MAX_UNCOMPACTED_WINDOWS_SUPPORT_COMPONENT = 40;
+const MAX_UNCOMPACTED_WINDOWS_GENERATION_COMPONENT = 80;
+const COMPACT_WINDOWS_SUPPORT_NAMESPACE = ".mirin-compact";
 
 export interface PendingGeneration {
   generation: number;
@@ -197,6 +201,38 @@ export function assertDownloadCanStart(
 export function generationDirectoryName(
   snapshot: PendingGeneration,
   owner: GenerationOwner = { pid: process.pid, session: UPDATER_PROCESS_SESSION },
+  platform: NodeJS.Platform = process.platform,
 ): string {
-  return `generation-${owner.pid}-${owner.session}-${snapshot.generation}-${snapshot.version}-${snapshot.tarHash.slice(0, 16)}`;
+  const uncompacted = `generation-${owner.pid}-${owner.session}-${snapshot.generation}-${snapshot.version}-${snapshot.tarHash.slice(0, 16)}`;
+  if (platform !== "win32" || uncompacted.length <= MAX_UNCOMPACTED_WINDOWS_GENERATION_COMPONENT) {
+    return uncompacted;
+  }
+  const digest = pathIdentityDigest("generation", [
+    snapshot.generation,
+    snapshot.version,
+    snapshot.tarHash,
+  ]);
+  return `generation-${owner.pid}-${owner.session}-g${digest}`;
+}
+
+export function updaterSupportPathComponents(
+  identifier: string,
+  channel: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  if (
+    platform !== "win32" ||
+    (identifier.length <= MAX_UNCOMPACTED_WINDOWS_SUPPORT_COMPONENT &&
+      channel.length <= MAX_UNCOMPACTED_WINDOWS_SUPPORT_COMPONENT)
+  ) {
+    return [identifier, channel];
+  }
+  return [COMPACT_WINDOWS_SUPPORT_NAMESPACE, pathIdentityDigest("support", [identifier, channel])];
+}
+
+function pathIdentityDigest(kind: string, values: Array<string | number>): string {
+  return createHash("sha256")
+    .update(JSON.stringify([kind, ...values]))
+    .digest("hex")
+    .slice(0, 32);
 }
