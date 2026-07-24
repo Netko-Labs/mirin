@@ -40,12 +40,13 @@ fn app_identity_key(dev: bool, identifier: &str) -> String {
             }
         })
         .collect();
+    let already_portable = raw == identifier;
     let candidate = if dev {
         format!("{identifier}-dev")
     } else {
         identifier
     };
-    if raw == identifier && candidate.encode_utf16().count() <= MAX_WINDOWS_IDENTITY_KEY_UNITS {
+    if already_portable && candidate.encode_utf16().count() <= MAX_WINDOWS_IDENTITY_KEY_UNITS {
         return candidate;
     }
 

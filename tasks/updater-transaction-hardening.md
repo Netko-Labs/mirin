@@ -163,3 +163,6 @@
   could not pass the existing native C dependencies without Windows SDK headers;
   Windows compilation and the maximum-length identity test remain enforced by
   the Windows x64 CI job.
+- Eighth-review CI follow-up: Windows x64 exposed and received a minimal fix for
+  a target-gated borrow-after-move in identity compaction; the algorithm and its
+  bounds are unchanged.
