@@ -147,12 +147,12 @@ mod tests {
         assert_eq!(identifier.len(), 233);
 
         let key = app_identity_key(false, &identifier);
+        let mut distinct_identifier = identifier.clone();
+        distinct_identifier.pop();
+        distinct_identifier.push('e');
         assert_eq!(key, app_identity_key(false, &identifier));
         assert_ne!(key, app_identity_key(true, &identifier));
-        assert_ne!(
-            key,
-            app_identity_key(false, &format!("{}e", &identifier[..252]))
-        );
+        assert_ne!(key, app_identity_key(false, &distinct_identifier));
         assert!(key.encode_utf16().count() <= MAX_WINDOWS_IDENTITY_KEY_UNITS);
         assert!(class_name_for(&key).len() <= 257);
         assert!(wide(&format!("mirin.{key}")).len() <= 129);

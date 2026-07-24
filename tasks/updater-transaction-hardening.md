@@ -181,3 +181,7 @@
 - Ninth/tenth-review local Rust: `cargo fmt --all --check`, workspace clippy with
   warnings denied, and workspace tests passed (20 tests across codec, core, and
   helper). The all-identity collision regression remains enforced by Windows CI.
+- Ninth/tenth-review CI follow-up: Windows x64 passed build, clippy, and the new
+  compact/literal collision regression, then exposed a stale 253-character test
+  fixture index after the app-id cap moved to 233; the distinctness fixture now
+  mutates its final character without a fixed index.
