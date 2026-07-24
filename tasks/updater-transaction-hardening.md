@@ -338,3 +338,15 @@
   `bun run test` passed 259 tests with the two expected non-Windows skips;
   `cargo fmt --all --check`, workspace clippy with warnings denied, all 26
   Rust workspace tests, and `git diff --check` passed.
+- Twenty-third clean-context review remediation: publish an unreadable durable
+  ambiguity guard before replacement launch, narrow it to the spawned PID, and
+  then publish the exact identity, closing the spawn-to-guard crash window on
+  Windows and POSIX. Recovery now publishes a fully written canonical marker
+  through an atomic no-clobber hard link, preserves the original claim after any
+  publication error, and restores or blocks on a surviving claim beside an
+  invalid marker instead of failing open.
+- Twenty-third-remediation verification: `bun run fmt-lint` passed with the
+  repository's existing 52 warnings, `bun run typecheck` passed, `bun run test`
+  passed 260 tests with the two expected non-Windows skips, and
+  `cargo fmt --all --check`, workspace clippy with warnings denied, all 26 Rust
+  workspace tests, and `git diff --check` passed.

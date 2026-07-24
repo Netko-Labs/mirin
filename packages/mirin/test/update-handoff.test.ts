@@ -224,6 +224,36 @@ describe("update handoff reservations", () => {
     expect(existsSync(fixture.handoff.markerPath)).toBe(true);
   });
 
+  test("restores an intact recovery claim instead of failing open on a torn marker", () => {
+    const fixture = interruptedTransaction("backed-up");
+    const claimOwner = { pid: 424242, token: "torn-marker-claim-owner" };
+    const recoveryOwner = { pid: process.pid, token: "torn-marker-recovery-owner" };
+    const ownerHash = createHash("sha256").update(claimOwner.token).digest("hex");
+    const staleClaimPath = join(
+      fixture.state,
+      `.update-recovery-claim-${fixture.handoff.token}--${claimOwner.pid}-${ownerHash}`,
+    );
+    renameSync(fixture.handoff.markerPath, staleClaimPath);
+    writeFileSync(fixture.handoff.markerPath, '{"token":');
+
+    const decision = inspectUpdateHandoff(
+      "dev.example.app",
+      fixture.resources,
+      false,
+      undefined,
+      () => recoveryOwner,
+      fixture.state,
+    );
+
+    expect(decision.blocked).toBe(false);
+    expect(decision.recovery?.owner).toEqual(recoveryOwner);
+    expect(decision.recovery?.claimPaths).toHaveLength(1);
+    expect(existsSync(staleClaimPath)).toBe(false);
+    expect(JSON.parse(readFileSync(fixture.handoff.markerPath, "utf8")).ownerToken).toBe(
+      recoveryOwner.token,
+    );
+  });
+
   test("blocks recovery while an exact replacement is live and carries its receipt afterward", () => {
     const fixture = interruptedTransaction("launching");
     const replacement = { pid: 789, token: "live-replacement-token" };
@@ -254,23 +284,25 @@ describe("update handoff reservations", () => {
     expect(decision.recovery?.replacementPath).toBe(fixture.handoff.replacementPath);
   });
 
-  test("fails safe when a launched replacement has only a pending identity guard", () => {
-    const fixture = interruptedTransaction("launching");
-    const recoveryOwner = { pid: process.pid, token: "pending-replacement-recovery-owner" };
-    writeFileSync(fixture.handoff.replacementPath, "pending:789");
+  test("fails safe when replacement launch or identity publication is pending", () => {
+    for (const guard of ["pending:launch", "pending:789"]) {
+      const fixture = interruptedTransaction("launching");
+      const recoveryOwner = { pid: process.pid, token: "pending-replacement-recovery-owner" };
+      writeFileSync(fixture.handoff.replacementPath, guard);
 
-    expect(
-      inspectUpdateHandoff(
-        "dev.example.app",
-        fixture.resources,
-        false,
-        undefined,
-        () => recoveryOwner,
-        fixture.state,
-      ),
-    ).toEqual({ blocked: true });
-    expect(readFileSync(fixture.handoff.replacementPath, "utf8")).toBe("pending:789");
-    expect(existsSync(fixture.handoff.markerPath)).toBe(true);
+      expect(
+        inspectUpdateHandoff(
+          "dev.example.app",
+          fixture.resources,
+          false,
+          undefined,
+          () => recoveryOwner,
+          fixture.state,
+        ),
+      ).toEqual({ blocked: true });
+      expect(readFileSync(fixture.handoff.replacementPath, "utf8")).toBe(guard);
+      expect(existsSync(fixture.handoff.markerPath)).toBe(true);
+    }
   });
 
   test("recovers a crash between durable marker and phase creation", () => {

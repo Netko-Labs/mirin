@@ -292,11 +292,15 @@ off the main-process API:
   attempt is treated as potentially visible even when its final durability sync
   reports failure, so the parent releases ownership only after confirmed exact
   helper exit. Armed acknowledgement and replacement identity/readiness use
-  temp-file-plus-rename publication. Before reading a launched target's exact
-  identity, the helper durably writes an intentionally unreadable pending-PID
-  guard. If identity lookup fails, the helper waits on its owned process handle
-  or child until exit before rollback; if the helper crashes first, startup sees
-  the guard and blocks recovery fail-safe. After a
+  temp-file-plus-rename publication. Before launch, the helper durably writes an
+  intentionally unreadable ambiguity guard, narrows it to a pending PID after
+  spawn, and finally replaces it with the exact process identity. If identity
+  lookup fails, the helper waits on its owned process handle or child until exit
+  before rollback; if the helper crashes anywhere across launch, startup sees
+  the guard and blocks recovery fail-safe. Recovery ownership keeps the original
+  journal as a claim while publishing a complete canonical marker atomically and
+  without replacement; an invalid marker beside any claim is restored or blocks
+  rather than failing open. After a
   successful commit, terminal cleanup durably removes the ownership marker before
   the phase and receipts, so a partial cleanup cannot strand the target behind a
   marker with no recoverable phase. An accepted helper

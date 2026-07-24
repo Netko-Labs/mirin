@@ -65,8 +65,11 @@ describe("Windows updater launcher", () => {
       parentToken: "parent-token",
     });
     const launch = script.indexOf("Start-Process -FilePath");
+    const prelaunchGuard = script.indexOf("pending:launch");
     const readiness = script.indexOf("Replacement did not report ready", launch);
     expect(launch).toBeGreaterThan(0);
+    expect(prelaunchGuard).toBeGreaterThan(0);
+    expect(prelaunchGuard).toBeLessThan(launch);
     expect(readiness).toBeGreaterThan(launch);
     expect(script.indexOf("C:\\Updates\\generation", launch)).toBeGreaterThan(launch);
     expect(script.indexOf("C:\\Apps\\[beta]\\Mirin.old", launch)).toBeGreaterThan(launch);
@@ -84,6 +87,7 @@ describe("Windows updater launcher", () => {
     expect(script).toContain("Replacement readiness receipt has the wrong process identity");
     expect(script).toContain("$readyProcess -ne $readyIdentity");
     expect(script).toContain("$replacementGuard='pending:'");
+    expect(script).toContain("Could not guard replacement launch");
     expect(script).toContain("Could not guard unidentified replacement process");
     expect(script).toContain("if ([string]::IsNullOrWhiteSpace($newToken))");
     expect(script).toContain("$newProcess.WaitForExit()");
@@ -627,11 +631,13 @@ describe("POSIX updater helpers", () => {
       parentToken: "parent-token",
     });
     const launch = script.indexOf('nohup "$EXE"');
+    const actualLaunch = script.indexOf("\nlaunch_new\n");
     const readiness = script.indexOf('[ -f "$READY" ]', launch);
     const deleteBackup = script.indexOf('durable-remove-directory "$OLD"', readiness);
     const restoreBackup = script.indexOf('"$SWAP" atomic-swap "$APP" "$RESTORE"', launch);
     const reopenOld = script.indexOf("relaunch_old", restoreBackup);
     expect(launch).toBeGreaterThan(0);
+    expect(actualLaunch).toBeGreaterThan(launch);
     expect(readiness).toBeGreaterThan(launch);
     expect(deleteBackup).toBeGreaterThan(readiness);
     expect(restoreBackup).toBeGreaterThan(launch);
@@ -650,13 +656,16 @@ describe("POSIX updater helpers", () => {
     );
     const replacementGuard = script.indexOf(
       '"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"',
-      launch,
+      actualLaunch,
     );
+    const prelaunchGuard = script.indexOf('"$SWAP" durable-write "$REPLACEMENT" "pending:launch"');
     const replacementIdentity = script.indexOf(
       '"$SWAP" durable-write "$REPLACEMENT" "$READY_IDENTITY"',
       replacementGuard,
     );
-    expect(replacementGuard).toBeGreaterThan(launch);
+    expect(prelaunchGuard).toBeGreaterThan(0);
+    expect(prelaunchGuard).toBeLessThan(actualLaunch);
+    expect(replacementGuard).toBeGreaterThan(actualLaunch);
     expect(replacementIdentity).toBeGreaterThan(replacementGuard);
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
@@ -680,8 +689,10 @@ describe("POSIX updater helpers", () => {
       parentToken: "parent-token",
     });
     const launch = script.indexOf("setsid ");
+    const actualLaunch = script.indexOf("\nlaunch_new\n");
     const readiness = script.indexOf('[ -f "$READY" ]', launch);
     expect(launch).toBeGreaterThan(0);
+    expect(actualLaunch).toBeGreaterThan(launch);
     expect(readiness).toBeGreaterThan(launch);
     expect(script.indexOf('process_matches "$NEW_PID" "$NEW_TOKEN"', launch)).toBeGreaterThan(
       launch,
@@ -698,6 +709,9 @@ describe("POSIX updater helpers", () => {
     expect(script).toContain('"$SWAP" atomic-swap "$APP" "$NEW"');
     expect(script).toContain('"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"');
     expect(script).toContain('if [ -z "$NEW_TOKEN" ]; then wait "$NEW_PID"');
+    const prelaunchGuard = script.indexOf('"$SWAP" durable-write "$REPLACEMENT" "pending:launch"');
+    expect(prelaunchGuard).toBeGreaterThan(0);
+    expect(prelaunchGuard).toBeLessThan(actualLaunch);
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
     }

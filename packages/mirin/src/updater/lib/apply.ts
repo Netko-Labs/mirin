@@ -202,6 +202,10 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
       "Could not journal updater backup completion",
     ),
     ...codec(["durable-write", options.phase, "launching"], "Could not journal replacement launch"),
+    ...codec(
+      ["durable-write", replacementIdentity, "pending:launch"],
+      "Could not guard replacement launch",
+    ),
     `  $env:${UPDATE_HANDOFF_TOKEN_ENV}=${psq(options.token)}`,
     "  try {",
     `    $newProcess=Start-Process -FilePath ${psq(options.executable)}${launchArguments} -WorkingDirectory ${psq(options.runningApp)} -PassThru`,
@@ -465,6 +469,7 @@ function renderPosixApplyShell(
       ? ['xattr -r -d com.apple.quarantine "$APP" 2>/dev/null || true']
       : []),
     '"$SWAP" durable-write "$PHASE" launching',
+    '"$SWAP" durable-write "$REPLACEMENT" "pending:launch"',
     "launch_new",
     '"$SWAP" durable-write "$REPLACEMENT" "pending:$NEW_PID"',
     "i=0",

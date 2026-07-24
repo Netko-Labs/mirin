@@ -3,6 +3,7 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -236,8 +237,8 @@ export function abandonUpdateHandoff(handoff: PreparedUpdateHandoff): void {
 /**
  * Decide whether this launch may cross an active updater reservation.
  * Only the staged target version may acquire the native lock while its parent
- * or helper is alive. Stale or expired reservations are removed fail-open to
- * the OS lock so PID reuse cannot permanently reserve an app.
+ * or helper is alive. Stale standalone reservations are removed fail-open to
+ * the OS lock, while any surviving recovery claim keeps inspection fail-safe.
  */
 export function inspectUpdateHandoff(
   identifier: string,
@@ -261,7 +262,13 @@ export function inspectUpdateHandoff(
   let marker = readMarker(markerPath);
   if (!marker) {
     removeFileBestEffort(markerPath);
-    return { blocked: false };
+    if (restoreOrphanedRecoveryClaim(directory, markerPath, getProcessIdentity) === "active") {
+      return { blocked: true };
+    }
+    marker = readMarker(markerPath);
+    if (!marker) {
+      return recoveryClaimPaths(directory).length > 0 ? { blocked: true } : { blocked: false };
+    }
   }
 
   const readyPath = join(directory, `.update-ready-${marker.token}`);
@@ -372,9 +379,9 @@ export function inspectUpdateHandoff(
       }),
     );
   } catch {
-    // Preserve the claim if no competing marker exists so a later bootstrap can
-    // reconstruct the journal. If a marker does exist, it is the winner.
-    if (existsSync(markerPath)) removeFileBestEffort(claimPath);
+    // A marker link can become visible before its parent sync reports failure.
+    // Preserve the claim regardless so a later bootstrap always has a durable
+    // journal to restore or use to validate the visible marker.
     return { blocked: true };
   }
   return {
@@ -667,6 +674,9 @@ function restoreOrphanedRecoveryClaim(
 }
 
 function restoreClaimedMarker(markerPath: string, claimPath: string): void {
+  if (existsSync(markerPath) && !readMarker(markerPath)) {
+    removeFileBestEffort(markerPath);
+  }
   if (!existsSync(markerPath)) {
     try {
       renameSync(claimPath, markerPath);
@@ -676,7 +686,7 @@ function restoreClaimedMarker(markerPath: string, claimPath: string): void {
       if (!existsSync(markerPath)) return;
     }
   }
-  removeFileBestEffort(claimPath);
+  if (readMarker(markerPath)) removeFileBestEffort(claimPath);
 }
 
 function processTokenHash(token: string): string {
@@ -688,17 +698,23 @@ function removeFilesBestEffort(paths: string[]): void {
 }
 
 function writeDurableInitialFile(path: string, contents: string): void {
-  if (process.platform === "win32") {
-    if (existsSync(path)) throw new Error("updater handoff reservation already exists");
-    writeDurableWithCodec(path, contents);
-    return;
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    if (process.platform === "win32") {
+      writeDurableWithCodec(temporary, contents);
+    } else {
+      writeFileSync(temporary, contents, {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600,
+      });
+      syncFile(temporary);
+    }
+    linkSync(temporary, path);
+    syncNamespace(path);
+  } finally {
+    removeFileBestEffort(temporary);
   }
-  writeFileSync(path, contents, {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
-  syncFileAndParent(path);
 }
 
 function writeDurableReplacement(path: string, contents: string): void {

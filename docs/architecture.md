@@ -150,9 +150,11 @@ missing canonical output restores the newest exact dead-owner backup first.
 Recovery claim acquisition precedes native-core loading and is a single-winner
 namespace operation. The contender atomically moves the journal to a claim whose
 name binds its exact process identity, revalidates the old owner after that move,
-and publishes its own durable owner marker before spawning recovery. A live
-claim blocks other bootstraps; only a dead claimant's journal can be atomically
-restored. Claim files are retained until recovery ownership transfers to the
+and publishes its own complete owner marker through an atomic no-clobber link
+before spawning recovery. A live claim blocks other bootstraps; only a dead
+claimant's journal can be atomically restored. An invalid canonical marker beside
+any claim is restored from that claim or blocks fail-safe rather than permitting
+startup. Claim files are retained until recovery ownership transfers to the
 helper and are removed durably before the journal, so simultaneous launches
 cannot arm two rollback helpers and interrupted claiming can reconstruct the
 journal. A source-version canonical tree is safe to clean even when a crash
@@ -166,16 +168,17 @@ the helper verifies that activation before writing its armed acknowledgement or
 allowing parent death to authorize a swap. A crash before activation cannot swap
 the install, while a crash after activation leaves the live helper represented in
 the reservation. Arming and replacement readiness are each published durably, so
-readers never accept a partial or PID-reused receipt. Immediately after spawning
-the target, the helper durably publishes its exact creation identity; the target
-republishes the same identity before readiness. Startup treats a valid live
-replacement receipt as active, and a recovery helper confirms exit or performs
-handle-bound exact termination before exchanging its files away. A replacement
-that launched but has no queryable exact identity is first protected by a durable,
-intentionally unreadable pending-PID guard. The owning helper waits on its process
-handle or child until exit before rollback; if that helper crashes, startup
-blocks recovery on the unreadable guard rather than exchanging files beneath an
-unidentified process. Because activation replacement can become visible before
+readers never accept a partial or PID-reused receipt. Before launching the
+target, the helper durably publishes an intentionally unreadable ambiguity guard,
+narrows it to a pending PID after spawn, and then replaces it with the exact
+creation identity; the target republishes that identity before readiness.
+Startup treats a valid live replacement receipt as active, and a recovery helper
+confirms exit or performs handle-bound exact termination before exchanging its
+files away. If identity lookup fails, the owning helper waits on its process
+handle or child until exit before rollback. If that helper crashes at any launch
+boundary, startup blocks recovery on the unreadable guard rather than exchanging
+files beneath a potentially live unidentified process. Because activation
+replacement can become visible before
 its final parent-directory sync reports failure, every activation publication
 attempt is treated as potentially accepted. If activation or arming fails, the
 parent performs bounded exact-process termination and abandons the reservation
