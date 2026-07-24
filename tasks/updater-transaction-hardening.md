@@ -19,6 +19,13 @@
 - [x] Update updater architecture/API/platform/example documentation.
 - [x] Run targeted and full TypeScript/Rust verification.
 - [x] Commit in new commits and push normally to `security/updater-transaction-hardening`.
+- [x] Authenticate exact manifest bytes with an embedded Ed25519 trust anchor.
+- [x] Validate every update redirect hop before requesting it.
+- [x] Reject hostile BSDIFF headers before entering the patch codec.
+- [x] Preserve staged updates across checks and helper-owned generations across cleanup.
+- [x] Make platform rollback remove partial replacements and verify restoration.
+- [x] Detect an immediately failed Linux replacement launch.
+- [x] Use topic-specific task filenames so the security PRs compose cleanly.
 
 ## Checkpoints
 
@@ -28,3 +35,10 @@
 - Full Rust: `cargo fmt --all --check`, workspace clippy with warnings denied, workspace build, and workspace tests passed (6 tests).
 - Patch hygiene: changed-file Biome check and `git diff --check` passed.
 - Residual manual verification: signed/notarized macOS replacement-open rollback, Windows installed folder swap, and Linux packaged folder swap remain platform smokes.
+- First clean-context review remediation: manifest signing, per-hop redirects,
+  BSDIFF validation, staged-check preservation, helper PID ownership, and platform
+  rollback hardening implemented.
+- Post-review full TypeScript: `bun run fmt-lint` passed with the same 55
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 59/59.
+- Post-review full Rust: `cargo fmt --all --check`, workspace clippy with warnings
+  denied, and workspace tests passed (8 tests).

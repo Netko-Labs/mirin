@@ -256,15 +256,17 @@ pub extern "C" fn mirin_bspatch_file_bounded(
     max_patch_bytes: u64,
     max_output_bytes: u64,
 ) -> c_int {
-    match engine::codec::bspatch_file_bounded(
-        &cstr(old),
-        &cstr(patch),
-        &cstr(new),
-        max_old_bytes,
-        max_patch_bytes,
-        max_output_bytes,
-    ) {
-        Ok(()) => 0,
-        Err(_) => 1,
+    match std::panic::catch_unwind(|| {
+        engine::codec::bspatch_file_bounded(
+            &cstr(old),
+            &cstr(patch),
+            &cstr(new),
+            max_old_bytes,
+            max_patch_bytes,
+            max_output_bytes,
+        )
+    }) {
+        Ok(Ok(())) => 0,
+        Ok(Err(_)) | Err(_) => 1,
     }
 }

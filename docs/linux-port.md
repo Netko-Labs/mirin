@@ -177,7 +177,12 @@ manifest/download/codec output with an 8 GiB streaming reconstructed-tar/decompr
 ceiling and a 512 MiB combined in-memory patch-input ceiling,
 and safe tar entry/link types before launching the asynchronous folder swap. Accepted
 helper launch is a terminal handoff; successful helpers remove their generation and
-startup prunes abandoned generations without touching live-process work. This does not redesign Linux updates around
+startup prunes abandoned generations without touching live app/helper PID work. The
+helper uses a unique backup, removes partial replacements before rollback, verifies
+restoration, and treats an immediately exiting replacement as a failed launch before
+restoring and relaunching the old app. Runtime manifests require a pinned Ed25519
+signature, and every redirect hop is subject to the HTTPS-or-loopback rule. This does
+not redesign Linux updates around
 deb/rpm/AppImage package managers; that remains out of scope.
 
 ### L4 — App-shell native features — 🚧 PARTIAL

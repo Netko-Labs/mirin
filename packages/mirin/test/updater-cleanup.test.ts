@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pruneGenerationDirectories } from "../src/updater/lib/cleanup.ts";
+import { APPLY_HELPER_PID_FILE, pruneGenerationDirectories } from "../src/updater/lib/cleanup.ts";
 import { generationDirectoryName } from "../src/updater/lib/transaction.ts";
 
 describe("updater generation cleanup", () => {
@@ -64,6 +64,38 @@ describe("updater generation cleanup", () => {
       expect(existsSync(live)).toBe(true);
       expect(existsSync(reusedPid)).toBe(false);
       expect(existsSync(abandoned)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves a generation transferred to a live apply helper", () => {
+    const root = mkdtempSync(join(tmpdir(), "mirin-updater-helper-owner-"));
+    const updates = join(root, "updates");
+    const generation = join(
+      updates,
+      generationDirectoryName(
+        { generation: 1, version: "1.2.3", tarHash: "a".repeat(64) },
+        { pid: 300, session: "e".repeat(32) },
+      ),
+    );
+    mkdirSync(generation, { recursive: true });
+    writeFileSync(join(generation, APPLY_HELPER_PID_FILE), "400");
+
+    try {
+      pruneGenerationDirectories(updates, {
+        currentPid: 100,
+        currentSession: "b".repeat(32),
+        isProcessAlive: (pid) => pid === 400,
+      });
+      expect(existsSync(generation)).toBe(true);
+
+      pruneGenerationDirectories(updates, {
+        currentPid: 100,
+        currentSession: "b".repeat(32),
+        isProcessAlive: () => false,
+      });
+      expect(existsSync(generation)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

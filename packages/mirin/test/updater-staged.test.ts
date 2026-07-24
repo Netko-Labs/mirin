@@ -16,6 +16,7 @@ const installed = {
   version: "1.0.0",
   channel: "stable",
   baseUrl: "https://updates.example.com",
+  publicKey: "MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
   name: "MirinApp",
   identifier: "com.example.mirin",
 };

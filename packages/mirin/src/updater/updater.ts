@@ -14,12 +14,13 @@ import { runtime } from "../runtime.ts";
 import { applyUpdateAndRelaunch } from "./lib/apply.ts";
 import { verifyArchiveLayout } from "./lib/archive.ts";
 import { pruneGenerationDirectories, removePathBestEffort } from "./lib/cleanup.ts";
-import { readBoundedManifestJson } from "./lib/http.ts";
+import { parseManifestBytes, readBoundedManifestBytes, readBoundedSignature } from "./lib/http.ts";
 import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
 import { MAX_PATCH_MEMORY_INPUT_BYTES, MAX_TAR_BYTES } from "./lib/limits.ts";
 import { parseManifest } from "./lib/manifest.ts";
 import { IS_LINUX, IS_MAC, IS_WINDOWS, platformName } from "./lib/platform.ts";
 import { isStrictlyNewer } from "./lib/semver.ts";
+import { verifyManifestSignature } from "./lib/signature.ts";
 import { validateStagedBundle } from "./lib/staged.ts";
 import {
   assertDownloadCanStart,
@@ -29,7 +30,7 @@ import {
   SingleFlight,
   UpdateTransactionState,
 } from "./lib/transaction.ts";
-import { artifactUrl, assertTrustedUpdateUrl, trustedBaseUrl } from "./lib/urls.ts";
+import { artifactUrl, fetchTrustedUpdateUrl, trustedBaseUrl } from "./lib/urls.ts";
 import { parseVersionJson } from "./lib/version.ts";
 import type {
   Listener,
@@ -91,7 +92,11 @@ export class Updater {
 
   /** Fetch the channel manifest; report a strictly newer update or `null`. Never throws. */
   checkForUpdate(): Promise<UpdateInfo | null> {
-    if (this.#transactions.isApplying || this.#transactions.isDownloading) {
+    if (
+      this.#transactions.isApplying ||
+      this.#transactions.isDownloading ||
+      this.#transactions.staged
+    ) {
       return Promise.resolve(null);
     }
     return this.#checks.run(() => this.#performCheck());
@@ -103,18 +108,28 @@ export class Updater {
 
     let generation: number | undefined;
     try {
-      const previousStaged = this.#transactions.staged;
       generation = this.#transactions.beginCheck();
       this.#pendingManifest = null;
-      if (previousStaged) removePathBestEffort(previousStaged.workDir, true);
       this.#setStatus("checking");
 
       const base = this.#baseUrl(version);
-      const url = `${base}/${this.#prefix(version)}-update.json?t=${Date.now()}`;
-      const response = await fetch(url, { redirect: "follow" });
-      assertTrustedUpdateUrl(response.url);
+      const manifestUrl = `${base}/${this.#prefix(version)}-update.json`;
+      const cacheBust = `t=${Date.now()}`;
+      const [response, signatureResponse] = await Promise.all([
+        fetchTrustedUpdateUrl(`${manifestUrl}?${cacheBust}`),
+        fetchTrustedUpdateUrl(`${manifestUrl}.sig?${cacheBust}`),
+      ]);
       if (!response.ok) throw new Error(`manifest ${response.status}`);
-      const manifest = parseManifest(await readBoundedManifestJson(response), {
+      if (!signatureResponse.ok) {
+        throw new Error(`manifest signature ${signatureResponse.status}`);
+      }
+      const manifestBytes = await readBoundedManifestBytes(response);
+      verifyManifestSignature(
+        manifestBytes,
+        await readBoundedSignature(signatureResponse),
+        version.publicKey,
+      );
+      const manifest = parseManifest(parseManifestBytes(manifestBytes), {
         channel: version.channel,
         platform: platformName(),
         arch: process.arch,
@@ -280,10 +295,9 @@ export class Updater {
         });
 
         if (IS_MAC) {
-          await runIgnoredCommand(
-            ["codesign", "--verify", "--deep", "--strict", staged],
-            "codesign verification failed on the downloaded update",
-          );
+          const resourcesDir = this.#resourcesDir();
+          if (!resourcesDir) throw new Error("installed app path is unavailable");
+          await verifyMacCodeIdentity(join(resourcesDir, "..", ".."), staged);
         }
         this.#assertCurrent(snapshot);
 
@@ -443,6 +457,25 @@ async function runIgnoredCommand(command: string[], errorMessage: string): Promi
   });
   const exitCode = await process.exited;
   if (exitCode !== 0) throw new Error(`${errorMessage} (${exitCode})`);
+}
+
+async function verifyMacCodeIdentity(installedApp: string, stagedApp: string): Promise<void> {
+  const inspect = Bun.spawn(["codesign", "-d", "-r-", installedApp], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const stderr = await new Response(inspect.stderr).text();
+  const exitCode = await inspect.exited;
+  if (exitCode !== 0) throw new Error(`installed app codesign inspection failed (${exitCode})`);
+  const requirement = stderr.match(/^designated => (.+)$/m)?.[1]?.trim();
+  if (!requirement || requirement.length > 4096) {
+    throw new Error("installed app has no bounded designated code requirement");
+  }
+  await runIgnoredCommand(
+    ["codesign", "--verify", "--deep", "--strict", `-R=${requirement}`, stagedApp],
+    "downloaded update does not match the installed code identity",
+  );
 }
 
 function pruneTarCacheBestEffort(tarsDir: string, keepFile: string): void {

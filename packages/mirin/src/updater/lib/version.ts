@@ -1,7 +1,11 @@
 import type { VersionInfo } from "../types.ts";
 import { MAX_VERSION_JSON_BYTES } from "./limits.ts";
 import { parseSemVer } from "./semver.ts";
+import { parseUpdatePublicKey } from "./signature.ts";
 import { trustedBaseUrl } from "./urls.ts";
+
+const WINDOWS_RESERVED_NAME =
+  /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i;
 
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -43,7 +47,7 @@ function appNameField(source: Record<string, unknown>): string {
 
 function channelField(source: Record<string, unknown>): string {
   const value = stringField(source, "channel", 64);
-  if (!/^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/.test(value)) {
+  if (!/^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/.test(value) || WINDOWS_RESERVED_NAME.test(value)) {
     throw new Error("invalid installed version field: channel");
   }
   return value;
@@ -74,6 +78,7 @@ export function parseVersionInfo(value: unknown): VersionInfo {
     version,
     channel: channelField(source),
     baseUrl,
+    publicKey: parseUpdatePublicKey(source.publicKey),
     name: appNameField(source),
     identifier: identifierField(source),
   };

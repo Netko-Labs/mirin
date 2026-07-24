@@ -12,6 +12,8 @@ export interface VersionInfo {
   version: string;
   channel: string;
   baseUrl: string;
+  /** Base64 DER SubjectPublicKeyInfo for signed update manifests. */
+  publicKey: string;
   name: string;
   identifier: string;
 }

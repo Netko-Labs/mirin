@@ -309,6 +309,13 @@ export interface LinuxConfig {
 export interface ReleaseConfig {
   /** Flat directory URL hosting `{channel}-{platform}-{arch}-*` update files. */
   baseUrl: string;
+  /**
+   * Base64 DER SubjectPublicKeyInfo for the Ed25519 key that signs update
+   * manifests. May instead be supplied through `MIRIN_UPDATE_PUBLIC_KEY` during
+   * the build. `mirin release` reads the matching private key from
+   * `MIRIN_UPDATE_PRIVATE_KEY`.
+   */
+  publicKey?: string;
   /** Update channel; baked into artifact names + support dir. Default "stable". */
   channel?: string;
   /** Optional markdown release notes embedded in the update manifest. */

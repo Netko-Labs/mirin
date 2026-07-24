@@ -56,8 +56,8 @@ produce a distributable, notarizable app.
 `mirin release` builds the app and emits installer + updater artifacts under
 `build/release/`:
 
-- macOS: a DMG plus `{channel}-darwin-{arch}-update.json`, full `.tar.zst`, and
-  optional delta patch.
+- macOS: a DMG plus `{channel}-darwin-{arch}-update.json` and its detached `.sig`,
+  full `.tar.zst`, and optional delta patch.
 - Windows: an Inno Setup installer when `iscc` is available, else NSIS when
   `makensis` is available, else a portable `.zip`, plus the updater artifacts.
 - Linux: AppImage, deb, and rpm packages plus the updater artifacts.
@@ -72,30 +72,48 @@ Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
 those files, such as GitHub Releases' `.../releases/latest/download`. Safe dotted
 channels such as `beta.preview-2` are supported; the same validated channel is used
 in artifact prefixes, manifests, embedded identity, URLs, and updater support paths.
+Generate a long-lived Ed25519 update key pair once:
+
+```bash
+openssl genpkey -algorithm Ed25519 -out update-private.pem
+openssl pkey -in update-private.pem -pubout -outform DER | openssl base64 -A
+openssl pkey -in update-private.pem -outform DER | openssl base64 -A
+```
+
+Put the first base64 value in `release.publicKey` (or
+`MIRIN_UPDATE_PUBLIC_KEY`) when building. Set the second as
+`MIRIN_UPDATE_PRIVATE_KEY` only in the release environment; it is a PKCS8 private
+key and must never be committed or packaged. `mirin release` fails closed if the
+keys are absent or do not match, signs the exact manifest bytes, and emits
+`update.json.sig`.
+
 Runtime updates reject non-HTTPS URLs except `http://localhost` / loopback for local
-testing, validate the manifest target, and accept only strictly newer SemVer
-precedence. Checks are single-flight and defer while a download is active; downloads
-and applies are guarded operations correlated to a version/hash generation. Accepted
-helper launch is a terminal handoff, so manual updater work and auto-check scheduling
-remain blocked until the process exits. Failed operations release their latch before
-best-effort cleanup, successful helpers remove their generation directory, and startup
-prunes abandoned generations while preserving work owned by live app processes. Manifest
-bodies, downloads, decompressed patches,
+testing, validate every redirect hop, verify the detached Ed25519 signature before
+parsing the manifest, validate its target, and accept only strictly newer SemVer
+precedence. Checks are single-flight and defer while a download is active or an update
+is staged; downloads and applies are guarded operations correlated to a version/hash
+generation. Accepted helper launch is a terminal handoff, so manual updater work and
+auto-check scheduling remain blocked until the process exits. Failed operations release
+their latch before best-effort cleanup, successful helpers remove their generation
+directory, and startup prunes abandoned generations while preserving work owned by
+live app processes or an apply-helper PID. Manifest bodies, downloads, decompressed patches,
 archive entries, and path/link lengths are bounded; streaming reconstructed tar output
 has an 8 GiB ceiling, while in-memory patch inputs have a 512 MiB combined ceiling and
 release bsdiff sources a 128 MiB per-source ceiling. Larger deltas use the full bundle.
 SHA-256, archive node/link safety, the real staged root
 and platform executable, and staged `version.json` identity are verified before apply.
-macOS verifies executable mode and codesign; Linux extracts with permission
-preservation and ensures owner execute on the validated regular executable. Set
+macOS verifies executable mode and the installed app's designated code requirement;
+Linux extracts with permission preservation, ensures owner execute on the validated
+regular executable, and rolls back if the replacement exits immediately. Set
 `release.notes` to embed markdown release notes in the update manifest for app update
 UIs.
 
 Current `mirin release` manifests add required `tarSize` and patch
 `uncompressedSize` bounds. Older Mirin runtimes ignore these additive fields and
-can consume new releases. Hardened runtimes intentionally reject legacy manifests
-that omit the bounds; release tooling can still publish a full update when the
-previous remote manifest is legacy, but skips delta generation against it.
+can consume the JSON payload in new releases. Hardened runtimes intentionally reject
+legacy manifests that omit the bounds or detached signature; release tooling can still
+publish a full update when the previous remote manifest is legacy or unsigned, but
+skips delta generation against it.
 
 ## Native features
 

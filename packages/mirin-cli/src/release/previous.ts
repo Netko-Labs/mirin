@@ -40,14 +40,38 @@ export function parsePreviousReleaseManifest(
 export async function readPreviousReleaseManifest(
   response: Response,
   expected: { channel: string; platform: string; arch: string },
-): Promise<PreviousReleaseManifest> {
+): Promise<{ manifest: PreviousReleaseManifest; bytes: Uint8Array }> {
+  const bytes = await readBoundedResponse(response, MAX_MANIFEST_BYTES, "previous update manifest");
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new Error("invalid previous update manifest JSON");
+  }
+  return { manifest: parsePreviousReleaseManifest(value, expected), bytes };
+}
+
+export async function readPreviousReleaseSignature(response: Response): Promise<string> {
+  const bytes = await readBoundedResponse(response, 1024, "previous update manifest signature");
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("invalid previous update manifest signature");
+  }
+}
+
+async function readBoundedResponse(
+  response: Response,
+  maximum: number,
+  label: string,
+): Promise<Uint8Array> {
   const rawLength = response.headers.get("content-length");
   if (rawLength !== null) {
-    if (!/^\d+$/.test(rawLength) || Number(rawLength) > MAX_MANIFEST_BYTES) {
-      throw new Error("previous update manifest is too large");
+    if (!/^\d+$/.test(rawLength) || Number(rawLength) > maximum) {
+      throw new Error(`${label} is too large`);
     }
   }
-  if (!response.body) throw new Error("previous update manifest has no body");
+  if (!response.body) throw new Error(`${label} has no body`);
 
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -57,9 +81,9 @@ export async function readPreviousReleaseManifest(
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > MAX_MANIFEST_BYTES) {
+      if (total > maximum) {
         await reader.cancel();
-        throw new Error("previous update manifest is too large");
+        throw new Error(`${label} is too large`);
       }
       chunks.push(value);
     }
@@ -73,13 +97,7 @@ export async function readPreviousReleaseManifest(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  let value: unknown;
-  try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
-    throw new Error("invalid previous update manifest JSON");
-  }
-  return parsePreviousReleaseManifest(value, expected);
+  return bytes;
 }
 
 function assertSemVer(value: string): void {
@@ -139,6 +157,27 @@ export function assertTrustedReleaseUrl(raw: string): void {
   if (url.protocol === "https:") return;
   if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return;
   throw new Error("release URLs must use HTTPS, except loopback HTTP for local testing");
+}
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_TRUSTED_REDIRECTS = 10;
+
+/** Follow redirects manually so an intermediate HTTP hop cannot bypass policy. */
+export async function fetchTrustedReleaseUrl(raw: string): Promise<Response> {
+  let current = raw;
+  for (let redirects = 0; redirects <= MAX_TRUSTED_REDIRECTS; redirects += 1) {
+    assertTrustedReleaseUrl(current);
+    const response = await fetch(current, { redirect: "manual" });
+    if (!REDIRECT_STATUSES.has(response.status)) return response;
+    const location = response.headers.get("location");
+    await response.body?.cancel();
+    if (!location) throw new Error("release redirect is missing a location");
+    if (redirects === MAX_TRUSTED_REDIRECTS) {
+      throw new Error("release redirect limit exceeded");
+    }
+    current = new URL(location, current).toString();
+  }
+  throw new Error("release redirect limit exceeded");
 }
 
 export function releaseArtifactUrl(base: string, fileName: string): string {

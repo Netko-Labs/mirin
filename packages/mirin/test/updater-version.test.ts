@@ -6,6 +6,7 @@ const installed = {
   version: "1.2.3",
   channel: "stable",
   baseUrl: "https://updates.example.com/",
+  publicKey: "MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
   name: "Mirin App",
   identifier: "com.example.mirin",
 };
@@ -28,7 +29,7 @@ describe("updater SemVer ordering", () => {
 });
 
 describe("installed updater metadata", () => {
-  test("parses and normalizes the five-field version identity with safe dotted channels", () => {
+  test("parses and normalizes the signed version identity with safe dotted channels", () => {
     expect(parseVersionInfo({ ...installed, channel: "beta.preview-2" })).toEqual({
       ...installed,
       channel: "beta.preview-2",
@@ -49,8 +50,14 @@ describe("installed updater metadata", () => {
     expect(() => parseVersionInfo({ ...installed, channel: "stable." })).toThrow(
       "invalid installed version field: channel",
     );
+    expect(() => parseVersionInfo({ ...installed, channel: "NUL" })).toThrow(
+      "invalid installed version field: channel",
+    );
     expect(() => parseVersionInfo({ ...installed, identifier: "com..mirin" })).toThrow(
       "invalid installed version field: identifier",
+    );
+    expect(() => parseVersionInfo({ ...installed, publicKey: "not-base64" })).toThrow(
+      "invalid installed version field: publicKey",
     );
     expect(() => parseVersionInfo({ ...installed, version: "1.2" })).toThrow("invalid SemVer");
   });

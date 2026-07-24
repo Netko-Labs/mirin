@@ -93,12 +93,16 @@ falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via c
 `%LOCALAPPDATA%` support dir, bounded/generation-correlated download staging,
 validated real app root + `<App>.exe` + `resources/version.json`, and a detached
 PowerShell folder swap + relaunch. The launch VBScript propagates
-`Win32_Process.Create` failure before the running app quits. Accepted WMI launch is
+`Win32_Process.Create` failure before the running app quits and records the apply
+helper PID so startup cleanup cannot delete its generation. Accepted WMI launch is
 the terminal handoff, so checks, downloads, applies, and auto-check scheduling remain
 blocked until exit. Successful helpers remove their generation and launcher files;
 launch failures clean launcher files best-effort, and startup prunes abandoned
-generations without touching live-process work. The post-exit swap still has no durable success acknowledgement and is
-not field-tested.
+generations without touching live app/helper work. The swap uses a unique backup,
+rejects stale backup collisions, removes partial replacements before rollback, and
+verifies restoration. The post-exit swap still has no durable success acknowledgement
+and is not field-tested. Runtime manifests require a pinned Ed25519 signature, and
+every redirect hop is subject to the HTTPS-or-loopback rule.
 `publish-all.ts` publishes the host-platform native package. Release-time
 compression uses the standalone `mirin-codec.exe`, which has no CEF or Bun FFI
 dependency.

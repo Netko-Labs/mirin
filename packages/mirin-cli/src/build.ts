@@ -25,6 +25,7 @@ import { compileWorkers, normalizeSidecars } from "./extras.ts";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
 import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
 import { validateReleaseChannel } from "./release/channel.ts";
+import { validateUpdatePublicKey } from "./release/signature.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -122,6 +123,8 @@ export interface BuildResult {
   channel: string;
   /** Update baseUrl, if `release` is configured. */
   baseUrl?: string;
+  /** Ed25519 public key embedded into version.json for manifest verification. */
+  updatePublicKey?: string;
   /** Markdown release notes embedded in the updater manifest, if configured. */
   releaseNotes?: string;
   /** libmirin_core path (for the updater codec at release time). */
@@ -188,6 +191,10 @@ export async function build(
   const version = opts.version ?? appVersion(projectDir);
   const channel = validateReleaseChannel(config.release?.channel ?? "stable");
   const baseUrl: string | undefined = config.release?.baseUrl;
+  const updatePublicKey =
+    baseUrl === undefined
+      ? undefined
+      : validateUpdatePublicKey(config.release?.publicKey ?? process.env.MIRIN_UPDATE_PUBLIC_KEY);
   const releaseNotes: string | undefined = config.release?.notes;
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
   const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
@@ -243,7 +250,14 @@ export async function build(
   // version.json embeds the running app's update identity (read by app.updater).
   // Only when `release` is configured — otherwise the app has no updater.
   const versionJson = baseUrl
-    ? JSON.stringify({ version, channel, baseUrl, name: appName, identifier: bundleId })
+    ? JSON.stringify({
+        version,
+        channel,
+        baseUrl,
+        publicKey: updatePublicKey,
+        name: appName,
+        identifier: bundleId,
+      })
     : undefined;
   const resources = {
     uiDir: join(projectDir, "dist"),
@@ -330,6 +344,7 @@ export async function build(
     version,
     channel,
     baseUrl,
+    updatePublicKey,
     releaseNotes,
     coreDylib: artifacts.coreDylib,
     codecBin: artifacts.codecBin,

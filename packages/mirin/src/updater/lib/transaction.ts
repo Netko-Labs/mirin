@@ -49,9 +49,9 @@ export class UpdateTransactionState {
   beginCheck(): number {
     if (this.isApplying) throw new Error("cannot check for updates while applying");
     if (this.#downloading !== null) throw new Error("cannot check while an update is downloading");
+    if (this.#staged) throw new Error("cannot check while an update is staged");
     this.#generation += 1;
     this.#pending = null;
-    this.#staged = null;
     return this.#generation;
   }
 

@@ -1,10 +1,11 @@
-import { lstatSync, readdirSync, rmSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { UPDATER_PROCESS_SESSION } from "./transaction.ts";
 
 const LEGACY_GENERATION_DIRECTORY = /^generation-[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.+-]*-[a-f0-9]{16}$/;
 const OWNED_GENERATION_DIRECTORY =
   /^generation-([1-9]\d*)-([a-f0-9]{32})-[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.+-]*-[a-f0-9]{16}$/;
+export const APPLY_HELPER_PID_FILE = ".apply-helper.pid";
 
 interface PruneGenerationOptions {
   currentPid?: number;
@@ -50,7 +51,23 @@ export function pruneGenerationDirectories(
     } catch {
       continue;
     }
+    const helperPid = applyHelperPid(path);
+    const isProcessAlive = options.isProcessAlive ?? processIsAlive;
+    if (helperPid !== undefined && isProcessAlive(helperPid)) continue;
     removePathBestEffort(path, true);
+  }
+}
+
+function applyHelperPid(workDir: string): number | undefined {
+  try {
+    const marker = join(workDir, APPLY_HELPER_PID_FILE);
+    if (!lstatSync(marker).isFile()) return undefined;
+    const value = readFileSync(marker, "utf8");
+    if (!/^[1-9]\d*$/.test(value)) return undefined;
+    const pid = Number(value);
+    return Number.isSafeInteger(pid) ? pid : undefined;
+  } catch {
+    return undefined;
   }
 }
 

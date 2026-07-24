@@ -185,6 +185,7 @@ pub fn bsdiff_file(old: &str, new: &str, patch: &str) -> io::Result<()> {
 pub fn bspatch_file(old: &str, patch: &str, new: &str) -> io::Result<()> {
     let old = read_all(old)?;
     let patch = read_all(patch)?;
+    validate_bsdiff_header(&patch, None)?;
     let out = BufWriter::new(File::create(new)?);
     Bspatch::new(&patch)?.apply(&old, out)?;
     Ok(())
@@ -209,6 +210,7 @@ pub fn bspatch_file_bounded(
     )?;
     let old = read_all_bounded(old, max_old_bytes)?;
     let patch = read_all_bounded(patch, max_patch_bytes)?;
+    validate_bsdiff_header(&patch, Some(max_output_bytes))?;
     let patcher = Bspatch::new(&patch)?;
     if patcher.hint_target_size() > max_output_bytes {
         return Err(limit_error(max_output_bytes));
@@ -218,6 +220,47 @@ pub fn bspatch_file_bounded(
         patcher.apply(&old, output)?;
         Ok(())
     })
+}
+
+fn validate_bsdiff_header(patch: &[u8], max_output_bytes: Option<u64>) -> io::Result<()> {
+    if patch.len() < 32 || &patch[..8] != b"BSDIFF40" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "not a valid BSDIFF40 patch",
+        ));
+    }
+    let control_bytes = nonnegative_bsdiff_integer(&patch[8..16], "control block size")?;
+    let delta_bytes = nonnegative_bsdiff_integer(&patch[16..24], "delta block size")?;
+    let target_bytes = nonnegative_bsdiff_integer(&patch[24..32], "target size")?;
+    let payload_end = 32_u64
+        .checked_add(control_bytes)
+        .and_then(|value| value.checked_add(delta_bytes))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "patch header overflow"))?;
+    if payload_end > patch.len() as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "patch block sizes exceed the input",
+        ));
+    }
+    if max_output_bytes.is_some_and(|maximum| target_bytes > maximum) {
+        return Err(limit_error(max_output_bytes.unwrap_or_default()));
+    }
+    Ok(())
+}
+
+fn nonnegative_bsdiff_integer(bytes: &[u8], label: &str) -> io::Result<u64> {
+    let encoded = u64::from_le_bytes(
+        bytes
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "truncated patch integer"))?,
+    );
+    if encoded >> 63 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("negative BSDIFF40 {label}"),
+        ));
+    }
+    Ok(encoded)
 }
 
 fn validate_patch_input_lengths(
@@ -261,6 +304,24 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("test directory should be created");
         root
+    }
+
+    #[test]
+    fn rejects_negative_and_overflowing_bsdiff_headers_without_panicking() {
+        let mut negative = [0_u8; 32];
+        negative[..8].copy_from_slice(b"BSDIFF40");
+        negative[15] = 0x80;
+        assert!(validate_bsdiff_header(&negative, Some(1024)).is_err());
+
+        let mut oversized_blocks = [0_u8; 32];
+        oversized_blocks[..8].copy_from_slice(b"BSDIFF40");
+        oversized_blocks[8..16].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(validate_bsdiff_header(&oversized_blocks, Some(1024)).is_err());
+
+        let mut oversized_target = [0_u8; 32];
+        oversized_target[..8].copy_from_slice(b"BSDIFF40");
+        oversized_target[24..32].copy_from_slice(&2048_u64.to_le_bytes());
+        assert!(validate_bsdiff_header(&oversized_target, Some(1024)).is_err());
     }
 
     #[test]

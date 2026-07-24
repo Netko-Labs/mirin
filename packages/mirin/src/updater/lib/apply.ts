@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { VersionInfo } from "../types.ts";
-import { removePathBestEffort } from "./cleanup.ts";
+import { APPLY_HELPER_PID_FILE, removePathBestEffort } from "./cleanup.ts";
 import { IS_LINUX, IS_WINDOWS, psq, sh } from "./platform.ts";
 
 interface ApplyOptions {
@@ -17,6 +17,7 @@ interface ShellScriptOptions {
   staged: string;
   workDir: string;
   pid?: number;
+  backup?: string;
 }
 
 interface WindowsScriptOptions extends ShellScriptOptions {
@@ -25,15 +26,34 @@ interface WindowsScriptOptions extends ShellScriptOptions {
   helperFiles: string[];
 }
 
-export function renderWindowsLaunchVbs(applyVbs: string): string {
+export function renderWindowsLaunchVbs(applyVbs: string, helperPidFile?: string): string {
   const command = `wscript.exe //B //Nologo "${applyVbs}"`.replace(/"/g, '""');
-  return [
+  const lines = [
     "Dim status, pid",
     `status = GetObject("winmgmts:Win32_Process").Create("${command}", Null, Null, pid)`,
     "If status <> 0 Then WScript.Quit status",
-    "WScript.Quit 0",
-    "",
-  ].join("\r\n");
+  ];
+  if (helperPidFile) {
+    const path = helperPidFile.replace(/"/g, '""');
+    lines.push(
+      "On Error Resume Next",
+      "Dim pidFile",
+      `Set pidFile = CreateObject("Scripting.FileSystemObject").CreateTextFile("${path}", False)`,
+      "If Err.Number <> 0 Then",
+      `  GetObject("winmgmts:Win32_Process.Handle='" & CStr(pid) & "'").Terminate`,
+      "  WScript.Quit 1",
+      "End If",
+      "pidFile.Write CStr(pid)",
+      "pidFile.Close",
+      "If Err.Number <> 0 Then",
+      `  GetObject("winmgmts:Win32_Process.Handle='" & CStr(pid) & "'").Terminate`,
+      "  WScript.Quit 1",
+      "End If",
+      "On Error GoTo 0",
+    );
+  }
+  lines.push("WScript.Quit 0", "");
+  return lines.join("\r\n");
 }
 
 export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): string {
@@ -44,13 +64,15 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "Set-Location $env:TEMP",
     `while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }`,
     "Start-Sleep -Milliseconds 700",
-    `Remove-Item -Recurse -Force ${psq(options.backup)} -ErrorAction SilentlyContinue`,
-    `for ($i=0; $i -lt 50; $i++) { Move-Item ${psq(options.runningApp)} ${psq(options.backup)} -ErrorAction SilentlyContinue; if (Test-Path ${psq(options.backup)}) { break }; Start-Sleep -Milliseconds 200 }`,
-    `if (-not (Test-Path ${psq(options.backup)})) { throw 'Could not unlock the existing app' }`,
+    `if (Test-Path ${psq(options.backup)}) { throw 'Updater backup path already exists' }`,
+    `for ($i=0; $i -lt 50; $i++) { try { Move-Item ${psq(options.runningApp)} ${psq(options.backup)} -ErrorAction Stop } catch {}; if ((Test-Path ${psq(options.backup)}) -and -not (Test-Path ${psq(options.runningApp)})) { break }; Start-Sleep -Milliseconds 200 }`,
+    `if ((Test-Path ${psq(options.runningApp)}) -or -not (Test-Path ${psq(options.backup)})) { throw 'Could not unlock the existing app' }`,
     "try {",
     `  Move-Item ${psq(options.staged)} ${psq(options.runningApp)}`,
     "} catch {",
+    `  Remove-Item -Recurse -Force ${psq(options.runningApp)} -ErrorAction SilentlyContinue`,
     `  Move-Item ${psq(options.backup)} ${psq(options.runningApp)} -ErrorAction SilentlyContinue`,
+    `  if (-not (Test-Path ${psq(options.executable)})) { throw 'Update rollback failed' }`,
     "  throw",
     "}",
     "try {",
@@ -58,6 +80,7 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "} catch {",
     `  Remove-Item -Recurse -Force ${psq(options.runningApp)} -ErrorAction SilentlyContinue`,
     `  Move-Item ${psq(options.backup)} ${psq(options.runningApp)} -ErrorAction SilentlyContinue`,
+    `  if (-not (Test-Path ${psq(options.executable)})) { throw 'Update rollback failed' }`,
     `  Start-Process -FilePath ${psq(options.executable)} -WorkingDirectory ${psq(options.runningApp)} -ErrorAction SilentlyContinue`,
     "  throw",
     "}",
@@ -72,13 +95,31 @@ export function renderLinuxApplyShell(
 ): string {
   return [
     ...shellPrelude(options),
-    'rm -rf "$OLD"',
+    `EXE=${sh(options.executable)}`,
     'mv "$APP" "$OLD"',
     'if ! mv "$NEW" "$APP"; then',
+    '  rm -rf "$APP"',
     '  mv "$OLD" "$APP"',
+    '  test -x "$EXE"',
     "  exit 1",
     "fi",
-    `setsid ${sh(options.executable)} >/dev/null 2>&1 < /dev/null &`,
+    "if ! command -v setsid >/dev/null 2>&1; then",
+    '  rm -rf "$APP"',
+    '  mv "$OLD" "$APP"',
+    '  test -x "$EXE"',
+    "  exit 1",
+    "fi",
+    'setsid "$EXE" >/dev/null 2>&1 < /dev/null &',
+    "NEW_PID=$!",
+    "sleep 1",
+    'if ! kill -0 "$NEW_PID" 2>/dev/null; then',
+    '  wait "$NEW_PID" 2>/dev/null || true',
+    '  rm -rf "$APP"',
+    '  mv "$OLD" "$APP"',
+    '  test -x "$EXE"',
+    '  setsid "$EXE" >/dev/null 2>&1 < /dev/null &',
+    "  exit 1",
+    "fi",
     'rm -rf "$OLD"',
     'rm -rf "$WORK"',
   ].join("\n");
@@ -87,10 +128,11 @@ export function renderLinuxApplyShell(
 export function renderMacApplyShell(options: ShellScriptOptions): string {
   return [
     ...shellPrelude(options),
-    'rm -rf "$OLD"',
     'mv "$APP" "$OLD"',
     'if ! mv "$NEW" "$APP"; then',
+    '  rm -rf "$APP"',
     '  mv "$OLD" "$APP"',
+    '  test -d "$APP"',
     "  exit 1",
     "fi",
     'xattr -r -d com.apple.quarantine "$APP" 2>/dev/null || true',
@@ -128,8 +170,10 @@ async function applyWindows({
   const script = join(tmpdir(), `mirin-apply-${token}.ps1`);
   const applyVbs = join(tmpdir(), `mirin-apply-${token}.vbs`);
   const launchVbs = join(tmpdir(), `mirin-launch-${token}.vbs`);
-  const helperFiles = [script, applyVbs, launchVbs];
-  const backup = `${runningApp}.mirin-old-${process.pid}`;
+  const helperFiles = [script, launchVbs];
+  const allHelperFiles = [script, applyVbs, launchVbs];
+  const backup = `${runningApp}.mirin-old-${token}`;
+  const helperPidFile = join(workDir, APPLY_HELPER_PID_FILE);
   writeFileSync(
     script,
     renderWindowsApplyPowerShell({
@@ -145,10 +189,11 @@ async function applyWindows({
   writeFileSync(
     applyVbs,
     `CreateObject("WScript.Shell").Run "powershell -NoProfile -NonInteractive ` +
-      `-ExecutionPolicy Bypass -WindowStyle Hidden -File ""${script}""", 0, False\n`,
+      `-ExecutionPolicy Bypass -WindowStyle Hidden -File ""${script}""", 0, True\n` +
+      `CreateObject("Scripting.FileSystemObject").DeleteFile WScript.ScriptFullName, True\n`,
     "utf8",
   );
-  writeFileSync(launchVbs, renderWindowsLaunchVbs(applyVbs), "utf8");
+  writeFileSync(launchVbs, renderWindowsLaunchVbs(applyVbs, helperPidFile), "utf8");
 
   try {
     const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs], {
@@ -161,7 +206,7 @@ async function applyWindows({
       throw new Error(`failed to launch Windows updater via WMI (${exitCode})`);
     }
   } catch (error) {
-    for (const file of helperFiles) removePathBestEffort(file);
+    for (const file of allHelperFiles) removePathBestEffort(file);
     throw error;
   }
 }
@@ -169,12 +214,17 @@ async function applyWindows({
 function applyLinux({ resourcesDir, staged, workDir, version }: ApplyOptions): void {
   const runningApp = join(resourcesDir, "..");
   const executable = join(runningApp, version.name);
-  spawnShellSwap(renderLinuxApplyShell({ runningApp, staged, workDir, executable }));
+  const backup = `${runningApp}.mirin-old-${process.pid}-${crypto.randomUUID()}`;
+  spawnShellSwap(
+    renderLinuxApplyShell({ runningApp, staged, workDir, executable, backup }),
+    workDir,
+  );
 }
 
 function applyMac({ resourcesDir, staged, workDir }: ApplyOptions): void {
   const runningApp = join(resourcesDir, "..", "..");
-  spawnShellSwap(renderMacApplyShell({ runningApp, staged, workDir }));
+  const backup = `${runningApp}.mirin-old-${process.pid}-${crypto.randomUUID()}`;
+  spawnShellSwap(renderMacApplyShell({ runningApp, staged, workDir, backup }), workDir);
 }
 
 function shellPrelude(options: ShellScriptOptions): string[] {
@@ -184,16 +234,28 @@ function shellPrelude(options: ShellScriptOptions): string[] {
     `NEW=${sh(options.staged)}`,
     `WORK=${sh(options.workDir)}`,
     `PID=${options.pid ?? process.pid}`,
-    'OLD="$APP.mirin-old-$PID"',
+    `OLD=${sh(options.backup ?? `${options.runningApp}.mirin-old-${options.pid ?? process.pid}`)}`,
+    'if [ -e "$OLD" ]; then exit 1; fi',
     'while kill -0 "$PID" 2>/dev/null; do sleep 0.2; done',
     "sleep 0.3",
   ];
 }
 
-function spawnShellSwap(script: string): void {
-  Bun.spawn(["/bin/sh", "-c", script], {
+function spawnShellSwap(script: string, workDir: string): void {
+  const helper = Bun.spawn(["/bin/sh", "-c", script], {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",
-  }).unref();
+  });
+  try {
+    writeFileSync(join(workDir, APPLY_HELPER_PID_FILE), String(helper.pid), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    helper.kill();
+    throw error;
+  }
+  helper.unref();
 }

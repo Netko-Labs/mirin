@@ -8,9 +8,16 @@ import {
 
 describe("Windows updater launcher", () => {
   test("propagates Win32_Process.Create status before the app can quit", () => {
-    const script = renderWindowsLaunchVbs('C:\\Temp\\Mirin "Update"\\apply.vbs');
+    const script = renderWindowsLaunchVbs(
+      'C:\\Temp\\Mirin "Update"\\apply.vbs',
+      "C:\\Updates\\generation\\.apply-helper.pid",
+    );
     expect(script).toContain('status = GetObject("winmgmts:Win32_Process").Create');
     expect(script).toContain("If status <> 0 Then WScript.Quit status");
+    expect(script).toContain("CreateTextFile");
+    expect(script).toContain(".apply-helper.pid");
+    expect(script).toContain("Win32_Process.Handle=");
+    expect(script).toContain(".Terminate");
     expect(script).toContain("WScript.Quit 0");
     expect(script).toContain('""Update""');
   });
@@ -29,6 +36,13 @@ describe("Windows updater launcher", () => {
     expect(launch).toBeGreaterThan(0);
     expect(script.indexOf("C:\\Updates\\generation", launch)).toBeGreaterThan(launch);
     expect(script.indexOf("C:\\Apps\\Mirin.old", launch)).toBeGreaterThan(launch);
+    expect(script).toContain("Updater backup path already exists");
+    expect(script).toContain(
+      "if ((Test-Path 'C:\\Apps\\Mirin') -or -not (Test-Path 'C:\\Apps\\Mirin.old'))",
+    );
+    expect(script).toContain(
+      "Remove-Item -Recurse -Force 'C:\\Apps\\Mirin' -ErrorAction SilentlyContinue",
+    );
   });
 });
 
@@ -51,7 +65,7 @@ describe("POSIX updater helpers", () => {
     expect(script.indexOf('rm -rf "$WORK"')).toBeGreaterThan(firstOpen);
   });
 
-  test("Linux relaunches before deleting the backup and generation", () => {
+  test("Linux observes immediate launch failure before deleting the backup and generation", () => {
     const script = renderLinuxApplyShell({
       runningApp: "/opt/Mirin App",
       staged: "/tmp/generation/extract/Mirin App",
@@ -61,6 +75,8 @@ describe("POSIX updater helpers", () => {
     });
     const launch = script.indexOf("setsid ");
     expect(launch).toBeGreaterThan(0);
+    expect(script.indexOf('kill -0 "$NEW_PID"', launch)).toBeGreaterThan(launch);
+    expect(script.indexOf('mv "$OLD" "$APP"', launch)).toBeGreaterThan(launch);
     expect(script.indexOf('rm -rf "$OLD"', launch)).toBeGreaterThan(launch);
     expect(script.indexOf('rm -rf "$WORK"', launch)).toBeGreaterThan(launch);
   });

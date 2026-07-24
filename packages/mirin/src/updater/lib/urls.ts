@@ -23,6 +23,27 @@ export function assertTrustedUpdateUrl(raw: string): void {
   throw new Error("update URLs must use HTTPS, except loopback HTTP for local testing");
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_TRUSTED_REDIRECTS = 10;
+
+/** Follow redirects manually so every requested hop satisfies the HTTPS policy. */
+export async function fetchTrustedUpdateUrl(raw: string): Promise<Response> {
+  let current = raw;
+  for (let redirects = 0; redirects <= MAX_TRUSTED_REDIRECTS; redirects += 1) {
+    assertTrustedUpdateUrl(current);
+    const response = await fetch(current, { redirect: "manual" });
+    if (!REDIRECT_STATUSES.has(response.status)) return response;
+    const location = response.headers.get("location");
+    await response.body?.cancel();
+    if (!location) throw new Error("update redirect is missing a location");
+    if (redirects === MAX_TRUSTED_REDIRECTS) {
+      throw new Error("update redirect limit exceeded");
+    }
+    current = new URL(location, current).toString();
+  }
+  throw new Error("update redirect limit exceeded");
+}
+
 function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";

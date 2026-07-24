@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { validateReleaseChannel } from "../src/release/channel.ts";
 import {
+  fetchTrustedReleaseUrl,
   parsePreviousReleaseManifest,
   readPreviousReleaseManifest,
   releaseArtifactUrl,
@@ -24,6 +25,11 @@ const manifest = {
     size: 42,
   },
 };
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 describe("release channel validation", () => {
   test("accepts safe dotted channels and rejects path-like punctuation", () => {
@@ -31,6 +37,8 @@ describe("release channel validation", () => {
     expect(() => validateReleaseChannel("../beta")).toThrow("safe channel name");
     expect(() => validateReleaseChannel("beta..preview")).toThrow("safe channel name");
     expect(() => validateReleaseChannel("stable.")).toThrow("safe channel name");
+    expect(() => validateReleaseChannel("NUL")).toThrow("safe channel name");
+    expect(() => validateReleaseChannel("con.preview")).toThrow("safe channel name");
   });
 });
 
@@ -90,6 +98,22 @@ describe("previous release validation", () => {
     expect(() => releaseArtifactUrl("https://example.com", "nested/file")).toThrow(
       "unsafe previous update artifact name",
     );
+  });
+
+  test("rejects an HTTP redirect hop before requesting it", async () => {
+    const requested: string[] = [];
+    globalThis.fetch = async (input) => {
+      requested.push(String(input));
+      return new Response(null, {
+        status: 302,
+        headers: { location: "http://releases.example.com/manifest" },
+      });
+    };
+
+    await expect(fetchTrustedReleaseUrl("https://releases.example.com/start")).rejects.toThrow(
+      "must use HTTPS",
+    );
+    expect(requested).toEqual(["https://releases.example.com/start"]);
   });
 });
 

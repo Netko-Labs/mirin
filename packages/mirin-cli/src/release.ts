@@ -3,6 +3,7 @@
  *
  * Produces, under `build/release/`:
  *   {channel}-{platform}-{arch}-update.json          the manifest the app polls
+ *   {channel}-{platform}-{arch}-update.json.sig      detached Ed25519 signature
  *   {channel}-{platform}-{arch}-{Name}.app.tar.zst   the full bundle (fallback)
  *   {channel}-{platform}-{arch}-{prevVersion}.patch  delta from the previous release
  *
@@ -24,11 +25,17 @@ import { build } from "./build.ts";
 import { notarizeAndStaple } from "./dmg.ts";
 import { buildReleaseInstaller } from "./release/installers.ts";
 import {
-  assertTrustedReleaseUrl,
+  fetchTrustedReleaseUrl,
   readPreviousReleaseManifest,
+  readPreviousReleaseSignature,
   releaseArtifactUrl,
   trustedReleaseBaseUrl,
 } from "./release/previous.ts";
+import {
+  assertUpdateSigningKey,
+  signUpdateManifest,
+  verifyUpdateManifest,
+} from "./release/signature.ts";
 
 // Level 10 keeps updater bundles compact without level 19's steep CPU cost.
 // The native codec uses multiple workers, so this scales across CI runner cores.
@@ -95,6 +102,10 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     console.error("[mirin release] no `release.baseUrl` in mirin.config.ts — nothing to publish.");
     return 1;
   }
+  if (!result.updatePublicKey) {
+    throw new Error("[mirin release] packaged update public key is unavailable.");
+  }
+  assertUpdateSigningKey(result.updatePublicKey);
 
   const isWindows = process.platform === "win32";
   const isLinux = process.platform === "linux";
@@ -170,16 +181,24 @@ export async function release(projectDir = process.cwd()): Promise<number> {
   try {
     const manifestUrl = new URL(releaseArtifactUrl(base, `${prefix}-update.json`));
     manifestUrl.searchParams.set("t", String(Date.now()));
-    const prevRes = await fetch(manifestUrl, {
-      redirect: "follow",
-    });
-    assertTrustedReleaseUrl(prevRes.url);
-    if (prevRes.ok) {
-      const prev = await readPreviousReleaseManifest(prevRes, {
+    const [prevRes, signatureRes] = await Promise.all([
+      fetchTrustedReleaseUrl(manifestUrl.toString()),
+      fetchTrustedReleaseUrl(
+        `${releaseArtifactUrl(base, `${prefix}-update.json.sig`)}?t=${Date.now()}`,
+      ),
+    ]);
+    if (prevRes.ok && signatureRes.ok) {
+      const previous = await readPreviousReleaseManifest(prevRes, {
         channel: result.channel,
         platform,
         arch,
       });
+      verifyUpdateManifest(
+        previous.bytes,
+        await readPreviousReleaseSignature(signatureRes),
+        result.updatePublicKey,
+      );
+      const prev = previous.manifest;
       if (prev.version !== result.version) {
         assertDeltaSourcesFitMemoryBudget(prev.tarSize, tarSize);
         console.log(`[mirin release] generating delta ${prev.version} → ${result.version}…`);
@@ -240,13 +259,19 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     patches,
   };
   const manifestName = `${prefix}-update.json`;
-  await Bun.write(join(outDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
+  const manifestBytes = new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`);
+  await Bun.write(join(outDir, manifestName), manifestBytes);
+  await Bun.write(
+    join(outDir, `${manifestName}.sig`),
+    `${signUpdateManifest(manifestBytes, result.updatePublicKey)}\n`,
+  );
 
   const { installerName, installerSize } = await installerBuild;
 
   const mb = (n: number) => (n / 1e6).toFixed(1);
   console.log("\n[mirin release] done → build/release/");
   console.log(`  ${manifestName}`);
+  console.log(`  ${manifestName}.sig`);
   console.log(`  ${bundleName} (${mb(bundleSize)} MB)`);
   for (const p of patches) console.log(`  ${p.url} (${mb(p.size)} MB delta from ${p.fromVersion})`);
   if (installerName) console.log(`  ${installerName} (${mb(installerSize)} MB installer)`);
@@ -261,8 +286,7 @@ async function downloadVerified(
   expectedSha256: string,
   expectedSize: number,
 ): Promise<void> {
-  const response = await fetch(url, { redirect: "follow" });
-  assertTrustedReleaseUrl(response.url);
+  const response = await fetchTrustedReleaseUrl(url);
   if (!response.ok || !response.body) throw new Error(`previous bundle ${response.status}`);
 
   const contentLength = Number(response.headers.get("content-length") ?? 0);
