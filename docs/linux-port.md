@@ -224,8 +224,9 @@ Linux packaging lives in `packages/mirin-cli`:
   single path segments, desktop fields reject line injection, and CLI/config package
   formats are restricted to `appimage`, `deb`, and `rpm`.
 - Parallel format jobs are settled before their shared filesystem tree is removed.
-  If any format fails, successful sibling artifacts are deleted before the caller
-  continues without Linux packages, preventing late or partial release output.
+  If any format fails, every expected package path is deleted, including output
+  created by a rejected job, before the caller continues without Linux packages.
+  Cleanup failure is fatal so a partial package set cannot enter the atomic release.
 
 ## Notes for contributors
 - App-shell features not yet ported are handled by the engine's

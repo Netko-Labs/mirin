@@ -17,6 +17,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
+import { resolveHostSingleInstance } from "./host-config.ts";
 import { Core } from "./native.ts";
 
 // Bundle layout differs by platform: macOS `.app` puts the host in
@@ -51,8 +52,13 @@ const coreConfig = JSON.parse(
   process.env.MIRIN_CONFIG_JSON ??
     JSON.stringify(process.env.MIRIN_DEV_URL ? { dev: true } : { resources_path: resourcesDir }),
 );
-// Opt out of single-instance (the core default) when the app allows multiple.
-if (manifest.singleInstance === false) coreConfig.single_instance = false;
+// Resolve one value for both the native host and Worker. The internal native
+// override must not leave the updater believing single-instance is still active.
+const singleInstance = resolveHostSingleInstance(
+  manifest.singleInstance,
+  coreConfig.single_instance,
+);
+coreConfig.single_instance = singleInstance;
 // The app's bundle id keys the per-app CEF cache dir (Windows has no OS bundle id).
 if (typeof manifest.id === "string") coreConfig.identifier = manifest.id;
 // Linux prod: the CLI stages the resolved app icon at resources/icon.png; the core
@@ -73,6 +79,7 @@ const worker = new Worker(workerPath, {
   workerData: {
     corePath,
     manifest,
+    singleInstance,
     id: typeof manifest.id === "string" ? manifest.id : undefined,
     devUrl: process.env.MIRIN_DEV_URL,
     resourcesDir,

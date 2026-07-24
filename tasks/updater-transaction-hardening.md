@@ -39,6 +39,9 @@
 - [x] Settle every parallel Linux package job before cleaning shared release staging.
 - [x] Bound release notes and generated manifest bytes to the runtime parser limits.
 - [x] Document DMG/Linux packages as intentional best-effort atomic-release exceptions.
+- [x] Share the effective native single-instance override with the updater Worker.
+- [x] Remove every expected Linux package output before best-effort failure recovery.
+- [x] Keep post-commit atomic backup cleanup non-fatal and prune aged leftovers.
 
 ## Checkpoints
 
@@ -80,3 +83,11 @@
   warnings (three warnings removed in touched Linux packaging code);
   `bun run typecheck` passed; `bun run test` passed 208 tests with the two expected
   Windows lifecycle skips on macOS; `git diff --check` passed.
+- Fourth clean-context review remediation: passed the effective native
+  single-instance value to the Worker, removed rejected-job and successful-sibling
+  Linux package output before best-effort recovery, failed closed on staging/output
+  cleanup errors, and made post-commit atomic backup cleanup recoverable.
+- Fourth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 212
+  tests with the two expected Windows lifecycle skips on macOS;
+  `git diff --check` passed.

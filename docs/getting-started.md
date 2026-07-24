@@ -70,11 +70,12 @@ produce a distributable, notarizable app.
 Release compression uses multiple CPU cores, and Linux package formats build in
 parallel with installer creation overlapping updater generation. Mirin waits for
 every parallel package process before cleaning shared staging; if one format
-fails, successful sibling artifacts are removed before the release continues
-without Linux packages. Apps that ship one language can set
-`cef: { locales: ["en-US"] }`; omit it to retain every CEF locale. In ephemeral
-CI, cache `~/.mirinjs/cef` by Mirin version and runner platform so each target
-does not download and unpack the same runtime again.
+fails, every expected artifact is removed before the release continues without
+Linux packages. If package or shared-staging cleanup itself fails, the atomic
+release aborts instead of committing partial package output. Apps that ship one
+language can set `cef: { locales: ["en-US"] }`; omit it to retain every CEF
+locale. In ephemeral CI, cache `~/.mirinjs/cef` by Mirin version and runner
+platform so each target does not download and unpack the same runtime again.
 
 Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
 those files, such as GitHub Releases' `.../releases/latest/download`. Safe dotted
@@ -96,7 +97,9 @@ sinks revalidate them before use. Bundle and release directories are assembled
 in unique sibling staging paths, so a failed required copy/sign/updater or
 Windows-installer run preserves the last successful output. DMG and Linux
 packages are best-effort exceptions: failures are logged and the atomic release
-can still commit its signed updater artifacts without them.
+can still commit its signed updater artifacts without them. Cleanup of the old
+backup after a successful canonical swap is non-fatal; aged leftovers are pruned
+by later runs.
 
 Generate a long-lived Ed25519 update key pair once:
 
@@ -122,7 +125,8 @@ repeated downloads of an already staged generation are rejected. Downloads and a
 are guarded operations correlated to a version/hash generation. `mirin build` validates
 the same strict SemVer grammar consumed by the runtime before packaging. Apps configured
 with `singleInstance: false` may check and download, but automatic apply is rejected;
-close every instance and install their update externally. Accepted helper launch is a
+close every instance and install their update externally. The guard uses the effective
+native-host value, including internal launch overrides. Accepted helper launch is a
 terminal handoff, so manual updater work and auto-check scheduling remain blocked until
 the process exits. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation

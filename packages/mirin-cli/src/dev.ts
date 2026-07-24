@@ -205,12 +205,18 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       // Windows the exe-dir search — neither needs this.)
       ...(IS_LINUX
         ? {
-            LD_LIBRARY_PATH: `${app}${process.env.LD_LIBRARY_PATH ? ":" + process.env.LD_LIBRARY_PATH : ""}`,
+            LD_LIBRARY_PATH: `${app}${
+              process.env.LD_LIBRARY_PATH ? `:${process.env.LD_LIBRARY_PATH}` : ""
+            }`,
           }
         : {}),
       MIRIN_WORKER: workerJs,
       MIRIN_DEV_URL: devUrl,
-      MIRIN_MANIFEST_JSON: JSON.stringify({ id: bundleId, windows: config.windows }),
+      MIRIN_MANIFEST_JSON: JSON.stringify({
+        id: bundleId,
+        windows: config.windows,
+        singleInstance: config.singleInstance,
+      }),
       // dev: true → enables inspect-element AND gives this run its own `-dev`
       // CEF cache dir, so `mirin dev` can run alongside the installed app.
       // `icon_path` (Linux) → the window's `_NET_WM_ICON` (cosmic dock/taskbar).

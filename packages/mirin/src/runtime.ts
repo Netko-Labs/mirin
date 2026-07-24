@@ -97,7 +97,8 @@ function dispatch(raw: string): void {
 export function boot(): void {
   const data = (workerData ?? {}) as {
     corePath?: string;
-    manifest?: { windows?: Record<string, WindowConfig>; singleInstance?: boolean };
+    manifest?: { windows?: Record<string, WindowConfig> };
+    singleInstance?: boolean;
     id?: string;
     devUrl?: string;
     resourcesDir?: string;
@@ -146,7 +147,7 @@ export function boot(): void {
     manifestWindows,
     id: data.id,
     isDev: !!data.devUrl,
-    singleInstance: data.manifest?.singleInstance !== false,
+    singleInstance: data.singleInstance !== false,
     devUrl: data.devUrl,
     resourcesDir: data.resourcesDir,
     corePath,

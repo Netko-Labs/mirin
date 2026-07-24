@@ -1,8 +1,20 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeAtomicOutputDirectory } from "../src/shared/fs/atomic-output.ts";
+import {
+  pruneStaleAtomicOutputBackups,
+  removeAtomicOutputDirectoryBestEffort,
+  writeAtomicOutputDirectory,
+} from "../src/shared/fs/atomic-output.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -43,6 +55,39 @@ describe("atomic output directories", () => {
 
     expect(readFileSync(join(output, "version.txt"), "utf8")).toBe("new");
     expect(stageEntries(root)).toEqual([]);
+  });
+
+  test("does not report a committed output as failed when backup cleanup fails", () => {
+    const warnings: string[] = [];
+    const removed = removeAtomicOutputDirectoryBestEffort(
+      "/synthetic/committed-backup",
+      "test committed backup",
+      () => {
+        throw new Error("permission denied");
+      },
+      (message) => warnings.push(message),
+    );
+
+    expect(removed).toBe(false);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("permission denied");
+  });
+
+  test("prunes aged committed backups on a later run", async () => {
+    const root = temporaryDirectory();
+    const output = join(root, "build", "app");
+    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+      writeFileSync(join(staging, "version.txt"), "current");
+    });
+    const backup = join(root, "build", ".app.mirin-backup-123-stale");
+    mkdirSync(backup);
+    writeFileSync(join(backup, "version.txt"), "old");
+    utimesSync(backup, new Date(0), new Date(0));
+
+    pruneStaleAtomicOutputBackups(root, output, "test output");
+
+    expect(existsSync(backup)).toBe(false);
+    expect(readFileSync(join(output, "version.txt"), "utf8")).toBe("current");
   });
 });
 
