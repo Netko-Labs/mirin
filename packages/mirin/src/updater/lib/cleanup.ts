@@ -59,6 +59,34 @@ export function pruneGenerationDirectories(
   }
 }
 
+export function hasLiveApplyHelper(
+  updatesDir: string,
+  isProcessAlive: (pid: number) => boolean = processIsAlive,
+): boolean {
+  let entries: string[];
+  try {
+    entries = readdirSync(updatesDir);
+  } catch {
+    return false;
+  }
+
+  for (const entry of entries) {
+    if (!OWNED_GENERATION_DIRECTORY.test(entry) && !LEGACY_GENERATION_DIRECTORY.test(entry)) {
+      continue;
+    }
+    const path = join(updatesDir, entry);
+    try {
+      const metadata = lstatSync(path);
+      if (metadata.isSymbolicLink() || !metadata.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const helperPid = applyHelperPid(path);
+    if (helperPid !== undefined && isProcessAlive(helperPid)) return true;
+  }
+  return false;
+}
+
 function applyHelperPid(workDir: string): number | undefined {
   try {
     const marker = join(workDir, APPLY_HELPER_PID_FILE);

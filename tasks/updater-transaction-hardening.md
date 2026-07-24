@@ -66,6 +66,7 @@
 - [x] Expire stale handoff reservations so PID reuse cannot block launch indefinitely.
 - [x] Retire renderer RPC endpoints without deleting a same-id replacement generation.
 - [x] Preserve relative macOS framework symlinks in install-filesystem staging.
+- [x] Prune abandoned install-side staging siblings without touching live owner/helper work.
 
 ## Checkpoints
 
@@ -192,3 +193,10 @@
 - Twelfth-review full TypeScript: `bun run fmt-lint` passed with the same 52
   pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 240
   tests with the two expected Windows lifecycle skips on macOS.
+- Thirteenth clean-context review remediation: prune only exact dead-owner
+  install-side staging siblings at startup while preserving live owner PIDs,
+  recorded apply-helper work, symlinks, and prefix lookalikes.
+- Thirteenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 241
+  tests with the two expected Windows lifecycle skips on macOS; focused cleanup
+  and staged-bundle coverage passed 8 tests; `git diff --check` passed.

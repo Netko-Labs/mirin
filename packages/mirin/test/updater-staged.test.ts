@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readlinkSync,
@@ -11,7 +12,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { prepareInstallSibling } from "../src/updater/lib/install-staging.ts";
+import {
+  prepareInstallSibling,
+  pruneInstallSiblingDirectories,
+} from "../src/updater/lib/install-staging.ts";
 import { validateStagedBundle } from "../src/updater/lib/staged.ts";
 
 const installed = {
@@ -174,6 +178,49 @@ describe("staged update bundle validation", () => {
       expect(readlinkSync(join(framework, "Resources"))).toBe("Versions/Current/Resources");
     } finally {
       rmSync(stage.root, { recursive: true, force: true });
+    }
+  });
+
+  test("prunes only dead-owned install siblings and preserves live helper work", () => {
+    const root = mkdtempSync(join(tmpdir(), "mirin-install-staging-cleanup-"));
+    const install = join(root, "install", installed.name);
+    const resources = join(install, "resources");
+    const parent = dirname(install);
+    const prefix = `.${installed.name}.mirin-new-`;
+    const abandoned = join(parent, `${prefix}300-11111111-1111-1111-1111-111111111111`);
+    const live = join(parent, `${prefix}200-22222222-2222-2222-2222-222222222222`);
+    const unrelated = join(parent, `${prefix}300-not-a-uuid`);
+    const outside = join(root, "outside");
+    const linked = join(parent, `${prefix}400-44444444-4444-4444-4444-444444444444`);
+    mkdirSync(resources, { recursive: true });
+    mkdirSync(abandoned);
+    mkdirSync(live);
+    mkdirSync(unrelated);
+    mkdirSync(outside);
+    symlinkSync(outside, linked, "dir");
+
+    try {
+      pruneInstallSiblingDirectories({
+        resourcesDir: resources,
+        platform: "linux",
+        hasLiveHelper: true,
+        isProcessAlive: () => false,
+      });
+      expect(existsSync(abandoned)).toBe(true);
+      expect(existsSync(live)).toBe(true);
+
+      pruneInstallSiblingDirectories({
+        resourcesDir: resources,
+        platform: "linux",
+        isProcessAlive: (pid) => pid === 200,
+      });
+      expect(existsSync(abandoned)).toBe(false);
+      expect(existsSync(live)).toBe(true);
+      expect(existsSync(unrelated)).toBe(true);
+      expect(existsSync(linked)).toBe(true);
+      expect(existsSync(outside)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

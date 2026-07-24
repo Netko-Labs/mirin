@@ -5,9 +5,13 @@ import { loadCodec } from "../codec.ts";
 import { runtime } from "../runtime.ts";
 import { applyUpdateAndRelaunch, assertLinuxInstallCanApply } from "./lib/apply.ts";
 import { verifyArchiveLayout } from "./lib/archive.ts";
-import { pruneGenerationDirectories, removePathBestEffort } from "./lib/cleanup.ts";
+import {
+  hasLiveApplyHelper,
+  pruneGenerationDirectories,
+  removePathBestEffort,
+} from "./lib/cleanup.ts";
 import { parseManifestBytes, readBoundedManifestBytes, readBoundedSignature } from "./lib/http.ts";
-import { prepareInstallSibling } from "./lib/install-staging.ts";
+import { prepareInstallSibling, pruneInstallSiblingDirectories } from "./lib/install-staging.ts";
 import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
 import { MAX_PATCH_MEMORY_INPUT_BYTES, MAX_TAR_BYTES } from "./lib/limits.ts";
 import { parseManifest } from "./lib/manifest.ts";
@@ -571,7 +575,14 @@ export function initializeUpdater(): void {
 
   try {
     const version = readVersionJsonFile(join(resourcesDir, "version.json"));
-    pruneGenerationDirectories(join(supportDir(version), "updates"));
+    const updatesDir = join(supportDir(version), "updates");
+    const liveHelper = hasLiveApplyHelper(updatesDir);
+    pruneGenerationDirectories(updatesDir);
+    pruneInstallSiblingDirectories({
+      resourcesDir,
+      platform: platformName(),
+      hasLiveHelper: liveHelper,
+    });
   } catch {
     // Invalid or unavailable updater metadata disables startup cleanup.
   }

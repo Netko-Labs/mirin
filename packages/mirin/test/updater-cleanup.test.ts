@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APPLY_HELPER_PID_FILE, pruneGenerationDirectories } from "../src/updater/lib/cleanup.ts";
+import {
+  APPLY_HELPER_PID_FILE,
+  hasLiveApplyHelper,
+  pruneGenerationDirectories,
+} from "../src/updater/lib/cleanup.ts";
 import { generationDirectoryName } from "../src/updater/lib/transaction.ts";
 
 describe("updater generation cleanup", () => {
@@ -16,9 +20,11 @@ describe("updater generation cleanup", () => {
     mkdirSync(abandoned, { recursive: true });
     mkdirSync(unrelated);
     mkdirSync(outside);
+    writeFileSync(join(outside, APPLY_HELPER_PID_FILE), "999");
     symlinkSync(outside, linked, "dir");
 
     try {
+      expect(hasLiveApplyHelper(updates, () => true)).toBe(false);
       pruneGenerationDirectories(updates);
       expect(existsSync(abandoned)).toBe(false);
       expect(existsSync(unrelated)).toBe(true);
@@ -83,6 +89,7 @@ describe("updater generation cleanup", () => {
     writeFileSync(join(generation, APPLY_HELPER_PID_FILE), "400");
 
     try {
+      expect(hasLiveApplyHelper(updates, (pid) => pid === 400)).toBe(true);
       pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
@@ -90,6 +97,7 @@ describe("updater generation cleanup", () => {
       });
       expect(existsSync(generation)).toBe(true);
 
+      expect(hasLiveApplyHelper(updates, () => false)).toBe(false);
       pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
