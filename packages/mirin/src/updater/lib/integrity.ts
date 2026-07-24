@@ -2,7 +2,7 @@ import { statSync } from "node:fs";
 import type { UpdateProgress } from "../types.ts";
 import { removePathBestEffort } from "./cleanup.ts";
 import { MAX_ARTIFACT_BYTES, MAX_TAR_BYTES } from "./limits.ts";
-import { fetchTrustedUpdateUrl } from "./urls.ts";
+import { fetchTrustedUpdateUrl, UPDATE_ARTIFACT_TIMEOUT_MS } from "./urls.ts";
 
 interface DownloadOptions {
   url: string;
@@ -32,7 +32,9 @@ export async function downloadVerifiedArtifact(options: DownloadOptions): Promis
 
   removePathBestEffort(options.destination);
   try {
-    const response = await fetchTrustedUpdateUrl(options.url);
+    const response = await fetchTrustedUpdateUrl(options.url, {
+      timeoutMs: UPDATE_ARTIFACT_TIMEOUT_MS,
+    });
     if (!response.ok || !response.body) throw new Error(`download ${response.status}`);
 
     const declared = contentLength(response);

@@ -37,4 +37,17 @@ describe("trusted updater redirects", () => {
     expect(await response.text()).toBe("ok");
     expect(calls).toBe(2);
   });
+
+  test("aborts a request that exceeds its deadline", async () => {
+    globalThis.fetch = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return reject(new Error("missing abort signal"));
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+
+    await expect(
+      fetchTrustedUpdateUrl("https://updates.example.com/stalled", { timeoutMs: 10 }),
+    ).rejects.toThrow();
+  });
 });

@@ -1,3 +1,4 @@
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import type { VersionInfo } from "../types.ts";
 import { MAX_VERSION_JSON_BYTES } from "./limits.ts";
 import { parseSemVer } from "./semver.ts";
@@ -95,4 +96,36 @@ export function parseVersionJson(text: string): VersionInfo {
     throw new Error("invalid installed version metadata JSON");
   }
   return parseVersionInfo(value);
+}
+
+/** Read version metadata through a fixed-size buffer before decoding or parsing it. */
+export function readVersionJsonFile(path: string): VersionInfo {
+  const descriptor = openSync(path, constants.O_RDONLY);
+  try {
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile() || metadata.size > MAX_VERSION_JSON_BYTES) {
+      throw new Error("installed version metadata is too large or is not a regular file");
+    }
+
+    const bytes = Buffer.alloc(MAX_VERSION_JSON_BYTES + 1);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const received = readSync(descriptor, bytes, offset, bytes.byteLength - offset, null);
+      if (received === 0) break;
+      offset += received;
+    }
+    if (offset > MAX_VERSION_JSON_BYTES) {
+      throw new Error("installed version metadata is too large");
+    }
+
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, offset));
+    } catch {
+      throw new Error("invalid installed version metadata UTF-8");
+    }
+    return parseVersionJson(text);
+  } finally {
+    closeSync(descriptor);
+  }
 }

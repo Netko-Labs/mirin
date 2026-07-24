@@ -7,6 +7,7 @@ import {
   releaseArtifactUrl,
   trustedReleaseBaseUrl,
 } from "../src/release/previous.ts";
+import { validateReleaseVersion } from "../src/release/semver.ts";
 import {
   assertDeltaSourcesFitMemoryBudget,
   MAX_RELEASE_DELTA_SOURCE_BYTES,
@@ -39,6 +40,14 @@ describe("release channel validation", () => {
     expect(() => validateReleaseChannel("stable.")).toThrow("safe channel name");
     expect(() => validateReleaseChannel("NUL")).toThrow("safe channel name");
     expect(() => validateReleaseChannel("con.preview")).toThrow("safe channel name");
+  });
+});
+
+describe("release version validation", () => {
+  test("matches the strict SemVer grammar consumed by the updater", () => {
+    expect(validateReleaseVersion("1.2.3-beta.1+build.5")).toBe("1.2.3-beta.1+build.5");
+    expect(() => validateReleaseVersion("v1.2.3")).toThrow("strict SemVer");
+    expect(() => validateReleaseVersion("1.2.3-beta.01")).toThrow("strict SemVer");
   });
 });
 
@@ -114,6 +123,19 @@ describe("previous release validation", () => {
       "must use HTTPS",
     );
     expect(requested).toEqual(["https://releases.example.com/start"]);
+  });
+
+  test("aborts a release request that exceeds its deadline", async () => {
+    globalThis.fetch = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return reject(new Error("missing abort signal"));
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+
+    await expect(
+      fetchTrustedReleaseUrl("https://releases.example.com/stalled", { timeoutMs: 10 }),
+    ).rejects.toThrow();
   });
 });
 

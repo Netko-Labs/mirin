@@ -27,6 +27,7 @@ describe("updater transaction generations", () => {
     const currentDownload = state.beginDownload();
     expect(state.completeDownload(currentDownload, "/staged", "/work")).toBe(true);
     expect(() => state.beginCheck()).toThrow("cannot check while an update is staged");
+    expect(() => state.beginDownload()).toThrow("already staged");
     expect(state.staged?.workDir).toBe("/work");
     const staged = state.beginApply();
     expect(staged.version).toBe("1.2.0");

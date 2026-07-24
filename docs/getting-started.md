@@ -88,12 +88,15 @@ keys are absent or do not match, signs the exact manifest bytes, and emits
 `update.json.sig`.
 
 Runtime updates reject non-HTTPS URLs except `http://localhost` / loopback for local
-testing, validate every redirect hop, verify the detached Ed25519 signature before
-parsing the manifest, validate its target, and accept only strictly newer SemVer
-precedence. Checks are single-flight and defer while a download is active or an update
-is staged; downloads and applies are guarded operations correlated to a version/hash
-generation. Accepted helper launch is a terminal handoff, so manual updater work and
-auto-check scheduling remain blocked until the process exits. Failed operations release
+testing, validate every redirect hop under a 30-second metadata deadline, verify the
+detached Ed25519 signature before parsing the manifest, validate its target, and accept
+only strictly newer SemVer precedence. Artifact requests have a 15-minute deadline.
+Checks are single-flight and defer while a download is active or an update is staged;
+repeated downloads of an already staged generation are rejected. Downloads and applies
+are guarded operations correlated to a version/hash generation. `mirin build` validates
+the same strict SemVer grammar consumed by the runtime before packaging. Accepted helper
+launch is a terminal handoff, so manual updater work and auto-check scheduling remain
+blocked until the process exits. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation
 directory, and startup prunes abandoned generations while preserving work owned by
 live app processes or an apply-helper PID. Manifest bodies, downloads, decompressed patches,
@@ -102,7 +105,9 @@ has an 8 GiB ceiling, while in-memory patch inputs have a 512 MiB combined ceili
 release bsdiff sources a 128 MiB per-source ceiling. Larger deltas use the full bundle.
 SHA-256, archive node/link safety, the real staged root
 and platform executable, and staged `version.json` identity are verified before apply.
-macOS verifies executable mode and the installed app's designated code requirement;
+`version.json` is bounded before reading and decoding. macOS verifies executable mode
+and a stable installed designated code requirement; ad-hoc local builds fall back to
+codesign validity because their exact-build cdhash changes between releases;
 Linux extracts with permission preservation, ensures owner execute on the validated
 regular executable, and rolls back if the replacement exits immediately. Set
 `release.notes` to embed markdown release notes in the update manifest for app update

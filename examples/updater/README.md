@@ -21,8 +21,9 @@ the `mirin release` artifacts, hostable on **GitHub Releases** or **any static h
   declared compressed and patch sizes plus an 8 GiB streaming reconstructed-tar ceiling
   and a 512 MiB combined in-memory patch-input ceiling; larger deltas use the full bundle.
   It verifies SHA-256; rejects unsafe tar node/link layouts; validates the real
-  staged root, executable mode, embedded identity, and the installed app's designated
-  code requirement; then **swaps the whole `.app`** and relaunches. Accepted helper
+  staged root, executable mode, embedded identity, and either the installed app's
+  stable designated code requirement or (for authenticated ad-hoc local builds)
+  codesign validity; then **swaps the whole `.app`** and relaunches. Accepted helper
   launch is a terminal handoff that blocks
   further check/download/apply and auto-check work until exit. The helper retains the
   old app through replacement launch, restores and reopens it if `open` fails, removes
@@ -32,7 +33,7 @@ the `mirin release` artifacts, hostable on **GitHub Releases** or **any static h
 
 > Production update hosts must use HTTPS. The runtime only allows HTTP for
 > loopback local testing (`localhost`, `127.0.0.1`, `[::1]`) and checks every
-> redirect hop. Current manifests
+> redirect hop under a deadline. Current manifests
 > include required `tarSize` and patch `uncompressedSize` bounds. Older runtimes
 > ignore those additive fields; hardened runtimes reject older manifests that omit
 > them.

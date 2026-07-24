@@ -1,12 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadCodec } from "../codec.ts";
@@ -31,7 +23,7 @@ import {
   UpdateTransactionState,
 } from "./lib/transaction.ts";
 import { artifactUrl, fetchTrustedUpdateUrl, trustedBaseUrl } from "./lib/urls.ts";
-import { parseVersionJson } from "./lib/version.ts";
+import { readVersionJsonFile } from "./lib/version.ts";
 import type {
   Listener,
   Manifest,
@@ -380,7 +372,7 @@ export class Updater {
       return null;
     }
     try {
-      this.#info = parseVersionJson(readFileSync(path, "utf8"));
+      this.#info = readVersionJsonFile(path);
     } catch {
       this.#info = null;
     }
@@ -459,23 +451,69 @@ async function runIgnoredCommand(command: string[], errorMessage: string): Promi
   if (exitCode !== 0) throw new Error(`${errorMessage} (${exitCode})`);
 }
 
+export function stableMacCodeRequirement(codesignOutput: string): string | undefined {
+  const requirement = codesignOutput.match(/^(?:#\s*)?designated => (.+)$/m)?.[1]?.trim();
+  if (!requirement || requirement.length > 4096) {
+    throw new Error("installed app has no bounded designated code requirement");
+  }
+  // Ad-hoc designated requirements pin the current cdhash and therefore cannot
+  // match a rebuilt release. Exact manifest-byte signing is the trust anchor for
+  // local ad-hoc update testing; still require the staged bundle to verify below.
+  return requirement.startsWith("cdhash ") ? undefined : requirement;
+}
+
 async function verifyMacCodeIdentity(installedApp: string, stagedApp: string): Promise<void> {
   const inspect = Bun.spawn(["codesign", "-d", "-r-", installedApp], {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "pipe",
   });
-  const stderr = await new Response(inspect.stderr).text();
+  const stderr = await readBoundedText(inspect.stderr, 8192, "codesign inspection output");
   const exitCode = await inspect.exited;
   if (exitCode !== 0) throw new Error(`installed app codesign inspection failed (${exitCode})`);
-  const requirement = stderr.match(/^designated => (.+)$/m)?.[1]?.trim();
-  if (!requirement || requirement.length > 4096) {
-    throw new Error("installed app has no bounded designated code requirement");
-  }
+  const requirement = stableMacCodeRequirement(stderr);
   await runIgnoredCommand(
-    ["codesign", "--verify", "--deep", "--strict", `-R=${requirement}`, stagedApp],
+    [
+      "codesign",
+      "--verify",
+      "--deep",
+      "--strict",
+      ...(requirement ? [`-R=${requirement}`] : []),
+      stagedApp,
+    ],
     "downloaded update does not match the installed code identity",
   );
+}
+
+async function readBoundedText(
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  label: string,
+): Promise<string> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximumBytes) {
+        await reader.cancel();
+        throw new Error(`${label} exceeds ${maximumBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }
 
 function pruneTarCacheBestEffort(tarsDir: string, keepFile: string): void {
@@ -512,7 +550,7 @@ export function initializeUpdater(): void {
   if (!resourcesDir) return;
 
   try {
-    const version = parseVersionJson(readFileSync(join(resourcesDir, "version.json"), "utf8"));
+    const version = readVersionJsonFile(join(resourcesDir, "version.json"));
     pruneGenerationDirectories(join(supportDir(version), "updates"));
   } catch {
     // Invalid or unavailable updater metadata disables startup cleanup.

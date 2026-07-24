@@ -64,6 +64,7 @@ export class UpdateTransactionState {
   beginDownload(): PendingGeneration {
     if (this.isApplying) throw new Error("cannot download an update while applying");
     if (this.#downloading !== null) throw new Error("an update download is already in progress");
+    if (this.#staged) throw new Error("an update is already staged");
     if (!this.#pending) throw new Error("no update to download — call checkForUpdate() first");
     this.#downloading = this.#pending.generation;
     return { ...this.#pending };

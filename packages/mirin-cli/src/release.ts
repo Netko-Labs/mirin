@@ -26,6 +26,7 @@ import { notarizeAndStaple } from "./dmg.ts";
 import { buildReleaseInstaller } from "./release/installers.ts";
 import {
   fetchTrustedReleaseUrl,
+  RELEASE_ARTIFACT_TIMEOUT_MS,
   readPreviousReleaseManifest,
   readPreviousReleaseSignature,
   releaseArtifactUrl,
@@ -286,7 +287,9 @@ async function downloadVerified(
   expectedSha256: string,
   expectedSize: number,
 ): Promise<void> {
-  const response = await fetchTrustedReleaseUrl(url);
+  const response = await fetchTrustedReleaseUrl(url, {
+    timeoutMs: RELEASE_ARTIFACT_TIMEOUT_MS,
+  });
   if (!response.ok || !response.body) throw new Error(`previous bundle ${response.status}`);
 
   const contentLength = Number(response.headers.get("content-length") ?? 0);

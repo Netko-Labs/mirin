@@ -25,13 +25,29 @@ export function assertTrustedUpdateUrl(raw: string): void {
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_TRUSTED_REDIRECTS = 10;
+export const UPDATE_METADATA_TIMEOUT_MS = 30_000;
+export const UPDATE_ARTIFACT_TIMEOUT_MS = 15 * 60_000;
+
+interface TrustedFetchOptions {
+  timeoutMs?: number;
+}
 
 /** Follow redirects manually so every requested hop satisfies the HTTPS policy. */
-export async function fetchTrustedUpdateUrl(raw: string): Promise<Response> {
+export async function fetchTrustedUpdateUrl(
+  raw: string,
+  options: TrustedFetchOptions = {},
+): Promise<Response> {
+  const timeoutMs = options.timeoutMs ?? UPDATE_METADATA_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 30 * 60_000) {
+    throw new Error("invalid update request timeout");
+  }
   let current = raw;
   for (let redirects = 0; redirects <= MAX_TRUSTED_REDIRECTS; redirects += 1) {
     assertTrustedUpdateUrl(current);
-    const response = await fetch(current, { redirect: "manual" });
+    const response = await fetch(current, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!REDIRECT_STATUSES.has(response.status)) return response;
     const location = response.headers.get("location");
     await response.body?.cancel();

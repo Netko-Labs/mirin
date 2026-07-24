@@ -1,8 +1,8 @@
-import { chmodSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { chmodSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { VersionInfo } from "../types.ts";
 import { MAX_ARCHIVE_ENTRIES } from "./limits.ts";
-import { parseVersionJson } from "./version.ts";
+import { readVersionJsonFile } from "./version.ts";
 
 export type UpdatePlatform = "darwin" | "linux" | "win32";
 
@@ -90,7 +90,7 @@ export function validateStagedBundle(options: StagedValidationOptions): VersionI
     throw new Error("staged update executable is not executable");
   }
 
-  const stagedVersion = parseVersionJson(readFileSync(versionPath, "utf8"));
+  const stagedVersion = readVersionJsonFile(versionPath);
   if (
     stagedVersion.version !== options.expectedVersion ||
     stagedVersion.name !== options.installed.name ||

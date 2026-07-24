@@ -26,6 +26,12 @@
 - [x] Make platform rollback remove partial replacements and verify restoration.
 - [x] Detect an immediately failed Linux replacement launch.
 - [x] Use topic-specific task filenames so the security PRs compose cleanly.
+- [x] Support authenticated ad-hoc macOS updates without pinning a build-specific cdhash.
+- [x] Bound `version.json` before allocating or decoding it.
+- [x] Reject repeated downloads after a generation is staged.
+- [x] Put redirect hops and response bodies under metadata/artifact deadlines.
+- [x] Record and terminate the directly launched Windows PowerShell helper.
+- [x] Validate release versions with the runtime's strict SemVer grammar.
 
 ## Checkpoints
 
@@ -41,4 +47,11 @@
 - Post-review full TypeScript: `bun run fmt-lint` passed with the same 55
   pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 59/59.
 - Post-review full Rust: `cargo fmt --all --check`, workspace clippy with warnings
+  denied, and workspace tests passed (8 tests).
+- Second clean-context review remediation: authenticated ad-hoc identity fallback,
+  bounded metadata reads, staged-download rejection, network deadlines, direct
+  Windows helper ownership, and build/runtime SemVer parity implemented.
+- Second-review full TypeScript: `bun run fmt-lint` passed with the same 55
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 64/64.
+- Second-review full Rust: `cargo fmt --all --check`, workspace clippy with warnings
   denied, and workspace tests passed (8 tests).

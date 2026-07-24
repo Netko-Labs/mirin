@@ -26,11 +26,14 @@ interface WindowsScriptOptions extends ShellScriptOptions {
   helperFiles: string[];
 }
 
-export function renderWindowsLaunchVbs(applyVbs: string, helperPidFile?: string): string {
-  const command = `wscript.exe //B //Nologo "${applyVbs}"`.replace(/"/g, '""');
+export function renderWindowsLaunchVbs(powershellScript: string, helperPidFile?: string): string {
+  const command =
+    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass " +
+    `-WindowStyle Hidden -File "${powershellScript}"`;
+  const escapedCommand = command.replace(/"/g, '""');
   const lines = [
     "Dim status, pid",
-    `status = GetObject("winmgmts:Win32_Process").Create("${command}", Null, Null, pid)`,
+    `status = GetObject("winmgmts:Win32_Process").Create("${escapedCommand}", Null, Null, pid)`,
     "If status <> 0 Then WScript.Quit status",
   ];
   if (helperPidFile) {
@@ -168,10 +171,8 @@ async function applyWindows({
   const executable = join(runningApp, `${version.name}.exe`);
   const token = `${process.pid}-${crypto.randomUUID()}`;
   const script = join(tmpdir(), `mirin-apply-${token}.ps1`);
-  const applyVbs = join(tmpdir(), `mirin-apply-${token}.vbs`);
   const launchVbs = join(tmpdir(), `mirin-launch-${token}.vbs`);
   const helperFiles = [script, launchVbs];
-  const allHelperFiles = [script, applyVbs, launchVbs];
   const backup = `${runningApp}.mirin-old-${token}`;
   const helperPidFile = join(workDir, APPLY_HELPER_PID_FILE);
   writeFileSync(
@@ -186,14 +187,7 @@ async function applyWindows({
     }),
     "utf8",
   );
-  writeFileSync(
-    applyVbs,
-    `CreateObject("WScript.Shell").Run "powershell -NoProfile -NonInteractive ` +
-      `-ExecutionPolicy Bypass -WindowStyle Hidden -File ""${script}""", 0, True\n` +
-      `CreateObject("Scripting.FileSystemObject").DeleteFile WScript.ScriptFullName, True\n`,
-    "utf8",
-  );
-  writeFileSync(launchVbs, renderWindowsLaunchVbs(applyVbs, helperPidFile), "utf8");
+  writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperPidFile), "utf8");
 
   try {
     const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs], {
@@ -206,7 +200,7 @@ async function applyWindows({
       throw new Error(`failed to launch Windows updater via WMI (${exitCode})`);
     }
   } catch (error) {
-    for (const file of allHelperFiles) removePathBestEffort(file);
+    for (const file of helperFiles) removePathBestEffort(file);
     throw error;
   }
 }

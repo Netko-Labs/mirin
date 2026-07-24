@@ -93,8 +93,10 @@ falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via c
 `%LOCALAPPDATA%` support dir, bounded/generation-correlated download staging,
 validated real app root + `<App>.exe` + `resources/version.json`, and a detached
 PowerShell folder swap + relaunch. The launch VBScript propagates
-`Win32_Process.Create` failure before the running app quits and records the apply
-helper PID so startup cleanup cannot delete its generation. Accepted WMI launch is
+`Win32_Process.Create` failure before the running app quits, launches PowerShell
+directly, and records that actual apply-helper PID before handoff so startup cleanup
+cannot delete its generation and a failed marker write can terminate the complete
+helper. Accepted WMI launch is
 the terminal handoff, so checks, downloads, applies, and auto-check scheduling remain
 blocked until exit. Successful helpers remove their generation and launcher files;
 launch failures clean launcher files best-effort, and startup prunes abandoned

@@ -1,3 +1,5 @@
+import { validateReleaseVersion } from "./semver.ts";
+
 export interface PreviousReleaseManifest {
   version: string;
   tarSize: number;
@@ -11,7 +13,6 @@ export interface PreviousReleaseManifest {
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const MAX_TAR_BYTES = 8 * 1024 * 1024 * 1024;
-const SEMVER_IDENTIFIER = /^[0-9A-Za-z-]+$/;
 
 export function parsePreviousReleaseManifest(
   value: unknown,
@@ -25,7 +26,11 @@ export function parsePreviousReleaseManifest(
   }
 
   const version = stringField(manifest, "version", 128);
-  assertSemVer(version);
+  try {
+    validateReleaseVersion(version);
+  } catch {
+    throw new Error("invalid previous update version");
+  }
   const tarSize = sizeField(manifest.tarSize, MAX_TAR_BYTES, "tar size");
   const bundle = record(manifest.bundle, "bundle");
   const url = stringField(bundle, "url", 255);
@@ -100,38 +105,6 @@ async function readBoundedResponse(
   return bytes;
 }
 
-function assertSemVer(value: string): void {
-  const plus = value.indexOf("+");
-  if (plus !== -1 && value.indexOf("+", plus + 1) !== -1) {
-    throw new Error("invalid previous update version");
-  }
-  const withoutBuild = plus === -1 ? value : value.slice(0, plus);
-  if (plus !== -1) assertIdentifiers(value.slice(plus + 1), false);
-  const hyphen = withoutBuild.indexOf("-");
-  const core = hyphen === -1 ? withoutBuild : withoutBuild.slice(0, hyphen);
-  if (hyphen !== -1) assertIdentifiers(withoutBuild.slice(hyphen + 1), true);
-  const parts = core.split(".");
-  if (
-    parts.length !== 3 ||
-    parts.some((part) => !/^\d+$/.test(part) || (part.length > 1 && part.startsWith("0")))
-  ) {
-    throw new Error("invalid previous update version");
-  }
-}
-
-function assertIdentifiers(value: string, rejectNumericLeadingZero: boolean): void {
-  const parts = value.split(".");
-  if (
-    parts.some(
-      (part) =>
-        !SEMVER_IDENTIFIER.test(part) ||
-        (rejectNumericLeadingZero && /^\d+$/.test(part) && part.length > 1 && part.startsWith("0")),
-    )
-  ) {
-    throw new Error("invalid previous update version");
-  }
-}
-
 function sizeField(value: unknown, maximum: number, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > maximum) {
     throw new Error(`invalid previous ${label}`);
@@ -161,13 +134,25 @@ export function assertTrustedReleaseUrl(raw: string): void {
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_TRUSTED_REDIRECTS = 10;
+export const RELEASE_METADATA_TIMEOUT_MS = 30_000;
+export const RELEASE_ARTIFACT_TIMEOUT_MS = 15 * 60_000;
 
 /** Follow redirects manually so an intermediate HTTP hop cannot bypass policy. */
-export async function fetchTrustedReleaseUrl(raw: string): Promise<Response> {
+export async function fetchTrustedReleaseUrl(
+  raw: string,
+  options: { timeoutMs?: number } = {},
+): Promise<Response> {
+  const timeoutMs = options.timeoutMs ?? RELEASE_METADATA_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 30 * 60_000) {
+    throw new Error("invalid release request timeout");
+  }
   let current = raw;
   for (let redirects = 0; redirects <= MAX_TRUSTED_REDIRECTS; redirects += 1) {
     assertTrustedReleaseUrl(current);
-    const response = await fetch(current, { redirect: "manual" });
+    const response = await fetch(current, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!REDIRECT_STATUSES.has(response.status)) return response;
     const location = response.headers.get("location");
     await response.body?.cancel();

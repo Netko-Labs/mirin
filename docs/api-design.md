@@ -188,14 +188,16 @@ off the main-process API:
   downloading, staged, or applying, and reports only releases with strictly newer
   SemVer precedence; equal versions, downgrades, and build-metadata-only changes
   return `null`. A listener may call `download()` directly from `update-available`;
-  downloads before a check commits and concurrent download/apply operations are
-  rejected. Once a detached apply helper is
+  downloads before a check commits, repeated downloads after staging, and concurrent
+  download/apply operations are rejected. Once a detached apply helper is
   accepted, the updater enters a terminal handoff: checks, downloads, applies, and
   auto-check scheduling remain blocked until process exit. Malformed embedded
   `version.json` metadata, including its Ed25519 public-key trust anchor, disables
   the updater. Each manifest must have a detached `.sig` over its exact bytes;
   signature verification happens before JSON parsing, and every redirect hop must
-  satisfy the HTTPS-or-loopback policy. `release.channel` supports validated safe
+  satisfy the HTTPS-or-loopback policy and a bounded request deadline. Embedded and
+  staged `version.json` files are size-bounded before allocation/decoding.
+  `release.channel` supports validated safe
   dotted names consistently across build/release output, embedded identity, manifest
   matching, artifact names, and support directories, excluding Windows reserved names.
   Downloads require
@@ -205,7 +207,9 @@ off the main-process API:
   archive structure, and subprocess output are bounded separately. A download is not
   staged until archive structure, platform executable,
   embedded identity, integrity, and platform signature checks pass. macOS verifies
-  executable mode, the installed app's designated code requirement, and codesign;
+  executable mode, the installed app's stable designated code requirement, and
+  codesign. Ad-hoc local builds use the pinned manifest key plus codesign validity
+  because an ad-hoc requirement pins one exact build;
   Linux preserves archive permissions and ensures owner execute on the validated
   regular host executable. Failed operations release latches before best-effort
   cleanup, successful helpers remove their generation directory, and startup prunes

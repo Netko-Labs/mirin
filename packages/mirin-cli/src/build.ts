@@ -25,6 +25,7 @@ import { compileWorkers, normalizeSidecars } from "./extras.ts";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
 import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
 import { validateReleaseChannel } from "./release/channel.ts";
+import { validateReleaseVersion } from "./release/semver.ts";
 import { validateUpdatePublicKey } from "./release/signature.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
@@ -188,7 +189,7 @@ export async function build(
   const appName: string = config.name ?? "Mirin App";
   const bundleId: string = config.id ?? "dev.mirin.app";
   const mainEntry = join(projectDir, config.main ?? "main/main.ts");
-  const version = opts.version ?? appVersion(projectDir);
+  const version = validateReleaseVersion(opts.version ?? appVersion(projectDir));
   const channel = validateReleaseChannel(config.release?.channel ?? "stable");
   const baseUrl: string | undefined = config.release?.baseUrl;
   const updatePublicKey =

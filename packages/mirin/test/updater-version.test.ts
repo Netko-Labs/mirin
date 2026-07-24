@@ -1,6 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { compareSemVer, isStrictlyNewer, parseSemVer } from "../src/updater/lib/semver.ts";
-import { parseVersionInfo, parseVersionJson } from "../src/updater/lib/version.ts";
+import {
+  parseVersionInfo,
+  parseVersionJson,
+  readVersionJsonFile,
+} from "../src/updater/lib/version.ts";
+import { stableMacCodeRequirement } from "../src/updater/updater.ts";
 
 const installed = {
   version: "1.2.3",
@@ -10,6 +18,13 @@ const installed = {
   name: "Mirin App",
   identifier: "com.example.mirin",
 };
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe("updater SemVer ordering", () => {
   test("implements SemVer precedence and ignores build metadata", () => {
@@ -68,5 +83,29 @@ describe("installed updater metadata", () => {
     expect(() => parseVersionJson(`{"padding":"${"x".repeat(20 * 1024)}"}`)).toThrow(
       "installed version metadata is too large",
     );
+  });
+
+  test("bounds version.json before allocating or decoding its contents", () => {
+    const root = mkdtempSync(join(tmpdir(), "mirin-version-test-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "version.json");
+    writeFileSync(path, JSON.stringify(installed));
+    expect(readVersionJsonFile(path).version).toBe("1.2.3");
+
+    writeFileSync(path, Buffer.alloc(20 * 1024, 0x20));
+    expect(() => readVersionJsonFile(path)).toThrow("too large");
+  });
+});
+
+describe("macOS update code identity", () => {
+  test("pins stable requirements but permits a newly authenticated ad-hoc build", () => {
+    expect(
+      stableMacCodeRequirement(
+        'designated => identifier "dev.example.app" and anchor apple generic',
+      ),
+    ).toBe('identifier "dev.example.app" and anchor apple generic');
+    expect(
+      stableMacCodeRequirement('# designated => cdhash H"abc" or cdhash H"def"'),
+    ).toBeUndefined();
   });
 });
