@@ -21,8 +21,12 @@ Targets Windows 10/11 x64 and arm64.
 Cargo `windows-sys` deps; `lib.rs` `win` module; `engine` arms for `load_cef`
 (no framework loader on Windows — libcef.dll resolves from the host-exe dir via the
 import lib), `default_cache_dir` (`%LOCALAPPDATA%`), `derive_subprocess_path`
-(`mirin-helper.exe`). `cargo build --workspace` warning-clean. **The `cef` crate
-compiles and links on Windows** — the project's biggest risk, cleared.
+(`mirin-helper.exe`). Before spawning the Worker, the host takes an exclusive or
+shared process-lifetime app-file handle; single-instance mode also acquires the
+existing named mutex for compatibility and existing-window activation. Only the
+exclusive capability reaches the updater apply path. `cargo build --workspace`
+warning-clean. **The `cef` crate compiles and links on Windows** — the project's
+biggest risk, cleared.
 
 ### W1 — Window MVP — ✅ DONE
 `win/window/mod.rs`: mirin-owned top-level window (class + WndProc), CEF child via

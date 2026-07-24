@@ -29,6 +29,14 @@ pub extern "C" fn mirin_run(config_json: *const c_char) -> c_int {
     engine::run_core(config)
 }
 
+/// Acquire the process-lifetime app lock before the Worker starts.
+/// Returns 0 when unavailable, 1 for shared multi-instance, or 2 for exclusive.
+#[no_mangle]
+pub extern "C" fn mirin_acquire_instance_lock(config_json: *const c_char) -> c_int {
+    let config: CoreConfig = serde_json::from_str(&cstr(config_json)).unwrap_or_default();
+    engine::acquire_instance_lock(&config) as c_int
+}
+
 /// Drain the next queued event as a JSON C string (valid until the next call), or
 /// null. The Worker polls this (see engine::poll_event for why we poll).
 #[no_mangle]

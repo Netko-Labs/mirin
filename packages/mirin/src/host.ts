@@ -74,12 +74,18 @@ if (process.platform === "linux" && !coreConfig.icon_path) {
 // Worker serializes the first-time load instead of racing two concurrent
 // dlopens across threads.
 const core = new Core(corePath);
+const instanceLock = core.acquireInstanceLock(JSON.stringify(coreConfig));
+if (!instanceLock) {
+  console.error("[mirin host] another app instance owns an incompatible process lock");
+  process.exit(0);
+}
+const singleInstanceAcquired = instanceLock === "exclusive";
 
 const worker = new Worker(workerPath, {
   workerData: {
     corePath,
     manifest,
-    singleInstance,
+    singleInstance: singleInstanceAcquired,
     id: typeof manifest.id === "string" ? manifest.id : undefined,
     devUrl: process.env.MIRIN_DEV_URL,
     resourcesDir,

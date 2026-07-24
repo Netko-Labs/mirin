@@ -132,9 +132,11 @@ a native move via `_NET_WM_MOVERESIZE` (see Windowing above).
 Cargo builds `cef`/`cef-dll-sys` on Linux (the project's biggest risk — **cleared**).
 `lib.rs` `linux` module; engine `#[cfg]` arms for `load_cef` (no framework loader —
 `libcef.so` resolves via the link path / rpath), `default_cache_dir`
-(`$XDG_CACHE_HOME`), `derive_subprocess_path` (`mirin-helper`). `linux/window/mod.rs` holds
-the CEF **Views** integration and the id→Window registry. `cargo build --workspace`
-warning-clean.
+(`$XDG_CACHE_HOME`), process-lifetime exclusive/shared app file locking before
+the Worker starts, and `derive_subprocess_path` (`mirin-helper`). Multi-instance
+processes hold shared locks and use PID-specific caches; updater-capable processes
+hold the mutually exclusive lock. `linux/window/mod.rs` holds the CEF **Views**
+integration and the id→Window registry. `cargo build --workspace` warning-clean.
 
 ### L1 — Window MVP (m1-smoke) — ✅ DONE
 `m1-smoke` renders a page in a native CEF **Views** X11 toplevel, full CEF subprocess

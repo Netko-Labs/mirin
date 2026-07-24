@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 use super::commands::quit;
 use super::config::CoreConfig;
 use super::handlers::MirinApp;
+use super::single_instance::{acquire_instance_lock, InstanceLock};
 use super::state::{ICON_PATH, IDENTIFIER, IS_DEV, RESOURCES_PATH, STARTUP_URL};
 
 #[cfg(target_os = "macos")]
@@ -24,24 +25,24 @@ type Library = ();
 #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
 pub fn run_core(mut config: CoreConfig) -> i32 {
     IS_DEV.store(config.dev, Ordering::Relaxed);
+    if acquire_instance_lock(&config) == InstanceLock::Unavailable {
+        eprintln!("[mirin] another app instance already owns an incompatible lock. Exiting.");
+        return 0;
+    }
     // Per-Monitor-v2 DPI awareness + an explicit AppUserModelID (so the taskbar
     // shows our icon, not Bun's) must be set before any window/CEF init.
     #[cfg(target_os = "windows")]
     {
         win::set_dpi_awareness();
         win::set_app_id(config.dev);
-        if config.single_instance {
-            if !win::acquire_single_instance(config.dev) {
-                win::activate_existing_instance();
-                return 0;
-            }
+    }
+    if !config.single_instance {
+        let cache_path = if config.cache_path.is_empty() {
+            default_cache_dir(config.dev, &config.identifier)
         } else {
-            config.cache_path = format!(
-                "{}-{}",
-                config.cache_path.trim_end_matches(['/', '\\']),
-                std::process::id()
-            );
-        }
+            config.cache_path.trim_end_matches(['/', '\\']).to_owned()
+        };
+        config.cache_path = format!("{cache_path}-{}", std::process::id());
     }
     #[cfg(target_os = "macos")]
     let _library = load_cef();
@@ -160,7 +161,7 @@ pub(crate) fn angle_backend() -> Option<String> {
     None
 }
 
-fn default_cache_dir(dev: bool, identifier: &str) -> String {
+pub(super) fn default_cache_dir(dev: bool, identifier: &str) -> String {
     let id = app_bundle_id()
         .or_else(|| {
             let sanitized: String = identifier

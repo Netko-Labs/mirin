@@ -22,7 +22,7 @@ export interface Runtime {
   id?: string;
   /** True under `mirin dev`; false in a packaged build. */
   isDev: boolean;
-  /** Whether the native host enforces a single running app instance. */
+  /** Whether the native host acquired the process-lifetime app singleton. */
   singleInstance: boolean;
   devUrl?: string;
   /** Contents/Resources of the running .app (for the updater). Absent in dev. */

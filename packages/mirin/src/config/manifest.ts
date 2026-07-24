@@ -180,11 +180,12 @@ export interface MirinConfig {
   urlSchemes?: string[];
   windows: Record<string, WindowConfig>;
   /**
-   * Single-instance app (default true): a second launch focuses the running
-   * window and exits, instead of opening another window. Set false to allow
-   * multiple instances (each gets its own CEF cache dir). Automatic updater
-   * apply is unavailable when false because replacing an install while sibling
-   * app processes are running is unsafe.
+   * Single-instance app (default true): the native host acquires an exclusive
+   * process-lifetime app lock before user code starts; a second launch exits and
+   * focuses the running window on Windows. Set false to allow multiple instances,
+   * which hold compatible shared locks and each get their own CEF cache dir.
+   * Automatic updater apply is unavailable when false because replacing an install
+   * while sibling app processes are running is unsafe.
    */
   singleInstance?: boolean;
 }

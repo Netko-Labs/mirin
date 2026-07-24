@@ -9,11 +9,12 @@
 import { CString, dlopen, FFIType, type Pointer, ptr } from "bun:ffi";
 
 function nullTerminated(s: string): Uint8Array {
-  return new TextEncoder().encode(s + "\0");
+  return new TextEncoder().encode(`${s}\0`);
 }
 
 const symbols = {
   mirin_run: { args: [FFIType.ptr], returns: FFIType.i32 },
+  mirin_acquire_instance_lock: { args: [FFIType.ptr], returns: FFIType.i32 },
   mirin_poll_event: { args: [], returns: FFIType.ptr },
   mirin_set_rpc_endpoint: { args: [FFIType.u16, FFIType.ptr], returns: FFIType.void },
   mirin_is_ready: { args: [], returns: FFIType.i32 },
@@ -59,6 +60,14 @@ export class Core {
   run(configJson: string): number {
     const buf = nullTerminated(configJson);
     return this.#lib.symbols.mirin_run(ptr(buf));
+  }
+
+  acquireInstanceLock(configJson: string): "exclusive" | "shared" | undefined {
+    const buf = nullTerminated(configJson);
+    const result = this.#lib.symbols.mirin_acquire_instance_lock(ptr(buf));
+    if (result === 2) return "exclusive";
+    if (result === 1) return "shared";
+    return undefined;
   }
 
   /**

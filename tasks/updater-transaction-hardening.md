@@ -42,6 +42,9 @@
 - [x] Share the effective native single-instance override with the updater Worker.
 - [x] Remove every expected Linux package output before best-effort failure recovery.
 - [x] Keep post-commit atomic backup cleanup non-fatal and prune aged leftovers.
+- [x] Acquire the cross-platform exclusive/shared app lock before starting user code.
+- [x] Gate automatic apply on the acquired native capability, not configuration.
+- [x] Prune only exact PID/UUID atomic backups and preserve prefix lookalikes.
 
 ## Checkpoints
 
@@ -91,3 +94,15 @@
   pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 212
   tests with the two expected Windows lifecycle skips on macOS;
   `git diff --check` passed.
+- Fifth clean-context review remediation: acquired a process-lifetime exclusive
+  or shared native app lock before starting user code, passed the actual
+  exclusive capability to the updater, gave every multi-instance process a
+  PID-specific CEF cache, and limited stale atomic-backup pruning to exact
+  PID/UUID-owned directories whose owner is gone.
+- Fifth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 214
+  tests with the two expected Windows lifecycle skips on macOS; changed-file
+  Biome and `git diff --check` passed.
+- Fifth-review full Rust: `cargo fmt --all --check`, workspace clippy with
+  warnings denied, workspace build, and workspace tests passed (9 tests,
+  including shared/exclusive lock exclusion).

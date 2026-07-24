@@ -13,6 +13,8 @@ import { basename, dirname, join } from "node:path";
 import { safeDestructiveDirectory } from "./project-source.ts";
 
 const STALE_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
+const OWNED_BACKUP_SUFFIX =
+  /^([1-9]\d*)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Cleanup after a committed swap must never turn that successful commit into a failure. */
 export function removeAtomicOutputDirectoryBestEffort(
@@ -44,6 +46,7 @@ export function pruneStaleAtomicOutputBackups(
   destination: string,
   label: string,
   now = Date.now(),
+  isProcessAlive: (pid: number) => boolean = processIsAlive,
 ): void {
   const finalDirectory = safeDestructiveDirectory(projectRoot, destination, label);
   if (!existsSync(finalDirectory)) return;
@@ -64,6 +67,10 @@ export function pruneStaleAtomicOutputBackups(
 
   for (const entry of entries) {
     if (!entry.name.startsWith(prefix) || !entry.isDirectory()) continue;
+    const owner = OWNED_BACKUP_SUFFIX.exec(entry.name.slice(prefix.length));
+    if (!owner) continue;
+    const ownerPid = Number(owner[1]);
+    if (!Number.isSafeInteger(ownerPid) || isProcessAlive(ownerPid)) continue;
     const candidate = join(parent, entry.name);
     try {
       const metadata = lstatSync(candidate);
@@ -87,6 +94,15 @@ export function pruneStaleAtomicOutputBackups(
         }`,
       );
     }
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
   }
 }
 

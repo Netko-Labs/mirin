@@ -99,7 +99,8 @@ Windows-installer run preserves the last successful output. DMG and Linux
 packages are best-effort exceptions: failures are logged and the atomic release
 can still commit its signed updater artifacts without them. Cleanup of the old
 backup after a successful canonical swap is non-fatal; aged leftovers are pruned
-by later runs.
+by later runs only when their exact PID/UUID ownership name matches and their
+owner process is gone.
 
 Generate a long-lived Ed25519 update key pair once:
 
@@ -125,10 +126,12 @@ repeated downloads of an already staged generation are rejected. Downloads and a
 are guarded operations correlated to a version/hash generation. `mirin build` validates
 the same strict SemVer grammar consumed by the runtime before packaging. Apps configured
 with `singleInstance: false` may check and download, but automatic apply is rejected;
-close every instance and install their update externally. The guard uses the effective
-native-host value, including internal launch overrides. Accepted helper launch is a
-terminal handoff, so manual updater work and auto-check scheduling remain blocked until
-the process exits. Failed operations release
+close every instance and install their update externally. The guard requires the
+process-lifetime exclusive app lock actually acquired by the native host before
+the Worker starts, including internal launch overrides. Multi-instance processes
+hold shared locks, preventing them from overlapping an exclusive updater-capable
+process. Accepted helper launch is a terminal handoff, so manual updater work and
+auto-check scheduling remain blocked until the process exits. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation
 directory, and startup prunes abandoned generations while preserving work owned by
 live app processes or an apply-helper PID. Manifest bodies, downloads, decompressed patches,

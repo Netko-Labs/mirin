@@ -1083,6 +1083,7 @@ name = "mirin-core"
 version = "0.1.0-alpha.18"
 dependencies = [
  "cef",
+ "libc",
  "mirin-codec",
  "notify-rust",
  "objc2",

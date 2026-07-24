@@ -79,15 +79,55 @@ describe("atomic output directories", () => {
     await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
       writeFileSync(join(staging, "version.txt"), "current");
     });
-    const backup = join(root, "build", ".app.mirin-backup-123-stale");
+    const backup = join(
+      root,
+      "build",
+      ".app.mirin-backup-123-12345678-1234-1234-1234-123456789abc",
+    );
     mkdirSync(backup);
     writeFileSync(join(backup, "version.txt"), "old");
     utimesSync(backup, new Date(0), new Date(0));
 
-    pruneStaleAtomicOutputBackups(root, output, "test output");
+    pruneStaleAtomicOutputBackups(root, output, "test output", Date.now(), () => false);
 
     expect(existsSync(backup)).toBe(false);
     expect(readFileSync(join(output, "version.txt"), "utf8")).toBe("current");
+  });
+
+  test("preserves aged prefix-sharing directories without an owned backup name", async () => {
+    const root = temporaryDirectory();
+    const output = join(root, "build", "release");
+    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+      writeFileSync(join(staging, "version.txt"), "current");
+    });
+    const lookalike = join(root, "build", ".release.mirin-backup-manual");
+    mkdirSync(lookalike);
+    writeFileSync(join(lookalike, "sentinel.txt"), "user data");
+    utimesSync(lookalike, new Date(0), new Date(0));
+
+    pruneStaleAtomicOutputBackups(root, output, "test output", Date.now(), () => false);
+
+    expect(readFileSync(join(lookalike, "sentinel.txt"), "utf8")).toBe("user data");
+  });
+
+  test("preserves an aged owned backup while its process is alive", async () => {
+    const root = temporaryDirectory();
+    const output = join(root, "build", "release");
+    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+      writeFileSync(join(staging, "version.txt"), "current");
+    });
+    const backup = join(
+      root,
+      "build",
+      ".release.mirin-backup-456-12345678-1234-1234-1234-123456789abc",
+    );
+    mkdirSync(backup);
+    writeFileSync(join(backup, "version.txt"), "live");
+    utimesSync(backup, new Date(0), new Date(0));
+
+    pruneStaleAtomicOutputBackups(root, output, "test output", Date.now(), (pid) => pid === 456);
+
+    expect(readFileSync(join(backup, "version.txt"), "utf8")).toBe("live");
   });
 });
 

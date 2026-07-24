@@ -86,7 +86,8 @@ may atomically replace the prior output without those optional artifacts. Linux
 package failures remove every expected package before that commit; if cleanup
 cannot prove the release package-free, the release fails closed. Cleanup of the
 old backup after a successful swap is non-fatal, and later runs prune aged
-leftovers.
+leftovers only when they have Mirin's exact PID/UUID ownership name and their
+owner process is gone.
 
 `app://` is mirin's bundled-asset scheme, served from the app bundle through a CEF scheme handler (dev mode points it at the working tree).
 
@@ -220,9 +221,11 @@ off the main-process API:
   downloads before a check commits, repeated downloads after staging, and concurrent
   download/apply operations are rejected. Apps with `singleInstance: false` can
   check and download, but automatic apply is rejected because replacing the shared
-  install while sibling app processes may be running is unsafe. The Worker uses
-  the same effective setting passed to the native host, including internal launch
-  overrides. Once a detached apply helper is accepted, the updater enters a
+  install while sibling app processes may be running is unsafe. Automatic apply
+  requires the process-lifetime exclusive app lock actually acquired by the native
+  host before the Worker starts, including internal launch overrides. Multi-instance
+  processes hold compatible shared locks, so they cannot overlap an exclusive
+  updater-capable process. Once a detached apply helper is accepted, the updater enters a
   terminal handoff: checks, downloads, applies, and auto-check scheduling remain
   blocked until process exit. Malformed embedded `version.json` metadata,
   including its Ed25519 public-key trust anchor, disables
