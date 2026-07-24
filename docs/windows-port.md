@@ -129,7 +129,10 @@ actual PID before the running app quits, so startup cleanup cannot delete its ge
 and a failed marker write can terminate the complete helper. Accepted WMI launch is the
 terminal handoff, so checks, downloads, applies, and auto-check scheduling remain blocked
 until exit; native terminal shutdown is requested before synchronous completion listeners.
-Process-wide generation allocation keeps public updater instances from sharing work.
+The parent records the PowerShell PID in the reservation before publishing its
+PID-bound activation; PowerShell refuses to arm or swap without that activation.
+Process-wide terminal/apply latches stop every updater instance's auto-checks, while
+process-wide generation allocation keeps public updater instances from sharing work.
 Successful helpers remove their generation and launcher files; launch failures
 clean launcher files best-effort, and startup prunes abandoned generations without touching
 live app/helper work. Mirin's first internal `ready` listener writes replacement

@@ -38,6 +38,7 @@ describe("Windows updater launcher", () => {
       helperFiles: ["C:\\Temp\\apply.ps1", "C:\\Temp\\apply.vbs"],
       marker: "C:\\State\\.update-handoff.json",
       ready: "C:\\State\\.update-ready-42-token",
+      activated: "C:\\Updates\\generation\\.apply-helper-activated",
       armed: "C:\\Updates\\generation\\.apply-helper-armed",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
@@ -52,7 +53,17 @@ describe("Windows updater launcher", () => {
     expect(script).toContain("Updater backup path already exists");
     expect(script).toContain("Replacement readiness receipt has the wrong process id");
     expect(script).toContain("$readyPid -ne [string]$newProcess.Id");
-    expect(script.indexOf(".apply-helper-armed")).toBeLessThan(script.indexOf("$parentDeadline"));
+    const activated = script.indexOf(".apply-helper-activated");
+    const armed = script.indexOf(".apply-helper-armed");
+    expect(activated).toBeGreaterThan(0);
+    expect(activated).toBeLessThan(
+      script.indexOf("Application exited before updater helper activation"),
+    );
+    expect(script.indexOf("Updater helper activation has the wrong process id")).toBeGreaterThan(
+      activated,
+    );
+    expect(armed).toBeGreaterThan(activated);
+    expect(armed).toBeLessThan(script.indexOf("$parentDeadline"));
     const rollback = script.indexOf("if ($parentExited -and $canRestore)");
     const rollbackCleanup = script.indexOf(
       "Remove-Item -LiteralPath 'C:\\Updates\\generation' -Recurse",
@@ -92,6 +103,7 @@ describe("POSIX updater helpers", () => {
       executable: "/Applications/Mirin App.app/Contents/MacOS/Mirin App",
       marker: "/tmp/state/.update-handoff.json",
       ready: "/tmp/state/.update-ready-42-token",
+      activated: "/tmp/generation/.apply-helper-activated",
       armed: "/tmp/generation/.apply-helper-armed",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
@@ -109,6 +121,9 @@ describe("POSIX updater helpers", () => {
     expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
     expect(script).toContain('if [ "$READY_PID" = "$NEW_PID" ]');
     expect(script).toContain('kill -KILL "$NEW_PID"');
+    expect(script.indexOf('test "$ACTIVATED_PID" = "$$"')).toBeLessThan(
+      script.indexOf('printf "%s" "$$" > "$ARMED"'),
+    );
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
     }
@@ -122,6 +137,7 @@ describe("POSIX updater helpers", () => {
       executable: "/opt/Mirin App/Mirin App",
       marker: "/tmp/state/.update-handoff.json",
       ready: "/tmp/state/.update-ready-42-token",
+      activated: "/tmp/generation/.apply-helper-activated",
       armed: "/tmp/generation/.apply-helper-armed",
       token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
@@ -137,8 +153,52 @@ describe("POSIX updater helpers", () => {
     expect(script.indexOf('printf "%s" "$$" > "$ARMED"')).toBeLessThan(
       script.indexOf('while kill -0 "$PID"'),
     );
+    expect(script.indexOf('test "$ACTIVATED_PID" = "$$"')).toBeLessThan(
+      script.indexOf('printf "%s" "$$" > "$ARMED"'),
+    );
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
+    }
+  });
+
+  test("does not swap after parent exit without an activation acknowledgement", async () => {
+    if (process.platform === "win32") return;
+    const root = mkdtempSync(join(tmpdir(), "mirin-helper-unactivated-"));
+    const runningApp = join(root, "Mirin.app");
+    const staged = join(root, ".Mirin.app.mirin-new");
+    const workDir = join(root, "work");
+    const marker = join(root, ".update-handoff.json");
+    try {
+      mkdirSync(runningApp);
+      mkdirSync(staged);
+      mkdirSync(workDir);
+      writeFileSync(join(runningApp, "old-sentinel"), "old");
+      writeFileSync(join(staged, "new-sentinel"), "new");
+      writeFileSync(marker, "{}");
+
+      const helper = Bun.spawn([
+        "/bin/sh",
+        "-c",
+        renderMacApplyShell({
+          runningApp,
+          staged,
+          workDir,
+          executable: join(runningApp, "Mirin"),
+          marker,
+          ready: join(root, ".update-ready"),
+          activated: join(workDir, ".apply-helper-activated"),
+          armed: join(workDir, ".apply-helper-armed"),
+          token: "42-00000000-0000-0000-0000-000000000000",
+          pid: 2_147_483_647,
+        }),
+      ]);
+
+      expect(await helper.exited).not.toBe(0);
+      expect(existsSync(join(runningApp, "old-sentinel"))).toBe(true);
+      expect(existsSync(join(runningApp, "new-sentinel"))).toBe(false);
+      expect(existsSync(`${runningApp}.mirin-old-2147483647`)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -150,6 +210,7 @@ describe("POSIX updater helpers", () => {
     const workDir = join(root, "work");
     const marker = join(root, ".update-handoff.json");
     const ready = join(root, ".update-ready-42-token");
+    const activated = join(workDir, ".apply-helper-activated");
     const armed = join(workDir, ".apply-helper-armed");
     const executable = join(runningApp, "Contents", "MacOS", "Mirin");
     const stagedExecutable = join(staged, "Contents", "MacOS", "Mirin");
@@ -165,6 +226,11 @@ describe("POSIX updater helpers", () => {
       chmodSync(executable, 0o755);
       chmodSync(stagedExecutable, 0o755);
 
+      const parent = Bun.spawn(["/bin/sh", "-c", "sleep 30"], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
       const script = renderMacApplyShell({
         runningApp,
         staged,
@@ -172,19 +238,23 @@ describe("POSIX updater helpers", () => {
         executable,
         marker,
         ready,
+        activated,
         armed,
         token: "42-00000000-0000-0000-0000-000000000000",
-        pid: 2_147_483_647,
+        pid: parent.pid,
       });
       const helper = Bun.spawn(["/bin/sh", "-c", script], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
       });
+      writeFileSync(activated, String(helper.pid));
+      parent.kill();
+      await parent.exited;
       expect(await helper.exited).not.toBe(0);
       expect(existsSync(join(runningApp, "old-sentinel"))).toBe(true);
       expect(existsSync(join(runningApp, "new-sentinel"))).toBe(false);
-      expect(existsSync(`${runningApp}.mirin-old-2147483647`)).toBe(false);
+      expect(existsSync(`${runningApp}.mirin-old-${parent.pid}`)).toBe(false);
       expect(existsSync(marker)).toBe(false);
       expect(existsSync(staged)).toBe(false);
     } finally {

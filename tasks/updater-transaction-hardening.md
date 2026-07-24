@@ -73,6 +73,8 @@
 - [x] Request terminal native quit before synchronous completion listeners.
 - [x] Write replacement readiness before synchronous user ready listeners.
 - [x] Keep public updater-instance generation work directories disjoint.
+- [x] Require parent activation before a detached helper may arm or swap.
+- [x] Share apply and terminal latches across every public updater instance.
 
 ## Checkpoints
 
@@ -229,3 +231,11 @@
   pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 244
   tests with the two expected Windows lifecycle skips on macOS; the focused
   lifecycle/transaction suite passed 9 tests; `git diff --check` passed.
+- Seventeenth clean-context review remediation: add a two-way helper activation
+  barrier after the exact helper PID is recorded in the reservation, and share
+  apply ownership, terminal state, and auto-check shutdown process-wide.
+- Seventeenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 246
+  tests with the two expected Windows lifecycle skips on macOS; focused handoff,
+  apply, cleanup, lifecycle, and transaction coverage passed 23 tests; `git diff
+  --check` passed.

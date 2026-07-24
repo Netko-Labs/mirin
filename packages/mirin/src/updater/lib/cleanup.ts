@@ -8,6 +8,7 @@ const LEGACY_GENERATION_DIRECTORY = /^generation-[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.
 const OWNED_GENERATION_DIRECTORY =
   /^generation-([1-9]\d*)-([a-f0-9]{32})-[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.+-]*-[a-f0-9]{16}$/;
 export const APPLY_HELPER_PID_FILE = ".apply-helper.pid";
+export const APPLY_HELPER_ACTIVATED_FILE = ".apply-helper-activated";
 export const APPLY_HELPER_ARMED_FILE = ".apply-helper-armed";
 export const MAX_APPLY_HELPER_AGE_MS = MAX_UPDATE_HANDOFF_AGE_MS;
 export const MAX_GENERATION_OWNER_AGE_MS = MAX_UPDATE_HANDOFF_AGE_MS;

@@ -136,8 +136,11 @@ launch overrides. `mirin build` and `mirin dev` reject mismatched CLI/project
 from overlapping an exclusive updater-capable process. Accepted helper launch is
 a terminal handoff, so manual updater work and auto-check scheduling remain
 blocked until the process exits; native shutdown is requested before synchronous
-`complete` listeners run. Before that handoff, the validated tree is copied
-and revalidated beside the install and the helper writes an armed acknowledgement.
+`complete` listeners run. This latch and auto-check shutdown are shared by every
+public `Updater` instance. Before that handoff, the validated tree is copied
+and revalidated beside the install. The parent atomically records the helper PID
+in the reservation and publishes a PID-bound activation acknowledgement; only
+then may the helper arm and treat parent death as swap authorization.
 The helper reserves the next launch for its token-bearing target with a bounded
 24-hour lease that recovers safely from stale PID reuse, and retains the
 backup until that exact PID acquires the exclusive lock and reports Worker/native

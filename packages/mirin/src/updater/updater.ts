@@ -13,7 +13,11 @@ import {
 import { parseManifestBytes, readBoundedManifestBytes, readBoundedSignature } from "./lib/http.ts";
 import { prepareInstallSibling, pruneInstallSiblingDirectories } from "./lib/install-staging.ts";
 import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
-import { enterTerminalUpdateHandoff } from "./lib/lifecycle.ts";
+import {
+  enterTerminalUpdateHandoff,
+  UpdaterProcessTerminalError,
+  updaterProcessLifecycle,
+} from "./lib/lifecycle.ts";
 import { MAX_PATCH_MEMORY_INPUT_BYTES, MAX_TAR_BYTES } from "./lib/limits.ts";
 import { parseManifest } from "./lib/manifest.ts";
 import { IS_LINUX, IS_MAC, IS_WINDOWS, platformName } from "./lib/platform.ts";
@@ -26,6 +30,7 @@ import {
   type PendingGeneration,
   runDownloadOperation,
   SingleFlight,
+  type StagedGeneration,
   UpdateTransactionState,
 } from "./lib/transaction.ts";
 import { artifactUrl, fetchTrustedUpdateUrl, trustedBaseUrl } from "./lib/urls.ts";
@@ -58,6 +63,7 @@ export class Updater {
   #transactions = new UpdateTransactionState();
   #checks = new SingleFlight<UpdateInfo | null>();
   #autoCheck: ReturnType<typeof setInterval> | undefined;
+  #stopOnTerminal: (() => void) | undefined;
 
   on<K extends keyof UpdaterEvents>(type: K, listener: Listener<UpdaterEvents[K]>): () => void {
     let set = this.#listeners.get(type);
@@ -91,6 +97,7 @@ export class Updater {
   /** Fetch the channel manifest; report a strictly newer update or `null`. Never throws. */
   checkForUpdate(): Promise<UpdateInfo | null> {
     if (
+      updaterProcessLifecycle.isTerminal ||
       this.#transactions.isApplying ||
       this.#transactions.isDownloading ||
       this.#transactions.staged
@@ -117,16 +124,15 @@ export class Updater {
         fetchTrustedUpdateUrl(`${manifestUrl}?${cacheBust}`),
         fetchTrustedUpdateUrl(`${manifestUrl}.sig?${cacheBust}`),
       ]);
+      updaterProcessLifecycle.assertActive();
       if (!response.ok) throw new Error(`manifest ${response.status}`);
       if (!signatureResponse.ok) {
         throw new Error(`manifest signature ${signatureResponse.status}`);
       }
       const manifestBytes = await readBoundedManifestBytes(response);
-      verifyManifestSignature(
-        manifestBytes,
-        await readBoundedSignature(signatureResponse),
-        version.publicKey,
-      );
+      const signature = await readBoundedSignature(signatureResponse);
+      updaterProcessLifecycle.assertActive();
+      verifyManifestSignature(manifestBytes, signature, version.publicKey);
       const manifest = parseManifest(parseManifestBytes(manifestBytes), {
         channel: version.channel,
         platform: platformName(),
@@ -162,6 +168,7 @@ export class Updater {
         this.#pendingManifest = null;
         if (staged) removePathBestEffort(staged.workDir, true);
       }
+      if (error instanceof UpdaterProcessTerminalError) return null;
       this.#fail(error);
       return null;
     }
@@ -169,6 +176,7 @@ export class Updater {
 
   /** Download, bound, verify, extract, and structurally validate the pending update. */
   async download(onProgress?: (progress: UpdateProgress) => void): Promise<void> {
+    updaterProcessLifecycle.assertActive();
     assertDownloadCanStart(this.#transactions, this.#checks.isRunning);
     const snapshot = this.#transactions.beginDownload();
     let workDir: string | undefined;
@@ -203,6 +211,7 @@ export class Updater {
           (candidate) => candidate.fromVersion === installed.version,
         );
         const reportProgress = (progress: UpdateProgress): void => {
+          if (updaterProcessLifecycle.isTerminal) return;
           this.#emit("progress", progress);
           onProgress?.(progress);
         };
@@ -311,7 +320,7 @@ export class Updater {
       },
       onCurrentFailure: (error) => {
         this.#pendingManifest = null;
-        this.#fail(error);
+        if (!(error instanceof UpdaterProcessTerminalError)) this.#fail(error);
       },
       cleanup: () => {
         if (workDir) removePathBestEffort(workDir, true);
@@ -331,7 +340,14 @@ export class Updater {
       throw new Error("installed update metadata is unavailable");
     }
     if (IS_LINUX) assertLinuxInstallCanApply(resourcesDir);
-    const staged = this.#transactions.beginApply();
+    const releaseProcessApply = updaterProcessLifecycle.beginApply();
+    let staged: StagedGeneration;
+    try {
+      staged = this.#transactions.beginApply();
+    } catch (error) {
+      releaseProcessApply();
+      throw error;
+    }
     let installStaged: string | undefined;
 
     this.#setStatus("applying");
@@ -356,6 +372,7 @@ export class Updater {
       this.#transactions.finishApply(false);
       this.#pendingManifest = null;
       removePathBestEffort(staged.workDir, true);
+      releaseProcessApply();
       this.#fail(error);
       throw error;
     }
@@ -370,15 +387,19 @@ export class Updater {
 
   startAutoCheck(intervalMs = 6 * 60 * 60 * 1000): () => void {
     this.stopAutoCheck();
-    if (this.#transactions.isHandedOff) return () => {};
+    if (updaterProcessLifecycle.isTerminal || this.#transactions.isHandedOff) return () => {};
     void this.checkForUpdate();
     this.#autoCheck = setInterval(() => void this.checkForUpdate(), intervalMs);
+    this.#stopOnTerminal = updaterProcessLifecycle.onTerminal(() => this.stopAutoCheck());
     return () => this.stopAutoCheck();
   }
 
   stopAutoCheck(): void {
     if (this.#autoCheck) clearInterval(this.#autoCheck);
     this.#autoCheck = undefined;
+    const stopOnTerminal = this.#stopOnTerminal;
+    this.#stopOnTerminal = undefined;
+    stopOnTerminal?.();
   }
 
   #version(): VersionInfo | null {
@@ -428,6 +449,7 @@ export class Updater {
   }
 
   #assertCurrent(snapshot: PendingGeneration): void {
+    updaterProcessLifecycle.assertActive();
     if (!this.#transactions.isCurrent(snapshot)) throw new StaleGenerationError();
   }
 

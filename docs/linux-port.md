@@ -189,8 +189,11 @@ acquire the exclusive app lock; the helper retains its unique backup until that 
 PID reports Worker/native readiness. Early exit or timeout uses bounded termination,
 removes the partial replacement, clears the reservation, restores, verifies, and
 relaunches the old app. Native shutdown begins before synchronous updater completion
-listeners, and process-wide generation allocation keeps public updater instances
-disjoint. Handoff reservations expire after a bounded 24-hour stale
+listeners. The parent records the shell helper PID in the reservation before
+publishing its PID-bound activation, and an unactivated helper cannot swap after a
+parent crash. Process-wide terminal/apply latches stop all updater-instance
+auto-checks, while process-wide generation allocation keeps their work disjoint.
+Handoff reservations expire after a bounded 24-hour stale
 lease so reused process IDs cannot block launch indefinitely. Startup prunes abandoned generations
 and, after its first internal `ready` listener writes replacement readiness ahead of
 user listeners, asynchronously prunes exact dead-owner install-side staging

@@ -1,4 +1,4 @@
-import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -9,7 +9,12 @@ import {
   UPDATE_HANDOFF_TOKEN_ENV,
 } from "../../update-handoff.ts";
 import type { VersionInfo } from "../types.ts";
-import { APPLY_HELPER_ARMED_FILE, APPLY_HELPER_PID_FILE, removePathBestEffort } from "./cleanup.ts";
+import {
+  APPLY_HELPER_ACTIVATED_FILE,
+  APPLY_HELPER_ARMED_FILE,
+  APPLY_HELPER_PID_FILE,
+  removePathBestEffort,
+} from "./cleanup.ts";
 import { IS_LINUX, IS_WINDOWS, psq, sh } from "./platform.ts";
 
 interface ApplyOptions {
@@ -26,6 +31,7 @@ interface ShellScriptOptions {
   workDir: string;
   marker: string;
   ready: string;
+  activated: string;
   armed: string;
   token: string;
   pid?: number;
@@ -83,6 +89,17 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     `  if (Test-Path -LiteralPath ${psq(options.backup)}) { throw 'Updater backup path already exists' }`,
     `  if (-not (Test-Path -LiteralPath ${psq(options.runningApp)} -PathType Container)) { throw 'Installed app path is unavailable' }`,
     `  if (-not (Test-Path -LiteralPath ${psq(options.staged)} -PathType Container)) { throw 'Install-filesystem stage is unavailable' }`,
+    "  $activationDeadline=(Get-Date).AddSeconds(5)",
+    "  while ($true) {",
+    `    if (Test-Path -LiteralPath ${psq(options.activated)} -PathType Leaf) {`,
+    `      $activatedPid=(Get-Content -LiteralPath ${psq(options.activated)} -Raw).Trim()`,
+    "      if ($activatedPid -ne [string]$PID) { throw 'Updater helper activation has the wrong process id' }",
+    "      break",
+    "    }",
+    `    if (-not (Get-Process -Id ${pid} -ErrorAction SilentlyContinue)) { throw 'Application exited before updater helper activation' }`,
+    "    if ((Get-Date) -ge $activationDeadline) { throw 'Updater helper was not activated' }",
+    "    Start-Sleep -Milliseconds 25",
+    "  }",
     `  [System.IO.File]::WriteAllText(${psq(options.armed)},[string]$PID,[System.Text.Encoding]::ASCII)`,
     "  $parentDeadline=(Get-Date).AddSeconds(30)",
     `  while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) {`,
@@ -118,7 +135,7 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "  if ($newProcess.HasExited) { throw 'Replacement exited after reporting ready' }",
     `  Remove-Item -LiteralPath ${psq(options.backup)} -Recurse -Force -ErrorAction SilentlyContinue`,
     `  Remove-Item -LiteralPath ${psq(options.workDir)} -Recurse -Force -ErrorAction SilentlyContinue`,
-    `  Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
+    `  Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.activated)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
     `  Remove-Item -LiteralPath ${helperFiles} -Force -ErrorAction SilentlyContinue`,
     "} catch {",
     "  $failure=$_",
@@ -136,7 +153,7 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "      }",
     `      if ((Test-Path -LiteralPath ${psq(options.backup)}) -or -not (Test-Path -LiteralPath ${psq(options.executable)} -PathType Leaf)) { throw 'Update rollback failed' }`,
     `      Remove-Item -LiteralPath ${psq(options.staged)} -Recurse -Force -ErrorAction SilentlyContinue`,
-    `      Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
+    `      Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.activated)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
     `      Remove-Item -LiteralPath ${psq(options.workDir)} -Recurse -Force -ErrorAction SilentlyContinue`,
     `      Start-Process -FilePath ${psq(options.executable)} -WorkingDirectory ${psq(options.runningApp)} -ErrorAction Stop`,
     "    }",
@@ -147,7 +164,7 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "  } catch {",
     "    $rollbackFailure=$_",
     "  }",
-    `  Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
+    `  Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.activated)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
     `  Remove-Item -LiteralPath ${helperFiles} -Force -ErrorAction SilentlyContinue`,
     "  if ($null -ne $rollbackFailure) { throw $rollbackFailure }",
     "  throw $failure",
@@ -177,6 +194,7 @@ function renderPosixApplyShell(
     `WORK=${sh(options.workDir)}`,
     `HANDOFF=${sh(options.marker)}`,
     `READY=${sh(options.ready)}`,
+    `ACTIVATED=${sh(options.activated)}`,
     `ARMED=${sh(options.armed)}`,
     `TOKEN=${sh(options.token)}`,
     `PID=${options.pid ?? process.pid}`,
@@ -184,7 +202,7 @@ function renderPosixApplyShell(
     `EXE=${sh(options.executable)}`,
     "PARENT_EXITED=0",
     "NEW_PID=",
-    'cleanup_handoff() { rm -f "$HANDOFF" "$READY" "$ARMED"; }',
+    'cleanup_handoff() { rm -f "$HANDOFF" "$READY" "$ACTIVATED" "$ARMED"; }',
     "stop_replacement() {",
     '  if [ -z "$NEW_PID" ] || ! kill -0 "$NEW_PID" 2>/dev/null; then',
     '    if [ -n "$NEW_PID" ]; then wait "$NEW_PID" 2>/dev/null || true; fi',
@@ -244,6 +262,19 @@ function renderPosixApplyShell(
     'test -d "$APP"',
     'test -d "$NEW"',
     ...(platform === "linux" ? ["command -v setsid >/dev/null 2>&1"] : []),
+    "i=0",
+    "while :; do",
+    '  if [ -f "$ACTIVATED" ]; then',
+    '    ACTIVATED_PID=""',
+    '    IFS= read -r ACTIVATED_PID < "$ACTIVATED" || true',
+    '    test "$ACTIVATED_PID" = "$$"',
+    "    break",
+    "  fi",
+    '  kill -0 "$PID" 2>/dev/null || exit 1',
+    '  if [ "$i" -ge 100 ]; then exit 1; fi',
+    "  i=$((i + 1))",
+    "  sleep 0.05",
+    "done",
     'printf "%s" "$$" > "$ARMED"',
     "i=0",
     'while kill -0 "$PID" 2>/dev/null; do',
@@ -307,6 +338,7 @@ async function applyWindows(
   const helperFiles = [script, launchVbs];
   const backup = `${runningApp}.mirin-old-${token}`;
   const helperPidFile = join(workDir, APPLY_HELPER_PID_FILE);
+  const activated = join(workDir, APPLY_HELPER_ACTIVATED_FILE);
   const armed = join(workDir, APPLY_HELPER_ARMED_FILE);
   writeFileSync(
     script,
@@ -319,6 +351,7 @@ async function applyWindows(
       helperFiles,
       marker: handoff.markerPath,
       ready: handoff.readyPath,
+      activated,
       armed,
       token,
     }),
@@ -338,7 +371,7 @@ async function applyWindows(
     }
     const helperPid = parseHelperPid(readFileSync(helperPidFile, "utf8"));
     try {
-      activateUpdateHandoff(handoff, helperPid);
+      authorizeHelperSwap(handoff, helperPid, activated);
       await waitForHelperArmed(armed, helperPid);
     } catch (error) {
       try {
@@ -361,6 +394,7 @@ async function applyLinux(
   const runningApp = join(resourcesDir, "..");
   const executable = join(runningApp, version.name);
   const backup = `${runningApp}.mirin-old-${handoff.token}`;
+  const activated = join(workDir, APPLY_HELPER_ACTIVATED_FILE);
   const armed = join(workDir, APPLY_HELPER_ARMED_FILE);
   await spawnShellSwap(
     renderLinuxApplyShell({
@@ -371,6 +405,7 @@ async function applyLinux(
       backup,
       marker: handoff.markerPath,
       ready: handoff.readyPath,
+      activated,
       armed,
       token: handoff.token,
     }),
@@ -386,6 +421,7 @@ async function applyMac(
   const runningApp = join(resourcesDir, "..", "..");
   const executable = join(runningApp, "Contents", "MacOS", version.name);
   const backup = `${runningApp}.mirin-old-${handoff.token}`;
+  const activated = join(workDir, APPLY_HELPER_ACTIVATED_FILE);
   const armed = join(workDir, APPLY_HELPER_ARMED_FILE);
   await spawnShellSwap(
     renderMacApplyShell({
@@ -396,6 +432,7 @@ async function applyMac(
       backup,
       marker: handoff.markerPath,
       ready: handoff.readyPath,
+      activated,
       armed,
       token: handoff.token,
     }),
@@ -420,13 +457,37 @@ async function spawnShellSwap(
       flag: "wx",
       mode: 0o600,
     });
-    activateUpdateHandoff(handoff, helper.pid);
+    authorizeHelperSwap(handoff, helper.pid, join(workDir, APPLY_HELPER_ACTIVATED_FILE));
     await waitForHelperArmed(join(workDir, APPLY_HELPER_ARMED_FILE), helper.pid);
   } catch (error) {
     helper.kill();
     throw error;
   }
   helper.unref();
+}
+
+/** Publish activation only after the durable reservation identifies this helper. */
+function authorizeHelperSwap(
+  handoff: PreparedUpdateHandoff,
+  helperPid: number,
+  activatedPath: string,
+): void {
+  activateUpdateHandoff(handoff, helperPid);
+  signalHelperActivation(activatedPath, helperPid);
+}
+
+function signalHelperActivation(path: string, helperPid: number): void {
+  const temporary = `${path}.${helperPid}.tmp`;
+  try {
+    writeFileSync(temporary, String(helperPid), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    renameSync(temporary, path);
+  } finally {
+    removePathBestEffort(temporary);
+  }
 }
 
 async function waitForHelperArmed(

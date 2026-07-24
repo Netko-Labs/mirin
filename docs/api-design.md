@@ -269,6 +269,10 @@ off the main-process API:
   signature verification happens before JSON parsing, and every redirect hop must
   satisfy the HTTPS-or-loopback policy and a bounded request deadline. Embedded and
   staged `version.json` files are size-bounded before allocation/decoding.
+  Before the helper may arm, the parent atomically records its exact PID in the
+  reservation and publishes a PID-bound activation acknowledgement. A helper
+  without that acknowledgement exits without swapping. Apply and terminal state
+  are shared by every public `Updater` instance, including auto-check shutdown.
   `release.channel` supports validated safe
   dotted names consistently across build/release output, embedded identity, manifest
   matching, artifact names, and support directories, excluding Windows reserved names.

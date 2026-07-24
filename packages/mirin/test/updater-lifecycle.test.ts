@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   acknowledgeUpdaterStartup,
-  enterTerminalUpdateHandoff,
+  UpdaterProcessLifecycle,
 } from "../src/updater/lib/lifecycle.ts";
 
 describe("updater lifecycle ordering", () => {
@@ -24,9 +24,10 @@ describe("updater lifecycle ordering", () => {
   });
 
   test("requests terminal native quit before notifying completion listeners", () => {
+    const lifecycle = new UpdaterProcessLifecycle();
     let quitRequested = false;
 
-    enterTerminalUpdateHandoff(
+    lifecycle.enterTerminal(
       () => {
         quitRequested = true;
       },
@@ -34,5 +35,25 @@ describe("updater lifecycle ordering", () => {
         expect(quitRequested).toBe(true);
       },
     );
+  });
+
+  test("shares apply and terminal state across updater instances", () => {
+    const lifecycle = new UpdaterProcessLifecycle();
+    const events: string[] = [];
+    const release = lifecycle.beginApply();
+
+    expect(() => lifecycle.beginApply()).toThrow("another updater instance");
+    release();
+    lifecycle.beginApply();
+    lifecycle.onTerminal(() => events.push("stop-auto-check"));
+    lifecycle.enterTerminal(
+      () => events.push("quit"),
+      () => events.push("complete"),
+    );
+
+    expect(events).toEqual(["stop-auto-check", "quit", "complete"]);
+    expect(lifecycle.isTerminal).toBe(true);
+    expect(() => lifecycle.assertActive()).toThrow("terminal handoff");
+    expect(() => lifecycle.beginApply()).toThrow("terminal handoff");
   });
 });
