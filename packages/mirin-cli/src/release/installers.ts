@@ -44,6 +44,7 @@ async function buildWindowsInstaller(
     appName: result.appName,
     exeName: `${result.appName}.exe`,
     version: result.version,
+    channel: result.channel,
     bundleId: result.bundleId,
     outDir,
     fileName: setupName,

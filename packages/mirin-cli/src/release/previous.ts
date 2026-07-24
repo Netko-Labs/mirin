@@ -1,4 +1,4 @@
-import { validateReleaseVersion } from "./semver.ts";
+import { validateAppVersion } from "../shared/validation/config.ts";
 
 export interface PreviousReleaseManifest {
   version: string;
@@ -27,7 +27,7 @@ export function parsePreviousReleaseManifest(
 
   const version = stringField(manifest, "version", 128);
   try {
-    validateReleaseVersion(version);
+    validateAppVersion(version);
   } catch {
     throw new Error("invalid previous update version");
   }

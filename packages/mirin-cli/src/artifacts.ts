@@ -73,7 +73,7 @@ export async function resolveArtifacts(opts: { release: boolean }): Promise<Arti
     coreDylib: join(nativeDir, coreFileName()),
     codecBin: join(nativeDir, codecFileName()),
     helperBin: join(nativeDir, helperFileName()),
-    hostEntry: resolvePackageFile("mirinjs/host"),
+    hostEntry: resolveCliPackageFile("mirinjs/host"),
     cefPath,
   };
 }
@@ -114,7 +114,7 @@ function platformTag(): string {
 function resolveNativeDir(): string {
   const pkg = `@mirinjs/${platformTag()}`;
   try {
-    return dirname(resolvePackageFile(`${pkg}/package.json`));
+    return dirname(resolveCliPackageFile(`${pkg}/package.json`));
   } catch {
     throw new Error(
       `mirin: prebuilt native package "${pkg}" is not installed. Run \`bun install\` ` +
@@ -123,8 +123,9 @@ function resolveNativeDir(): string {
   }
 }
 
-function resolvePackageFile(specifier: string): string {
-  return Bun.resolveSync(specifier, process.cwd());
+/** Resolve dependencies owned by the CLI package, independent of the app's cwd. */
+export function resolveCliPackageFile(specifier: string, cliDir = CLI_DIR): string {
+  return Bun.resolveSync(specifier, cliDir);
 }
 
 /** The CLI's own version, used to pick the matching CEF release asset. */

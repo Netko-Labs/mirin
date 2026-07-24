@@ -22,6 +22,11 @@ bun install
 bun run dev
 ```
 
+The scaffold directory/app name must be lowercase kebab-case (`my-app`): letters
+or digits separated by single hyphens. The command validates the name before it
+copies anything, including when a Windows-style target path is supplied to the
+shared scaffold API.
+
 The first `dev`/`build` downloads the Chromium Embedded Framework once
 (~hundreds of MB) into `~/.mirinjs/cef/<version-platform>/`.
 
@@ -72,6 +77,20 @@ Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
 those files, such as GitHub Releases' `.../releases/latest/download`. Safe dotted
 channels such as `beta.preview-2` are supported; the same validated channel is used
 in artifact prefixes, manifests, embedded identity, URLs, and updater support paths.
+Before any build/dev output is created, Mirin requires a portable app `name`, a
+reverse-DNS `id`, a bounded `release.channel` made of alphanumeric runs separated
+by single `.`, `_`, or `-` characters, and a strict SemVer package/override
+version. On macOS the full SemVer remains in updater metadata while the bundle
+plist uses Apple's 4/2/2-digit build-component bounds and `d`/`a`/`b`/`fc`
+suffixes for `dev`/`preview`, `alpha`, `beta`, and `rc` prereleases (iterations
+1–255). Sidecar and extra-worker sources must resolve to regular files within
+the canonical project root; missing paths, directories, special files, and
+escaping symlinks fail preflight. App icons must resolve to a project-owned
+regular file or a flat `.iconset` containing no symlinks; bundle and package
+sinks revalidate them before use. Bundle and release directories are assembled
+in unique sibling staging paths, so a failed copy/sign/package run preserves
+the last successful output.
+
 Generate a long-lived Ed25519 update key pair once:
 
 ```bash

@@ -78,8 +78,15 @@ export interface WindowConfig {
 }
 
 export interface MirinConfig {
-  /** Reverse-DNS app id, e.g. "dev.peje.hello". */
+  /**
+   * Reverse-DNS app id, e.g. "dev.peje.hello". Uses at least two ASCII DNS-style
+   * labels and is validated before any build/dev output is created.
+   */
   id: string;
+  /**
+   * Portable bundle filename/display name: ASCII letters/digits plus spaces,
+   * `.`, `_`, `(`, `)`, and `-`; no reserved Windows names or trailing dot/space.
+   */
   name: string;
   /**
    * Publisher / company name (e.g. "Netko Labs"). Shown in the Windows installer,
@@ -145,7 +152,9 @@ export interface MirinConfig {
    * root) or a {@link SidecarSpec}. Names must be filename-safe (`A-Z`, `a-z`,
    * `0-9`, `.`, `_`, `-`) and paths must stay under the project root. Each binary is copied into
    * `Contents/Resources/sidecars/<name>`, codesigned (hardened runtime), and —
-   * when notary credentials are set — notarized with the rest of the app.
+   * when notary credentials are set — notarized with the rest of the app. Sources
+   * must resolve to regular files inside the canonical project root; escaping
+   * symlinks, directories, missing paths, and special files are rejected.
    *
    * Prefer a binary already on the user's PATH (`Bun.spawn("git", …)`) or a
    * download-on-first-run when size/licensing matter; bundle only when you need
@@ -260,12 +269,16 @@ export interface NsisConfig {
   include?: string;
 }
 
-/**
- * Inno Setup installer options — the same knobs as {@link NsisConfig}
- * (perMachine, oneClick, shortcuts, license, publisher, runAfterFinish,
- * installerIcon, and a raw `include` injected as `.iss` instead of NSIS script).
- */
-export type InnoConfig = NsisConfig;
+/** Inno Setup installer options, sharing the common NSIS installer knobs. */
+export interface InnoConfig extends Omit<NsisConfig, "installDir" | "include"> {
+  /**
+   * Default install directory: an absolute Windows path, or a path beginning with
+   * `{autopf}` or `{localappdata}`.
+   */
+  installDir?: string;
+  /** Raw Inno Setup script injected near the top of the generated `.iss` file. */
+  include?: string;
+}
 
 /** A Linux distributable package format `mirin` can emit. */
 export type LinuxPackageFormat = "appimage" | "deb" | "rpm";
@@ -316,7 +329,11 @@ export interface ReleaseConfig {
    * `MIRIN_UPDATE_PRIVATE_KEY`.
    */
   publicKey?: string;
-  /** Update channel; baked into artifact names + support dir. Default "stable". */
+  /**
+   * Flat release path/artifact segment (ASCII letters, digits, `.`, `_`, `-`,
+   * maximum 64 characters). Baked into artifact names and the support directory.
+   * Default "stable".
+   */
   channel?: string;
   /** Optional markdown release notes embedded in the update manifest. */
   notes?: string;

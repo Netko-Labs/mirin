@@ -102,7 +102,7 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 - **Linking.** The framework is loaded at runtime (`cef_load_library` path on macOS), keeping `libmirin_core` itself free of hard CEF linkage.
 - **Bundle requirement.** CEF on macOS effectively requires the `.app` + helpers structure even during development. `mirin dev` therefore materializes a **dev bundle**: a throwaway `.app` skeleton (ad-hoc signed) whose Resources point at the working tree, so the edit-reload loop doesn't pay a full repackage.
 - **Production locales.** `cef.locales` optionally keeps only selected locale packs in production bundles. Windows/Linux copy matching `locales/*.pak`; macOS retains the matching `.lproj` directory and its grammatical-gender variants before codesigning. Omission preserves the complete CEF runtime.
-- **Release scheduling.** The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. A standalone `mirin-codec` binary performs release-time zstd and bsdiff work without loading CEF or depending on Bun FFI; the runtime core links the same Rust codec library.
+- **Release scheduling.** Platform bundles and the complete release directory are assembled in unique sibling staging directories and replace the prior successful output only after success. The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. A standalone `mirin-codec` binary performs release-time zstd and bsdiff work without loading CEF or depending on Bun FFI; the runtime core links the same Rust codec library.
 - **Updater transactions.** Packaged apps structurally parse their six-field `version.json` identity through a fixed-size read, including an Ed25519 manifest trust anchor and a safe dotted channel used consistently in artifact prefixes and support-directory paths. Every manifest has a detached signature over its exact bytes, is bounded before verification and JSON parsing, and is fetched through manual redirects that enforce HTTPS-or-loopback and a deadline on every hop/body. Only strictly newer SemVer precedence is accepted (build metadata does not make a release newer), and build tooling validates the same grammar before packaging. Manifest checks are single-flight. Each accepted manifest receives a generation tied to its version and tar hash; downloads use process/session-owned generation directories, checks are deferred while a download is active or an update is staged, and concurrent/repeated download/apply calls are rejected. A committed check may start its download directly from the `update-available` listener. Failure releases the transaction latch before nonthrowing best-effort cleanup, completed helpers remove their generation work directory, and startup prunes abandoned strict `generation-*` directories without following symlinks or deleting generations owned by live app processes or recorded apply-helper PIDs. Once the detached apply helper is accepted, the transaction enters an irreversible terminal handoff: manual checks/downloads/applies and auto-check scheduling remain blocked until process exit. Manifest bodies, signatures, compressed artifacts, raw patches, reconstructed tars, entry counts, paths, and link targets have absolute limits; streaming reconstructed tar/decompression output is capped at 8 GiB while compressed artifacts, subprocess output, and archive structure remain independently bounded. In-memory patch inputs have a 512 MiB combined ceiling; release-time bsdiff source tars have a 128 MiB per-source ceiling because its suffix index amplifies memory. Larger deltas are skipped in favor of the full bundle. New manifests declare exact compressed sizes, `tarSize`, and patch `uncompressedSize`; bounded additive codec/FFI calls enforce decompression, patch-input, patch-output, and malformed-header ceilings while legacy codec calls remain available for trusted local use. Before apply, Mirin rejects traversal, sparse/special nodes, escaping symlinks/hardlinks, a linked/non-directory root, a missing/non-regular platform executable, and staged `version.json` identity drift. macOS requires executable mode and a stable installed designated code requirement; authenticated ad-hoc local builds fall back to codesign validity because their cdhash is build-specific. Linux extracts with permission preservation and ensures owner execute only after validating the regular host executable. Apply helpers use unique backups, remove partial replacements before rollback, verify restoration, and retain the backup until replacement launch succeeds; Windows records the directly launched PowerShell PID before handoff, and Linux treats an immediate replacement exit as failure. Release tar creation disables macOS AppleDouble sidecars so the archive has one expected root.
 
 ## 6. Repository layout
@@ -146,8 +146,11 @@ CLIs need none). Spawn at runtime with `app.sidecar(name, { args, … })` — a 
 the child so it's killed on quit. Use `resolveSidecar(name)` when the application needs
 the staged path without launching it, such as installing a user-facing command. Sidecars are separate OS processes and, like the
 Worker, must not touch AppKit/CEF. Sidecar names are validated as single safe filename
-segments (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-`), and source paths must be project-relative
-without escaping the project root.
+segments (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-`). The CLI canonicalizes the project root
+and each source before any build/dev output is touched, rejects lexical or symlink
+escapes plus missing/directory/special sources, and copies production sidecars as new
+regular files before changing destination permissions. This prevents a bundled symlink
+or `chmod` from mutating the project source.
 
 **Extra workers** — `workers: { name: "src/foo.worker.ts" }`. Each entry is bundled by
 the CLI to `Contents/Resources/workers/<name>.js` (alongside the main `worker.js`).
@@ -156,7 +159,7 @@ Resolve one with `resolveWorker(name)` and hand it to `new Worker(...)`
 run off the main thread and **cannot** issue window/native FFI — anything native is
 requested from the app worker. They may `dlopen` the core for pure functions (as the
 updater's codec does), but not UI commands. Worker names and entry paths follow the same
-single-segment / project-root validation as sidecars.
+single-segment, canonical containment, and regular-file validation as sidecars.
 
 Dev (`mirin dev`) stages both under `.mirin/{sidecars,workers}` and points the host at
 them via `MIRIN_SIDECAR_DIR` / `MIRIN_WORKERS_DIR`; prod resolves them in-bundle
@@ -218,15 +221,35 @@ embedded-NSView/OSR model. Consequences:
 **Bundle + distribution.** No `.app`/codesign — a flat app folder: `<App>.exe` (bun
 host) + `mirin_core.dll` + `mirin-helper.exe` + the CEF runtime (libcef.dll, `*.pak`,
 `icudtl.dat`, `locales/`) all beside the exe (so the OS loader resolves libcef), and
-`resources/{ui, worker.js, mirin.manifest.json, version.json}`. `mirin dev`/`build`/
-`release` branch on `process.platform` (`bundle/windows/index.ts`). `mirin release` emits an
-**NSIS installer** (`…-setup.exe` — Program Files / per-user install, Start Menu +
-Desktop shortcuts, uninstaller, Add/Remove Programs; customizable via the `nsis`
-config, `installer-win.ts`; needs `makensis`, falls back to a portable `.zip`) +
+`resources/{ui, worker.js, mirin.manifest.json, version.json}`. The six-field
+`version.json`, including its Ed25519 manifest trust anchor, is serialized and
+parsed back by CLI-private validation, and every
+platform bundle revalidates app name/id/channel/version plus icon and extra-asset
+sinks before assembling a unique sibling stage. The stage replaces the prior
+output only after the complete bundle succeeds. `mirin dev`/`build`/`release` branch on `process.platform`
+(`bundle/windows/index.ts`). `mirin release` emits an **NSIS installer**
+(`…-setup.exe` — Program Files / per-user install, Start Menu + Desktop shortcuts,
+uninstaller, Add/Remove Programs; customizable via the `nsis` config,
+`installer-win.ts`; needs `makensis`, falls back to a portable `.zip`). Its owned app
+payload lives under `$INSTDIR\\app`; upgrades remove that directory only when a
+bundle-specific root marker proves ownership. A first install refuses a pre-existing
+unowned `app` collision.
+A five-marker fingerprint gates cleanup of the former flat NSIS/Inno payload, which deletes
+only enumerated root files and owned `resources`/`locales`. `Uninstall.exe` remains at
+`$INSTDIR`; uninstall repeats the guarded legacy cleanup, recursively removes only `app`,
+deletes known shortcuts/registry/uninstaller entries, then attempts a non-recursive root
+removal so unrelated user files survive. Inno uses the same ownership marker and
+`app` payload boundary, recursively cleans updater-added payload files on uninstall,
+applies the same marker-gated enumerated cleanup to legacy flat payloads, and stores
+`unins000.*` under a bundle-specific owned directory. Switching installer toolchains
+removes only the prior tool's exact owned uninstaller and
+bundle-keyed registry entry only after the flat fingerprint or shared ownership
+marker matches. Inno accepts absolute Windows install paths or
+`{autopf}`/`{localappdata}` prefixes, and escapes literal script paths. It also emits
 a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`; the updater
-swaps the folder via a detached PowerShell relauncher. The pre-quit VBScript now
-returns the `Win32_Process.Create` status, so the running app quits only after WMI
-accepts the detached helper. That acceptance is the terminal handoff point: updater
+swaps the folder via a detached PowerShell relauncher. WMI directly launches
+PowerShell and records its actual PID, so the running app quits only after the complete
+helper is accepted. That acceptance is the terminal handoff point: updater
 operations and auto-check scheduling remain blocked through process exit. Successful
 helpers remove their generation and temporary launcher files; launch failures clean
 temporary files best-effort, and the next startup prunes abandoned generations while

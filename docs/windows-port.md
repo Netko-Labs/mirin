@@ -84,30 +84,44 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
 `@mirinjs/win32-{arch}` prebuilt-native package + CLI optional dep; `artifacts.ts`
 installed-mode + CEF release download (platform-generic). `mirin release` (verified)
 emits `{channel}-win32-{arch}-update.json` + `.tar.zst` updater bundle + a real
-**NSIS installer** (`…-setup.exe`, `installer-win.ts`). Verified end-to-end: silent
-install (`/S /D=`) → 252 files + Add/Remove Programs entry, the installed app
-cold-launches (0 GPU failures), silent uninstall removes the folder + registry key.
-Customizable via the `nsis` config (perMachine/oneClick, shortcuts, license,
-publisher, runAfterFinish, installerIcon, raw `include`); needs `makensis`, else
-falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
+**NSIS installer** (`…-setup.exe`, `installer-win.ts`). The generated script keeps
+the owned payload under `$INSTDIR\\app` and the stable `Uninstall.exe` at the root.
+A bundle-specific root marker gates recursive replacement and uninstall cleanup;
+first install refuses a pre-existing unowned `app` collision.
+A guarded migration recognizes the former flat Mirin layout from the app/core/helper/CEF/
+manifest fingerprint, removes only enumerated payload files plus owned `resources` and
+`locales`, and leaves unrelated root files intact. Uninstall repeats that guarded cleanup
+as a fallback, removes the new payload recursively, deletes known shortcuts/registry/
+uninstaller entries, then removes `$INSTDIR` non-recursively. Registry uninstall commands
+quote executable paths containing spaces. Windows x64 CI covers flat → new → uninstall and
+new-v1 → new-v2 → uninstall while preserving a root sentinel. Customizable via the `nsis`
+config (perMachine/oneClick, shortcuts, license, publisher, runAfterFinish, installerIcon,
+raw `include`); needs `makensis`, else falls back to the portable `.zip`. The Inno
+alternative also replaces an owned `{app}\\app` payload on upgrade and marker-gates
+enumerated cleanup of its legacy flat payload. Both generators share the ownership
+marker, remove stale cross-tool uninstallers and exact bundle-keyed registry entries,
+and preserve unrelated root files. Inno stores `unins000.*` under a bundle-specific
+owned subdirectory, so cross-tool migration never guesses at or deletes another app's
+uninstaller; it also recursively removes updater-added payload files during uninstall.
+It accepts only absolute Windows install
+paths or `{autopf}`/`{localappdata}` prefixes and escapes literal filesystem paths before
+rendering `.iss`. Anko's
+`build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
 `%LOCALAPPDATA%` support dir, bounded/generation-correlated download staging,
 validated real app root + `<App>.exe` + `resources/version.json`, and a detached
-PowerShell folder swap + relaunch. The launch VBScript propagates
-`Win32_Process.Create` failure before the running app quits, launches PowerShell
-directly, and records that actual apply-helper PID before handoff so startup cleanup
-cannot delete its generation and a failed marker write can terminate the complete
-helper. Accepted WMI launch is
-the terminal handoff, so checks, downloads, applies, and auto-check scheduling remain
-blocked until exit. Successful helpers remove their generation and launcher files;
-launch failures clean launcher files best-effort, and startup prunes abandoned
-generations without touching live app/helper work. The swap uses a unique backup,
-rejects stale backup collisions, removes partial replacements before rollback, and
-verifies restoration. The post-exit swap still has no durable success acknowledgement
-and is not field-tested. Runtime manifests require a pinned Ed25519 signature, and
-every redirect hop is subject to the HTTPS-or-loopback rule.
-`publish-all.ts` publishes the host-platform native package. Release-time
-compression uses the standalone `mirin-codec.exe`, which has no CEF or Bun FFI
-dependency.
+PowerShell folder swap + relaunch. WMI launches PowerShell directly and records its
+actual PID before the running app quits, so startup cleanup cannot delete its generation
+and a failed marker write can terminate the complete helper. Accepted WMI launch is the
+terminal handoff, so checks, downloads, applies, and auto-check scheduling remain blocked
+until exit. Successful helpers remove their generation and launcher files; launch failures
+clean launcher files best-effort, and startup prunes abandoned generations without touching
+live app/helper work. The swap uses a unique backup, rejects stale backup collisions,
+removes partial replacements before rollback, and verifies restoration. The post-exit swap
+still has no durable success acknowledgement and is not field-tested. Runtime manifests
+require a pinned Ed25519 signature, and every redirect hop is subject to the
+HTTPS-or-loopback rule. `publish-all.ts` publishes the host-platform native package.
+Release-time compression uses the standalone `mirin-codec.exe`, which has no CEF or Bun
+FFI dependency.
 
 Windows arm64 currently uses an x64 host/core/CEF compatibility payload because
 Bun's native Windows arm64 runtime does not provide `bun:ffi`. Windows 11 ARM runs

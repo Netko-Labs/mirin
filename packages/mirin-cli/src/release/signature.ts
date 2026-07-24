@@ -6,29 +6,12 @@ import {
   timingSafeEqual,
   verify,
 } from "node:crypto";
+import { validateUpdatePublicKey } from "../shared/validation/update-key.ts";
+
+export { validateUpdatePublicKey } from "../shared/validation/update-key.ts";
 
 const MAX_KEY_BYTES = 1024;
 const ED25519_SIGNATURE_BYTES = 64;
-
-/** Validate and normalize a base64 DER Ed25519 SubjectPublicKeyInfo value. */
-export function validateUpdatePublicKey(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 2048) {
-    throw new Error(
-      "[mirin] release.publicKey or MIRIN_UPDATE_PUBLIC_KEY must contain a base64 DER Ed25519 public key.",
-    );
-  }
-  const der = strictBase64(value, MAX_KEY_BYTES, "update public key");
-  let key: KeyObject;
-  try {
-    key = createPublicKey({ key: der, format: "der", type: "spki" });
-  } catch {
-    throw new Error("[mirin] update public key is not valid DER SubjectPublicKeyInfo.");
-  }
-  if (key.asymmetricKeyType !== "ed25519") {
-    throw new Error("[mirin] update public key must use Ed25519.");
-  }
-  return der.toString("base64");
-}
 
 /** Sign exact manifest bytes and prove the private key matches the packaged public key. */
 export function signUpdateManifest(manifest: Uint8Array, publicKey: string): string {

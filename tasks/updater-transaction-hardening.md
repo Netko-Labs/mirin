@@ -32,6 +32,8 @@
 - [x] Put redirect hops and response bodies under metadata/artifact deadlines.
 - [x] Record and terminate the directly launched Windows PowerShell helper.
 - [x] Validate release versions with the runtime's strict SemVer grammar.
+- [x] Share the exact six-field signed updater metadata contract across CLI bundle sinks and runtime parsing.
+- [x] Compose signed release generation with owned atomic output staging and installer settlement.
 
 ## Checkpoints
 
@@ -54,4 +56,12 @@
 - Second-review full TypeScript: `bun run fmt-lint` passed with the same 55
   pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 64/64.
 - Second-review full Rust: `cargo fmt --all --check`, workspace clippy with warnings
+  denied, and workspace tests passed (8 tests).
+- Integration review remediation: stacked the packaging-safety branch without history
+  rewriting, unified channel/SemVer/public-key validation, and preserved both atomic
+  release staging and signed/bounded updater generation.
+- Integration full TypeScript: `bun run fmt-lint` passed with the same 55
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 202 tests
+  with the two expected Windows lifecycle skips on macOS.
+- Integration full Rust: `cargo fmt --all --check`, workspace clippy with warnings
   denied, and workspace tests passed (8 tests).
