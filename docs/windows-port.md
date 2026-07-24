@@ -132,9 +132,11 @@ until exit. Successful helpers remove their generation and launcher files; launc
 clean launcher files best-effort, and startup prunes abandoned generations without touching
 live app/helper work. The validated payload is first copied and revalidated beside
 the install. The swap uses literal PowerShell paths, a unique backup, rejects stale
-backup collisions, removes partial replacements before rollback, and verifies
-restoration. A private handoff reservation admits only the helper's token-bearing
-target after the old PID releases its OS lock. PowerShell keeps the backup until
+backup collisions, removes partial replacements before rollback, verifies
+restoration, and removes its generation work before relaunching the restored app.
+A private handoff reservation admits only the helper's token-bearing target after
+the old PID releases its OS lock and expires after a bounded 24-hour stale lease.
+PowerShell keeps the backup until
 that exact replacement PID acquires the exclusive lock and writes a Worker/native
 readiness receipt; every post-exit failure stops it, restores the old
 folder, clears the reservation, and relaunches the prior executable. Runtime manifests

@@ -60,6 +60,11 @@
 - [x] Scope Windows existing-window activation to the bundle-specific window class.
 - [x] Observe concurrent installer rejection immediately so atomic cleanup always runs.
 - [x] Bound long Win32 identities and fail closed when window-class registration fails.
+- [x] Hash every Windows identity so compact output cannot collide with a literal app id.
+- [x] Keep validated app ids below portable filesystem component limits.
+- [x] Remove Windows generation work before rollback relaunch.
+- [x] Expire stale handoff reservations so PID reuse cannot block launch indefinitely.
+- [x] Retire renderer RPC endpoints without deleting a same-id replacement generation.
 
 ## Checkpoints
 
@@ -166,3 +171,13 @@
 - Eighth-review CI follow-up: Windows x64 exposed and received a minimal fix for
   a target-gated borrow-after-move in identity compaction; the algorithm and its
   bounds are unchanged.
+- Ninth/tenth clean-context review remediation: hash every Win32 identity, cap app
+  ids at 233 portable characters, clean Windows rollback generations before
+  relaunch, expire stale reservations after 24 hours, and retain same-id renderer
+  endpoint generations across CEF cross-origin browser replacement.
+- Ninth/tenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 239
+  tests with the two expected Windows lifecycle skips on macOS.
+- Ninth/tenth-review local Rust: `cargo fmt --all --check`, workspace clippy with
+  warnings denied, and workspace tests passed (20 tests across codec, core, and
+  helper). The all-identity collision regression remains enforced by Windows CI.

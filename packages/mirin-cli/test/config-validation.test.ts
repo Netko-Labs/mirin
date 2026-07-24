@@ -55,6 +55,15 @@ describe("CLI app identity validation", () => {
     (value) => expect(() => validateBundleId(value)).toThrow("invalid app id"),
   );
 
+  test("bounds app ids below portable filesystem component limits", () => {
+    const maximum = `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(41)}`;
+    const tooLong = `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(42)}`;
+    expect(maximum).toHaveLength(233);
+    expect(tooLong).toHaveLength(234);
+    expect(validateBundleId(maximum)).toBe(maximum);
+    expect(() => validateBundleId(tooLong)).toThrow("up to 233 total characters");
+  });
+
   test.each([
     "../beta",
     "nested/beta",

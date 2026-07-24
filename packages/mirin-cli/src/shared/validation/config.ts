@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const MAX_APP_NAME_LENGTH = 120;
 const MAX_CHANNEL_LENGTH = 64;
-const MAX_IDENTIFIER_LENGTH = 253;
+const MAX_IDENTIFIER_LENGTH = 233;
 const MAX_VERSION_LENGTH = 128;
 const MAX_RELEASE_NOTES_LENGTH = 64 * 1024;
 export const DEFAULT_APP_VERSION = "1.0.0";
@@ -72,7 +72,8 @@ export function validateBundleId(value: unknown): string {
   ) {
     throw new Error(
       `[mirin] invalid app id ${quoted(identifier)} — use a reverse-DNS identifier such as ` +
-        '"dev.example.my-app" with at least two 1–63 character ASCII labels.',
+        `"dev.example.my-app" with at least two 1–63 character ASCII labels and up to ` +
+        `${MAX_IDENTIFIER_LENGTH} total characters.`,
     );
   }
   return identifier;

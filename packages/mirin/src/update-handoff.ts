@@ -19,11 +19,13 @@ const READY_FILE = /^\.update-ready-[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9
 export const HOST_RUNTIME_PROTOCOL = 1;
 export const EXCLUSIVE_UPDATER_CAPABILITY = "exclusive-app-lock-v1";
 export const UPDATE_HANDOFF_TOKEN_ENV = "MIRIN_UPDATE_HANDOFF_TOKEN";
+export const MAX_UPDATE_HANDOFF_AGE_MS = 24 * 60 * 60 * 1000;
 
 interface UpdateHandoffMarker {
   token: string;
   targetVersion: string;
   ownerPid: number;
+  createdAtMs: number;
   helperPid?: number;
 }
 
@@ -65,7 +67,9 @@ export function prepareUpdateHandoff(
   identifier: string,
   targetVersion: string,
   directory = instanceStateDirectory(identifier),
+  createdAtMs = Date.now(),
 ): PreparedUpdateHandoff {
+  if (!validTimestamp(createdAtMs)) throw new Error("invalid updater handoff timestamp");
   mkdirSync(directory, { recursive: true });
   const token = `${process.pid}-${randomUUID()}`;
   const markerPath = join(directory, HANDOFF_FILE);
@@ -75,6 +79,7 @@ export function prepareUpdateHandoff(
     token,
     targetVersion,
     ownerPid: process.pid,
+    createdAtMs,
   };
   writeFileSync(markerPath, serializeMarker(marker), {
     encoding: "utf8",
@@ -113,7 +118,8 @@ export function abandonUpdateHandoff(handoff: PreparedUpdateHandoff): void {
 /**
  * Decide whether this launch may cross an active updater reservation.
  * Only the staged target version may acquire the native lock while its parent
- * or helper is alive. Stale reservations are removed fail-open to the OS lock.
+ * or helper is alive. Stale or expired reservations are removed fail-open to
+ * the OS lock so PID reuse cannot permanently reserve an app.
  */
 export function inspectUpdateHandoff(
   identifier: string,
@@ -122,12 +128,19 @@ export function inspectUpdateHandoff(
   launchToken?: string,
   isProcessAlive: (pid: number) => boolean = processIsAlive,
   directory = instanceStateDirectory(identifier, dev),
+  nowMs = Date.now(),
 ): UpdateHandoffDecision {
   const markerPath = join(directory, HANDOFF_FILE);
   if (!existsSync(markerPath)) return { blocked: false };
   const marker = readMarker(markerPath);
   if (!marker) {
     removeFileBestEffort(markerPath);
+    return { blocked: false };
+  }
+
+  if (!validTimestamp(nowMs) || Math.abs(nowMs - marker.createdAtMs) > MAX_UPDATE_HANDOFF_AGE_MS) {
+    removeFileBestEffort(markerPath);
+    removeFileBestEffort(join(directory, `.update-ready-${marker.token}`));
     return { blocked: false };
   }
 
@@ -173,12 +186,15 @@ function readMarker(path: string): UpdateHandoffMarker | undefined {
     const source = value as Record<string, unknown>;
     const keys = Object.keys(source);
     if (
-      keys.some((key) => !["token", "targetVersion", "ownerPid", "helperPid"].includes(key)) ||
+      keys.some(
+        (key) => !["token", "targetVersion", "ownerPid", "createdAtMs", "helperPid"].includes(key),
+      ) ||
       !HANDOFF_TOKEN.test(String(source.token ?? "")) ||
       typeof source.targetVersion !== "string" ||
       source.targetVersion.length === 0 ||
       source.targetVersion.length > 128 ||
       !validPid(source.ownerPid) ||
+      !validTimestamp(source.createdAtMs) ||
       (source.helperPid !== undefined && !validPid(source.helperPid))
     ) {
       return undefined;
@@ -187,6 +203,7 @@ function readMarker(path: string): UpdateHandoffMarker | undefined {
       token: source.token as string,
       targetVersion: source.targetVersion,
       ownerPid: source.ownerPid,
+      createdAtMs: source.createdAtMs,
       ...(source.helperPid === undefined ? {} : { helperPid: source.helperPid }),
     } as UpdateHandoffMarker;
   } catch {
@@ -211,6 +228,10 @@ function installedVersion(resourcesDir: string): string | undefined {
 }
 
 function validPid(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function validTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 

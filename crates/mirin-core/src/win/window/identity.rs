@@ -10,9 +10,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use super::create::{class_name_for, set_class_identity, wide};
 
-const MAX_WINDOWS_IDENTITY_KEY_UNITS: usize = 96;
 const COMPACT_IDENTITY_PREFIX_CHARS: usize = 48;
 const COMPACT_IDENTITY_HASH_BYTES: usize = 16;
+const MAX_WINDOWS_IDENTITY_KEY_UNITS: usize =
+    COMPACT_IDENTITY_PREFIX_CHARS + 1 + COMPACT_IDENTITY_HASH_BYTES * 2;
 
 /// The host exe's file stem (the app name): the fallback identity key when a
 /// validated bundle identifier is unavailable. Falls back to "App".
@@ -40,15 +41,11 @@ fn app_identity_key(dev: bool, identifier: &str) -> String {
             }
         })
         .collect();
-    let already_portable = raw == identifier;
     let candidate = if dev {
         format!("{identifier}-dev")
     } else {
         identifier
     };
-    if already_portable && candidate.encode_utf16().count() <= MAX_WINDOWS_IDENTITY_KEY_UNITS {
-        return candidate;
-    }
 
     let mut hasher = Sha256::new();
     hasher.update(if dev {
@@ -66,7 +63,9 @@ fn app_identity_key(dev: bool, identifier: &str) -> String {
         .chars()
         .take(COMPACT_IDENTITY_PREFIX_CHARS)
         .collect();
-    format!("{prefix}-{hash}")
+    let compact = format!("{prefix}-{hash}");
+    debug_assert!(compact.encode_utf16().count() <= MAX_WINDOWS_IDENTITY_KEY_UNITS);
+    compact
 }
 
 /// Try to take the app's single-instance lock (a named mutex). Returns true if
@@ -125,14 +124,11 @@ mod tests {
 
     #[test]
     fn singleton_key_uses_bundle_identity_instead_of_executable_name() {
-        assert_eq!(
-            app_identity_key(false, "dev.example.first"),
-            "dev.example.first"
-        );
-        assert_eq!(
-            app_identity_key(true, "dev.example.second"),
-            "dev.example.second-dev"
-        );
+        let first = app_identity_key(false, "dev.example.first");
+        let second = app_identity_key(true, "dev.example.second");
+        assert_eq!(first, app_identity_key(false, "dev.example.first"));
+        assert_eq!(second, app_identity_key(true, "dev.example.second"));
+        assert_ne!(first, second);
         assert_ne!(
             class_name_for(&app_identity_key(false, "dev.example.first")),
             class_name_for(&app_identity_key(false, "dev.example.second"))
@@ -146,9 +142,9 @@ mod tests {
             "a".repeat(63),
             "b".repeat(63),
             "c".repeat(63),
-            "d".repeat(61)
+            "d".repeat(41)
         );
-        assert_eq!(identifier.len(), 253);
+        assert_eq!(identifier.len(), 233);
 
         let key = app_identity_key(false, &identifier);
         assert_eq!(key, app_identity_key(false, &identifier));
@@ -160,5 +156,13 @@ mod tests {
         assert!(key.encode_utf16().count() <= MAX_WINDOWS_IDENTITY_KEY_UNITS);
         assert!(class_name_for(&key).len() <= 257);
         assert!(wide(&format!("mirin.{key}")).len() <= 129);
+    }
+
+    #[test]
+    fn compact_output_cannot_collide_with_a_literal_bundle_identifier() {
+        let long_identifier = format!("dev.example.{}", "a".repeat(100));
+        let compact = app_identity_key(false, &long_identifier);
+
+        assert_ne!(compact, app_identity_key(false, &compact));
     }
 }

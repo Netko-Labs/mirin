@@ -6,6 +6,7 @@ import {
   abandonUpdateHandoff,
   activateUpdateHandoff,
   inspectUpdateHandoff,
+  MAX_UPDATE_HANDOFF_AGE_MS,
   prepareUpdateHandoff,
   signalUpdateReady,
 } from "../src/update-handoff.ts";
@@ -74,6 +75,28 @@ describe("update handoff reservations", () => {
 
     expect(
       inspectUpdateHandoff("dev.example.app", oldResources, false, undefined, () => false, state),
+    ).toEqual({ blocked: false });
+    expect(existsSync(handoff.markerPath)).toBe(false);
+  });
+
+  test("expires a reservation even when its numeric process ids have been reused", () => {
+    const root = temporaryDirectory();
+    const state = join(root, "state");
+    const oldResources = resources(root, "old", "1.0.0");
+    const createdAtMs = 1_700_000_000_000;
+    const handoff = prepareUpdateHandoff("dev.example.app", "2.0.0", state, createdAtMs);
+    activateUpdateHandoff(handoff, 456);
+
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        oldResources,
+        false,
+        undefined,
+        () => true,
+        state,
+        createdAtMs + MAX_UPDATE_HANDOFF_AGE_MS + 1,
+      ),
     ).toEqual({ blocked: false });
     expect(existsSync(handoff.markerPath)).toBe(false);
   });

@@ -82,7 +82,8 @@ those files, such as GitHub Releases' `.../releases/latest/download`. Safe dotte
 channels such as `beta.preview-2` are supported; the same validated channel is used
 in artifact prefixes, manifests, embedded identity, URLs, and updater support paths.
 Before any build/dev output is created, Mirin requires a portable app `name`, a
-reverse-DNS `id`, a bounded `release.channel` made of alphanumeric runs separated
+reverse-DNS `id` of at most 233 characters, a bounded `release.channel` made of
+alphanumeric runs separated
 by single `.`, `_`, or `-` characters, and a strict SemVer package/override
 version. New scaffolds declare version `1.0.0`; projects without a package
 version use the same macOS-compatible fallback. On macOS the full SemVer remains
@@ -135,7 +136,8 @@ from overlapping an exclusive updater-capable process. Accepted helper launch is
 a terminal handoff, so manual updater work and auto-check scheduling remain
 blocked until the process exits. Before that handoff, the validated tree is copied
 and revalidated beside the install and the helper writes an armed acknowledgement.
-The helper reserves the next launch for its token-bearing target and retains the
+The helper reserves the next launch for its token-bearing target with a bounded
+24-hour lease that recovers safely from stale PID reuse, and retains the
 backup until that exact PID acquires the exclusive lock and reports Worker/native
 readiness; timeout or early exit restores and relaunches the old install.
 AppImage/deb/rpm payloads omit updater metadata and update through their

@@ -53,6 +53,15 @@ describe("Windows updater launcher", () => {
     expect(script).toContain("Replacement readiness receipt has the wrong process id");
     expect(script).toContain("$readyPid -ne [string]$newProcess.Id");
     expect(script.indexOf(".apply-helper-armed")).toBeLessThan(script.indexOf("$parentDeadline"));
+    const rollback = script.indexOf("if ($parentExited -and $canRestore)");
+    const rollbackCleanup = script.indexOf(
+      "Remove-Item -LiteralPath 'C:\\Updates\\generation' -Recurse",
+      rollback,
+    );
+    const rollbackRelaunch = script.indexOf("Start-Process -FilePath", rollbackCleanup);
+    expect(rollback).toBeGreaterThan(0);
+    expect(rollbackCleanup).toBeGreaterThan(rollback);
+    expect(rollbackRelaunch).toBeGreaterThan(rollbackCleanup);
     for (const line of script.split("\n")) {
       if (/\b(?:Test-Path|Get-Content|Move-Item|Remove-Item)\b/.test(line)) {
         expect(line).toContain("-LiteralPath");

@@ -18,7 +18,7 @@ mod origin;
 use cef::{args::Args, *};
 use origin::TrustedOrigin;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// JS bootstrap defining `window.mirin` (the transport `mirin/client` expects).
 /// `__PORT__` / `__TOKEN__` / `__WEBVIEW__` are substituted per browser.
@@ -33,9 +33,40 @@ struct RpcEndpoint {
 }
 
 thread_local! {
-    /// Per-browser RPC endpoint captured in on_browser_created, consumed in
-    /// on_context_created (both run on the renderer thread).
-    static ENDPOINTS: RefCell<HashMap<i32, RpcEndpoint>> = RefCell::new(HashMap::new());
+    /// Per-browser RPC endpoint generations captured in on_browser_created and
+    /// consumed in on_context_created (both run on the renderer thread). CEF
+    /// may create a replacement with the same numeric id before destroying the
+    /// old browser, so destruction retires the oldest generation only.
+    static ENDPOINTS: RefCell<HashMap<i32, VecDeque<RpcEndpoint>>> =
+        RefCell::new(HashMap::new());
+}
+
+fn register_endpoint(
+    endpoints: &mut HashMap<i32, VecDeque<RpcEndpoint>>,
+    browser_id: i32,
+    endpoint: RpcEndpoint,
+) {
+    endpoints.entry(browser_id).or_default().push_back(endpoint);
+}
+
+fn current_endpoint(
+    endpoints: &HashMap<i32, VecDeque<RpcEndpoint>>,
+    browser_id: i32,
+) -> Option<RpcEndpoint> {
+    endpoints
+        .get(&browser_id)
+        .and_then(|generations| generations.back())
+        .cloned()
+}
+
+fn retire_oldest_endpoint(endpoints: &mut HashMap<i32, VecDeque<RpcEndpoint>>, browser_id: i32) {
+    let remove_browser = endpoints.get_mut(&browser_id).is_some_and(|generations| {
+        generations.pop_front();
+        generations.is_empty()
+    });
+    if remove_browser {
+        endpoints.remove(&browser_id);
+    }
 }
 
 fn main() {
@@ -112,7 +143,16 @@ wrap_render_process_handler! {
                 webview: dict.int(Some(&CefString::from("windowId"))),
                 initial_origin: TrustedOrigin::parse(&initial_url),
             };
-            ENDPOINTS.with(|e| e.borrow_mut().insert(browser.identifier(), endpoint));
+            ENDPOINTS.with(|endpoints| {
+                register_endpoint(&mut endpoints.borrow_mut(), browser.identifier(), endpoint);
+            });
+        }
+
+        fn on_browser_destroyed(&self, browser: Option<&mut Browser>) {
+            let Some(browser) = browser else { return };
+            ENDPOINTS.with(|endpoints| {
+                retire_oldest_endpoint(&mut endpoints.borrow_mut(), browser.identifier());
+            });
         }
 
         fn on_context_created(
@@ -126,7 +166,9 @@ wrap_render_process_handler! {
                 return;
             }
 
-            let endpoint = ENDPOINTS.with(|e| e.borrow().get(&browser.identifier()).cloned());
+            let endpoint = ENDPOINTS.with(|endpoints| {
+                current_endpoint(&endpoints.borrow(), browser.identifier())
+            });
             let Some(endpoint) = endpoint else { return };
             let Some(initial_origin) = endpoint.initial_origin else { return };
             let current_url = CefString::from(&frame.url()).to_string();
@@ -145,5 +187,42 @@ wrap_render_process_handler! {
                 0,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        current_endpoint, register_endpoint, retire_oldest_endpoint, RpcEndpoint, TrustedOrigin,
+    };
+    use std::collections::HashMap;
+
+    fn endpoint(token: &str) -> RpcEndpoint {
+        RpcEndpoint {
+            port: 1234,
+            token: token.to_owned(),
+            webview: 7,
+            initial_origin: TrustedOrigin::parse("app://bundle/index.html"),
+        }
+    }
+
+    #[test]
+    fn browser_replacement_retains_the_newest_endpoint_until_its_own_destroy() {
+        let mut endpoints = HashMap::new();
+        register_endpoint(&mut endpoints, 9, endpoint("old"));
+        register_endpoint(&mut endpoints, 9, endpoint("replacement"));
+
+        assert_eq!(
+            current_endpoint(&endpoints, 9).unwrap().token,
+            "replacement"
+        );
+        retire_oldest_endpoint(&mut endpoints, 9);
+        assert_eq!(
+            current_endpoint(&endpoints, 9).unwrap().token,
+            "replacement"
+        );
+        retire_oldest_endpoint(&mut endpoints, 9);
+        assert!(current_endpoint(&endpoints, 9).is_none());
+        assert!(!endpoints.contains_key(&9));
     }
 }

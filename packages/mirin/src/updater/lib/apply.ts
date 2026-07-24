@@ -137,6 +137,7 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     `      if ((Test-Path -LiteralPath ${psq(options.backup)}) -or -not (Test-Path -LiteralPath ${psq(options.executable)} -PathType Leaf)) { throw 'Update rollback failed' }`,
     `      Remove-Item -LiteralPath ${psq(options.staged)} -Recurse -Force -ErrorAction SilentlyContinue`,
     `      Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.ready)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
+    `      Remove-Item -LiteralPath ${psq(options.workDir)} -Recurse -Force -ErrorAction SilentlyContinue`,
     `      Start-Process -FilePath ${psq(options.executable)} -WorkingDirectory ${psq(options.runningApp)} -ErrorAction Stop`,
     "    }",
     "    if (-not $parentExited) {",

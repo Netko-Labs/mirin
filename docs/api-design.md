@@ -65,7 +65,8 @@ serializable data.
 The CLI validates packaging identity before it creates/cleans build directories or
 starts Vite/native work. `name` is one portable ASCII filename segment (letters,
 digits, spaces, `.`, `_`, `(`, `)`, `-`; no Windows device names or trailing
-dot/space), `id` is a reverse-DNS identifier with at least two DNS-style labels,
+dot/space), `id` is a reverse-DNS identifier of at most 233 total characters
+with at least two DNS-style labels,
 `release.channel` is a flat filename-safe segment of at most 64 characters:
 alphanumeric runs separated by single `.`, `_`, or `-` characters, excluding
 Windows device names. The package/override version must be strict SemVer. macOS
