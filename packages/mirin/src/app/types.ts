@@ -22,6 +22,7 @@ export type WindowEvents = {
 };
 
 export type AppEvents = {
+  /** Fired after every automatically opened window emits native `window.created`. */
   ready: void;
   "window-all-closed": void;
   /** A deep-link URL (a registered `urlSchemes` scheme) opened the app, or

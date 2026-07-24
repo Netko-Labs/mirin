@@ -2,7 +2,10 @@
 
 Status of the Linux (CEF) port. Mirrors `docs/windows-port.md`. The host/Worker/FFI
 model, CEF handlers, `app://` scheme, and the RPC/data plane are shared with macOS
-and Windows; only `crates/mirin-core/src/linux/*` and the CLI's bundling differ.
+and Windows; only `crates/mirin-core/src/linux/*` and the CLI's bundling differ. The
+shared helper injects `window.mirin` only into the trusted top-level initial origin;
+subframes/cross-origin navigations receive no bridge, and disconnect rejects pending
+RPC without replay.
 
 **Linux forces X11 (Ozone).** mirin appends `--ozone-platform=x11` (override with
 `MIRIN_OZONE`); on a Wayland session the app runs under **XWayland**. This mirrors
@@ -47,8 +50,10 @@ model:
 **CEF Views toplevel.** `MirinWindowDelegate` + `MirinBrowserViewDelegate` (via
 `wrap_window_delegate!` / `wrap_browser_view_delegate!`) with an id→Window registry.
 The mirin `window_id` is stamped on the BrowserView's `View::id`, read back in the
-shared LifeSpanHandler's `on_after_created` to map a Browser → its window. `can_resize`
-/ `can_maximize` / `can_minimize` all return **true** — CEF's `can_*` delegates default
+shared LifeSpanHandler's `on_after_created` to map a Browser → its window. That shared
+registry now targets per-window close and `loadUrl()` calls; `app.windows.open()` waits
+for the matching creation event, and explicit quit covers zero-window/creation-race
+states. `can_resize` / `can_maximize` / `can_minimize` all return **true** — CEF's `can_*` delegates default
 to false, and a non-resizable window gets fixed WM size hints that make the compositor
 refuse `_NET_WM_MOVERESIZE` resizes.
 

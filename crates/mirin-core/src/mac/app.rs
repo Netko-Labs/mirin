@@ -16,9 +16,6 @@ use objc2_app_kit::{
 use objc2_foundation::{NSArray, NSURL};
 use std::cell::Cell;
 
-use crate::engine::MirinHandler;
-use crate::mac::window::close_all_windows;
-
 #[derive(Default)]
 pub struct MirinApplicationIvars {
     handling_send_event: Cell<Bool>,
@@ -45,18 +42,10 @@ define_class!(
         }
 
         /// Chromium needs `terminate:` to unwind via the message loop instead of
-        /// exit(). Closing all windows drives each browser's close lifecycle,
-        /// which ends the loop once the last one is gone.
+        /// exit(). The engine handles live, pending, and zero-window quit paths.
         #[unsafe(method(terminate:))]
         unsafe fn terminate(&self, _sender: &AnyObject) {
-            if let Some(handler) = MirinHandler::instance() {
-                let already = { handler.lock().expect("lock").is_closing() };
-                if !already {
-                    MirinHandler::close_all_browsers(&handler, false);
-                    return;
-                }
-            }
-            close_all_windows();
+            crate::engine::quit();
         }
     }
 

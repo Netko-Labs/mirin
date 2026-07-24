@@ -15,7 +15,7 @@ Targets macOS 13+ (arm64 first, x64 builds once CI exists).
 - `mirin-core` + `mirin-helper` initialize CEF via the `cef` crate, open a **mirin-owned NSWindow** with a CEF browser embedded as a child view, load `https://example.com`.
 - Driven by the temporary `m1-smoke` bin (`crates/mirin-core/src/bin/m1_smoke.rs`) run from inside the dev `.app` bundle, so CEF/bundle/signing issues surfaced before any FFI exists.
 - **Exit criteria — all met:** window renders real Chromium; app quits cleanly via both the red button and programmatic quit (`MIRIN_AUTOQUIT_MS` debug hook); zero orphan helper processes; healthy 1 browser + 5 helper process tree, no crashes.
-- **Hard-won result — embedded-view close lifecycle.** A browser parented into an app-owned NSWindow (`set_as_child`) does *not* complete CEF's close lifecycle by default — `on_before_close` never fires, so the message loop never quits. The working recipe (see `MirinHandler::do_close` + `mac::detach_browser_view`): **Alloy runtime** for the embedded browser; close via **non-force** `CloseBrowser(false)`; in `do_close` **detach CEF's view from its superview** (`removeFromSuperview`) and return false — that "host view destroyed via view hierarchy tear-down" is what makes CEF destroy the browser and fire `on_before_close`. Also required: never hold the handler mutex across `close_browser` (it re-enters `on_before_close` → deadlock), and drive the red-button path through `windowShouldClose:` (initiate CEF close, return NO; allow once `is_closing`).
+- **Hard-won result — embedded-view close lifecycle.** A browser parented into an app-owned NSWindow (`set_as_child`) does *not* complete CEF's close lifecycle by default — `on_before_close` never fires, so the message loop never quits. The working recipe (see `MirinHandler::do_close` + `mac::detach_browser_view`): **Alloy runtime** for the embedded browser; ordinary window close uses **non-force** `CloseBrowser(false)`; in `do_close` **detach CEF's view from its superview** (`removeFromSuperview`) and return false — that "host view destroyed via view hierarchy tear-down" is what makes CEF destroy the browser and fire `on_before_close`. Also required: never hold the handler mutex across `close_browser` (it re-enters `on_before_close` → deadlock), and drive the red-button path through `windowShouldClose:` (initiate CEF close, return NO; allow once that exact window is acknowledged closing). Explicit app quit is monotonic and upgrades every current or late browser to `CloseBrowser(true)` so `beforeunload` cannot poison shutdown.
 - **Environment notes:** needs Rust ≥ 1.91 (cef-rs deps); `use-mock-keychain` switch suppresses the repeated keychain prompt that ad-hoc re-signing otherwise triggers; `root_cache_path` must be set (cef-rs #287).
 
 ### M1.5 — Main-thread handoff spike ⚠ — ✅ DONE
@@ -26,12 +26,12 @@ Targets macOS 13+ (arm64 first, x64 builds once CI exists).
 - C ABI (lib.rs): `mirin_run`, `mirin_poll_event`, `mirin_set_rpc_endpoint`, `mirin_is_ready`, `mirin_window_create/close/load_url/set_title`, `mirin_app_quit`. Window registry keyed by id; close events route back by mapping browser→window.
 - `packages/mirin`: `app` singleton + `WindowHandle`, manifest-driven window opening on `core.ready`, typed events. Host bootstrap (`host.ts`) `bun build --compile`d into the bundle's `Contents/MacOS/<exe>`.
 - **Exit criteria — met:** manifest window opens from config; `app.on("ready")` fires; `window.closed`/`window-all-closed` deliver; quit tears everything down with **zero orphan helpers** (verified 6→0).
-- *Deferred:* per-window `loadUrl` on a live browser (needs the window→browser map exercised; M2.x).
+- **Lifecycle hardening:** `WindowHandle.close()` and the red button/Cmd-W target only that window; `loadUrl()` navigates the mapped live browser; explicit quit exits zero-window apps and safely wins races with browser creation. Browser close/navigation calls snapshot the target under the handler lock and run after releasing it.
 
 ### M3 — Typed RPC — ✅ DONE (dev transport)
-- Preload bootstrap injected by `mirin-helper`'s render-process handler at V8-context creation, using rpc port/token/window-id from per-browser `extra_info`. Token-authenticated localhost WebSocket data plane to the Bun Worker (`RpcServer`).
-- `mirin/rpc` router + `mirin/client` with full inference; typed `query`/`mutation` round-trips and `event` push main→webview.
-- **Exit criteria — met:** the React example round-trips a typed `greet` query and receives live typed `tick` push events; the socket is token-gated.
+- Preload bootstrap injected by `mirin-helper`'s render-process handler at V8-context creation, using RPC port/token/window-id plus the resolved initial URL from per-browser `extra_info`. Injection is restricted to the main frame while its current `app:`, `http:`, or `https:` origin matches that initial origin; subframes and cross-origin navigations receive no bridge.
+- `mirin/rpc` router + `mirin/client` with full inference; typed `query`/`mutation` round-trips and `event` push main→webview. Disconnect rejects pending calls and never replays requests that may already have executed; later calls reconnect normally.
+- **Exit criteria — met:** the React example round-trips a typed `greet` query and receives live typed `tick` push events; the socket is token-gated and the bridge is top-level-origin scoped.
 - *Deferred:* `app://` scheme handler (dev loads the Vite URL directly for HMR; `app://` is needed for `mirin build`); payload encryption.
 
 ### M4 — Developer experience — ✅ DONE (dev loop)
@@ -68,7 +68,7 @@ Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dial
 - **Global shortcuts** — Carbon `RegisterEventHotKey` (system-wide, no accessibility prompt). Verified: the Spotlight panel is summoned by ⌘⇧J. (Avoid combos other apps claim — ⌘⇧Space is 1Password's.)
 - **Dialogs** — `NSOpenPanel`/`NSSavePanel`/`NSAlert`, run modally on the UI thread; async via a `requestId` echoed in `dialog.result`. Code-complete; interactively untested (AX can't coordinate-click the webview) but uses the proven RPC + event pipeline.
 - **Clipboard** — `NSPasteboard` text read/write (sync, off the UI thread).
-- **Window controls + multi-window** — minimize/maximize/restore/fullscreen/focus/show/hide/center/alwaysOnTop; `window.focus/blur/moved/resized` events; `app.windows.open()`.
+- **Window controls + multi-window** — minimize/maximize/restore/fullscreen/focus/show/hide/center/alwaysOnTop; `window.focus/blur/moved/resized` events; `app.windows.open()` awaits its matching `window.created` or rejects on correlated `window.create-failed`, automatic windows are all created before `app.ready`, pre-ready Dock policy applies before those windows open, and close/load operations stay scoped to the requested window.
 - **Custom title bar + frameless** — `titleBarStyle: "hiddenInset" | "hidden"`, `transparent`, `alwaysOnTop`, `movableByBackground`, `visible:false`. CEF ignores `-webkit-app-region`, so a transparent `TitleBarDragView` (overriding `mouseDownCanMoveWindow`) is overlaid on the title strip for real dragging. Verified via the kitchen-sink (draggable custom title bar) and Spotlight (borderless translucent panel, traffic lights hidden, clear background).
 - **Examples** — `examples/kitchen-sink` (all features) and `examples/spotlight` (hotkey-summoned frameless command palette: type-to-filter over RPC, Esc to dismiss, resident).
 
@@ -84,6 +84,6 @@ Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dial
 1. Dialogs interactive test harness; updater runtime swap field testing across signed/notarized installs
 2. Payload encryption on the RPC plane, or a CEF-IPC RPC transport (message router) to avoid loopback-origin policy friction entirely
 3. User preload scripts; session/cookie controls
-4. Multi-webview windows (BrowserView equivalent); per-window `loadUrl`
+4. Multi-webview windows (BrowserView equivalent)
 5. Linux port
 6. Windows WebView2 option

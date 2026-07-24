@@ -7,7 +7,7 @@ use super::MirinHandler;
 use crate::engine::boot::{angle_backend, should_disable_gpu};
 use crate::engine::config::{WindowMaterial, WindowOpts};
 use crate::engine::events::emit_event;
-use crate::engine::state::{CLIENT, NEXT_WINDOW_ID, READY, RESOURCES_PATH, STARTUP_URL};
+use crate::engine::state::{self, CLIENT, NEXT_WINDOW_ID, READY, RESOURCES_PATH, STARTUP_URL};
 use crate::engine::window::create_window_on_ui;
 
 wrap_app! {
@@ -81,12 +81,18 @@ wrap_browser_process_handler! {
         fn on_context_initialized(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
 
-            let client = MirinHandlerClient::new(MirinHandler::new());
+            let handler = MirinHandler::new();
+            let client = MirinHandlerClient::new(handler.clone());
             CLIENT.with(|c| *c.borrow_mut() = Some(client));
 
             let resources = RESOURCES_PATH.with(|p| p.borrow().clone());
             if !resources.is_empty() {
                 crate::scheme::register_app_factory(resources);
+            }
+
+            if state::quit_requested() {
+                MirinHandler::finish_quit_if_idle(&handler);
+                return;
             }
 
             READY.store(true, Ordering::SeqCst);
@@ -95,6 +101,10 @@ wrap_browser_process_handler! {
             #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             if let Some(url) = STARTUP_URL.with(|u| u.borrow().clone()) {
                 let id = NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed);
+                if !state::begin_window_creation(id) {
+                    MirinHandler::request_quit(&handler);
+                    return;
+                }
                 let mut opts = WindowOpts::startup(url);
                 if std::env::var_os("MIRIN_SMOKE_TRANSPARENT").is_some() {
                     opts.transparent = true;
@@ -106,7 +116,14 @@ wrap_browser_process_handler! {
                         });
                     }
                 }
-                create_window_on_ui(id, opts);
+                if !create_window_on_ui(id, opts) {
+                    MirinHandler::fail_window_creation(
+                        &handler,
+                        id,
+                        "native startup browser creation failed",
+                    );
+                    MirinHandler::request_quit(&handler);
+                }
             }
         }
     }

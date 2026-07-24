@@ -37,7 +37,10 @@ export interface WindowMaterialOptions {
 }
 
 export interface WindowConfig {
-  /** Page to load: `app://` (bundled assets) or http(s). */
+  /**
+   * Page to load: `app://` (bundled assets) or http(s). The privileged
+   * `window.mirin` bridge is limited to this URL's top-level origin.
+   */
   url: string;
   title?: string;
   width?: number;

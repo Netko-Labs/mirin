@@ -2,9 +2,11 @@
 
 Status of the Windows (CEF) port. Mirrors `docs/macos-mvp.md`. The host/Worker/FFI
 model, CEF handlers, `app://` scheme, and the RPC/data plane are shared with macOS;
-only `crates/mirin-core/src/win/*` (Win32) and the CLI's bundling differ. Engine =
-CEF, **windowed** (CEF owns a child HWND parented to a mirin-owned top-level Win32
-window) — not the macOS embedded-NSView/OSR model.
+only `crates/mirin-core/src/win/*` (Win32) and the CLI's bundling differ. The shared
+renderer helper exposes `window.mirin` only to the trusted top-level initial origin;
+subframes/cross-origin navigations get no bridge, and disconnect rejects pending RPC
+without replay. Engine = CEF, **windowed** (CEF owns a child HWND parented to a
+mirin-owned top-level Win32 window) — not the macOS embedded-NSView/OSR model.
 
 Targets Windows 10/11 x64 and arm64.
 
@@ -49,7 +51,10 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
 ### W4 — App-shell native features — ✅ DONE (gaps noted)
 - **Window controls + events** — minimize/maximize/restore/fullscreen(borderless)/
   focus/show/hide/center/alwaysOnTop; `window.focus/blur/moved/resized` via the WndProc;
-  set-title/position. Verified (minimize).
+  set-title/position. Per-window close and `loadUrl()` use the shared browser registry,
+  so one window never tears down or navigates another. `app.windows.open()` awaits
+  `window.created`, and explicit quit also handles zero-window/creation-race states.
+  Verified (minimize).
 - **Custom title bar** — frameless (`WM_NCCALCSIZE` + DWM shadow); dragging via the
   preload → `window.maybeStartDrag` control frame (carrying click `detail`) →
   `ReleaseCapture`+`WM_NCLBUTTONDOWN` against CEF's `-webkit-app-region` regions.

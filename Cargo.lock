@@ -1103,6 +1103,7 @@ name = "mirin-helper"
 version = "0.1.0-alpha.18"
 dependencies = [
  "cef",
+ "url",
 ]
 
 [[package]]

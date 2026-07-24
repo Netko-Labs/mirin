@@ -83,12 +83,20 @@ mirin_app_quit_for_update()                            // forced terminal handof
 
 Options cross the boundary as JSON for the MVP. It's measurably slower than a binary layout and we don't care yet; these are low-frequency control calls. Revisit only with profiles in hand.
 
-**Events (Rust → Bun).** Rust delivers events (window closed, webview ready, RPC payloads from webviews) through a `JSCallback` (threadsafe) registered at startup, carrying a JSON-encoded event. The TS runtime dispatches to typed emitters. If `JSCallback` throughput or threading proves flaky, fallback design: a `socketpair` between core and Worker with a length-prefixed JSON frame protocol — same envelope, different pipe.
+**Events (Rust → Bun).** Rust appends JSON events such as `core.ready`,
+`window.created`, `window.create-failed`, and `window.closed` to a process-global
+queue. Creation results carry the allocated Mirin window id, so the Worker can
+resolve or reject exactly the matching handle. The Worker drains
+that queue through `mirin_poll_event` every 8 ms and dispatches by the event's
+`type`. Polling is required because the host main thread is blocked inside
+`mirin_run`; a bun:ffi callback invoked from that thread does not enter the
+Worker's event loop. RPC payloads remain on the WebSocket data plane instead of
+this low-frequency lifecycle queue.
 
-**Envelope** (both directions where applicable):
+**Event shape:**
 
 ```json
-{ "v": 1, "kind": "event" | "cmd", "type": "window.closed", "target": 3, "payload": { } }
+{ "type": "window.closed", "id": 3 }
 ```
 
 ## 4. Webview ↔ Bun IPC
@@ -100,13 +108,21 @@ Two planes:
 **Data plane (developer RPC).** The typed RPC system (`docs/api-design.md` §3) runs over a **localhost WebSocket** hosted by the Bun Worker:
 
 1. At startup the Worker opens a `Bun.serve` WebSocket server on an ephemeral port and generates a random per-session token.
-2. Rust passes `port`+`token`+`webviewId` into each webview's preload environment.
-3. The preload bootstrap (injected by `mirin-helper`'s render-process handler at V8-context creation, before any page script runs) connects and authenticates, then exposes `window.mirin` to page code.
-4. RPC frames are JSON over that socket.
+2. Rust passes `port` + `token` + `webviewId` and the browser's resolved initial URL through CEF `extra_info`.
+3. `mirin-helper` parses the initial URL into a normalized `app:`, `http:`, or `https:` origin. At V8-context creation it injects the bootstrap only into the main frame and only when the current document still matches that origin. Subframes, opaque or malformed URLs, and cross-origin navigations receive no `window.mirin` capability.
+4. The bootstrap connects and authenticates, then RPC frames are JSON over that socket.
 
 Rationale: this avoids routing the data plane through CEF process messages → browser process → FFI → Worker (three hops, two serializations), and electrobun ships the same shape in production. The token gates the localhost port; payload encryption (AES-256-GCM as electrobun does) is **deferred post-MVP** — note that any local process can sniff loopback in theory, so this is a known, accepted MVP gap.
 
-Preload injection is renderer-side: `mirin-helper` implements CEF's render-process handler and evaluates the (build-time-bundled) preload bootstrap in `on_context_created`. The bootstrap is part of mirin, not user-supplied, for the MVP; user preloads come later.
+Preload injection is renderer-side: `mirin-helper` implements CEF's render-process handler and evaluates the build-time-bundled bootstrap in `on_context_created` only after the top-level trusted-origin check. The initial origin remains the capability boundary for the browser's lifetime: same-origin loads may receive the bridge again, while a cross-origin redirect or navigation does not. The bootstrap is part of mirin, not user-supplied, for the MVP; user preloads come later.
+
+A socket disconnect rejects and clears every outstanding renderer RPC promise.
+Requests already sent are never replayed after reconnect because they may have
+executed in the Worker; calls made after the disconnect may use the new
+connection. Serialization failure removes the request before rejecting it, and
+frames delivered by a replaced socket are ignored. This gives failures
+at-most-once transport behavior instead of leaving promises pending forever or
+allowing stale connections to settle current calls.
 
 ## 5. CEF integration
 
@@ -117,6 +133,32 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 - **Production locales.** `cef.locales` optionally keeps only selected locale packs in production bundles. Windows/Linux copy matching `locales/*.pak`; macOS retains the matching `.lproj` directory and its grammatical-gender variants before codesigning. Omission preserves the complete CEF runtime.
 - **Release scheduling.** Platform bundles and the release directory are assembled in unique sibling staging directories and replace the prior successful output only after required output succeeds. The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. DMG and Linux packages are best-effort and may be omitted from an otherwise valid atomic updater release; Windows installer failures remain fatal. Concurrent Linux format jobs are all settled before their shared package tree is cleaned; a failed set removes every expected output, including artifacts from rejected jobs. Failure to clean package output or shared staging aborts the release instead of committing a partial best-effort set. AppImage/deb/rpm payload copies omit standalone updater metadata because those installs update through their package channel. After a successful atomic swap, old-output cleanup is non-fatal because the new canonical output is already committed; later runs prune only aged real-directory backups with Mirin's exact PID/UUID name and a dead owner, without following links or matching prefix-sharing user directories. A standalone `mirin-codec` binary performs release-time zstd and bsdiff work without loading CEF or depending on Bun FFI; the runtime core links the same Rust codec library.
 - **Updater transactions.** Packaged apps structurally parse their six-field `version.json` identity through a fixed-size read, including an Ed25519 manifest trust anchor and a safe dotted channel used consistently in artifact prefixes and support-directory paths. Every manifest has a detached signature over its exact bytes, is bounded before verification and JSON parsing, and is fetched through manual redirects that enforce HTTPS-or-loopback and a deadline on every hop/body. Only strictly newer SemVer precedence is accepted (build metadata does not make a release newer), and build tooling validates the same grammar before packaging. Manifest checks are single-flight. Each accepted manifest receives a generation tied to its version and tar hash; downloads use process/session-owned generation directories, checks are deferred while a download is active or an update is staged, and concurrent/repeated download/apply calls are rejected. A committed check may start its download directly from the `update-available` listener. Failure releases the transaction latch before nonthrowing best-effort cleanup, completed helpers remove their generation work directory, and startup prunes abandoned strict `generation-*` directories without following symlinks or deleting generations owned by live app processes or recorded apply-helper PIDs. Automatic apply requires a protocol-compatible Worker and the host's actually acquired exclusive app-lock capability, not configuration intent; apps that opt into multiple instances hold shared locks, may coexist with each other, and may check and stage an update but cannot overlap an exclusive updater-capable process or replace the shared install. The host resolves developer configuration and internal native overrides once, acquires the platform lock before spawning user code, and passes the versioned result to the Worker. Multi-instance processes receive PID-specific CEF cache directories on every platform. Before terminal handoff, Linux proves the portable install parent writable; managed AppImage/deb/rpm payloads omit updater metadata entirely. Once the detached apply helper is accepted, the transaction blocks further work and uses a forced, zero-window-safe native shutdown. A reservation beside the native app lock blocks ordinary launches after the old PID exits and admits only the validated target version. The helper retains the old install while that successor acquires the exclusive lock and reports Worker/native readiness through a private receipt; exit or timeout removes the partial replacement, clears the reservation, restores the backup, and relaunches the old version. Manifest bodies, signatures, compressed artifacts, raw patches, reconstructed tars, entry counts, paths, and link targets have absolute limits; streaming reconstructed tar/decompression output is capped at 8 GiB while compressed artifacts, subprocess output, and archive structure remain independently bounded. In-memory patch inputs have a 512 MiB combined ceiling; release-time bsdiff source tars have a 128 MiB per-source ceiling because its suffix index amplifies memory. Larger deltas are skipped in favor of the full bundle. New manifests declare exact compressed sizes, `tarSize`, and patch `uncompressedSize`; bounded additive codec/FFI calls enforce decompression, patch-input, patch-output, and malformed-header ceilings while legacy codec calls remain available for trusted local use. Before apply, Mirin rejects traversal, sparse/special nodes, escaping symlinks/hardlinks, a linked/non-directory root, a missing/non-regular platform executable, and staged `version.json` identity drift. macOS requires executable mode and a stable installed designated code requirement; authenticated ad-hoc local builds fall back to codesign validity because their cdhash is build-specific. Linux extracts with permission preservation and ensures owner execute only after validating the regular host executable. Windows records the directly launched PowerShell PID before handoff. Release tar creation disables macOS AppleDouble sidecars so the archive has one expected root.
+
+### Window lifecycle guarantees
+
+The shared `MirinHandler` owns the browser list and browser-id → window-id map.
+Per-window close and navigation snapshot the matching `Browser` while holding the
+handler mutex, release the mutex, and only then call CEF. `close_browser` and
+`Frame::load_url` may re-enter lifecycle handlers, so they must never run under
+that lock. Native close gestures route through the same targeted browser close;
+only explicit app quit closes every browser.
+
+`app.windows.open()` resolves when the matching native `window.created` event is
+observed, not when the create command is merely queued. Pending creations are
+reserved by Mirin window id; popup and DevTools callbacks cannot consume those
+reservations. Synchronous platform/CEF creation failure tears down partial native
+and OSR state, releases that exact id, and emits `window.create-failed`, which
+rejects and unregisters the matching TypeScript handle.
+
+Automatic manifest windows are all awaited before `app.ready` fires. A failure
+prevents `ready` and requests orderly application quit. Pre-ready macOS Dock
+policy is flushed at `core.ready`, before automatic windows are opened. Explicit
+quit is monotonic: it records the process-wide request and force-closes every
+current or late-created browser, even when another browser is already closing,
+so `beforeunload` cancellation cannot leave the app permanently half-quit.
+Queued creation tasks are canceled with correlated failures. The loop ends only
+when both live browsers and pending creation ids are zero; a reservation rollback
+that reaches zero schedules a UI-thread idle-finish check.
 
 ## 6. Repository layout
 
@@ -200,11 +242,12 @@ native layer (`mac/` vs `win/` vs `linux/`) and the bundle layout differ. `win/`
 mirin-owned top-level Win32 window (`WindowInfo::set_as_child`) — not the macOS
 embedded-NSView/OSR model. Consequences:
 
-- **Close lifecycle.** `CloseBrowser(false)` → `do_close` (which marks the window
-  closing) → CEF sends `WM_CLOSE` to the top-level owner → the WndProc lets the
-  *next* `WM_CLOSE` `DestroyWindow`, which tears down the CEF child and fires
-  `on_before_close`. This is-closing handshake is the Windows analogue of macOS's
-  view-detach dance (`win/window/mod.rs`).
+- **Close lifecycle.** `CloseBrowser(false)` → `do_close` (which marks that exact
+  window closing) → CEF sends `WM_CLOSE` to the top-level owner → the WndProc lets
+  the *next* `WM_CLOSE` `DestroyWindow`, which tears down the CEF child and fires
+  `on_before_close`. This per-window acknowledgement is the Windows analogue of
+  macOS's view-detach dance (`win/window/mod.rs`). Explicit app quit upgrades all
+  current and later closes to `CloseBrowser(true)`.
 - **Custom title bar** (`titleBarStyle: hidden | hiddenInset`): frameless via
   `WM_NCCALCSIZE` (client == window; maximized inset), DWM shadow restored with
   `DwmExtendFrameIntoClientArea`. The webview child consumes mouse input, so
