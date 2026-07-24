@@ -157,7 +157,7 @@ describe("Windows updater launcher", () => {
     mkdirSync(work);
     writeFileSync(join(app, "old-sentinel"), "old");
     writeFileSync(join(staged, "new-sentinel"), "new");
-    copyFileSync(powershell, executable);
+    copyFileSync(codec, executable);
     copyFileSync(powershell, join(staged, "Mirin.exe"));
     writeFileSync(marker, "{}");
     runTestCodec(codec, ["durable-write", phase, "prepared"]);
@@ -214,7 +214,7 @@ describe("Windows updater launcher", () => {
           parentIdentity.token,
         ]);
       }
-      rmSync(root, { recursive: true, force: true });
+      await removeTestRoot(root);
     }
   }, 30_000);
 
@@ -250,7 +250,7 @@ describe("Windows updater launcher", () => {
     mkdirSync(work);
     writeFileSync(join(app, "old-sentinel"), "old");
     writeFileSync(join(staged, "new-sentinel"), "new");
-    copyFileSync(powershell, executable);
+    copyFileSync(codec, executable);
     copyFileSync(powershell, join(staged, "Mirin.exe"));
     writeFileSync(marker, "{}");
     runTestCodec(codec, ["durable-write", phase, "prepared"]);
@@ -333,7 +333,7 @@ describe("Windows updater launcher", () => {
           parentIdentity.token,
         ]);
       }
-      rmSync(root, { recursive: true, force: true });
+      await removeTestRoot(root);
     }
   }, 30_000);
 });
@@ -645,4 +645,18 @@ async function waitForProcessExit(
     await Bun.sleep(25);
   }
   return false;
+}
+
+async function removeTestRoot(path: string): Promise<void> {
+  let failure: unknown;
+  for (let index = 0; index < 200; index += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      failure = error;
+      await Bun.sleep(25);
+    }
+  }
+  throw failure;
 }
