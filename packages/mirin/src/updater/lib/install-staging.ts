@@ -37,6 +37,7 @@ export async function prepareInstallSibling(
       recursive: true,
       errorOnExist: true,
       force: false,
+      verbatimSymlinks: true,
     });
     validateStagedBundle({
       staged,

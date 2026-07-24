@@ -65,6 +65,7 @@
 - [x] Remove Windows generation work before rollback relaunch.
 - [x] Expire stale handoff reservations so PID reuse cannot block launch indefinitely.
 - [x] Retire renderer RPC endpoints without deleting a same-id replacement generation.
+- [x] Preserve relative macOS framework symlinks in install-filesystem staging.
 
 ## Checkpoints
 
@@ -185,3 +186,9 @@
   compact/literal collision regression, then exposed a stale 253-character test
   fixture index after the app-id cap moved to 233; the distinctness fixture now
   mutates its final character without a fixed index.
+- Twelfth clean-context review remediation: preserve verbatim relative symlink
+  targets while copying the validated macOS bundle beside its install, so CEF
+  framework links remain inside the copied app during immediate revalidation.
+- Twelfth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 240
+  tests with the two expected Windows lifecycle skips on macOS.

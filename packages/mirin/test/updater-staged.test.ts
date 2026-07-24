@@ -3,6 +3,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readlinkSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -38,6 +39,29 @@ function createLinuxStage(version = "1.1.0"): {
   chmodSync(executable, 0o755);
   writeFileSync(join(resources, "version.json"), JSON.stringify({ ...installed, version }), "utf8");
   return { root, extractionRoot, staged, executable };
+}
+
+function createMacStage(version = "1.1.0"): {
+  root: string;
+  staged: string;
+} {
+  const root = mkdtempSync(join(tmpdir(), "mirin-mac-staged-test-"));
+  const staged = join(root, "download", `${installed.name}.app`);
+  const contents = join(staged, "Contents");
+  const executable = join(contents, "MacOS", installed.name);
+  const resources = join(contents, "Resources");
+  const framework = join(contents, "Frameworks", "Chromium Embedded Framework.framework");
+  const frameworkVersion = join(framework, "Versions", "A");
+  mkdirSync(dirname(executable), { recursive: true });
+  mkdirSync(resources, { recursive: true });
+  mkdirSync(join(frameworkVersion, "Resources"), { recursive: true });
+  writeFileSync(executable, "#!/bin/sh\n");
+  chmodSync(executable, 0o755);
+  writeFileSync(join(resources, "version.json"), JSON.stringify({ ...installed, version }), "utf8");
+  writeFileSync(join(frameworkVersion, "Resources", "fixture.txt"), "framework");
+  symlinkSync("A", join(framework, "Versions", "Current"));
+  symlinkSync("Versions/Current/Resources", join(framework, "Resources"));
+  return { root, staged };
 }
 
 describe("staged update bundle validation", () => {
@@ -121,6 +145,33 @@ describe("staged update bundle validation", () => {
           expectedVersion: "1.1.0",
         }).version,
       ).toBe("1.1.0");
+    } finally {
+      rmSync(stage.root, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves relative macOS framework symlinks in the install-side copy", async () => {
+    const stage = createMacStage();
+    const install = join(stage.root, "install", `${installed.name}.app`);
+    const resources = join(install, "Contents", "Resources");
+    mkdirSync(resources, { recursive: true });
+    try {
+      const sibling = await prepareInstallSibling({
+        resourcesDir: resources,
+        downloadedStage: stage.staged,
+        platform: "darwin",
+        installed,
+        expectedVersion: "1.1.0",
+        verifyMacIdentity: async () => {},
+      });
+      const framework = join(
+        sibling,
+        "Contents",
+        "Frameworks",
+        "Chromium Embedded Framework.framework",
+      );
+      expect(readlinkSync(join(framework, "Versions", "Current"))).toBe("A");
+      expect(readlinkSync(join(framework, "Resources"))).toBe("Versions/Current/Resources");
     } finally {
       rmSync(stage.root, { recursive: true, force: true });
     }
