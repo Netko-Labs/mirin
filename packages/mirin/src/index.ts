@@ -8,7 +8,7 @@
  */
 
 import { app, wireAppEvents } from "./app/index.ts";
-import { boot } from "./runtime.ts";
+import { boot, signalUpdaterReady } from "./runtime.ts";
 import { initializeUpdater } from "./updater/updater.ts";
 
 // Side-effect imports: each feature subscribes its native-event handlers.
@@ -63,6 +63,7 @@ export type { UpdateInfo, UpdateProgress, UpdaterEvents, UpdaterStatus } from ".
 export { Updater, updater } from "./updater/index.ts";
 
 wireAppEvents();
+app.on("ready", () => queueMicrotask(signalUpdaterReady));
 boot();
 initializeUpdater();
 

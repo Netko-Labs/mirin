@@ -124,3 +124,6 @@
 - Sixth-review full Rust: `cargo fmt --all --check`, workspace clippy with
   warnings denied, and workspace tests passed (9 tests). Windows mutex identity
   and PowerShell parser coverage are enforced in the Windows x64 CI job.
+- Stacked lifecycle integration: the readiness receipt is queued from the app
+  bootstrap's `ready` listener, so the lifecycle branch can wait for every
+  automatic native window without conflicting in the shared event-wiring block.
