@@ -7,11 +7,14 @@ import { build } from "../src/build.ts";
 import { dev } from "../src/dev.ts";
 import { resolveProjectIcon } from "../src/shared/fs/project-source.ts";
 import {
+  DEFAULT_APP_VERSION,
+  resolveAppVersion,
   validateAppIdentity,
   validateAppName,
   validateAppVersion,
   validateBundleId,
   validateReleaseChannel,
+  validateReleaseNotes,
 } from "../src/shared/validation/config.ts";
 
 const temporaryDirectories: string[] = [];
@@ -74,6 +77,20 @@ describe("CLI app identity validation", () => {
     "accepts scaffold name %s as a CLI app name",
     (value) => expect(validateAppName(validateScaffoldName(value))).toBe(value),
   );
+
+  test("uses a macOS-compatible version when package.json omits one", () => {
+    delete process.env.MIRIN_APP_VERSION;
+    const root = project({});
+    writeFileSync(join(root, "package.json"), `${JSON.stringify({ name: "safe-app" })}\n`);
+
+    expect(resolveAppVersion(root)).toBe(DEFAULT_APP_VERSION);
+    expect(DEFAULT_APP_VERSION).toBe("1.0.0");
+  });
+
+  test("bounds release notes to the runtime manifest contract", () => {
+    expect(validateReleaseNotes("x".repeat(64 * 1024))).toHaveLength(64 * 1024);
+    expect(() => validateReleaseNotes("x".repeat(64 * 1024 + 1))).toThrow("invalid release notes");
+  });
 });
 
 describe("build and dev preflight", () => {
@@ -110,6 +127,15 @@ describe("build and dev preflight", () => {
 
     await expect(build(root)).rejects.toThrow("must use HTTPS");
     expect(existsSync(stale)).toBe(true);
+    expect(existsSync(join(root, "build"))).toBe(false);
+    expect(existsSync(join(root, ".mirin"))).toBe(false);
+  });
+
+  test("rejects oversized release notes before touching output", async () => {
+    delete process.env.MIRIN_APP_VERSION;
+    const root = project({ notes: "x".repeat(64 * 1024 + 1) });
+
+    await expect(build(root)).rejects.toThrow("invalid release notes");
     expect(existsSync(join(root, "build"))).toBe(false);
     expect(existsSync(join(root, ".mirin"))).toBe(false);
   });
@@ -164,6 +190,7 @@ function project(overrides: Record<string, string>): string {
     release: {
       channel: overrides.channel ?? "stable",
       ...(overrides.baseUrl === undefined ? {} : { baseUrl: overrides.baseUrl }),
+      ...(overrides.notes === undefined ? {} : { notes: overrides.notes }),
     },
   };
   writeFileSync(join(root, "mirin.config.ts"), `export default ${JSON.stringify(config)};\n`);

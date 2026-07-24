@@ -182,7 +182,9 @@ export interface MirinConfig {
   /**
    * Single-instance app (default true): a second launch focuses the running
    * window and exits, instead of opening another window. Set false to allow
-   * multiple instances (each gets its own CEF cache dir).
+   * multiple instances (each gets its own CEF cache dir). Automatic updater
+   * apply is unavailable when false because replacing an install while sibling
+   * app processes are running is unsafe.
    */
   singleInstance?: boolean;
 }
@@ -335,7 +337,7 @@ export interface ReleaseConfig {
    * Default "stable".
    */
   channel?: string;
-  /** Optional markdown release notes embedded in the update manifest. */
+  /** Optional markdown release notes embedded in the update manifest (maximum 64 Ki characters). */
   notes?: string;
 }
 

@@ -223,6 +223,9 @@ Linux packaging lives in `packages/mirin-cli`:
 - Package metadata is validated before writing launchers or desktop files: app ids are
   single path segments, desktop fields reject line injection, and CLI/config package
   formats are restricted to `appimage`, `deb`, and `rpm`.
+- Parallel format jobs are settled before their shared filesystem tree is removed.
+  If any format fails, successful sibling artifacts are deleted before the caller
+  continues without Linux packages, preventing late or partial release output.
 
 ## Notes for contributors
 - App-shell features not yet ported are handled by the engine's

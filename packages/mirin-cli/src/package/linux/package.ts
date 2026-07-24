@@ -64,16 +64,35 @@ export async function buildLinuxPackages(input: LinuxPackageInput): Promise<Linu
   let fsRoot: string | undefined;
   try {
     if (needFsTree) fsRoot = stageFsTree(safeInput, binName);
-    return await Promise.all(
-      safeInput.formats.map((format) =>
-        format === "appimage"
-          ? buildAppImage(safeInput, binName)
-          : buildFpm(safeInput, binName, fsRoot!, format),
-      ),
+    return await settleLinuxPackageBuilds(
+      safeInput.formats.map((format) => {
+        if (format === "appimage") return buildAppImage(safeInput, binName);
+        if (!fsRoot) throw new Error("Linux package staging is unavailable");
+        return buildFpm(safeInput, binName, fsRoot, format);
+      }),
     );
   } finally {
     if (fsRoot) rmSync(fsRoot, { recursive: true, force: true });
   }
+}
+
+/**
+ * Wait for every concurrently started packager before shared staging cleanup.
+ * If any format fails, remove successful sibling artifacts and propagate failure
+ * only after all child processes have settled.
+ */
+export async function settleLinuxPackageBuilds(
+  jobs: Promise<LinuxPackageResult>[],
+): Promise<LinuxPackageResult[]> {
+  const settled = await Promise.allSettled(jobs);
+  const successful = settled.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  const failure = settled.find((result) => result.status === "rejected");
+  if (!failure || failure.status !== "rejected") return successful;
+
+  for (const artifact of successful) rmSync(artifact.path, { force: true });
+  throw failure.reason;
 }
 
 /**
@@ -191,6 +210,7 @@ async function buildFpm(
   console.log(`[mirin] building ${kind} → ${fileName}`);
   const res = await $`${fpm} ${args}`.nothrow().quiet();
   if (res.exitCode !== 0 || !existsSync(out)) {
+    rmSync(out, { force: true });
     throw new Error(`fpm (${kind}) failed (exit ${res.exitCode}):\n${res.stderr.toString()}`);
   }
   return { format: kind, path: out, size: size(out) };
@@ -250,12 +270,17 @@ async function buildAppImage(
   console.log(`[mirin] building AppImage → ${fileName}`);
   // --appimage-extract-and-run: run appimagetool without FUSE. ARCH is required by
   // appimagetool; NO_STRIP avoids stripping the Bun-compiled host (which would break it).
-  const res = await $`${appimagetool} --appimage-extract-and-run ${appDirRoot} ${out}`
-    .env({ ...process.env, ARCH: arch, NO_STRIP: "1" })
-    .nothrow()
-    .quiet();
-  rmSync(appDirRoot, { recursive: true, force: true });
+  let res: Awaited<ReturnType<typeof $>>;
+  try {
+    res = await $`${appimagetool} --appimage-extract-and-run ${appDirRoot} ${out}`
+      .env({ ...process.env, ARCH: arch, NO_STRIP: "1" })
+      .nothrow()
+      .quiet();
+  } finally {
+    rmSync(appDirRoot, { recursive: true, force: true });
+  }
   if (res.exitCode !== 0 || !existsSync(out)) {
+    rmSync(out, { force: true });
     throw new Error(`appimagetool failed (exit ${res.exitCode}):\n${res.stderr.toString()}`);
   }
   chmodSync(out, 0o755);
@@ -274,9 +299,9 @@ export function resolveLinuxFormats(
   linux: boolean | LinuxConfig | undefined,
   override?: LinuxPackageFormat[],
 ): LinuxPackageFormat[] {
-  if (override && override.length) return validateLinuxFormats(override, "CLI override");
+  if (override?.length) return validateLinuxFormats(override, "CLI override");
   const fromConfig = typeof linux === "object" ? linux.formats : undefined;
-  return fromConfig && fromConfig.length
+  return fromConfig?.length
     ? validateLinuxFormats(fromConfig, "mirin.config.ts linux.formats")
     : [...LINUX_FORMATS];
 }

@@ -11,6 +11,7 @@ import { validateReleaseVersion } from "../src/release/semver.ts";
 import {
   assertDeltaSourcesFitMemoryBudget,
   MAX_RELEASE_DELTA_SOURCE_BYTES,
+  validateReleaseManifestBytes,
 } from "../src/release.ts";
 
 const expected = { channel: "stable", platform: "linux", arch: "x64" };
@@ -149,6 +150,15 @@ describe("release delta memory budget", () => {
     ).not.toThrow();
     expect(() => assertDeltaSourcesFitMemoryBudget(MAX_RELEASE_DELTA_SOURCE_BYTES + 1, 1)).toThrow(
       "in-memory codec limit",
+    );
+  });
+});
+
+describe("release manifest output bounds", () => {
+  test("matches the runtime's 256 KiB response ceiling before signing", () => {
+    expect(() => validateReleaseManifestBytes(new Uint8Array(256 * 1024))).not.toThrow();
+    expect(() => validateReleaseManifestBytes(new Uint8Array(256 * 1024 + 1))).toThrow(
+      "release manifest exceeds",
     );
   });
 });

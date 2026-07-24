@@ -63,6 +63,7 @@ describe("scaffold output", () => {
     const packageJson: unknown = JSON.parse(readFileSync(join(target, "package.json"), "utf8"));
     expect(packageJson).toMatchObject({
       name: "valid-app",
+      version: "1.0.0",
       private: true,
       dependencies: { mirinjs: expect.stringMatching(/^\^\d+\.\d+\.\d+/) },
       devDependencies: { "@mirinjs/cli": expect.stringMatching(/^\^\d+\.\d+\.\d+/) },

@@ -68,10 +68,13 @@ produce a distributable, notarizable app.
 - Linux: AppImage, deb, and rpm packages plus the updater artifacts.
 
 Release compression uses multiple CPU cores, and Linux package formats build in
-parallel with installer creation overlapping updater generation. Apps that ship
-one language can set `cef: { locales: ["en-US"] }`; omit it to retain every CEF
-locale. In ephemeral CI, cache `~/.mirinjs/cef` by Mirin version and runner
-platform so each target does not download and unpack the same runtime again.
+parallel with installer creation overlapping updater generation. Mirin waits for
+every parallel package process before cleaning shared staging; if one format
+fails, successful sibling artifacts are removed before the release continues
+without Linux packages. Apps that ship one language can set
+`cef: { locales: ["en-US"] }`; omit it to retain every CEF locale. In ephemeral
+CI, cache `~/.mirinjs/cef` by Mirin version and runner platform so each target
+does not download and unpack the same runtime again.
 
 Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
 those files, such as GitHub Releases' `.../releases/latest/download`. Safe dotted
@@ -80,16 +83,20 @@ in artifact prefixes, manifests, embedded identity, URLs, and updater support pa
 Before any build/dev output is created, Mirin requires a portable app `name`, a
 reverse-DNS `id`, a bounded `release.channel` made of alphanumeric runs separated
 by single `.`, `_`, or `-` characters, and a strict SemVer package/override
-version. On macOS the full SemVer remains in updater metadata while the bundle
-plist uses Apple's 4/2/2-digit build-component bounds and `d`/`a`/`b`/`fc`
-suffixes for `dev`/`preview`, `alpha`, `beta`, and `rc` prereleases (iterations
-1–255). Sidecar and extra-worker sources must resolve to regular files within
+version. New scaffolds declare version `1.0.0`; projects without a package
+version use the same macOS-compatible fallback. On macOS the full SemVer remains
+in updater metadata while the bundle plist uses Apple's 4/2/2-digit
+build-component bounds and `d`/`a`/`b`/`fc` suffixes for `dev`/`preview`,
+`alpha`, `beta`, and `rc` prereleases (iterations 1–255). Sidecar and
+extra-worker sources must resolve to regular files within
 the canonical project root; missing paths, directories, special files, and
 escaping symlinks fail preflight. App icons must resolve to a project-owned
 regular file or a flat `.iconset` containing no symlinks; bundle and package
 sinks revalidate them before use. Bundle and release directories are assembled
-in unique sibling staging paths, so a failed copy/sign/package run preserves
-the last successful output.
+in unique sibling staging paths, so a failed required copy/sign/updater or
+Windows-installer run preserves the last successful output. DMG and Linux
+packages are best-effort exceptions: failures are logged and the atomic release
+can still commit its signed updater artifacts without them.
 
 Generate a long-lived Ed25519 update key pair once:
 
@@ -113,9 +120,11 @@ only strictly newer SemVer precedence. Artifact requests have a 15-minute deadli
 Checks are single-flight and defer while a download is active or an update is staged;
 repeated downloads of an already staged generation are rejected. Downloads and applies
 are guarded operations correlated to a version/hash generation. `mirin build` validates
-the same strict SemVer grammar consumed by the runtime before packaging. Accepted helper
-launch is a terminal handoff, so manual updater work and auto-check scheduling remain
-blocked until the process exits. Failed operations release
+the same strict SemVer grammar consumed by the runtime before packaging. Apps configured
+with `singleInstance: false` may check and download, but automatic apply is rejected;
+close every instance and install their update externally. Accepted helper launch is a
+terminal handoff, so manual updater work and auto-check scheduling remain blocked until
+the process exits. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation
 directory, and startup prunes abandoned generations while preserving work owned by
 live app processes or an apply-helper PID. Manifest bodies, downloads, decompressed patches,
@@ -129,8 +138,9 @@ and a stable installed designated code requirement; ad-hoc local builds fall bac
 codesign validity because their exact-build cdhash changes between releases;
 Linux extracts with permission preservation, ensures owner execute on the validated
 regular executable, and rolls back if the replacement exits immediately. Set
-`release.notes` to embed markdown release notes in the update manifest for app update
-UIs.
+`release.notes` to embed at most 64 Ki characters of markdown release notes in the
+update manifest for app update UIs. The final manifest is also capped at 256 KiB
+before signing.
 
 Current `mirin release` manifests add required `tarSize` and patch
 `uncompressedSize` bounds. Older Mirin runtimes ignore these additive fields and

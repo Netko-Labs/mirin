@@ -34,6 +34,11 @@
 - [x] Validate release versions with the runtime's strict SemVer grammar.
 - [x] Share the exact six-field signed updater metadata contract across CLI bundle sinks and runtime parsing.
 - [x] Compose signed release generation with owned atomic output staging and installer settlement.
+- [x] Keep scaffold/fallback versions compatible with macOS bundle metadata.
+- [x] Reject automatic apply for apps that permit multiple running instances.
+- [x] Settle every parallel Linux package job before cleaning shared release staging.
+- [x] Bound release notes and generated manifest bytes to the runtime parser limits.
+- [x] Document DMG/Linux packages as intentional best-effort atomic-release exceptions.
 
 ## Checkpoints
 
@@ -65,3 +70,13 @@
   with the two expected Windows lifecycle skips on macOS.
 - Integration full Rust: `cargo fmt --all --check`, workspace clippy with warnings
   denied, and workspace tests passed (8 tests).
+- Third clean-context review remediation: restored a nonzero scaffold/fallback app
+  version, rejected unsafe multi-instance automatic apply, and settled every Linux
+  package child before cleanup while removing partial successful siblings.
+- Third clean-context follow-up: bounded release notes and generated manifests to
+  the runtime parser limits and documented DMG/Linux package failures as deliberate
+  best-effort exceptions to required atomic release output.
+- Third-review full TypeScript: `bun run fmt-lint` passed with 52 pre-existing
+  warnings (three warnings removed in touched Linux packaging code);
+  `bun run typecheck` passed; `bun run test` passed 208 tests with the two expected
+  Windows lifecycle skips on macOS; `git diff --check` passed.

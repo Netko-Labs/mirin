@@ -31,7 +31,11 @@ import {
   resolveProjectIcon,
   validateOwnedOutputDirectory,
 } from "./shared/fs/project-source.ts";
-import { resolveAppVersion, validateAppIdentity } from "./shared/validation/config.ts";
+import {
+  resolveAppVersion,
+  validateAppIdentity,
+  validateReleaseNotes,
+} from "./shared/validation/config.ts";
 import { validateUpdatePublicKey } from "./shared/validation/update-key.ts";
 import {
   serializeVersionMetadata,
@@ -186,6 +190,7 @@ export async function build(
   const mainEntry = resolveProjectFile(root, config.main ?? "main/main.ts", "main entry");
   const icon =
     config.icon === undefined ? undefined : resolveProjectIcon(root, config.icon, "app icon");
+  const releaseNotes = validateReleaseNotes(config.release?.notes);
   const baseUrl: string | undefined =
     config.release === undefined ? undefined : config.release.baseUrl;
   if (config.release !== undefined) validateReleaseBaseUrl(baseUrl);
@@ -193,7 +198,6 @@ export async function build(
     config.release === undefined
       ? undefined
       : validateUpdatePublicKey(config.release.publicKey ?? process.env.MIRIN_UPDATE_PUBLIC_KEY);
-  const releaseNotes: string | undefined = config.release?.notes;
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
   const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
   const inno: boolean | import("mirinjs").InnoConfig = config.inno ?? true;

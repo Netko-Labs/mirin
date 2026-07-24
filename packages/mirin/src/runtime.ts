@@ -22,6 +22,8 @@ export interface Runtime {
   id?: string;
   /** True under `mirin dev`; false in a packaged build. */
   isDev: boolean;
+  /** Whether the native host enforces a single running app instance. */
+  singleInstance: boolean;
   devUrl?: string;
   /** Contents/Resources of the running .app (for the updater). Absent in dev. */
   resourcesDir?: string;
@@ -95,7 +97,7 @@ function dispatch(raw: string): void {
 export function boot(): void {
   const data = (workerData ?? {}) as {
     corePath?: string;
-    manifest?: { windows?: Record<string, WindowConfig> };
+    manifest?: { windows?: Record<string, WindowConfig>; singleInstance?: boolean };
     id?: string;
     devUrl?: string;
     resourcesDir?: string;
@@ -144,6 +146,7 @@ export function boot(): void {
     manifestWindows,
     id: data.id,
     isDev: !!data.devUrl,
+    singleInstance: data.manifest?.singleInstance !== false,
     devUrl: data.devUrl,
     resourcesDir: data.resourcesDir,
     corePath,

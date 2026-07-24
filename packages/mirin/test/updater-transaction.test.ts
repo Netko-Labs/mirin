@@ -5,8 +5,14 @@ import {
   SingleFlight,
   UpdateTransactionState,
 } from "../src/updater/lib/transaction.ts";
+import { assertUpdaterApplyAllowed } from "../src/updater/updater.ts";
 
 describe("updater transaction generations", () => {
+  test("rejects automatic apply when the app permits multiple running instances", () => {
+    expect(() => assertUpdaterApplyAllowed(true)).not.toThrow();
+    expect(() => assertUpdaterApplyAllowed(false)).toThrow("singleInstance is false");
+  });
+
   test("rejects checks during download and stale completion after invalidation", () => {
     const state = new UpdateTransactionState();
     const firstGeneration = state.beginCheck();

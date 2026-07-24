@@ -46,6 +46,7 @@ import { validateAppIdentity } from "./shared/validation/config.ts";
 const RELEASE_COMPRESSION_LEVEL = 10;
 const MAX_RELEASE_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const MAX_RELEASE_TAR_BYTES = 8 * 1024 * 1024 * 1024;
+const MAX_RELEASE_MANIFEST_BYTES = 256 * 1024;
 // qbsdiff holds both sources and a suffix index in memory. Larger apps retain the
 // full updater bundle but skip the optional delta instead of risking an OOM abort.
 export const MAX_RELEASE_DELTA_SOURCE_BYTES = 128 * 1024 * 1024;
@@ -60,6 +61,14 @@ export function assertDeltaSourcesFitMemoryBudget(
   ) {
     throw new Error(
       `delta source tar exceeds the in-memory codec limit (${MAX_RELEASE_DELTA_SOURCE_BYTES} bytes)`,
+    );
+  }
+}
+
+export function validateReleaseManifestBytes(bytes: Uint8Array): void {
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_RELEASE_MANIFEST_BYTES) {
+    throw new Error(
+      `release manifest exceeds the updater limit (${MAX_RELEASE_MANIFEST_BYTES} bytes)`,
     );
   }
 }
@@ -282,6 +291,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
         };
         const manifestName = `${prefix}-update.json`;
         const manifestBytes = new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`);
+        validateReleaseManifestBytes(manifestBytes);
         await Bun.write(join(outDir, manifestName), manifestBytes);
         await Bun.write(
           join(outDir, `${manifestName}.sig`),

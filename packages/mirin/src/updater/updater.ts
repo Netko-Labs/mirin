@@ -318,6 +318,7 @@ export class Updater {
     if (this.#checks.isRunning) {
       throw new Error("cannot apply while an update check is in progress");
     }
+    assertUpdaterApplyAllowed(runtime().singleInstance);
     const installed = this.#version();
     const resourcesDir = this.#resourcesDir();
     const staged = this.#transactions.beginApply();
@@ -438,6 +439,15 @@ export class Updater {
     } catch {
       // The runtime may be detached while updater helpers are tested or shutting down.
     }
+  }
+}
+
+/** Applying cannot safely replace an install while sibling app processes are supported. */
+export function assertUpdaterApplyAllowed(singleInstance: boolean): void {
+  if (!singleInstance) {
+    throw new Error(
+      "automatic update apply is unavailable when singleInstance is false; install the update after closing every app instance",
+    );
   }
 }
 
