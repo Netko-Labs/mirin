@@ -38,6 +38,7 @@ export function finalizeCommittedUpdateRecovery(recovery: UpdateHandoffRecovery)
   }
   for (const path of recovery.claimPaths) removeStateFileDurably(tool, path);
   removeStateFileDurably(tool, recovery.markerPath);
+  removeStateFileDurably(tool, recovery.replacementPath);
   removeStateFileDurably(tool, recovery.readyPath);
   removeStateFileDurably(tool, recovery.phasePath);
   removeFileBestEffort(tool);
@@ -153,6 +154,7 @@ function renderPosixRecovery(
     `MARKER=${sh(recovery.markerPath)}`,
     `PHASE=${sh(recovery.phasePath)}`,
     `READY=${sh(recovery.readyPath)}`,
+    `REPLACEMENT=${sh(recovery.replacementPath)}`,
     `ACTIVATED=${sh(activated)}`,
     `ARMED=${sh(armed)}`,
     `IDENTITY=${sh(identity)}`,
@@ -180,12 +182,20 @@ function renderPosixRecovery(
     'if ! "$TOOL" wait-process "$OWNER_PID" "$OWNER_TOKEN" 30000; then',
     '  "$TOOL" terminate-process "$OWNER_PID" "$OWNER_TOKEN"',
     "fi",
+    ...(recovery.replacement
+      ? [
+          `if ! "$TOOL" wait-process ${recovery.replacement.pid} ${sh(recovery.replacement.token)} 0; then`,
+          `  "$TOOL" terminate-process ${recovery.replacement.pid} ${sh(recovery.replacement.token)}`,
+          "fi",
+        ]
+      : []),
     '"$TOOL" atomic-swap "$APP" "$RESTORE"',
     '"$TOOL" durable-remove-directory "$RESTORE"',
     ...recovery.claimPaths.map(
       (path) => `if [ -f ${sh(path)} ]; then "$TOOL" durable-remove-file ${sh(path)}; fi`,
     ),
     'if [ -f "$MARKER" ]; then "$TOOL" durable-remove-file "$MARKER"; fi',
+    'if [ -f "$REPLACEMENT" ]; then "$TOOL" durable-remove-file "$REPLACEMENT"; fi',
     'if [ -f "$READY" ]; then "$TOOL" durable-remove-file "$READY"; fi',
     'if [ -f "$PHASE" ]; then "$TOOL" durable-remove-file "$PHASE"; fi',
     'rm -f "$ACTIVATED" "$ARMED" "$IDENTITY" "$TOOL"',
@@ -235,6 +245,15 @@ function renderWindowsRecovery(
     `  & $tool terminate-process ${psq(String(recovery.owner.pid))} ${psq(recovery.owner.token)}`,
     "  if ($LASTEXITCODE -ne 0) { throw 'Could not stop updater recovery owner' }",
     "}",
+    ...(recovery.replacement
+      ? [
+          `& $tool wait-process ${psq(String(recovery.replacement.pid))} ${psq(recovery.replacement.token)} '0'`,
+          "if ($LASTEXITCODE -ne 0) {",
+          `  & $tool terminate-process ${psq(String(recovery.replacement.pid))} ${psq(recovery.replacement.token)}`,
+          "  if ($LASTEXITCODE -ne 0) { throw 'Could not stop live replacement before recovery' }",
+          "}",
+        ]
+      : []),
     `& $tool atomic-swap ${psq(recovery.runningApp)} ${psq(restorePath)}`,
     "if ($LASTEXITCODE -ne 0) { throw 'Could not restore previous app' }",
     `& $tool durable-remove-directory ${psq(restorePath)}`,
@@ -244,6 +263,7 @@ function renderWindowsRecovery(
         `if (Test-Path -LiteralPath ${psq(path)} -PathType Leaf) { & $tool durable-remove-file ${psq(path)} }`,
     ),
     `if (Test-Path -LiteralPath ${psq(recovery.markerPath)} -PathType Leaf) { & $tool durable-remove-file ${psq(recovery.markerPath)} }`,
+    `if (Test-Path -LiteralPath ${psq(recovery.replacementPath)} -PathType Leaf) { & $tool durable-remove-file ${psq(recovery.replacementPath)} }`,
     `if (Test-Path -LiteralPath ${psq(recovery.readyPath)} -PathType Leaf) { & $tool durable-remove-file ${psq(recovery.readyPath)} }`,
     `if (Test-Path -LiteralPath ${psq(recovery.phasePath)} -PathType Leaf) { & $tool durable-remove-file ${psq(recovery.phasePath)} }`,
     `Remove-Item -LiteralPath ${psq(activated)},${psq(armed)},${psq(identity)} -Force -ErrorAction SilentlyContinue`,

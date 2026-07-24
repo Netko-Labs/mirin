@@ -61,6 +61,7 @@ describe("update handoff reservations", () => {
     signalUpdateReady(handoff.readyPath, owner);
     expect(existsSync(handoff.readyPath)).toBe(true);
     expect(readFileSync(handoff.readyPath, "utf8")).toBe(`${process.pid}|owner-token`);
+    expect(readFileSync(handoff.replacementPath, "utf8")).toBe(`${process.pid}|owner-token`);
     expect(readdirSync(state).some((entry) => entry.endsWith(".tmp"))).toBe(false);
     abandonUpdateHandoff(handoff);
     expect(existsSync(handoff.markerPath)).toBe(false);
@@ -166,6 +167,7 @@ describe("update handoff reservations", () => {
       markerPath: fixture.handoff.markerPath,
       phasePath: fixture.handoff.phasePath,
       readyPath: fixture.handoff.readyPath,
+      replacementPath: fixture.handoff.replacementPath,
       runningApp: fixture.app,
       staged: fixture.staged,
       backup: fixture.handoff.backup,
@@ -220,6 +222,36 @@ describe("update handoff reservations", () => {
     expect(decision.blocked).toBe(false);
     expect(decision.recovery?.owner).toEqual(recoveryOwner);
     expect(existsSync(fixture.handoff.markerPath)).toBe(true);
+  });
+
+  test("blocks recovery while an exact replacement is live and carries its receipt afterward", () => {
+    const fixture = interruptedTransaction("launching");
+    const replacement = { pid: 789, token: "live-replacement-token" };
+    const recoveryOwner = { pid: process.pid, token: "replacement-recovery-owner" };
+    writeFileSync(fixture.handoff.replacementPath, `${replacement.pid}|${replacement.token}`);
+
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        fixture.resources,
+        false,
+        undefined,
+        (pid) => (pid === replacement.pid ? replacement : recoveryOwner),
+        fixture.state,
+      ),
+    ).toEqual({ blocked: true });
+
+    const decision = inspectUpdateHandoff(
+      "dev.example.app",
+      fixture.resources,
+      false,
+      undefined,
+      (pid) => (pid === process.pid ? recoveryOwner : undefined),
+      fixture.state,
+    );
+    expect(decision.blocked).toBe(false);
+    expect(decision.recovery?.replacement).toEqual(replacement);
+    expect(decision.recovery?.replacementPath).toBe(fixture.handoff.replacementPath);
   });
 
   test("recovers a crash between durable marker and phase creation", () => {
@@ -304,7 +336,7 @@ describe("update handoff reservations", () => {
   });
 });
 
-function interruptedTransaction(phase: "backed-up" | "committed") {
+function interruptedTransaction(phase: "backed-up" | "launching" | "committed") {
   const root = temporaryDirectory();
   const state = join(root, "state");
   const app = join(root, "Mirin");

@@ -166,12 +166,20 @@ the helper verifies that activation before writing its armed acknowledgement or
 allowing parent death to authorize a swap. A crash before activation cannot swap
 the install, while a crash after activation leaves the live helper represented in
 the reservation. Arming and replacement readiness are each published durably, so
-readers never accept a partial or PID-reused receipt. If arming fails after
+readers never accept a partial or PID-reused receipt. Immediately after spawning
+the target, the helper durably publishes its exact creation identity; the target
+republishes the same identity before readiness. Startup treats a valid live
+replacement receipt as active, and a recovery helper confirms exit or performs
+handle-bound exact termination before exchanging its files away. If arming fails after
 activation, the parent performs bounded exact-process termination and abandons the
 reservation only after confirmed helper death; otherwise the helper keeps terminal
 ownership and all recovery files. Apply ownership and terminal state are process-wide: all public
 `Updater` instances stop auto-check timers and reject new work once any instance
 hands off, while in-flight work rechecks terminal state at asynchronous boundaries.
+After commit or rollback, the helper durably removes the ownership marker before
+the phase and replacement/readiness receipts. Therefore a crash or selective
+cleanup failure either leaves a complete recoverable journal or leaves no marker
+that can block the already-settled canonical app.
 
 Linux opens its pidfd before validating the boot/start token, and Windows
 validates creation time through the same process handle used for waiting or

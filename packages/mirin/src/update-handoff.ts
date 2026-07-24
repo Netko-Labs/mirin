@@ -17,6 +17,7 @@ import {
   bundledCodecPath,
   formatProcessIdentity,
   isProcessToken,
+  parseProcessIdentity,
   processIdentity,
   type UpdateProcessIdentity,
 } from "./update-process.ts";
@@ -62,6 +63,7 @@ interface RecoveryClaim {
 export interface PreparedUpdateHandoff extends UpdateHandoffMarker {
   markerPath: string;
   readyPath: string;
+  replacementPath: string;
 }
 
 export type UpdateHandoffPhase =
@@ -86,11 +88,13 @@ export interface UpdateHandoffRecovery {
   markerPath: string;
   phasePath: string;
   readyPath: string;
+  replacementPath: string;
   runningApp: string;
   staged: string;
   backup: string;
   restorePath?: string;
   owner: UpdateProcessIdentity;
+  replacement?: UpdateProcessIdentity;
   claimPaths: string[];
 }
 
@@ -140,8 +144,10 @@ export function prepareUpdateHandoff(
   const token = `${process.pid}-${randomUUID()}`;
   const markerPath = join(directory, HANDOFF_FILE);
   const readyPath = join(directory, `.update-ready-${token}`);
+  const replacementPath = replacementIdentityPath(directory, token);
   const phasePath = join(directory, `${PHASE_FILE_PREFIX}${token}`);
   removeFileBestEffort(readyPath);
+  removeFileBestEffort(replacementPath);
   const marker: UpdateHandoffMarker = {
     token,
     targetVersion,
@@ -165,7 +171,7 @@ export function prepareUpdateHandoff(
   try {
     writeDurableInitialFile(markerPath, serializeMarker(marker));
     if (transaction) writeDurableReplacement(phasePath, "prepared");
-    return { ...marker, markerPath, readyPath };
+    return { ...marker, markerPath, readyPath, replacementPath };
   } catch (error) {
     if (!markerExisted) removeFileBestEffort(markerPath);
     if (!phaseExisted) removeFileBestEffort(phasePath);
@@ -222,6 +228,7 @@ export function activateUpdateRecovery(
 export function abandonUpdateHandoff(handoff: PreparedUpdateHandoff): void {
   const current = readMarker(handoff.markerPath);
   if (current?.token === handoff.token) removeFileBestEffort(handoff.markerPath);
+  removeFileBestEffort(handoff.replacementPath);
   removeFileBestEffort(handoff.readyPath);
   if (handoff.phasePath) removeFileBestEffort(handoff.phasePath);
 }
@@ -257,12 +264,17 @@ export function inspectUpdateHandoff(
     return { blocked: false };
   }
 
+  const readyPath = join(directory, `.update-ready-${marker.token}`);
+  const replacementPath = replacementIdentityPath(directory, marker.token);
+  const replacement = readProcessIdentityReceipt(replacementPath);
+  const replacementStateIsUnreadable = existsSync(replacementPath) && !replacement;
   const active =
     getProcessIdentity(marker.ownerPid)?.token === marker.ownerToken ||
     (marker.helperPid !== undefined &&
       marker.helperToken !== undefined &&
-      getProcessIdentity(marker.helperPid)?.token === marker.helperToken);
-  const readyPath = join(directory, `.update-ready-${marker.token}`);
+      getProcessIdentity(marker.helperPid)?.token === marker.helperToken) ||
+    replacementStateIsUnreadable ||
+    (replacement !== undefined && getProcessIdentity(replacement.pid)?.token === replacement.token);
   const launchedTarget =
     launchToken === marker.token && installedVersion(resourcesDir) === marker.targetVersion;
   if (active) {
@@ -291,11 +303,18 @@ export function inspectUpdateHandoff(
   }
   marker = claimedMarker;
   const claimPaths = recoveryClaimPaths(directory, marker.token);
+  const claimedReplacementPath = replacementIdentityPath(directory, marker.token);
+  const claimedReplacement = readProcessIdentityReceipt(claimedReplacementPath);
+  const claimedReplacementStateIsUnreadable =
+    existsSync(claimedReplacementPath) && !claimedReplacement;
   const claimedActive =
     getProcessIdentity(marker.ownerPid)?.token === marker.ownerToken ||
     (marker.helperPid !== undefined &&
       marker.helperToken !== undefined &&
-      getProcessIdentity(marker.helperPid)?.token === marker.helperToken);
+      getProcessIdentity(marker.helperPid)?.token === marker.helperToken) ||
+    claimedReplacementStateIsUnreadable ||
+    (claimedReplacement !== undefined &&
+      getProcessIdentity(claimedReplacement.pid)?.token === claimedReplacement.token);
   const claimedReadyPath = join(directory, `.update-ready-${marker.token}`);
   const claimedTarget =
     launchToken === marker.token && installedVersion(resourcesDir) === marker.targetVersion;
@@ -306,6 +325,7 @@ export function inspectUpdateHandoff(
 
   if (!markerTransactionIsValid(marker, resourcesDir, directory)) {
     removeFilesBestEffort(claimPaths);
+    removeFileBestEffort(claimedReplacementPath);
     removeFileBestEffort(claimedReadyPath);
     return { blocked: false };
   }
@@ -322,6 +342,7 @@ export function inspectUpdateHandoff(
       return { blocked: true };
     }
     removeFilesBestEffort(claimPaths);
+    removeFileBestEffort(claimedReplacementPath);
     removeFileBestEffort(marker.phasePath);
     removeFileBestEffort(claimedReadyPath);
     return { blocked: false };
@@ -364,11 +385,13 @@ export function inspectUpdateHandoff(
       markerPath,
       phasePath: marker.phasePath,
       readyPath: claimedReadyPath,
+      replacementPath: claimedReplacementPath,
       runningApp: marker.runningApp,
       staged: marker.staged,
       backup: marker.backup,
       ...(restorePath ? { restorePath } : {}),
       owner,
+      ...(claimedReplacement ? { replacement: claimedReplacement } : {}),
       claimPaths,
     },
   };
@@ -385,7 +408,10 @@ export function signalUpdateReady(
   if (!identity || identity.pid !== process.pid) {
     throw new Error("could not bind updater readiness to the current process");
   }
-  writeDurableReplacement(readyPath, formatProcessIdentity(identity));
+  const token = basename(readyPath).slice(".update-ready-".length);
+  const receipt = formatProcessIdentity(identity);
+  writeDurableReplacement(replacementIdentityPath(dirname(readyPath), token), receipt);
+  writeDurableReplacement(readyPath, receipt);
 }
 
 function serializeMarker(marker: UpdateHandoffMarker): string {
@@ -532,6 +558,20 @@ function readPhase(path: string): UpdateHandoffPhase | undefined {
   } catch {
     return undefined;
   }
+}
+
+function readProcessIdentityReceipt(path: string): UpdateProcessIdentity | undefined {
+  try {
+    const metadata = lstatSync(path);
+    if (!metadata.isFile() || metadata.size <= 0 || metadata.size > 256) return undefined;
+    return parseProcessIdentity(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function replacementIdentityPath(directory: string, token: string): string {
+  return join(directory, `.update-replacement-${token}`);
 }
 
 function validOptionalString(value: unknown, maxLength: number): boolean {

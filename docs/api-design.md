@@ -268,10 +268,13 @@ off the main-process API:
   terminal state. The helper atomically exchanges complete old/new directories,
   so interruption never removes the canonical launch path. The backup remains
   until that exact launched process durably publishes a Worker/native readiness
-  receipt. The phase journal lives outside the replaceable app; a later launch
-  atomically claims an inactive pre-commit transaction for one bootstrap winner
-  and rolls it back before loading the native core/Worker, or completes cleanup
-  for a committed transaction. Every
+  receipt. The helper also durably records that exact replacement identity
+  immediately after launch, and the target republishes it before readiness, so
+  recovery blocks on a live target and confirms or terminates that exact process
+  before rollback. The phase journal lives outside the replaceable app; a later
+  launch atomically claims an inactive pre-commit transaction for one bootstrap
+  winner and rolls it back before loading the native core/Worker, or completes
+  cleanup for a committed transaction. Every
   recoverable post-exit failure atomically rolls back and reopens
   the prior install; parent/replacement termination is bounded, while unconfirmed
   termination or rollback preserves terminal ownership and both trees. Managed Linux
@@ -286,7 +289,10 @@ off the main-process API:
   identity; the parent validates that receipt, records it in the reservation,
   and publishes an identity-bound activation acknowledgement. A helper
   without that acknowledgement exits without swapping. Armed acknowledgement and
-  replacement readiness use temp-file-plus-rename publication. An accepted helper
+  replacement identity/readiness use temp-file-plus-rename publication. After a
+  successful commit, terminal cleanup durably removes the ownership marker before
+  the phase and receipts, so a partial cleanup cannot strand the target behind a
+  marker with no recoverable phase. An accepted helper
   forces and confirms handle-bound parent termination after the
   graceful-shutdown deadline on Linux and Windows. macOS has creation-bound
   kqueue waiting but no unprivileged handle-bound signal operation, so a timed-out

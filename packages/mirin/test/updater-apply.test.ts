@@ -97,6 +97,21 @@ describe("Windows updater launcher", () => {
     expect(script).toContain("backup-pending");
     expect(script).toContain("committed");
     expect(script).toContain("terminate-process");
+    expect(script).toContain(".update-replacement-42-00000000-0000-0000-0000-000000000000");
+    const committedPhase = script.indexOf(
+      "durable-write' 'C:\\State\\.update-phase-42-token' 'committed",
+    );
+    const markerCleanup = script.indexOf(
+      "durable-remove-file' 'C:\\State\\.update-handoff.json",
+      committedPhase,
+    );
+    const phaseCleanup = script.indexOf(
+      "durable-remove-file' 'C:\\State\\.update-phase-42-token",
+      markerCleanup,
+    );
+    expect(committedPhase).toBeGreaterThan(0);
+    expect(markerCleanup).toBeGreaterThan(committedPhase);
+    expect(phaseCleanup).toBeGreaterThan(markerCleanup);
     const rollback = script.indexOf("if ($parentExited -and $canRestore)");
     const rollbackCleanup = script.indexOf(
       "Remove-Item -LiteralPath 'C:\\Updates\\generation' -Recurse",
@@ -158,7 +173,7 @@ describe("Windows updater launcher", () => {
     mkdirSync(work);
     writeFileSync(join(app, "old-sentinel"), "old");
     writeFileSync(join(staged, "new-sentinel"), "new");
-    copyFileSync(codec, executable);
+    copyFileSync(codec, join(app, "Mirin.exe"));
     copyFileSync(powershell, join(staged, "Mirin.exe"));
     writeFileSync(marker, "{}");
     runTestCodec(codec, ["durable-write", phase, "prepared"]);
@@ -241,7 +256,6 @@ describe("Windows updater launcher", () => {
     const launchVbs = join(root, "launch.vbs");
     const helperPidFile = join(work, ".apply-helper.pid");
     const helperLaunchPidFile = join(work, ".apply-helper-launch.pid");
-    const executable = join(app, "Mirin.exe");
     const powershell = join(
       process.env.SystemRoot as string,
       "System32",
@@ -249,13 +263,17 @@ describe("Windows updater launcher", () => {
       "v1.0",
       "powershell.exe",
     );
+    // Relocating powershell.exe without its adjacent runtime files exits before
+    // executing EncodedCommand. Launch the system binary while the sentinels
+    // still verify that the app payload itself was atomically replaced.
+    const executable = powershell;
     mkdirSync(app);
     mkdirSync(staged);
     mkdirSync(state);
     mkdirSync(work);
     writeFileSync(join(app, "old-sentinel"), "old");
     writeFileSync(join(staged, "new-sentinel"), "new");
-    copyFileSync(codec, executable);
+    copyFileSync(codec, join(app, "Mirin.exe"));
     copyFileSync(powershell, join(staged, "Mirin.exe"));
     writeFileSync(marker, "{}");
     runTestCodec(codec, ["durable-write", phase, "prepared"]);
@@ -589,6 +607,9 @@ function writeTestSwapTool(path: string): void {
       "    ;;",
       "  durable-remove-directory)",
       '    rm -rf "$1"',
+      "    ;;",
+      "  durable-remove-file)",
+      '    rm -f "$1"',
       "    ;;",
       "  atomic-swap)",
       '    temporary="$1.mirin-test-swap"',

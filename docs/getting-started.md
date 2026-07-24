@@ -158,7 +158,11 @@ retains the reservation and recovery trees.
 The helper reserves the next launch for its token-bearing target and binds all
 ownership, wait, termination, and readiness decisions to OS process creation
 identity rather than a reusable PID. It retains the backup until that exact
-process acquires the exclusive lock and durably publishes Worker/native readiness;
+process acquires the exclusive lock and durably publishes Worker/native readiness.
+The helper records the exact replacement immediately after launch, and the target
+republishes it before readiness; restart recovery blocks while it is live and
+confirms or terminates only that exact process before rollback. Successful
+teardown durably removes the ownership marker before its phase and receipts;
 timeout or early exit atomically restores and relaunches the old install. If the
 helper dies or the machine restarts, the next host launch atomically claims the
 external phase journal for one recovery winner before loading native runtime

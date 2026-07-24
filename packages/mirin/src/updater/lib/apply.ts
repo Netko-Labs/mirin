@@ -53,6 +53,7 @@ interface ShellScriptOptions {
   activated: string;
   armed: string;
   phase: string;
+  replacement?: string;
   swapTool: string;
   token: string;
   parentToken?: string;
@@ -120,6 +121,8 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     ? ` -ArgumentList ${options.launchArguments.map(psq).join(",")}`
     : "";
   const helperIdentity = join(options.workDir, APPLY_HELPER_PID_FILE);
+  const replacementIdentity =
+    options.replacement ?? join(dirname(options.marker), `.update-replacement-${options.token}`);
   const codec = (args: string[], failure: string, indent = "  "): string[] => [
     `${indent}& ${psq(options.swapTool)} ${args.map(psq).join(" ")}`,
     `${indent}if ($LASTEXITCODE -ne 0) { throw ${psq(failure)} }`,
@@ -208,6 +211,11 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     `  $newToken=(& ${psq(options.swapTool)} process-token ([string]$newProcess.Id)).Trim()`,
     "  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($newToken)) { throw 'Could not identify replacement process' }",
     "  $readyIdentity=[string]$newProcess.Id+'|'+$newToken",
+    ...durableDynamicWrite(
+      replacementIdentity,
+      "$readyIdentity",
+      "Could not publish replacement process identity",
+    ),
     `  $readyDeadline=(Get-Date).AddMilliseconds(${readyWaitMs})`,
     "  $readyOk=$false",
     "  while (-not $readyOk) {",
@@ -230,8 +238,25 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
       ["durable-remove-directory", options.backup],
       "Could not durably remove the previous app",
     ),
+    ...codec(
+      ["durable-remove-file", options.marker],
+      "Could not durably clear committed updater ownership",
+    ),
+    `  if (Test-Path -LiteralPath ${psq(replacementIdentity)} -PathType Leaf) {`,
+    ...codec(
+      ["durable-remove-file", replacementIdentity],
+      "Could not clear replacement process identity",
+      "    ",
+    ),
+    "  }",
+    `  if (Test-Path -LiteralPath ${psq(options.ready)} -PathType Leaf) {`,
+    ...codec(["durable-remove-file", options.ready], "Could not clear updater readiness", "    "),
+    "  }",
+    ...codec(
+      ["durable-remove-file", options.phase],
+      "Could not durably clear committed updater phase",
+    ),
     `  Remove-Item -LiteralPath ${psq(options.workDir)} -Recurse -Force -ErrorAction SilentlyContinue`,
-    `  Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.phase)},${psq(options.ready)},${psq(options.activated)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
     `  Remove-Item -LiteralPath ${helperFiles} -Force -ErrorAction SilentlyContinue`,
     "} catch {",
     "  $failure=$_",
@@ -255,7 +280,18 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     "      }",
     `      if ((Test-Path -LiteralPath ${psq(options.backup)}) -or -not (Test-Path -LiteralPath ${psq(options.executable)} -PathType Leaf)) { throw 'Update rollback failed' }`,
     `      Remove-Item -LiteralPath ${psq(options.staged)} -Recurse -Force -ErrorAction SilentlyContinue`,
-    `      Remove-Item -LiteralPath ${psq(options.marker)},${psq(options.phase)},${psq(options.ready)},${psq(options.activated)},${psq(options.armed)} -Force -ErrorAction SilentlyContinue`,
+    `      & ${psq(options.swapTool)} ${psq("durable-remove-file")} ${psq(options.marker)}`,
+    "      if ($LASTEXITCODE -ne 0) { throw 'Could not durably clear rolled-back updater ownership' }",
+    `      if (Test-Path -LiteralPath ${psq(replacementIdentity)} -PathType Leaf) {`,
+    `        & ${psq(options.swapTool)} ${psq("durable-remove-file")} ${psq(replacementIdentity)}`,
+    "        if ($LASTEXITCODE -ne 0) { throw 'Could not clear rolled-back replacement identity' }",
+    "      }",
+    `      if (Test-Path -LiteralPath ${psq(options.ready)} -PathType Leaf) {`,
+    `        & ${psq(options.swapTool)} ${psq("durable-remove-file")} ${psq(options.ready)}`,
+    "        if ($LASTEXITCODE -ne 0) { throw 'Could not clear rolled-back readiness' }",
+    "      }",
+    `      & ${psq(options.swapTool)} ${psq("durable-remove-file")} ${psq(options.phase)}`,
+    "      if ($LASTEXITCODE -ne 0) { throw 'Could not durably clear rolled-back updater phase' }",
     `      Remove-Item -LiteralPath ${psq(options.workDir)} -Recurse -Force -ErrorAction SilentlyContinue`,
     `      Start-Process -FilePath ${psq(options.executable)} -WorkingDirectory ${psq(options.runningApp)} -ErrorAction Stop`,
     "    }",
@@ -295,6 +331,8 @@ function renderPosixApplyShell(
   platform: "darwin" | "linux",
 ): string {
   const parentToken = options.parentToken ?? "test-parent-token";
+  const replacementIdentity =
+    options.replacement ?? join(dirname(options.marker), `.update-replacement-${options.token}`);
   return [
     "set -eu",
     "umask 077",
@@ -303,6 +341,7 @@ function renderPosixApplyShell(
     `WORK=${sh(options.workDir)}`,
     `HANDOFF=${sh(options.marker)}`,
     `READY=${sh(options.ready)}`,
+    `REPLACEMENT=${sh(replacementIdentity)}`,
     `ACTIVATED=${sh(options.activated)}`,
     `ARMED=${sh(options.armed)}`,
     `HELPER_IDENTITY=${sh(join(options.workDir, APPLY_HELPER_PID_FILE))}`,
@@ -318,7 +357,8 @@ function renderPosixApplyShell(
     "SWAPPED=0",
     "NEW_PID=",
     "NEW_TOKEN=",
-    'cleanup_handoff() { rm -f "$HANDOFF" "$PHASE" "$READY" "$ACTIVATED" "$ARMED"; }',
+    'durable_remove_state() { if [ -f "$1" ]; then "$SWAP" durable-remove-file "$1"; fi; }',
+    'cleanup_handoff() { durable_remove_state "$HANDOFF"; durable_remove_state "$REPLACEMENT"; durable_remove_state "$READY"; durable_remove_state "$PHASE"; durable_remove_state "$ACTIVATED"; durable_remove_state "$ARMED"; }',
     'process_matches() { observed=$("$SWAP" process-token "$1" 2>/dev/null) || return 1; [ "$observed" = "$2" ]; }',
     "stop_replacement() {",
     '  if [ -z "$NEW_PID" ]; then return 0; fi',
@@ -357,8 +397,8 @@ function renderPosixApplyShell(
     "      fi",
     "    fi",
     '  elif [ "$ACCEPTED" -eq 0 ]; then',
-    '    rm -rf "$NEW" "$WORK" 2>/dev/null || true',
     "    cleanup_handoff",
+    '    rm -rf "$NEW" "$WORK" 2>/dev/null || true',
     "  fi",
     '  exit "$status"',
     "}",
@@ -412,6 +452,7 @@ function renderPosixApplyShell(
     "done",
     'test -n "$NEW_TOKEN"',
     'READY_IDENTITY="$NEW_PID|$NEW_TOKEN"',
+    '"$SWAP" durable-write "$REPLACEMENT" "$READY_IDENTITY"',
     "READY_OK=0",
     "i=0",
     'while [ "$i" -lt 300 ]; do',
@@ -427,8 +468,8 @@ function renderPosixApplyShell(
     '"$SWAP" durable-write "$PHASE" committed',
     "trap - EXIT HUP INT TERM",
     '"$SWAP" durable-remove-directory "$OLD"',
+    "cleanup_handoff",
     'rm -rf "$WORK" 2>/dev/null || true',
-    "cleanup_handoff || true",
     "exit 0",
   ].join("\n");
 }
@@ -511,6 +552,7 @@ async function applyWindows(
       activated,
       armed,
       phase: handoff.phasePath as string,
+      replacement: handoff.replacementPath,
       swapTool,
       token,
       parentToken: handoff.ownerToken,
@@ -581,6 +623,7 @@ async function applyLinux(
       activated,
       armed,
       phase: handoff.phasePath as string,
+      replacement: handoff.replacementPath,
       swapTool,
       token: handoff.token,
       parentToken: handoff.ownerToken,
@@ -617,6 +660,7 @@ async function applyMac(
       activated,
       armed,
       phase: handoff.phasePath as string,
+      replacement: handoff.replacementPath,
       swapTool,
       token: handoff.token,
       parentToken: handoff.ownerToken,

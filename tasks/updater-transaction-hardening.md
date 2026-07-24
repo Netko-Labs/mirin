@@ -299,3 +299,16 @@
 - Twentieth-review full Rust: `cargo fmt --all --check`, workspace clippy with
   warnings denied, and workspace tests passed (26 tests across codec, core, and
   helper).
+- Twenty-first clean-context review remediation: persist the launched
+  replacement's exact process identity from both helper and target, block startup
+  recovery while that process is live, require exact exit/termination before a
+  rollback exchange, and make commit/rollback teardown remove the durable
+  ownership marker before phase and receipt cleanup. The Windows success
+  integration now launches the system PowerShell runtime instead of relocating
+  its executable without required adjacent runtime files.
+- Twenty-first-remediation verification: `bun run fmt-lint` passed with the
+  repository's existing 52 warnings, `bun run typecheck` passed, and
+  `bun run test` passed 256 tests with the two expected non-Windows skips.
+- Twenty-first-remediation Rust verification: `cargo fmt --all --check`,
+  workspace clippy with warnings denied, and workspace tests passed (26 tests
+  across codec, core, and helper).
