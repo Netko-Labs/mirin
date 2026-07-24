@@ -18,9 +18,11 @@
 - [x] Inno marker-gates enumerated cleanup of legacy flat payloads without deleting unrelated root files.
 - [x] Inno and NSIS reject unowned nested payload collisions and share a bundle-specific ownership marker.
 - [x] Inno and NSIS remove stale cross-tool uninstallers and exact registry entries during a verified migration.
+- [x] Inno stores its uninstaller in a bundle-specific owned directory so NSIS migration never guesses numbered `unins*.exe` ownership.
 - [x] Bundle and release outputs stage in unique sibling directories and replace the prior successful output only after success.
+- [x] Parallel installer/package work always settles before release staging cleanup.
 - [x] macOS signing entitlements live in exclusive private temporary files with `finally` cleanup.
-- [x] macOS derives numeric Apple bundle metadata while preserving full SemVer in updater metadata.
+- [x] macOS derives bounded Apple marketing/build metadata, including monotonic prerelease suffixes, while preserving full SemVer in updater metadata.
 - [x] Release-channel grammar matches the updater contract and rejects repeated or trailing separators.
 
 ## Verification

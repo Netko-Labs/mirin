@@ -60,9 +60,12 @@ digits, spaces, `.`, `_`, `(`, `)`, `-`; no Windows device names or trailing
 dot/space), `id` is a reverse-DNS identifier with at least two DNS-style labels,
 `release.channel` is a flat filename-safe segment of at most 64 characters:
 alphanumeric runs separated by single `.`, `_`, or `-` characters, excluding
-Windows device names. The package/override version must be strict SemVer.
-macOS keeps that full SemVer in updater metadata but writes its numeric
-`major.minor.patch` core to `CFBundleShortVersionString` and `CFBundleVersion`.
+Windows device names. The package/override version must be strict SemVer. macOS
+keeps that full SemVer in updater metadata, writes its numeric
+`major.minor.patch` core to `CFBundleShortVersionString`, and maps
+`dev`/`preview`, `alpha`, `beta`, and `rc` prereleases to Apple's
+`d`/`a`/`b`/`fc` build suffixes. Apple bundle components are limited to 4/2/2
+digits, the major version must be nonzero, and prerelease iterations must be 1–255.
 Platform bundle and installer sinks repeat validation before recursive removal.
 When updates are enabled,
 the CLI emits exactly the validated five-field `version.json` envelope (`version`,

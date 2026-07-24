@@ -59,7 +59,7 @@ describe("NSIS script rendering", () => {
     expect(lines.some((line) => line.includes("DeleteRegKey HKCU"))).toBe(true);
   });
 
-  test("removes a prior Inno uninstaller only after matching the ownership marker", () => {
+  test("removes only the bundle-owned Inno uninstaller directory after matching ownership", () => {
     const script = renderNsisScript(base);
     const cleanup = script.indexOf("Function CleanupOwnedNestedInstall");
 
@@ -70,7 +70,10 @@ describe("NSIS script rendering", () => {
         cleanup,
       ),
     ).toBeGreaterThan(cleanup);
-    expect(script.indexOf('Delete "$INSTDIR\\unins000.exe"', cleanup)).toBeGreaterThan(cleanup);
+    expect(
+      script.indexOf('RMDir /r "$INSTDIR\\.mirin-dev.example.safe-app-inno-uninstall"', cleanup),
+    ).toBeGreaterThan(cleanup);
+    expect(script).not.toContain('Delete "$INSTDIR\\unins000.exe"');
     expect(
       script.indexOf(
         'DeleteRegKey HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{dev.example.safe-app}_is1"',

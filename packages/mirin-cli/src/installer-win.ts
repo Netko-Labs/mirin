@@ -226,6 +226,7 @@ function appendOwnedNestedCleanupFunction(
 ): void {
   const { name, ownershipMarker, bundleId } = options;
   const innoKey = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{${bundleId}}_is1`;
+  const innoUninstallDirectory = `.mirin-${bundleId}-inno-uninstall`;
   lines.push(
     "",
     "Function RequireOwnedNestedOrEmpty",
@@ -238,9 +239,7 @@ function appendOwnedNestedCleanupFunction(
     "",
     `Function ${name}`,
     `  IfFileExists "$INSTDIR\\${nsisLiteral(ownershipMarker)}" 0 cleanup_owned_done`,
-    '  Delete "$INSTDIR\\unins000.exe"',
-    '  Delete "$INSTDIR\\unins000.dat"',
-    '  Delete "$INSTDIR\\unins000.msg"',
+    `  RMDir /r "$INSTDIR\\${nsisLiteral(innoUninstallDirectory)}"`,
     "  SetRegView 32",
     `  DeleteRegKey HKCU "${innoKey}"`,
     `  DeleteRegKey HKLM "${innoKey}"`,
@@ -324,9 +323,6 @@ function appendLegacyCleanupFunction(lines: string[], options: LegacyCleanupOpti
   for (const file of rootFiles) {
     lines.push(`  Delete "$INSTDIR\\${nsisLiteral(file)}"`);
   }
-  lines.push('  Delete "$INSTDIR\\unins000.exe"');
-  lines.push('  Delete "$INSTDIR\\unins000.dat"');
-  lines.push('  Delete "$INSTDIR\\unins000.msg"');
   if (deleteNsisUninstaller) lines.push('  Delete "$INSTDIR\\Uninstall.exe"');
   const innoKey = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{${bundleId}}_is1`;
   lines.push("  SetRegView 32");

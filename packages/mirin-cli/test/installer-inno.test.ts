@@ -92,6 +92,7 @@ describe("Inno Setup script rendering", () => {
     expect(script).toContain(
       "SaveStringToFile(ExpandConstant('{app}\\.mirin-dev.example.safe-app.owned')",
     );
+    expect(script).toContain("UninstallFilesDir={app}\\.mirin-dev.example.safe-app-inno-uninstall");
   });
 
   test("recursively removes only the marker-owned updater payload on uninstall", () => {

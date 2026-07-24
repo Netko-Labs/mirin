@@ -79,7 +79,9 @@ build/dev output is created, Mirin requires a portable app `name`, a reverse-DNS
 `id`, a bounded `release.channel` made of alphanumeric runs separated by single
 `.`, `_`, or `-` characters, and a strict SemVer package/override version. On
 macOS the full SemVer remains in updater metadata while the bundle plist uses
-its Apple-compatible numeric `major.minor.patch` core. Sidecar and extra-worker
+Apple's 4/2/2-digit build-component bounds and `d`/`a`/`b`/`fc` suffixes for
+`dev`/`preview`, `alpha`, `beta`, and `rc` prereleases (iterations 1–255).
+Sidecar and extra-worker
 sources must resolve to regular files within
 the canonical project root; missing paths, directories, special files, and
 escaping symlinks fail preflight. App icons must resolve to a project-owned

@@ -84,6 +84,7 @@ export function renderInnoScript(input: RenderInnoInput): string {
   const baseName = fileName.slice(0, -".exe".length);
   const legacyRootFiles = normalizedLegacyRootFiles(exeName, input.legacyRootFiles);
   const ownershipMarker = `.mirin-${bundleId}.owned`;
+  const uninstallDirectory = `.mirin-${bundleId}-inno-uninstall`;
   const nsisKey = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${bundleId}`;
 
   const lines: string[] = [];
@@ -105,6 +106,7 @@ export function renderInnoScript(input: RenderInnoInput): string {
   lines.push("ArchitecturesAllowed=x64compatible");
   lines.push("ArchitecturesInstallIn64BitMode=x64compatible");
   lines.push(`UninstallDisplayIcon={app}\\app\\${innoLiteralPath(exeName, "executable name")}`);
+  lines.push(`UninstallFilesDir={app}\\${uninstallDirectory}`);
   if (icon) lines.push(`SetupIconFile=${innoLiteralPath(icon, "installer icon")}`);
   if (license) lines.push(`LicenseFile=${innoLiteralPath(license, "license file")}`);
   if (minimal) {

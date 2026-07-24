@@ -130,99 +130,113 @@ export async function release(projectDir = process.cwd()): Promise<number> {
         isLinux,
       });
 
-      // Release tooling runs in plain Bun, including Windows arm64 builds where
-      // bun:ffi is unavailable. The standalone helper also avoids loading CEF merely
-      // to compress updater artifacts.
-      const codec = createReleaseCodec(result.codecBin);
-
-      // Uncompressed tar — the identity + diff/patch basis (BSD tar keeps symlinks).
-      const newTar = join(outDir, "_new.tar");
-      await $`tar -cf ${newTar} -C ${buildDir} ${appArtifact}`;
-      const tarHash = await sha256File(newTar);
-
-      // Full bundle: zstd(newTar).
-      const bundleName = `${prefix}-${safeName}${isWindows ? "" : ".app"}.tar.zst`;
-      const bundlePath = join(outDir, bundleName);
-      console.log(`[mirin release] compressing → ${bundleName}`);
-      codec.compress(newTar, bundlePath, RELEASE_COMPRESSION_LEVEL);
-      const bundleSha = await sha256File(bundlePath);
-      const bundleSize = statSync(bundlePath).size;
-
-      // Delta patch vs the previous release (if reachable). Best-effort.
-      const patches: Array<{ fromVersion: string; url: string; sha256: string; size: number }> = [];
       try {
-        const manifestUrl = new URL(releaseArtifactUrl(base, `${prefix}-update.json`));
-        manifestUrl.searchParams.set("t", String(Date.now()));
-        const prevRes = await fetch(manifestUrl, {
-          redirect: "follow",
-        });
-        assertTrustedReleaseUrl(prevRes.url);
-        if (prevRes.ok) {
-          const prev = parsePreviousReleaseManifest(await prevRes.json(), {
-            channel: result.channel,
-            platform,
-            arch,
+        // Release tooling runs in plain Bun, including Windows arm64 builds where
+        // bun:ffi is unavailable. The standalone helper also avoids loading CEF merely
+        // to compress updater artifacts.
+        const codec = createReleaseCodec(result.codecBin);
+
+        // Uncompressed tar — the identity + diff/patch basis (BSD tar keeps symlinks).
+        const newTar = join(outDir, "_new.tar");
+        await $`tar -cf ${newTar} -C ${buildDir} ${appArtifact}`;
+        const tarHash = await sha256File(newTar);
+
+        // Full bundle: zstd(newTar).
+        const bundleName = `${prefix}-${safeName}${isWindows ? "" : ".app"}.tar.zst`;
+        const bundlePath = join(outDir, bundleName);
+        console.log(`[mirin release] compressing → ${bundleName}`);
+        codec.compress(newTar, bundlePath, RELEASE_COMPRESSION_LEVEL);
+        const bundleSha = await sha256File(bundlePath);
+        const bundleSize = statSync(bundlePath).size;
+
+        // Delta patch vs the previous release (if reachable). Best-effort.
+        const patches: Array<{ fromVersion: string; url: string; sha256: string; size: number }> =
+          [];
+        try {
+          const manifestUrl = new URL(releaseArtifactUrl(base, `${prefix}-update.json`));
+          manifestUrl.searchParams.set("t", String(Date.now()));
+          const prevRes = await fetch(manifestUrl, {
+            redirect: "follow",
           });
-          if (prev.version !== result.version) {
-            console.log(`[mirin release] generating delta ${prev.version} → ${result.version}…`);
-            const tmp = mkdtempSync(join(tmpdir(), "mirin-release-"));
-            try {
-              const prevZst = join(tmp, "prev.tar.zst");
-              await downloadVerified(
-                releaseArtifactUrl(base, prev.bundle.url),
-                prevZst,
-                prev.bundle.sha256,
-                prev.bundle.size,
-              );
-              const prevTar = join(tmp, "prev.tar");
-              codec.decompress(prevZst, prevTar);
-              const rawPatch = join(tmp, "patch.bin");
-              codec.diff(prevTar, newTar, rawPatch); // bsdiff
-              const patchName = `${prefix}-${prev.version}.patch`;
-              const patchPath = join(outDir, patchName);
-              codec.compress(rawPatch, patchPath, RELEASE_COMPRESSION_LEVEL);
-              patches.push({
-                fromVersion: prev.version,
-                url: patchName,
-                sha256: await sha256File(patchPath),
-                size: statSync(patchPath).size,
-              });
-            } finally {
-              rmSync(tmp, { recursive: true, force: true });
+          assertTrustedReleaseUrl(prevRes.url);
+          if (prevRes.ok) {
+            const prev = parsePreviousReleaseManifest(await prevRes.json(), {
+              channel: result.channel,
+              platform,
+              arch,
+            });
+            if (prev.version !== result.version) {
+              console.log(`[mirin release] generating delta ${prev.version} → ${result.version}…`);
+              const tmp = mkdtempSync(join(tmpdir(), "mirin-release-"));
+              try {
+                const prevZst = join(tmp, "prev.tar.zst");
+                await downloadVerified(
+                  releaseArtifactUrl(base, prev.bundle.url),
+                  prevZst,
+                  prev.bundle.sha256,
+                  prev.bundle.size,
+                );
+                const prevTar = join(tmp, "prev.tar");
+                codec.decompress(prevZst, prevTar);
+                const rawPatch = join(tmp, "patch.bin");
+                codec.diff(prevTar, newTar, rawPatch); // bsdiff
+                const patchName = `${prefix}-${prev.version}.patch`;
+                const patchPath = join(outDir, patchName);
+                codec.compress(rawPatch, patchPath, RELEASE_COMPRESSION_LEVEL);
+                patches.push({
+                  fromVersion: prev.version,
+                  url: patchName,
+                  sha256: await sha256File(patchPath),
+                  size: statSync(patchPath).size,
+                });
+              } finally {
+                rmSync(tmp, { recursive: true, force: true });
+              }
             }
           }
+        } catch (e) {
+          console.warn(
+            `[mirin release] skipping delta patch: ${e instanceof Error ? e.message : e}`,
+          );
         }
-      } catch (e) {
-        console.warn(`[mirin release] skipping delta patch: ${e instanceof Error ? e.message : e}`);
+
+        rmSync(newTar, { force: true });
+
+        const manifest = {
+          version: result.version,
+          channel: result.channel,
+          platform,
+          arch,
+          body: result.releaseNotes,
+          tarHash,
+          bundle: { url: bundleName, sha256: bundleSha, size: bundleSize },
+          patches,
+        };
+        const manifestName = `${prefix}-update.json`;
+        await Bun.write(join(outDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
+
+        const { installerName, installerSize } = await installerBuild;
+
+        const mb = (n: number) => (n / 1e6).toFixed(1);
+        console.log("\n[mirin release] done → build/release/");
+        console.log(`  ${manifestName}`);
+        console.log(`  ${bundleName} (${mb(bundleSize)} MB)`);
+        for (const p of patches)
+          console.log(`  ${p.url} (${mb(p.size)} MB delta from ${p.fromVersion})`);
+        if (installerName) console.log(`  ${installerName} (${mb(installerSize)} MB installer)`);
+        console.log(`\nUpload all of build/release/ to: ${result.baseUrl}`);
+        if (existsSync(join(outDir, "_new.tar"))) rmSync(join(outDir, "_new.tar"), { force: true });
+        return 0;
+      } finally {
+        // Installer/package work shares the staging directory. Even when updater
+        // generation fails first, settle it before atomic cleanup can remove paths
+        // still owned by a child process. Preserve the original failure if both fail.
+        try {
+          await installerBuild;
+        } catch {
+          // The successful path observes this rejection at its primary await above.
+        }
       }
-
-      rmSync(newTar, { force: true });
-
-      const manifest = {
-        version: result.version,
-        channel: result.channel,
-        platform,
-        arch,
-        body: result.releaseNotes,
-        tarHash,
-        bundle: { url: bundleName, sha256: bundleSha, size: bundleSize },
-        patches,
-      };
-      const manifestName = `${prefix}-update.json`;
-      await Bun.write(join(outDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
-
-      const { installerName, installerSize } = await installerBuild;
-
-      const mb = (n: number) => (n / 1e6).toFixed(1);
-      console.log("\n[mirin release] done → build/release/");
-      console.log(`  ${manifestName}`);
-      console.log(`  ${bundleName} (${mb(bundleSize)} MB)`);
-      for (const p of patches)
-        console.log(`  ${p.url} (${mb(p.size)} MB delta from ${p.fromVersion})`);
-      if (installerName) console.log(`  ${installerName} (${mb(installerSize)} MB installer)`);
-      console.log(`\nUpload all of build/release/ to: ${result.baseUrl}`);
-      if (existsSync(join(outDir, "_new.tar"))) rmSync(join(outDir, "_new.tar"), { force: true });
-      return 0;
     },
   );
 }

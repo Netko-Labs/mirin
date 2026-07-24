@@ -108,11 +108,34 @@ ${keys}
 `;
 }
 
-/** Convert strict SemVer to the numeric three-component format Apple requires. */
-export function macBundleVersion(version: string): string {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
-  if (!match) throw new Error(`[mirin] invalid app version for macOS bundle metadata: ${version}`);
-  return `${match[1]}.${match[2]}.${match[3]}`;
+interface MacBundleVersions {
+  shortVersion: string;
+  buildVersion: string;
+}
+
+/**
+ * Map the supported SemVer subset to Apple's marketing/build version formats.
+ * Apple bounds build components to 4/2/2 digits and supports d/a/b/fc suffixes
+ * with a 1...255 iteration for development releases.
+ */
+export function macBundleVersions(version: string): MacBundleVersions {
+  const match =
+    /^([1-9]\d{0,3})\.(0|[1-9]\d?)\.(0|[1-9]\d?)(?:-(dev|preview|alpha|beta|rc)(?:\.(0|[1-9]\d{0,2}))?)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+      version,
+    );
+  if (!match) {
+    throw new Error(`[mirin] macOS app version must fit Apple's bundle format: ${version}`);
+  }
+  const [, major, minor, patch, stage, rawIteration] = match;
+  const shortVersion = `${major}.${minor}.${patch}`;
+  if (!stage) return { shortVersion, buildVersion: shortVersion };
+
+  const iteration = rawIteration === undefined ? 1 : Number(rawIteration);
+  if (iteration < 1 || iteration > 255) {
+    throw new Error(`[mirin] macOS prerelease iteration must be between 1 and 255: ${version}`);
+  }
+  const suffix = stage === "alpha" ? "a" : stage === "beta" ? "b" : stage === "rc" ? "fc" : "d";
+  return { shortVersion, buildVersion: `${shortVersion}${suffix}${iteration}` };
 }
 
 /** The 10 standard iconset renditions (point size + @1x/@2x pixel size). */
@@ -217,7 +240,7 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
       const contents = join(staging, "Contents");
       const macos = join(contents, "MacOS");
       const frameworks = join(contents, "Frameworks");
-      const appleVersion = macBundleVersion(version);
+      const appleVersion = macBundleVersions(version);
 
       mkdirSync(macos, { recursive: true });
       mkdirSync(frameworks, { recursive: true });
@@ -238,8 +261,8 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
         CFBundleInfoDictionaryVersion: "6.0",
         CFBundleName: appName,
         CFBundlePackageType: "APPL",
-        CFBundleShortVersionString: appleVersion,
-        CFBundleVersion: appleVersion,
+        CFBundleShortVersionString: appleVersion.shortVersion,
+        CFBundleVersion: appleVersion.buildVersion,
         LSMinimumSystemVersion: "13.0",
         NSHighResolutionCapable: true,
         NSSupportsAutomaticGraphicsSwitching: true,
@@ -324,8 +347,8 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
             CFBundleInfoDictionaryVersion: "6.0",
             CFBundleName: name,
             CFBundlePackageType: "APPL",
-            CFBundleShortVersionString: appleVersion,
-            CFBundleVersion: appleVersion,
+            CFBundleShortVersionString: appleVersion.shortVersion,
+            CFBundleVersion: appleVersion.buildVersion,
             LSMinimumSystemVersion: "13.0",
             LSUIElement: "1",
             NSHighResolutionCapable: true,
