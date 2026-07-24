@@ -10,8 +10,14 @@ import type { SidecarOptions, SidecarProcess } from "../sidecar.ts";
 import { sidecar as spawnSidecar } from "../sidecar.ts";
 import type { Updater } from "../updater/index.ts";
 import { updater } from "../updater/index.ts";
+import { DockPolicy } from "./lib/dock-policy.ts";
 import { Emitter } from "./lib/emitter.ts";
 import { normalizeMaterial } from "./lib/material.ts";
+import {
+  runAutomaticWindowStartup,
+  unregisterWindow,
+  WindowCreationTracker,
+} from "./lib/window-lifecycle.ts";
 import type {
   AppEvents,
   BroadcastEmitters,
@@ -38,8 +44,9 @@ export class WindowHandle extends Emitter<WindowEvents> {
     runtime().core.windowSetTitle(this.id, title);
   }
 
+  /** Navigate this window. In dev, app URLs resolve through the Vite server. */
   async loadUrl(url: string): Promise<void> {
-    runtime().core.windowLoadUrl(this.id, url);
+    runtime().core.windowLoadUrl(this.id, resolveUrl(url));
   }
 
   async close(): Promise<void> {
@@ -141,6 +148,7 @@ function rpcEmitters(send: (method: string, payload: unknown) => void): RpcEmitt
 class Windows {
   #byName = new Map<string, WindowHandle>();
   #byId = new Map<number, WindowHandle>();
+  #creations = new WindowCreationTracker();
 
   get(name: string): WindowHandle {
     const win = this.#byName.get(name);
@@ -157,6 +165,7 @@ class Windows {
     return this.#byId.get(id);
   }
 
+  /** Create a window and resolve after native CEF browser creation completes. */
   async open(options: WindowOpenOptions | string): Promise<WindowHandle> {
     const opts = typeof options === "string" ? manifestWindow(options) : options;
     const id = runtime().core.windowCreate(
@@ -166,9 +175,16 @@ class Windows {
         material: normalizeMaterial(opts.material),
       }),
     );
+    if (id === 0) throw new Error("native window creation was not accepted");
     const handle = new WindowHandle(id, opts.name);
     this.#register(handle);
-    return handle;
+    try {
+      await this.#creations.waitFor(id);
+      return handle;
+    } catch (error) {
+      this.#unregister(handle);
+      throw error;
+    }
   }
 
   #register(handle: WindowHandle): void {
@@ -176,17 +192,29 @@ class Windows {
     if (handle.name) this.#byName.set(handle.name, handle);
   }
 
+  #unregister(handle: WindowHandle): void {
+    unregisterWindow(this.#byId, this.#byName, handle);
+  }
+
   /** @internal */
   _byId(id: number): WindowHandle | undefined {
     return this.#byId.get(id);
   }
   /** @internal */
-  _remove(id: number): void {
+  _created(id: number): void {
+    this.#creations.markCreated(id);
+  }
+  /** @internal */
+  _creationFailed(id: number, error: Error): void {
+    this.#creations.reject(id, error);
     const handle = this.#byId.get(id);
-    if (handle) {
-      this.#byId.delete(id);
-      if (handle.name) this.#byName.delete(handle.name);
-    }
+    if (handle) this.#unregister(handle);
+  }
+  /** @internal */
+  _remove(id: number): void {
+    this.#creations.reject(id, new Error(`window ${id} closed before creation completed`));
+    const handle = this.#byId.get(id);
+    if (handle) this.#unregister(handle);
   }
 }
 
@@ -198,6 +226,7 @@ function manifestWindow(name: string): WindowOpenOptions {
 
 class MirinApp extends Emitter<AppEvents> {
   readonly windows = new Windows();
+  #dockPolicy = new DockPolicy();
 
   /** Cross-platform auto-updater. Inert unless the app was built with `release` set. */
   readonly updater: Updater = updater;
@@ -227,18 +256,16 @@ class MirinApp extends Emitter<AppEvents> {
     show: () => this.#setDock(true),
   };
 
-  /** Apply the Dock policy now if the core is up, else once it's ready. The
-   *  native command needs the CEF UI thread, which only runs after `ready`. */
+  /** Apply Dock policy now if the core is up, else at native core readiness. */
   #setDock(visible: boolean): void {
-    const apply = () => runtime().core.appSetDockVisible(visible);
-    if (runtime().core.isReady()) {
-      apply();
-    } else {
-      const off = this.on("ready", () => {
-        off();
-        apply();
-      });
-    }
+    const core = runtime().core;
+    this.#dockPolicy.set(visible, core.isReady(), (next) => core.appSetDockVisible(next));
+  }
+
+  /** @internal — flushes pre-ready policy before automatic windows are opened. */
+  _coreReady(): void {
+    const core = runtime().core;
+    this.#dockPolicy.flush((visible) => core.appSetDockVisible(visible));
   }
 
   /** Type-level `any` preserves the caller's concrete router shape. */
@@ -275,17 +302,40 @@ export const app = new MirinApp();
 
 const WINDOW_EVENTS = ["focus", "blur", "moved", "resized"] as const;
 
+function nativeWindowId(event: NativeEvent): number | undefined {
+  return typeof event.id === "number" && Number.isInteger(event.id) && event.id > 0
+    ? event.id
+    : undefined;
+}
+
 export function wireAppEvents(): void {
   onNativeEvent("core.ready", () => {
-    for (const cfg of runtime().manifestWindows) {
-      if (cfg.open === "manual") continue;
-      void app.windows.open(cfg as WindowOpenOptions);
-    }
-    app._emit("ready", undefined);
+    app._coreReady();
+    runAutomaticWindowStartup(
+      runtime().manifestWindows,
+      (cfg) => app.windows.open(cfg as WindowOpenOptions),
+      () => app._emit("ready", undefined),
+      () => app.quit(),
+    );
+  });
+
+  onNativeEvent("window.created", (event: NativeEvent) => {
+    const id = nativeWindowId(event);
+    if (id != null) app.windows._created(id);
+  });
+
+  onNativeEvent("window.create-failed", (event: NativeEvent) => {
+    const id = nativeWindowId(event);
+    if (id == null) return;
+    const message =
+      typeof event.error === "string"
+        ? event.error
+        : `native window creation failed for window ${id}`;
+    app.windows._creationFailed(id, new Error(message));
   });
 
   onNativeEvent("window.closed", (event: NativeEvent) => {
-    const id = event.id as number | undefined;
+    const id = nativeWindowId(event);
     if (id == null) return;
     app.windows._byId(id)?._emit("closed", undefined);
     app.windows._remove(id);
@@ -299,7 +349,7 @@ export function wireAppEvents(): void {
   });
 
   onNativeEvent("window.material", (event: NativeEvent) => {
-    const id = event.id as number | undefined;
+    const id = nativeWindowId(event);
     if (id == null) return;
     app.windows._byId(id)?._emit("material", {
       requested: String(event.requested ?? ""),
@@ -310,7 +360,7 @@ export function wireAppEvents(): void {
 
   for (const kind of WINDOW_EVENTS) {
     onNativeEvent(`window.${kind}`, (event: NativeEvent) => {
-      const id = event.id as number | undefined;
+      const id = nativeWindowId(event);
       if (id == null) return;
       const handle = app.windows._byId(id);
       if (!handle) return;

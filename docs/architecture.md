@@ -35,9 +35,25 @@ MyApp.app/
 The host is produced with `bun build --compile` from a small bootstrap script. Its job, in order:
 
 1. Resolve paths (app bundle root, resources, `libmirin_core.dylib`).
-2. `dlopen` `libmirin_core` via `bun:ffi`.
-3. Spawn the user's main-process code as a **Bun Worker** (`new Worker(appEntry)`).
-4. Call `mirin_run(...)` on the **main thread**. This call never returns: Rust takes ownership of the thread, initializes CEF + AppKit (`NSApplication`), and runs the CEF message loop until quit.
+2. Resolve configuration and the bounded `version.json` identity, then reconcile
+   any interrupted updater transaction before requiring the replaceable native
+   core, Worker, or manifest to load.
+3. `dlopen` `libmirin_core` via `bun:ffi` and acquire the process-lifetime app
+   lock before user code starts.
+   Single-instance processes take it exclusively; multi-instance processes take
+   it shared, so the two modes cannot overlap. Windows also keeps a bundle-ID
+   scoped named mutex and window class for compatibility and existing-window
+   activation. Every identifier uses a domain-separated deterministic bounded
+   prefix/hash identity so Win32 limits and literal compact-output collisions
+   cannot prevent or conflate window creation, while
+   macOS/Linux use nonblocking OS file locks. An incompatible launch exits
+   without spawning a Worker.
+4. Spawn the user's main-process code as a **Bun Worker** (`new Worker(appEntry)`),
+   passing a versioned positive capability only when the singleton was actually
+   acquired. Build/dev reject a project `mirinjs` version that differs from the
+   CLI-owned host runtime; either side of an unexpected skew otherwise fails
+   closed for updater apply.
+5. Call `mirin_run(...)` on the **main thread**. This call never returns: Rust takes ownership of the thread, initializes CEF + AppKit (`NSApplication`), and runs the CEF message loop until quit.
 
 This is the electrobun-proven model. The main thread belongs to AppKit/CEF for the process's lifetime; all user code lives on the Worker thread, where Bun's event loop runs unimpeded.
 
@@ -60,22 +76,32 @@ Each CEF subprocess type is the same small Rust binary (`mirin-helper`) wrapped 
 **Commands (Bun → Rust).** Synchronous C calls that enqueue work and return immediately. Handle-returning calls (e.g. `mirin_window_create`) allocate the ID synchronously in Rust and return it; the actual AppKit/CEF work happens asynchronously on the main thread.
 
 ```
+mirin_acquire_instance_lock(config_json) -> 0|1|2     // unavailable/shared/exclusive
 mirin_run(config_json, callbacks) -> never returns   // host bootstrap only
 mirin_window_create(opts_json) -> u32                 // returns window id
 mirin_window_set_title(id, title_ptr)
 mirin_window_load_url(id, url_ptr)
 mirin_window_close(id)
 mirin_app_quit()
+mirin_app_quit_for_update()                            // forced terminal handoff
 ```
 
 Options cross the boundary as JSON for the MVP. It's measurably slower than a binary layout and we don't care yet; these are low-frequency control calls. Revisit only with profiles in hand.
 
-**Events (Rust → Bun).** Rust delivers events (window closed, webview ready, RPC payloads from webviews) through a `JSCallback` (threadsafe) registered at startup, carrying a JSON-encoded event. The TS runtime dispatches to typed emitters. If `JSCallback` throughput or threading proves flaky, fallback design: a `socketpair` between core and Worker with a length-prefixed JSON frame protocol — same envelope, different pipe.
+**Events (Rust → Bun).** Rust appends JSON events such as `core.ready`,
+`window.created`, `window.create-failed`, and `window.closed` to a process-global
+queue. Creation results carry the allocated Mirin window id, so the Worker can
+resolve or reject exactly the matching handle. The Worker drains
+that queue through `mirin_poll_event` every 8 ms and dispatches by the event's
+`type`. Polling is required because the host main thread is blocked inside
+`mirin_run`; a bun:ffi callback invoked from that thread does not enter the
+Worker's event loop. RPC payloads remain on the WebSocket data plane instead of
+this low-frequency lifecycle queue.
 
-**Envelope** (both directions where applicable):
+**Event shape:**
 
 ```json
-{ "v": 1, "kind": "event" | "cmd", "type": "window.closed", "target": 3, "payload": { } }
+{ "type": "window.closed", "id": 3 }
 ```
 
 ## 4. Webview ↔ Bun IPC
@@ -87,13 +113,21 @@ Two planes:
 **Data plane (developer RPC).** The typed RPC system (`docs/api-design.md` §3) runs over a **localhost WebSocket** hosted by the Bun Worker:
 
 1. At startup the Worker opens a `Bun.serve` WebSocket server on an ephemeral port and generates a random per-session token.
-2. Rust passes `port`+`token`+`webviewId` into each webview's preload environment.
-3. The preload bootstrap (injected by `mirin-helper`'s render-process handler at V8-context creation, before any page script runs) connects and authenticates, then exposes `window.mirin` to page code.
-4. RPC frames are JSON over that socket.
+2. Rust passes `port` + `token` + `webviewId` and the browser's resolved initial URL through CEF `extra_info`.
+3. `mirin-helper` parses the initial URL into a normalized `app:`, `http:`, or `https:` origin. At V8-context creation it injects the bootstrap only into the main frame and only when the current document still matches that origin. Subframes, opaque or malformed URLs, and cross-origin navigations receive no `window.mirin` capability.
+4. The bootstrap connects and authenticates, then RPC frames are JSON over that socket.
 
 Rationale: this avoids routing the data plane through CEF process messages → browser process → FFI → Worker (three hops, two serializations), and electrobun ships the same shape in production. The token gates the localhost port; payload encryption (AES-256-GCM as electrobun does) is **deferred post-MVP** — note that any local process can sniff loopback in theory, so this is a known, accepted MVP gap.
 
-Preload injection is renderer-side: `mirin-helper` implements CEF's render-process handler and evaluates the (build-time-bundled) preload bootstrap in `on_context_created`. The bootstrap is part of mirin, not user-supplied, for the MVP; user preloads come later.
+Preload injection is renderer-side: `mirin-helper` implements CEF's render-process handler and evaluates the build-time-bundled bootstrap in `on_context_created` only after the top-level trusted-origin check. The initial origin remains the capability boundary for the browser's lifetime: same-origin loads may receive the bridge again, while a cross-origin redirect or navigation does not. CEF may create a cross-origin replacement browser with the same numeric identifier before destroying the old browser, so endpoint state retains FIFO generations per identifier, uses the newest generation for contexts, and retires only the oldest generation on each destroy callback. The bootstrap is part of mirin, not user-supplied, for the MVP; user preloads come later.
+
+A socket disconnect rejects and clears every outstanding renderer RPC promise.
+Requests already sent are never replayed after reconnect because they may have
+executed in the Worker; calls made after the disconnect may use the new
+connection. Serialization failure removes the request before rejecting it, and
+frames delivered by a replaced socket are ignored. This gives failures
+at-most-once transport behavior instead of leaving promises pending forever or
+allowing stale connections to settle current calls.
 
 ## 5. CEF integration
 
@@ -102,14 +136,148 @@ Preload injection is renderer-side: `mirin-helper` implements CEF's render-proce
 - **Linking.** The framework is loaded at runtime (`cef_load_library` path on macOS), keeping `libmirin_core` itself free of hard CEF linkage.
 - **Bundle requirement.** CEF on macOS effectively requires the `.app` + helpers structure even during development. `mirin dev` therefore materializes a **dev bundle**: a throwaway `.app` skeleton (ad-hoc signed) whose Resources point at the working tree, so the edit-reload loop doesn't pay a full repackage.
 - **Production locales.** `cef.locales` optionally keeps only selected locale packs in production bundles. Windows/Linux copy matching `locales/*.pak`; macOS retains the matching `.lproj` directory and its grammatical-gender variants before codesigning. Omission preserves the complete CEF runtime.
-- **Release scheduling.** The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. A standalone `mirin-codec` binary performs release-time zstd and bsdiff work without loading CEF or depending on Bun FFI; the runtime core links the same Rust codec library.
+- **Release scheduling.** Platform bundles and the release directory are assembled in unique sibling staging directories and replace the prior successful output only after required output succeeds. The signed app is immutable input for both updater and installer artifacts. Mirin starts DMG/Inno/Linux package creation before producing the updater tar, allowing external packaging tools and notarization to overlap zstd compression and delta generation. The installer promise is converted immediately to an always-settled result, so an early tool failure cannot terminate Bun before the release path waits for child ownership to end and cleans staging. DMG and Linux packages are best-effort and may be omitted from an otherwise valid atomic updater release; Windows installer failures remain fatal. Concurrent Linux format jobs are all settled before their shared package tree is cleaned; a failed set removes every expected output, including artifacts from rejected jobs. Failure to clean package output or shared staging aborts the release instead of committing a partial best-effort set. AppImage/deb/rpm payload copies omit standalone updater metadata because those installs update through their package channel. After a successful atomic swap, old-output cleanup is non-fatal because the new canonical output is already committed; later runs prune only aged real-directory backups with Mirin's exact PID/UUID name and a dead owner, without following links or matching prefix-sharing user directories. The standalone `mirin-codec` binary performs release-time zstd/bsdiff work and the updater's native atomic directory exchange without loading CEF or depending on Bun FFI; it is bundled with apps and the runtime core links the same Rust codec library.
+- **Updater transactions.** Packaged apps structurally parse their six-field `version.json` identity through a fixed-size read, including an Ed25519 manifest trust anchor and a safe dotted channel used consistently in artifact prefixes and support-directory paths. Every manifest has a detached signature over its exact bytes, is bounded before verification and JSON parsing, and is fetched through manual redirects that enforce HTTPS-or-loopback and a deadline on every hop/body. Only strictly newer SemVer precedence is accepted (build metadata does not make a release newer), and build tooling validates the same grammar before packaging. Manifest checks are single-flight. Each accepted manifest receives a process-wide unique generation tied to its version and tar hash, so separate public `Updater` instances cannot share a work directory; downloads use process/session-owned generation directories, checks are deferred while a download is active or an update is staged, and concurrent/repeated download/apply calls are rejected. On Windows, over-budget identifier/channel support hierarchies and generation identities use reserved deterministic 128-bit compact forms while ordinary paths remain stable. A committed check may start its download directly from the `update-available` listener. Failure releases the transaction latch before nonthrowing best-effort cleanup, completed helpers remove their generation work directory, and startup prunes abandoned strict `generation-*` directories without following symlinks or deleting generations owned by live app processes or recorded apply-helper identities. Startup also prunes exact dead-owner install siblings left by interrupted copies, while any live owner or recorded apply helper preserves them. Automatic apply requires a protocol-compatible Worker and the host's actually acquired exclusive app-lock capability, not configuration intent; apps that opt into multiple instances hold shared locks, may coexist with each other, and may check and stage an update but cannot overlap an exclusive updater-capable process or replace the shared install. The host resolves developer configuration and internal native overrides once, acquires the platform lock before spawning user code, and passes the versioned result to the Worker. Multi-instance processes receive PID-specific CEF cache directories on every platform. Before terminal handoff, Mirin copies and revalidates the validated tree beside the installed app, requires the staged recovery codec, recursively flushes regular-file contents and directory metadata, copies the bundled native swap tool into helper-owned work, validates the real app/stage operands, and probes an atomic exchange on that exact filesystem or volume. Unsupported mounts, reparse points, and filesystems fail while the old app is still active; managed AppImage/deb/rpm payloads omit updater metadata entirely. The detached helper validates its static prerequisites and durably publishes an exact-process armed acknowledgement before the updater enters terminal state. Only then does the runtime block further work and invoke the same monotonic forced quit used by the app lifecycle, rejecting pending and late window creation; synchronous `complete` listeners run only after native shutdown has been requested. If graceful shutdown exceeds its bound, the accepted helper forces and confirms exact parent termination before proceeding; inability to confirm preserves the reservation and recovery trees. A reservation beside the native app lock blocks ordinary launches after the old process exits; only the helper's token-bearing target may cross it, and that target must acquire the exclusive lock. Owner, helper, and replacement receipts combine the PID with its OS creation identity (Linux boot/start time with pidfds, macOS start time with kqueue, and Windows creation time with process handles), so PID reuse cannot authorize, terminate, or retain another process. Before every namespace mutation, the helper durably journals its phase outside the replaceable app and uses parent-directory fsync or Windows write-through transitions. It exchanges the canonical and staged directories atomically (`renameat2(RENAME_EXCHANGE)` on Linux, `renamex_np(RENAME_SWAP)` on macOS, and one TxF namespace transaction on Windows), so interruption leaves the canonical launch path pointing to either the complete old or complete new tree, never absent. The old tree is then retained until the exact launched process reports Worker/native readiness through a durable receipt. If the helper dies or the machine restarts, host bootstrap claims the inactive journal before loading the core/Worker: a pre-commit target is exchanged back by a copied external recovery helper after the current process exits, while a committed target finishes durable backup cleanup. Recovery is idempotent across repeated interruption. Every other recoverable post-exit failure atomically exchanges the old tree back and relaunches it; readiness failure uses bounded exact-process termination, while an unkillable replacement or failed rollback preserves ownership and both trees instead of deleting recovery state. Windows filesystem cmdlets use literal-path semantics. Manifest bodies, signatures, compressed artifacts, raw patches, reconstructed tars, entry counts, paths, and link targets have absolute limits; streaming reconstructed tar/decompression output is capped at 8 GiB while compressed artifacts, subprocess output, and archive structure remain independently bounded. In-memory patch inputs have a 512 MiB combined ceiling; release-time bsdiff source tars have a 128 MiB per-source ceiling because its suffix index amplifies memory. Larger deltas are skipped in favor of the full bundle. New manifests declare exact compressed sizes, `tarSize`, and patch `uncompressedSize`; bounded additive codec/FFI calls enforce decompression, patch-input, patch-output, and malformed-header ceilings while legacy codec calls remain available for trusted local use. Before apply, Mirin rejects traversal, sparse/special nodes, escaping symlinks/hardlinks, a linked/non-directory root, a missing/non-regular platform executable or recovery codec, and staged `version.json` identity drift. macOS requires executable mode and a stable installed designated code requirement; authenticated ad-hoc local builds fall back to codesign validity because their cdhash is build-specific. Linux extracts with permission preservation and ensures owner execute only after validating the regular host and codec executables. Windows records the directly launched PowerShell identity before handoff. Release tar creation disables macOS AppleDouble sidecars so the archive has one expected root.
+
+Build/release output commit uses the same standalone codec primitives as updater
+replacement: recursively flush the completed sibling tree, validate the real
+operands, and atomically exchange it with an existing canonical output. A first
+output uses a durable sibling move. The old tree remains under its exact owned
+stage name until non-fatal cleanup; later runs prune only aged dead-owner
+stage/backup directories. For compatibility with the former two-move scheme, a
+missing canonical output restores the newest exact dead-owner backup first.
+If the codec reports that an output exchange is visible but its parent sync
+failed, the CLI retries `sync-parent` before cleanup. Continued sync failure
+returns an explicit durability error while retaining the new canonical output
+and the previous output under its owned stage name.
+
+Recovery claim acquisition precedes native-core loading and is a single-winner
+namespace operation. The contender atomically moves the journal to a claim whose
+name binds its exact process identity, revalidates the old owner after that move,
+and publishes its own complete owner marker through an atomic no-clobber link
+before spawning recovery. A live claim blocks other bootstraps; only a dead
+claimant's journal can be atomically restored. An invalid canonical marker beside
+any claim is restored from that claim or blocks fail-safe rather than permitting
+startup. Claim files are retained until recovery ownership transfers to the
+helper and are removed durably before the journal, so simultaneous launches
+cannot arm two rollback helpers and interrupted claiming can reconstruct the
+journal. A source-version canonical tree is safe to clean even when a crash
+happened between initial marker and phase-file creation.
+
+Install-side sibling components start with a fixed 16-hex hash of the installed
+app basename rather than embedding the potentially 120-character basename. The
+complete ownership name therefore stays below common 255-byte component limits,
+while cleanup and recovery continue to recognize the former full-name prefix.
+
+Helper acceptance is a two-way barrier. The helper first durably
+self-publishes its PID and OS creation identity. The parent validates that
+receipt, records the helper in the launch reservation, then publishes an
+identity-bound activation file;
+the helper verifies that activation before writing its armed acknowledgement or
+allowing parent death to authorize a swap. A crash before activation cannot swap
+the install, while a crash after activation leaves the live helper represented in
+the reservation. Arming and replacement readiness use atomic exact-identity
+receipts, so readers never accept a partial or PID-reused receipt. A matching
+armed receipt is irreversible acceptance as soon as it is visible: the helper
+marks ownership before publication, and a post-publication parent-sync error
+causes exact receipt reconciliation plus a sync retry rather than cleanup.
+Recovery-helper arming follows the same rule. Before launching the
+target, the helper durably publishes a boot-identity-bound ambiguity guard,
+narrows it to a pending PID after spawn, and then replaces it with the exact
+creation identity; the target republishes that identity before readiness.
+Startup treats a valid live replacement receipt as active, and a recovery helper
+confirms exit or performs handle-bound exact termination before exchanging its
+files away. If identity lookup fails, the owning helper waits on its process
+handle or child until exit before rollback. If that helper crashes at any launch
+boundary, startup blocks recovery on a same-boot guard rather than exchanging
+files beneath a potentially live unidentified process. A guard from an earlier
+boot cannot represent a surviving process and is therefore reconciled through
+the normal single-winner recovery path; failure to query current boot identity
+remains fail-safe. Because activation or arming can become visible before
+its final parent-directory sync reports failure, every such publication attempt
+is treated as potentially accepted. If activation or arming fails, the
+parent performs bounded exact-process termination and abandons the reservation
+only after confirmed helper death; otherwise the helper keeps terminal ownership
+and all recovery files. Apply ownership and terminal state are process-wide: all
+public `Updater` instances stop auto-check timers and reject new work once any
+instance hands off, while in-flight work rechecks terminal state at asynchronous
+boundaries.
+After commit or rollback, the helper durably removes the ownership marker before
+the phase and replacement/readiness receipts. Therefore a crash or selective
+cleanup failure either leaves a complete recoverable journal or leaves no marker
+that can block the already-settled canonical app.
+
+The codec reports status 2 only when an atomic directory exchange became visible
+but its parent-directory sync failed. Apply, rollback, and recovery mark that
+exchange as completed and retry `sync-parent`; if durability remains uncertain,
+they preserve ownership and both trees instead of deleting either side. Windows
+recovery also changes to the temporary directory before waiting or exchanging,
+so its inherited current-directory handle cannot pin the installed tree.
+Windows updater-state components longer than 40 characters use a deterministic
+128-bit SHA-256 prefix form. This bounds the app-controlled part of recovery
+claim paths below legacy `MAX_PATH` constraints while preserving existing
+support paths for ordinary identifiers.
+
+Linux opens its pidfd before validating the boot/start token and rejects zombie
+or dead `/proc` states as exited even while an unreaped PID entry remains. Windows
+validates creation time through the same process handle used for waiting or
+termination. Windows token queries also require that handle to remain
+unsignaled, because an exited process object can stay queryable while another
+handle retains it. macOS kqueue waiting is creation-bound, but macOS does not
+expose an unprivileged handle-bound signal operation. Mirin therefore refuses
+unsafe numeric-PID forced termination there; timeout preserves the durable
+transaction and both trees for recovery instead of risking a recycled PID.
+
+Mirin's first internal `ready` listener writes any replacement-readiness receipt
+synchronously before user `ready` listeners run. It defers only startup cleanup,
+which uses asynchronous filesystem operations and keeps recursive deletion off the
+helper's 30-second readiness path and the app event loop. The former
+`.<app-name>.mirin-new-<pid>-<uuid>` form is recognized as a legacy owned
+sibling; new siblings use
+`.mirin-new-<app-name-hash16>-<pid>-<session>-<creation-token-hash>-<createdAt>-<uuid>`.
+Current-process ownership must match its session, while non-current owners must
+match the recorded OS creation identity within the bounded cleanup lease.
+Generation owners use the same exact identity plus bounded modification-time
+lease, so a recycled long-lived PID cannot retain abandoned work.
+
+Install-filesystem updater staging preserves relative symlink text before
+revalidation, so macOS framework links remain scoped to the copied app instead
+of being rebound to the download generation.
+
+### Window lifecycle guarantees
+
+The shared `MirinHandler` owns the browser list and browser-id → window-id map.
+Per-window close and navigation snapshot the matching `Browser` while holding the
+handler mutex, release the mutex, and only then call CEF. `close_browser` and
+`Frame::load_url` may re-enter lifecycle handlers, so they must never run under
+that lock. Native close gestures route through the same targeted browser close;
+only explicit app quit closes every browser.
+
+`app.windows.open()` resolves when the matching native `window.created` event is
+observed, not when the create command is merely queued. Pending creations are
+reserved by Mirin window id; popup and DevTools callbacks cannot consume those
+reservations. Synchronous platform/CEF creation failure tears down partial native
+and OSR state, releases that exact id, and emits `window.create-failed`, which
+rejects and unregisters the matching TypeScript handle. A creation task that
+reaches the UI thread before CEF has installed `MirinHandler` follows the same
+correlated failure path instead of silently releasing its reservation.
+
+Automatic manifest windows are all awaited before `app.ready` fires. A failure
+prevents `ready` and requests orderly application quit. Pre-ready macOS Dock
+policy is flushed at `core.ready`, before automatic windows are opened. Explicit
+quit is monotonic: it records the process-wide request and force-closes every
+current or late-created browser, even when another browser is already closing,
+so `beforeunload` cancellation cannot leave the app permanently half-quit.
+Queued creation tasks are canceled with correlated failures. The loop ends only
+when both live browsers and pending creation ids are zero; a reservation rollback
+that reaches zero schedules a UI-thread idle-finish check.
 
 ## 6. Repository layout
 
 ```
 mirin/
 ├─ crates/
-│  ├─ mirin-codec/       # shared updater codec library + release helper binary
+│  ├─ mirin-codec/       # shared updater codec + atomic-swap/release helper
 │  ├─ mirin-core/        # cdylib: C ABI, windowing, CEF browser process, event routing
 │  └─ mirin-helper/      # CEF subprocess binary (incl. render-process preload injection)
 ├─ packages/
@@ -145,8 +313,11 @@ CLIs need none). Spawn at runtime with `app.sidecar(name, { args, … })` — a 
 the child so it's killed on quit. Use `resolveSidecar(name)` when the application needs
 the staged path without launching it, such as installing a user-facing command. Sidecars are separate OS processes and, like the
 Worker, must not touch AppKit/CEF. Sidecar names are validated as single safe filename
-segments (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-`), and source paths must be project-relative
-without escaping the project root.
+segments (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-`). The CLI canonicalizes the project root
+and each source before any build/dev output is touched, rejects lexical or symlink
+escapes plus missing/directory/special sources, and copies production sidecars as new
+regular files before changing destination permissions. This prevents a bundled symlink
+or `chmod` from mutating the project source.
 
 **Extra workers** — `workers: { name: "src/foo.worker.ts" }`. Each entry is bundled by
 the CLI to `Contents/Resources/workers/<name>.js` (alongside the main `worker.js`).
@@ -155,7 +326,7 @@ Resolve one with `resolveWorker(name)` and hand it to `new Worker(...)`
 run off the main thread and **cannot** issue window/native FFI — anything native is
 requested from the app worker. They may `dlopen` the core for pure functions (as the
 updater's codec does), but not UI commands. Worker names and entry paths follow the same
-single-segment / project-root validation as sidecars.
+single-segment, canonical containment, and regular-file validation as sidecars.
 
 Dev (`mirin dev`) stages both under `.mirin/{sidecars,workers}` and points the host at
 them via `MIRIN_SIDECAR_DIR` / `MIRIN_WORKERS_DIR`; prod resolves them in-bundle
@@ -165,8 +336,8 @@ relative to `Contents/Resources`. The host threads both dirs to the Worker throu
 **Deep links** — `urlSchemes: ["anko"]` registers the app as the macOS handler for
 `anko://…` URLs (written to `Info.plist` `CFBundleURLTypes` by
 `bundle/macos/app.ts`). macOS
-launches the app (or routes to the running instance — the per-app CEF cache dir makes
-mirin apps single-instance) and delivers the URL to the AppKit delegate's
+launches the app (or routes to the running instance — the native per-app lock is
+acquired before user code starts) and delivers the URL to the AppKit delegate's
 `application:openURLs:` (`mac/app.rs`), which emits an `app.open-url` native event the
 Worker surfaces as `app.on("open-url", (url) => …)` — including the URL the app was
 launched with.
@@ -183,11 +354,12 @@ native layer (`mac/` vs `win/` vs `linux/`) and the bundle layout differ. `win/`
 mirin-owned top-level Win32 window (`WindowInfo::set_as_child`) — not the macOS
 embedded-NSView/OSR model. Consequences:
 
-- **Close lifecycle.** `CloseBrowser(false)` → `do_close` (which marks the window
-  closing) → CEF sends `WM_CLOSE` to the top-level owner → the WndProc lets the
-  *next* `WM_CLOSE` `DestroyWindow`, which tears down the CEF child and fires
-  `on_before_close`. This is-closing handshake is the Windows analogue of macOS's
-  view-detach dance (`win/window/mod.rs`).
+- **Close lifecycle.** `CloseBrowser(false)` → `do_close` (which marks that exact
+  window closing) → CEF sends `WM_CLOSE` to the top-level owner → the WndProc lets
+  the *next* `WM_CLOSE` `DestroyWindow`, which tears down the CEF child and fires
+  `on_before_close`. This per-window acknowledgement is the Windows analogue of
+  macOS's view-detach dance (`win/window/mod.rs`). Explicit app quit upgrades all
+  current and later closes to `CloseBrowser(true)`.
 - **Custom title bar** (`titleBarStyle: hidden | hiddenInset`): frameless via
   `WM_NCCALCSIZE` (client == window; maximized inset), DWM shadow restored with
   `DwmExtendFrameIntoClientArea`. The webview child consumes mouse input, so
@@ -217,16 +389,53 @@ embedded-NSView/OSR model. Consequences:
 **Bundle + distribution.** No `.app`/codesign — a flat app folder: `<App>.exe` (bun
 host) + `mirin_core.dll` + `mirin-helper.exe` + the CEF runtime (libcef.dll, `*.pak`,
 `icudtl.dat`, `locales/`) all beside the exe (so the OS loader resolves libcef), and
-`resources/{ui, worker.js, mirin.manifest.json, version.json}`. `mirin dev`/`build`/
-`release` branch on `process.platform` (`bundle/windows/index.ts`). `mirin release` emits an
-**NSIS installer** (`…-setup.exe` — Program Files / per-user install, Start Menu +
-Desktop shortcuts, uninstaller, Add/Remove Programs; customizable via the `nsis`
-config, `installer-win.ts`; needs `makensis`, falls back to a portable `.zip`) +
+`resources/{ui, worker.js, mirin.manifest.json, version.json}`. The six-field
+`version.json`, including its Ed25519 manifest trust anchor, is serialized and
+parsed back by CLI-private validation, and every
+platform bundle revalidates app name/id/channel/version plus icon and extra-asset
+sinks before assembling a unique sibling stage. The stage replaces the prior
+output only after the complete bundle succeeds. `mirin dev`/`build`/`release` branch on `process.platform`
+(`bundle/windows/index.ts`). `mirin release` emits an **NSIS installer**
+(`…-setup.exe` — Program Files / per-user install, Start Menu + Desktop shortcuts,
+uninstaller, Add/Remove Programs; customizable via the `nsis` config,
+`installer-win.ts`; needs `makensis`, falls back to a portable `.zip`). Its owned app
+payload lives under `$INSTDIR\\app`; upgrades remove that directory only when a
+bundle-specific root marker proves ownership. A first install refuses a pre-existing
+unowned `app` collision.
+A five-marker fingerprint gates cleanup of the former flat NSIS/Inno payload, which deletes
+only enumerated root files and owned `resources`/`locales`. `Uninstall.exe` remains at
+`$INSTDIR`; uninstall repeats the guarded legacy cleanup, recursively removes only `app`,
+deletes known shortcuts/registry/uninstaller entries, then attempts a non-recursive root
+removal so unrelated user files survive. Inno uses the same ownership marker and
+`app` payload boundary, recursively cleans updater-added payload files on uninstall,
+applies the same marker-gated enumerated cleanup to legacy flat payloads, and stores
+`unins000.*` under a bundle-specific owned directory. Switching installer toolchains
+removes only the prior tool's exact owned uninstaller and
+bundle-keyed registry entry only after the flat fingerprint or shared ownership
+marker matches. Inno accepts absolute Windows install paths or
+`{autopf}`/`{localappdata}` prefixes, and escapes literal script paths. It also emits
 a `.tar.zst` updater bundle + `{channel}-win32-{arch}-update.json`; the updater
-swaps the folder via a detached PowerShell relauncher. Runtime updates require
-HTTPS artifact hosts except loopback HTTP for local testing, validate that the
-manifest matches channel/platform/arch, verify SHA-256 hashes, and reject update
-tars whose entries escape the expected app root before extraction. Consumers
+atomically exchanges the folder via a detached PowerShell relauncher and the
+bundled native codec. WMI directly launches
+PowerShell and records its actual PID. The helper preflights its literal app,
+backup, same-volume stage paths, and a successful TxF probe and atomically writes
+an armed acknowledgement, so the
+running app quits only after the complete helper is accepted. That acceptance is the terminal handoff point: updater
+operations and auto-check scheduling remain blocked through process exit. A
+matching receipt remains accepted if publication became visible before its
+parent sync failed; PowerShell reconciles the exact identity, retries the sync,
+and preserves ownership instead of deleting the handoff. Successful
+helpers remove their generation and temporary launcher files; launch failures clean
+temporary files best-effort, and the next startup prunes abandoned generations while
+preserving work owned by live app processes.
+Runtime updates require HTTPS artifact hosts except loopback HTTP for local testing,
+enforce the bounded generation transaction above, verify SHA-256 hashes, and validate
+the extracted root, executable, and embedded identity before apply. The post-exit
+folder exchange keeps its backup until the exact token-bearing replacement PID acquires
+the exclusive lock and atomically writes a durable readiness receipt; interruption
+cannot leave the canonical folder absent. Recoverable post-exit failures atomically
+roll back and reopen the prior install, while unconfirmed termination or rollback
+preserves ownership and both trees. Consumers
 install the prebuilt `@mirinjs/win32-{arch}` native package + a CEF release download
 (no Rust).
 Build prereqs: cmake + ninja (for `cef-dll-sys`'s C++ wrapper) + MSVC.
@@ -283,11 +492,19 @@ port **owns no native toolkit window**:
   host-side and ignored on macOS/Windows (which take icon + identity from the OS
   bundle).
 - **Bundle + distribution.** No `.app`/codesign — a flat app folder like Windows:
-  `<App>` (bun host) + `libmirin_core.so` + `mirin-helper` + the CEF runtime (libcef.so,
+  `<App>` (bun host) + `libmirin_core.so` + `mirin-codec` + `mirin-helper` + the CEF runtime (libcef.so,
   `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`), all beside the host
   with an `$ORIGIN` rpath so `libcef.so` resolves without `LD_LIBRARY_PATH`, plus
   `resources/{ui, worker.js, mirin.manifest.json, version.json, icon.png}`. `mirin dev`/
-  `build`/`release` branch on `process.platform` (`bundle/linux/index.ts`). Packaging
-  (AppImage / `.deb` / `.rpm`) is landing this release — see `docs/linux-port.md` §L5.
+  `build`/`release` branch on `process.platform` (`bundle/linux/index.ts`). Updater tar
+  extraction uses `tar -xpf`; structural validation rejects linked/special executables
+  before ensuring owner execute on the regular host file. The bundled codec probes
+  and performs `renameat2(RENAME_EXCHANGE)` so the canonical folder remains present.
+  Detached relaunch enters the
+  terminal handoff, reserves the app lock for the staged version, and removes the
+  successful generation only after a readiness receipt, while startup prunes abandoned
+  generations without touching live-process work. Managed AppImage / `.deb` / `.rpm`
+  payloads omit updater metadata and use their package channel instead. See
+  `docs/linux-port.md` §L5.
 
 Full status and rationale: `docs/linux-port.md`.

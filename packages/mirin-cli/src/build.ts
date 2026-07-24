@@ -13,17 +13,34 @@
  * ID to produce a distributable, notarizable app.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
-import { resolveArtifacts } from "./artifacts.ts";
+import { assertRuntimePackageCompatibility, resolveArtifacts } from "./artifacts.ts";
 import { buildLinuxBundle } from "./bundle/linux/index.ts";
 import { buildAppBundle } from "./bundle/macos/index.ts";
 import { normalizeCefLocales } from "./bundle/shared/cef-locales.ts";
 import { buildWindowsBundle } from "./bundle/windows/index.ts";
-import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { compileWorkers, normalizeSidecars, normalizeWorkers } from "./extras.ts";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
 import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
+import {
+  assertProjectIcon,
+  canonicalProjectRoot,
+  resolveProjectFile,
+  resolveProjectIcon,
+  validateOwnedOutputDirectory,
+} from "./shared/fs/project-source.ts";
+import {
+  resolveAppVersion,
+  validateAppIdentity,
+  validateReleaseNotes,
+} from "./shared/validation/config.ts";
+import { validateUpdatePublicKey } from "./shared/validation/update-key.ts";
+import {
+  serializeVersionMetadata,
+  validateReleaseBaseUrl,
+} from "./shared/validation/version-json.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -83,9 +100,8 @@ async function brandWindowsExe(
   }
   const args: string[] = [];
   if (opts.icon) {
-    const ico = makeWindowsIcon(join(opts.projectDir, opts.icon), join(opts.work, "exe-icon.ico"), {
-      onlyLargest: true,
-    });
+    const icon = assertProjectIcon(opts.projectDir, opts.icon, "app icon");
+    const ico = makeWindowsIcon(icon, join(opts.work, "exe-icon.ico"), { onlyLargest: true });
     if (ico) args.push("--set-icon", ico);
   }
   const fv = winFileVersion(opts.version);
@@ -121,6 +137,8 @@ export interface BuildResult {
   channel: string;
   /** Update baseUrl, if `release` is configured. */
   baseUrl?: string;
+  /** Ed25519 public key embedded into version.json for manifest verification. */
+  updatePublicKey?: string;
   /** Markdown release notes embedded in the updater manifest, if configured. */
   releaseNotes?: string;
   /** libmirin_core path (for the updater codec at release time). */
@@ -145,22 +163,6 @@ export interface BuildResult {
   signIdentity?: string;
 }
 
-/**
- * The app version: `$MIRIN_APP_VERSION` (release-pipeline override) wins, otherwise
- * the project's package.json `version` (the single source of truth).
- */
-function appVersion(projectDir: string): string {
-  const override = process.env.MIRIN_APP_VERSION;
-  if (override) return override;
-  const pkgPath = join(projectDir, "package.json");
-  if (!existsSync(pkgPath)) return "0.0.0";
-  try {
-    return JSON.parse(readFileSync(pkgPath, "utf8")).version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
-
 export interface BuildOptions {
   /** Override the app version (else `$MIRIN_APP_VERSION` / package.json). */
   version?: string;
@@ -174,33 +176,54 @@ export async function build(
   projectDir = process.cwd(),
   opts: BuildOptions = {},
 ): Promise<BuildResult> {
-  const outDir = join(projectDir, "build");
-  const work = join(projectDir, ".mirin");
-  mkdirSync(outDir, { recursive: true });
-  mkdirSync(work, { recursive: true });
-  sweepBuildTemps(projectDir);
-
-  const config = (await import(join(projectDir, "mirin.config.ts"))).default;
-  const appName: string = config.name ?? "Mirin App";
-  const bundleId: string = config.id ?? "dev.mirin.app";
-  const mainEntry = join(projectDir, config.main ?? "main/main.ts");
-  const version = opts.version ?? appVersion(projectDir);
-  const channel: string = config.release?.channel ?? "stable";
-  const baseUrl: string | undefined = config.release?.baseUrl;
-  const releaseNotes: string | undefined = config.release?.notes;
+  // Preflight every value that becomes a path or release identity before creating,
+  // cleaning, compiling, downloading, or recursively removing anything.
+  const root = canonicalProjectRoot(projectDir);
+  const config = (await import(join(root, "mirin.config.ts"))).default;
+  const identity = validateAppIdentity({
+    appName: config.name === undefined ? "Mirin App" : config.name,
+    bundleId: config.id === undefined ? "dev.mirin.app" : config.id,
+    channel: config.release?.channel === undefined ? "stable" : config.release.channel,
+    version: resolveAppVersion(root, opts.version),
+  });
+  const { appName, bundleId, version, channel } = identity;
+  const mainEntry = resolveProjectFile(root, config.main ?? "main/main.ts", "main entry");
+  const icon =
+    config.icon === undefined ? undefined : resolveProjectIcon(root, config.icon, "app icon");
+  const releaseNotes = validateReleaseNotes(config.release?.notes);
+  const baseUrl: string | undefined =
+    config.release === undefined ? undefined : config.release.baseUrl;
+  if (config.release !== undefined) validateReleaseBaseUrl(baseUrl);
+  const updatePublicKey =
+    config.release === undefined
+      ? undefined
+      : validateUpdatePublicKey(config.release.publicKey ?? process.env.MIRIN_UPDATE_PUBLIC_KEY);
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
   const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
   const inno: boolean | import("mirinjs").InnoConfig = config.inno ?? true;
   const linux: boolean | import("mirinjs").LinuxConfig = config.linux ?? true;
   const publisher: string = config.publisher ?? appName;
   const cefLocales = normalizeCefLocales(config.cef?.locales);
+  const sidecars = normalizeSidecars(root, config.sidecars);
+  const workers = normalizeWorkers(root, config.workers);
+  assertRuntimePackageCompatibility(root);
+  const versionJson =
+    config.release === undefined
+      ? undefined
+      : serializeVersionMetadata({ ...identity, baseUrl, publicKey: updatePublicKey });
+
+  const outDir = validateOwnedOutputDirectory(root, "build", "build output directory");
+  const work = validateOwnedOutputDirectory(root, ".mirin", "build work directory");
+  mkdirSync(outDir, { recursive: true });
+  mkdirSync(work, { recursive: true });
+  sweepBuildTemps(root);
 
   console.log(`[mirin build] ${appName} ${version}`);
 
   // Production UI and native artifacts do not share outputs, so overlap them.
   console.log("[mirin build] building UI + native artifacts…");
   const [, artifacts] = await Promise.all([
-    $`bunx vite build`.cwd(projectDir),
+    $`bunx vite build`.cwd(root),
     resolveArtifacts({ release: true }),
   ]);
 
@@ -209,43 +232,39 @@ export async function build(
   const signIdentity = process.env.MIRIN_SIGN_IDENTITY;
   const hostExe = join(work, IS_WINDOWS ? "host-release.exe" : "host-release");
   const workerJs = join(work, "worker.release.js");
-  const sidecars = normalizeSidecars(projectDir, config.sidecars);
   const hostBuild = (async (): Promise<void> => {
     // Bun's Windows arm64 build currently has no bun:ffi/TinyCC runtime. The
     // win32-arm64 Mirin package therefore carries an x64 compatibility payload,
     // which Windows 11 ARM executes through its built-in x64 emulation layer.
     const target = IS_WINDOWS && process.arch === "arm64" ? ["--target=bun-windows-x64"] : [];
     await $`bun build --compile --minify ${target} ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
-      projectDir,
+      root,
     );
     if (IS_WINDOWS) {
       patchPeToGuiSubsystem(hostExe);
       await brandWindowsExe(hostExe, {
-        projectDir,
+        projectDir: root,
         work,
         appName,
         version,
-        icon: config.icon,
+        icon,
         publisher,
       });
     }
   })();
   const workerBuild = $`bun build ${mainEntry} --target=bun --minify --outfile ${workerJs}`.cwd(
-    projectDir,
+    root,
   );
-  const extraWorkersBuild = compileWorkers(projectDir, config.workers, join(work, "workers"), true);
+  const extraWorkersBuild = compileWorkers(root, workers, join(work, "workers"), true);
   const [, , extraWorkers] = await Promise.all([hostBuild, workerBuild, extraWorkersBuild]);
 
   // 5. assemble (+ sign on macOS)
   const artifactKind = IS_WINDOWS ? "app folder" : IS_LINUX ? "app folder" : ".app";
   console.log(`[mirin build] assembling ${artifactKind}…`);
-  // version.json embeds the running app's update identity (read by app.updater).
+  // version.json embeds the validated running app identity (read by app.updater).
   // Only when `release` is configured — otherwise the app has no updater.
-  const versionJson = baseUrl
-    ? JSON.stringify({ version, channel, baseUrl, name: appName, identifier: bundleId })
-    : undefined;
   const resources = {
-    uiDir: join(projectDir, "dist"),
+    uiDir: join(root, "dist"),
     workerJs,
     manifestJson: JSON.stringify({
       id: bundleId,
@@ -258,25 +277,35 @@ export async function build(
   const { app } = IS_WINDOWS
     ? await buildWindowsBundle({
         appName,
+        bundleId,
+        version,
+        channel,
+        projectDir: root,
         outDir,
         hostExe,
         coreDll: artifacts.coreDylib,
+        codecBin: artifacts.codecBin,
         helperExe: artifacts.helperBin,
         cefPath: artifacts.cefPath,
         cefLocales,
-        icon: config.icon ? join(projectDir, config.icon) : undefined,
+        icon,
         resources: { ...resources, sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })) },
       })
     : IS_LINUX
       ? await buildLinuxBundle({
           appName,
+          bundleId,
+          version,
+          channel,
+          projectDir: root,
           outDir,
           hostExe,
           coreDll: artifacts.coreDylib,
+          codecBin: artifacts.codecBin,
           helperExe: artifacts.helperBin,
           cefPath: artifacts.cefPath,
           cefLocales,
-          icon: config.icon ? join(projectDir, config.icon) : undefined,
+          icon,
           resources: {
             ...resources,
             sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })),
@@ -285,14 +314,17 @@ export async function build(
       : await buildAppBundle({
           appName,
           bundleId,
+          version,
+          channel,
+          projectDir: root,
           outDir,
           hostExe,
           coreDylib: artifacts.coreDylib,
+          codecBin: artifacts.codecBin,
           helperBin: artifacts.helperBin,
           cefPath: artifacts.cefPath,
           cefLocales,
-          version,
-          icon: config.icon ? join(projectDir, config.icon) : undefined,
+          icon,
           signIdentity,
           urlSchemes: config.urlSchemes,
           resources: { ...resources, sidecars },
@@ -313,8 +345,8 @@ export async function build(
       version,
       publisher,
       outDir,
-      projectDir,
-      icon: config.icon ? join(projectDir, config.icon) : undefined,
+      projectDir: root,
+      icon,
       options: typeof linux === "object" ? linux : {},
       formats,
     });
@@ -329,16 +361,17 @@ export async function build(
     version,
     channel,
     baseUrl,
+    updatePublicKey,
     releaseNotes,
     coreDylib: artifacts.coreDylib,
     codecBin: artifacts.codecBin,
-    projectDir,
+    projectDir: root,
     dmg,
     nsis,
     inno,
     linux,
     publisher,
-    icon: config.icon ? join(projectDir, config.icon) : undefined,
+    icon,
     signIdentity,
   };
 }

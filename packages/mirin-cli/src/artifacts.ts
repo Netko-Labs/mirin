@@ -73,7 +73,7 @@ export async function resolveArtifacts(opts: { release: boolean }): Promise<Arti
     coreDylib: join(nativeDir, coreFileName()),
     codecBin: join(nativeDir, codecFileName()),
     helperBin: join(nativeDir, helperFileName()),
-    hostEntry: resolvePackageFile("mirinjs/host"),
+    hostEntry: resolveCliPackageFile("mirinjs/host"),
     cefPath,
   };
 }
@@ -114,7 +114,7 @@ function platformTag(): string {
 function resolveNativeDir(): string {
   const pkg = `@mirinjs/${platformTag()}`;
   try {
-    return dirname(resolvePackageFile(`${pkg}/package.json`));
+    return dirname(resolveCliPackageFile(`${pkg}/package.json`));
   } catch {
     throw new Error(
       `mirin: prebuilt native package "${pkg}" is not installed. Run \`bun install\` ` +
@@ -123,8 +123,48 @@ function resolveNativeDir(): string {
   }
 }
 
-function resolvePackageFile(specifier: string): string {
-  return Bun.resolveSync(specifier, process.cwd());
+/** Resolve dependencies owned by the CLI package, independent of the app's cwd. */
+export function resolveCliPackageFile(specifier: string, cliDir = CLI_DIR): string {
+  return Bun.resolveSync(specifier, cliDir);
+}
+
+/**
+ * The compiled host comes from the CLI-owned runtime while the Worker bundles
+ * the project's runtime. They must be the exact same release so internal
+ * workerData and native FFI capabilities cannot drift.
+ */
+export function assertRuntimePackageCompatibility(projectRoot: string, cliDir = CLI_DIR): string {
+  const hostEntry = resolveCliPackageFile("mirinjs", cliDir);
+  const workerEntry = Bun.resolveSync("mirinjs", projectRoot);
+  const host = runtimePackageIdentity(hostEntry);
+  const worker = runtimePackageIdentity(workerEntry);
+  if (host.version !== worker.version) {
+    throw new Error(
+      `[mirin] runtime version mismatch: @mirinjs/cli uses mirinjs ${host.version}, ` +
+        `but the project resolves mirinjs ${worker.version}. Install matching versions before building.`,
+    );
+  }
+  return host.version;
+}
+
+function runtimePackageIdentity(entry: string): { version: string } {
+  let directory = dirname(entry);
+  for (let depth = 0; depth < 8; depth += 1) {
+    const manifest = join(directory, "package.json");
+    if (existsSync(manifest)) {
+      const value: unknown = JSON.parse(readFileSync(manifest, "utf8"));
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const record = value as Record<string, unknown>;
+        if (record.name === "mirinjs" && typeof record.version === "string") {
+          return { version: record.version };
+        }
+      }
+    }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  throw new Error(`[mirin] could not resolve the mirinjs package owning ${entry}`);
 }
 
 /** The CLI's own version, used to pick the matching CEF release asset. */

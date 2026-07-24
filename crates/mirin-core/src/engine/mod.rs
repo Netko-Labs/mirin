@@ -8,6 +8,7 @@ mod commands;
 mod config;
 mod events;
 mod handlers;
+mod single_instance;
 mod state;
 mod tasks;
 mod window;
@@ -24,8 +25,9 @@ pub mod tray;
 pub use boot::run_core;
 pub use clipboard::{clipboard_read_text, clipboard_write_text};
 pub use commands::{
-    close_window, create_window, load_url, quit, request_window_close, set_dock_visible,
-    set_material, set_title, window_control, window_maybe_start_drag, window_set_position,
+    close_window, create_window, load_url, quit, quit_for_update, request_window_close,
+    set_dock_visible, set_material, set_title, window_control, window_maybe_start_drag,
+    window_set_position,
 };
 pub use config::{CoreConfig, WindowOpts};
 pub use dialog::dialog_show;
@@ -34,5 +36,6 @@ pub use handlers::MirinHandler;
 pub use menu::{popup_menu, set_app_menu};
 pub use notification::notification_show;
 pub use shortcut::{shortcut_register, shortcut_unregister};
+pub use single_instance::{acquire_instance_lock, InstanceLock};
 pub use state::{icon_path, is_dev, is_ready, set_rpc_endpoint, wm_class};
 pub use tray::{tray_create, tray_destroy};

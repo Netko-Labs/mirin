@@ -2,7 +2,10 @@
 
 Status of the Linux (CEF) port. Mirrors `docs/windows-port.md`. The host/Worker/FFI
 model, CEF handlers, `app://` scheme, and the RPC/data plane are shared with macOS
-and Windows; only `crates/mirin-core/src/linux/*` and the CLI's bundling differ.
+and Windows; only `crates/mirin-core/src/linux/*` and the CLI's bundling differ. The
+shared helper injects `window.mirin` only into the trusted top-level initial origin;
+subframes/cross-origin navigations receive no bridge, and disconnect rejects pending
+RPC without replay.
 
 **Linux forces X11 (Ozone).** mirin appends `--ozone-platform=x11` (override with
 `MIRIN_OZONE`); on a Wayland session the app runs under **XWayland**. This mirrors
@@ -47,8 +50,10 @@ model:
 **CEF Views toplevel.** `MirinWindowDelegate` + `MirinBrowserViewDelegate` (via
 `wrap_window_delegate!` / `wrap_browser_view_delegate!`) with an id→Window registry.
 The mirin `window_id` is stamped on the BrowserView's `View::id`, read back in the
-shared LifeSpanHandler's `on_after_created` to map a Browser → its window. `can_resize`
-/ `can_maximize` / `can_minimize` all return **true** — CEF's `can_*` delegates default
+shared LifeSpanHandler's `on_after_created` to map a Browser → its window. That shared
+registry now targets per-window close and `loadUrl()` calls; `app.windows.open()` waits
+for the matching creation event, and explicit quit covers zero-window/creation-race
+states. `can_resize` / `can_maximize` / `can_minimize` all return **true** — CEF's `can_*` delegates default
 to false, and a non-resizable window gets fixed WM size hints that make the compositor
 refuse `_NET_WM_MOVERESIZE` resizes.
 
@@ -132,9 +137,11 @@ a native move via `_NET_WM_MOVERESIZE` (see Windowing above).
 Cargo builds `cef`/`cef-dll-sys` on Linux (the project's biggest risk — **cleared**).
 `lib.rs` `linux` module; engine `#[cfg]` arms for `load_cef` (no framework loader —
 `libcef.so` resolves via the link path / rpath), `default_cache_dir`
-(`$XDG_CACHE_HOME`), `derive_subprocess_path` (`mirin-helper`). `linux/window/mod.rs` holds
-the CEF **Views** integration and the id→Window registry. `cargo build --workspace`
-warning-clean.
+(`$XDG_CACHE_HOME`), process-lifetime exclusive/shared app file locking before
+the Worker starts, and `derive_subprocess_path` (`mirin-helper`). Multi-instance
+processes hold shared locks and use PID-specific caches; updater-capable processes
+hold the mutually exclusive lock. `linux/window/mod.rs` holds the CEF **Views**
+integration and the id→Window registry. `cargo build --workspace` warning-clean.
 
 ### L1 — Window MVP (m1-smoke) — ✅ DONE
 `m1-smoke` renders a page in a native CEF **Views** X11 toplevel, full CEF subprocess
@@ -170,7 +177,44 @@ lib + helper + m1-smoke (`.cargo/config.toml` rustflags), so `libcef.so` resolve
 **no `LD_LIBRARY_PATH`** — a fully self-contained bundle. **Verified:** the standalone
 `build/Anko/Anko` cold-launches with a clean env → renders Anko's UI from **`app://`**
 with the typed RPC data plane connected; `ldd` confirms `libcef.so` resolves via
-`$ORIGIN`.
+`$ORIGIN`. The portable-folder updater extracts with `tar -xpf`, requires a real
+staged root plus regular `<App>` and `mirin-codec` executables, then ensures owner
+execute only after that validation. It also requires matching `resources/version.json`, bounded
+manifest/download/codec output with an 8 GiB streaming reconstructed-tar/decompression
+ceiling and a 512 MiB combined in-memory patch-input ceiling,
+and safe tar entry/link types before launching the asynchronous folder swap. Before
+handoff the runtime copies, revalidates, and recursively flushes the payload beside
+the portable install, copies the bundled `mirin-codec` into helper work, compares
+the real operands' device identities, and probes `renameat2(RENAME_EXCHANGE)` on
+that exact filesystem before the helper acknowledges
+its prerequisites. Its token-bearing successor must acquire the exclusive app
+lock; the helper retains its unique backup until that exact process durably
+reports Worker/native readiness. PIDfds plus boot/start-time identities bind
+ownership, waiting, termination, and receipts. Complete directory exchange keeps
+the canonical launch path present through interruption. A visible exchange whose
+parent sync fails has its own codec status; the helper marks it swapped, retries
+the sync, and rolls back or preserves both trees instead of deleting the old app.
+Early exit or timeout uses
+bounded termination and atomic rollback before verifying and relaunching the old app;
+unconfirmed termination or rollback preserves terminal ownership and both trees.
+An accepted helper forces and confirms parent termination after the graceful
+deadline rather than discarding the transaction. Native shutdown begins before synchronous updater completion
+listeners. The parent records the shell helper PID in the reservation before
+publishing its PID-bound activation, and an unactivated helper cannot swap after a
+parent crash. Each namespace transition is preceded by an external durable phase
+journal. After helper death or reboot, the next host launch reconciles it before
+loading the core/Worker, rolling a pre-commit target back through an external
+helper or completing committed cleanup. Process-wide terminal/apply latches stop all updater-instance
+auto-checks, while process-wide generation allocation keeps their work disjoint.
+Exact creation identities prevent reused process IDs from retaining or crossing a
+handoff reservation. Startup prunes abandoned generations
+and, after its first internal `ready` listener writes replacement readiness ahead of
+user listeners, asynchronously prunes exact dead-owner install-side staging
+siblings with session ownership and bounded live-PID leases. Non-current generation
+owners share the same bounded lease. Runtime manifests require a pinned Ed25519
+signature, and every redirect hop is subject to the HTTPS-or-loopback rule. Managed
+deb/rpm/AppImage payload copies omit updater metadata and update through their package
+channel instead.
 
 ### L4 — App-shell native features — 🚧 PARTIAL
 `examples/kitchen-sink` renders and runs the full "Native feature tour" over RPC.
@@ -207,9 +251,15 @@ Linux packaging lives in `packages/mirin-cli`:
   **`.deb` / `.rpm`** (`fpm`) from the assembled flat app folder.
 - Each package stages a `.desktop` entry with a matching `StartupWMClass`, a hicolor
   icon, and a wrapper/AppRun that executes the real host binary inside the payload.
+- Package-managed payload copies omit `resources/version.json`, disabling the
+  standalone folder updater for read-only AppImages and `/opt` deb/rpm installs.
 - Package metadata is validated before writing launchers or desktop files: app ids are
   single path segments, desktop fields reject line injection, and CLI/config package
   formats are restricted to `appimage`, `deb`, and `rpm`.
+- Parallel format jobs are settled before their shared filesystem tree is removed.
+  If any format fails, every expected package path is deleted, including output
+  created by a rejected job, before the caller continues without Linux packages.
+  Cleanup failure is fatal so a partial package set cannot enter the atomic release.
 
 ## Notes for contributors
 - App-shell features not yet ported are handled by the engine's

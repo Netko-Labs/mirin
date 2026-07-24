@@ -12,6 +12,8 @@ export interface VersionInfo {
   version: string;
   channel: string;
   baseUrl: string;
+  /** Base64 DER SubjectPublicKeyInfo for signed update manifests. */
+  publicKey: string;
   name: string;
   identifier: string;
 }
@@ -19,11 +21,14 @@ export interface VersionInfo {
 export interface UpdateArtifact {
   url: string;
   sha256: string;
-  size?: number;
+  /** Exact compressed download size in bytes. */
+  size: number;
 }
 
 export interface UpdatePatch extends UpdateArtifact {
   fromVersion: string;
+  /** Exact decompressed BSDIFF payload size in bytes. */
+  uncompressedSize: number;
 }
 
 /** The published-release manifest ({prefix}-update.json). */
@@ -36,6 +41,8 @@ export interface Manifest {
   body?: string;
   /** SHA-256 of the uncompressed bundle tar (update identity + integrity). */
   tarHash: string;
+  /** Exact uncompressed bundle tar size in bytes. */
+  tarSize: number;
   bundle: UpdateArtifact;
   patches?: UpdatePatch[];
 }

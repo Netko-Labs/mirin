@@ -29,6 +29,14 @@ pub extern "C" fn mirin_run(config_json: *const c_char) -> c_int {
     engine::run_core(config)
 }
 
+/// Acquire the process-lifetime app lock before the Worker starts.
+/// Returns 0 when unavailable, 1 for shared multi-instance, or 2 for exclusive.
+#[no_mangle]
+pub extern "C" fn mirin_acquire_instance_lock(config_json: *const c_char) -> c_int {
+    let config: CoreConfig = serde_json::from_str(&cstr(config_json)).unwrap_or_default();
+    engine::acquire_instance_lock(&config) as c_int
+}
+
 /// Drain the next queued event as a JSON C string (valid until the next call), or
 /// null. The Worker polls this (see engine::poll_event for why we poll).
 #[no_mangle]
@@ -49,6 +57,12 @@ pub extern "C" fn mirin_is_ready() -> c_int {
 #[no_mangle]
 pub extern "C" fn mirin_app_quit() {
     engine::quit();
+}
+
+/// Force application shutdown after an updater helper has accepted handoff.
+#[no_mangle]
+pub extern "C" fn mirin_app_quit_for_update() {
+    engine::quit_for_update();
 }
 
 /// Show (1) or hide (0) the app's Dock icon / menu-bar presence (macOS).
@@ -212,6 +226,18 @@ pub extern "C" fn mirin_zstd_decompress_file(src: *const c_char, dst: *const c_c
 }
 
 #[no_mangle]
+pub extern "C" fn mirin_zstd_decompress_file_bounded(
+    src: *const c_char,
+    dst: *const c_char,
+    max_output_bytes: u64,
+) -> c_int {
+    match engine::codec::zstd_decompress_file_bounded(&cstr(src), &cstr(dst), max_output_bytes) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn mirin_bsdiff_file(
     old: *const c_char,
     new: *const c_char,
@@ -232,5 +258,29 @@ pub extern "C" fn mirin_bspatch_file(
     match engine::codec::bspatch_file(&cstr(old), &cstr(patch), &cstr(new)) {
         Ok(()) => 0,
         Err(_) => 1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mirin_bspatch_file_bounded(
+    old: *const c_char,
+    patch: *const c_char,
+    new: *const c_char,
+    max_old_bytes: u64,
+    max_patch_bytes: u64,
+    max_output_bytes: u64,
+) -> c_int {
+    match std::panic::catch_unwind(|| {
+        engine::codec::bspatch_file_bounded(
+            &cstr(old),
+            &cstr(patch),
+            &cstr(new),
+            max_old_bytes,
+            max_patch_bytes,
+            max_output_bytes,
+        )
+    }) {
+        Ok(Ok(())) => 0,
+        Ok(Err(_)) | Err(_) => 1,
     }
 }

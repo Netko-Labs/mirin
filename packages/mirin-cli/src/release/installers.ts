@@ -5,7 +5,11 @@ import type { BuildResult } from "../build.ts";
 import { buildDmg, type DmgOptions, notarizeAndStaple } from "../dmg.ts";
 import { buildInnoInstaller, hasInno } from "../installer-inno.ts";
 import { buildNsisInstaller, hasMakensis } from "../installer-win.ts";
-import { buildLinuxPackages, resolveLinuxFormats } from "../package/linux/index.ts";
+import {
+  buildLinuxPackages,
+  LinuxPackageCleanupError,
+  resolveLinuxFormats,
+} from "../package/linux/index.ts";
 
 export interface ReleaseInstallerResult {
   installerName?: string;
@@ -44,6 +48,7 @@ async function buildWindowsInstaller(
     appName: result.appName,
     exeName: `${result.appName}.exe`,
     version: result.version,
+    channel: result.channel,
     bundleId: result.bundleId,
     outDir,
     fileName: setupName,
@@ -112,6 +117,7 @@ async function buildLinuxInstallers(input: ReleaseInstallerInput): Promise<Relea
       ? { installerName: basename(primary.path), installerSize: primary.size }
       : { installerSize: 0 };
   } catch (error) {
+    if (error instanceof LinuxPackageCleanupError) throw error;
     console.warn(
       `\n[mirin release] Linux packaging failed: ${error instanceof Error ? error.message : error}\n` +
         "[mirin release] shipping the updater bundle + manifest WITHOUT packages.\n",

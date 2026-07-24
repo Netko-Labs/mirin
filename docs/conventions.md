@@ -44,7 +44,7 @@ Top-level layout:
 
 ```txt
 crates/
-  mirin-codec/      updater codec library and release executable
+  mirin-codec/      updater codec library and atomic-swap/release executable
   mirin-core/       Rust native core loaded through Bun FFI
   mirin-helper/     CEF subprocess executable
 packages/

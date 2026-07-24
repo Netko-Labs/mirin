@@ -9,11 +9,12 @@
 import { CString, dlopen, FFIType, type Pointer, ptr } from "bun:ffi";
 
 function nullTerminated(s: string): Uint8Array {
-  return new TextEncoder().encode(s + "\0");
+  return new TextEncoder().encode(`${s}\0`);
 }
 
 const symbols = {
   mirin_run: { args: [FFIType.ptr], returns: FFIType.i32 },
+  mirin_acquire_instance_lock: { args: [FFIType.ptr], returns: FFIType.i32 },
   mirin_poll_event: { args: [], returns: FFIType.ptr },
   mirin_set_rpc_endpoint: { args: [FFIType.u16, FFIType.ptr], returns: FFIType.void },
   mirin_is_ready: { args: [], returns: FFIType.i32 },
@@ -32,6 +33,7 @@ const symbols = {
     returns: FFIType.void,
   },
   mirin_app_quit: { args: [], returns: FFIType.void },
+  mirin_app_quit_for_update: { args: [], returns: FFIType.void },
   mirin_app_set_dock_visible: { args: [FFIType.i32], returns: FFIType.void },
   mirin_set_app_menu: { args: [FFIType.ptr], returns: FFIType.void },
   mirin_popup_menu: { args: [FFIType.ptr], returns: FFIType.void },
@@ -59,6 +61,14 @@ export class Core {
   run(configJson: string): number {
     const buf = nullTerminated(configJson);
     return this.#lib.symbols.mirin_run(ptr(buf));
+  }
+
+  acquireInstanceLock(configJson: string): "exclusive" | "shared" | undefined {
+    const buf = nullTerminated(configJson);
+    const result = this.#lib.symbols.mirin_acquire_instance_lock(ptr(buf));
+    if (result === 2) return "exclusive";
+    if (result === 1) return "shared";
+    return undefined;
   }
 
   /**
@@ -127,6 +137,10 @@ export class Core {
 
   quit(): void {
     this.#lib.symbols.mirin_app_quit();
+  }
+
+  quitForUpdate(): void {
+    this.#lib.symbols.mirin_app_quit_for_update();
   }
 
   appSetDockVisible(visible: boolean): void {

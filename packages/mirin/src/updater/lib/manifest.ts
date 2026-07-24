@@ -1,7 +1,7 @@
-import type { Manifest } from "../types.ts";
+import type { Manifest, UpdateArtifact, UpdatePatch } from "../types.ts";
+import { MAX_ARTIFACT_BYTES, MAX_PATCH_BYTES, MAX_PATCH_COUNT, MAX_TAR_BYTES } from "./limits.ts";
+import { parseSemVer } from "./semver.ts";
 import { artifactUrl } from "./urls.ts";
-
-const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024 * 1024;
 
 export function parseManifest(
   value: unknown,
@@ -11,11 +11,12 @@ export function parseManifest(
   const body = optionalStringField(manifest, "body", 64 * 1024);
   const parsed: Manifest = {
     version: versionField(manifest, "version"),
-    channel: stringField(manifest, "channel"),
-    platform: stringField(manifest, "platform"),
-    arch: stringField(manifest, "arch"),
+    channel: stringField(manifest, "channel", 64),
+    platform: stringField(manifest, "platform", 32),
+    arch: stringField(manifest, "arch", 32),
     ...(body === undefined ? {} : { body }),
     tarHash: sha256Field(manifest, "tarHash"),
+    tarSize: sizeField(manifest, "tarSize", MAX_TAR_BYTES),
     bundle: artifactField(manifest.bundle, "bundle"),
     patches: patchesField(manifest.patches),
   };
@@ -38,9 +39,9 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function stringField(source: Record<string, unknown>, key: string): string {
+function stringField(source: Record<string, unknown>, key: string, maxLength = 1024): string {
   const value = source[key];
-  if (typeof value !== "string" || value.length === 0 || value.length > 1024) {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
     throw new Error(`invalid update manifest field: ${key}`);
   }
   return value;
@@ -60,60 +61,57 @@ function optionalStringField(
 }
 
 function versionField(source: Record<string, unknown>, key: string): string {
-  const value = stringField(source, key);
-  if (
-    value.length > 128 ||
-    !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
-      value,
-    )
-  ) {
+  const value = stringField(source, key, 128);
+  try {
+    parseSemVer(value);
+  } catch {
     throw new Error(`invalid update manifest version: ${key}`);
   }
   return value;
 }
 
 function sha256Field(source: Record<string, unknown>, key: string): string {
-  const value = stringField(source, key);
+  const value = stringField(source, key, 64);
   if (!/^[a-f0-9]{64}$/i.test(value)) {
     throw new Error(`invalid update manifest hash: ${key}`);
   }
   return value.toLowerCase();
 }
 
-function sizeField(source: Record<string, unknown>): number | undefined {
-  const value = source.size;
-  if (value === undefined) return undefined;
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value <= 0 ||
-    value > MAX_ARTIFACT_BYTES
-  ) {
-    throw new Error("invalid update manifest field: size");
+function sizeField(source: Record<string, unknown>, key: string, maximum: number): number {
+  const value = source[key];
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`invalid update manifest field: ${key}`);
   }
   return value;
 }
 
-function artifactField(value: unknown, label: string): Manifest["bundle"] {
+function artifactField(value: unknown, label: string): UpdateArtifact {
   const source = record(value, label);
-  const url = stringField(source, "url");
+  const url = stringField(source, "url", 255);
   artifactUrl("https://example.invalid", url);
   return {
     url,
     sha256: sha256Field(source, "sha256"),
-    size: sizeField(source),
+    size: sizeField(source, "size", MAX_ARTIFACT_BYTES),
   };
 }
 
-function patchesField(value: unknown): Manifest["patches"] {
+function patchesField(value: unknown): UpdatePatch[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error("invalid update manifest field: patches");
+  if (!Array.isArray(value) || value.length > MAX_PATCH_COUNT) {
+    throw new Error("invalid update manifest field: patches");
+  }
+  const versions = new Set<string>();
   return value.map((item, index) => {
     const patch = record(item, `patches[${index}]`);
-    const artifact = artifactField(patch, `patches[${index}]`);
+    const fromVersion = versionField(patch, "fromVersion");
+    if (versions.has(fromVersion)) throw new Error(`duplicate update patch: ${fromVersion}`);
+    versions.add(fromVersion);
     return {
-      fromVersion: versionField(patch, "fromVersion"),
-      ...artifact,
+      fromVersion,
+      ...artifactField(patch, `patches[${index}]`),
+      uncompressedSize: sizeField(patch, "uncompressedSize", MAX_PATCH_BYTES),
     };
   });
 }

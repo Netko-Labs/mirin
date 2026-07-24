@@ -2,9 +2,11 @@
 
 Status of the Windows (CEF) port. Mirrors `docs/macos-mvp.md`. The host/Worker/FFI
 model, CEF handlers, `app://` scheme, and the RPC/data plane are shared with macOS;
-only `crates/mirin-core/src/win/*` (Win32) and the CLI's bundling differ. Engine =
-CEF, **windowed** (CEF owns a child HWND parented to a mirin-owned top-level Win32
-window) — not the macOS embedded-NSView/OSR model.
+only `crates/mirin-core/src/win/*` (Win32) and the CLI's bundling differ. The shared
+renderer helper exposes `window.mirin` only to the trusted top-level initial origin;
+subframes/cross-origin navigations get no bridge, and disconnect rejects pending RPC
+without replay. Engine = CEF, **windowed** (CEF owns a child HWND parented to a
+mirin-owned top-level Win32 window) — not the macOS embedded-NSView/OSR model.
 
 Targets Windows 10/11 x64 and arm64.
 
@@ -21,8 +23,18 @@ Targets Windows 10/11 x64 and arm64.
 Cargo `windows-sys` deps; `lib.rs` `win` module; `engine` arms for `load_cef`
 (no framework loader on Windows — libcef.dll resolves from the host-exe dir via the
 import lib), `default_cache_dir` (`%LOCALAPPDATA%`), `derive_subprocess_path`
-(`mirin-helper.exe`). `cargo build --workspace` warning-clean. **The `cef` crate
-compiles and links on Windows** — the project's biggest risk, cleared.
+(`mirin-helper.exe`). Before spawning the Worker, the host takes an exclusive or
+shared process-lifetime app-file handle; single-instance mode also acquires the
+bundle-ID-scoped named mutex for compatibility and existing-window activation.
+The matching bundle-specific Win32 window class prevents activation from
+foregrounding an unrelated Mirin app. Identifiers that would exceed Win32 class
+or AppUserModelID limits are reduced to a deterministic bounded prefix plus a
+SHA-256-derived suffix, and class-registration failure aborts window creation
+instead of caching a false success.
+Only a protocol-compatible Worker's exclusive capability reaches the updater
+apply path. `cargo build --workspace`
+warning-clean. **The `cef` crate compiles and links on Windows** — the project's
+biggest risk, cleared.
 
 ### W1 — Window MVP — ✅ DONE
 `win/window/mod.rs`: mirin-owned top-level window (class + WndProc), CEF child via
@@ -44,7 +56,10 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
 ### W4 — App-shell native features — ✅ DONE (gaps noted)
 - **Window controls + events** — minimize/maximize/restore/fullscreen(borderless)/
   focus/show/hide/center/alwaysOnTop; `window.focus/blur/moved/resized` via the WndProc;
-  set-title/position. Verified (minimize).
+  set-title/position. Per-window close and `loadUrl()` use the shared browser registry,
+  so one window never tears down or navigates another. `app.windows.open()` awaits
+  `window.created`, and explicit quit also handles zero-window/creation-race states.
+  Verified (minimize).
 - **Custom title bar** — frameless (`WM_NCCALCSIZE` + DWM shadow); dragging via the
   preload → `window.maybeStartDrag` control frame (carrying click `detail`) →
   `ReleaseCapture`+`WM_NCLBUTTONDOWN` against CEF's `-webkit-app-region` regions.
@@ -80,20 +95,94 @@ env, no dev server) → UI from `app://`, RPC works, clean close.
   → 0 GPU failures + clean close. `MIRIN_ANGLE=<backend>` still overrides; single-GPU
   machines keep Chromium's D3D11 default.
 
-### W5 — Distribution — ✅ DONE (updater swap unverified)
+### W5 — Distribution — ✅ DONE (updater swap covered by Windows x64 CI)
 `@mirinjs/win32-{arch}` prebuilt-native package + CLI optional dep; `artifacts.ts`
 installed-mode + CEF release download (platform-generic). `mirin release` (verified)
 emits `{channel}-win32-{arch}-update.json` + `.tar.zst` updater bundle + a real
-**NSIS installer** (`…-setup.exe`, `installer-win.ts`). Verified end-to-end: silent
-install (`/S /D=`) → 252 files + Add/Remove Programs entry, the installed app
-cold-launches (0 GPU failures), silent uninstall removes the folder + registry key.
-Customizable via the `nsis` config (perMachine/oneClick, shortcuts, license,
-publisher, runAfterFinish, installerIcon, raw `include`); needs `makensis`, else
-falls back to the portable `.zip`. Anko's `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
-`%LOCALAPPDATA%` support dir, detached-PowerShell folder swap + relaunch (implemented;
-the runtime swap isn't field-tested). `publish-all.ts` publishes the host-platform
-native package. Release-time compression uses the standalone `mirin-codec.exe`,
-which has no CEF or Bun FFI dependency.
+**NSIS installer** (`…-setup.exe`, `installer-win.ts`). The generated script keeps
+the owned payload under `$INSTDIR\\app` and the stable `Uninstall.exe` at the root.
+A bundle-specific root marker gates recursive replacement and uninstall cleanup;
+first install refuses a pre-existing unowned `app` collision.
+A guarded migration recognizes the former flat Mirin layout from the app/core/helper/CEF/
+manifest fingerprint, removes only enumerated payload files plus owned `resources` and
+`locales`, and leaves unrelated root files intact. Uninstall repeats that guarded cleanup
+as a fallback, removes the new payload recursively, deletes known shortcuts/registry/
+uninstaller entries, then removes `$INSTDIR` non-recursively. Registry uninstall commands
+quote executable paths containing spaces. Windows x64 CI covers flat → new → uninstall and
+new-v1 → new-v2 → uninstall while preserving a root sentinel. Customizable via the `nsis`
+config (perMachine/oneClick, shortcuts, license, publisher, runAfterFinish, installerIcon,
+raw `include`); needs `makensis`, else falls back to the portable `.zip`. The Inno
+alternative also replaces an owned `{app}\\app` payload on upgrade and marker-gates
+enumerated cleanup of its legacy flat payload. Both generators share the ownership
+marker, remove stale cross-tool uninstallers and exact bundle-keyed registry entries,
+and preserve unrelated root files. Inno stores `unins000.*` under a bundle-specific
+owned subdirectory, so cross-tool migration never guesses at or deletes another app's
+uninstaller; it also recursively removes updater-added payload files during uninstall.
+It accepts only absolute Windows install
+paths or `{autopf}`/`{localappdata}` prefixes and escapes literal filesystem paths before
+rendering `.iss`. Anko's
+`build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
+`%LOCALAPPDATA%` support dir, bounded/generation-correlated download staging,
+deterministic 128-bit compaction for long recovery identifiers plus over-budget
+updater identifier/channel hierarchies and generation identities, so maximum
+valid configuration does not overflow recovery or apply work paths,
+validated real app root + `<App>.exe` + `resources/version.json`, and a detached
+PowerShell folder swap + relaunch. WMI launches PowerShell directly and records its
+PID plus Windows process-creation time before the running app quits, so startup cleanup cannot delete its generation
+and a failed marker write can terminate the complete helper. Accepted WMI launch is the
+terminal handoff, so checks, downloads, applies, and auto-check scheduling remain blocked
+until exit; native terminal shutdown is requested before synchronous completion listeners.
+The parent durably records the PowerShell process identity in the reservation
+before publishing its identity-bound activation; PowerShell refuses to arm or
+swap without that activation. A matching armed receipt remains accepted if its
+publication became visible before the parent sync failed; PowerShell reconciles
+the exact identity, retries the sync, and preserves ownership instead of
+deleting the handoff.
+Process-wide terminal/apply latches stop every updater instance's auto-checks, while
+process-wide generation allocation keeps public updater instances from sharing work.
+Successful helpers remove their generation and launcher files; launch failures
+clean launcher files best-effort, and startup prunes abandoned generations without touching
+live app/helper work. Mirin's first internal `ready` listener writes replacement
+readiness before user listeners, then asynchronously prunes exact dead-owner install-side
+staging siblings with session ownership and bounded live-PID leases.
+Non-current generation-owner PIDs share the same bounded lease.
+The validated payload, including `mirin-codec.exe`, is first copied, revalidated,
+and recursively flushed beside the install. The bundled codec is copied into
+helper work, rejects reparse-point operands, compares the actual directory volume
+identities, and probes a TxF directory transaction before terminal handoff. PowerShell
+uses literal paths, atomically commits the three namespace renames that exchange
+the complete app trees, keeps the canonical launch path present through interruption,
+rejects stale backup collisions, atomically rolls back, verifies restoration, and
+removes its generation work before relaunching the restored app.
+The codec distinguishes a committed exchange with a failed parent sync from a
+pre-exchange failure. PowerShell records that the swap is visible, retries the
+sync, and preserves the journal and both trees if durability remains uncertain.
+Recovery PowerShell starts in the temporary directory so its inherited current
+directory cannot pin the installed tree. If WMI cannot publish the helper PID,
+the unactivated helper self-expires; the launcher never terminates a raw numeric
+PID that might already have been reused.
+A private handoff reservation admits only the helper's token-bearing target after
+the old process releases its OS lock. Process handles and creation times bind
+wait, termination, cleanup ownership, arming, and readiness so PID reuse cannot
+authorize a different process.
+PowerShell keeps the backup until
+that exact replacement process acquires the exclusive lock and writes a durable
+Worker/native readiness receipt; every post-exit failure stops it, restores the old
+folder, clears the reservation, and relaunches the prior executable. If graceful
+parent shutdown reaches its deadline, PowerShell forces and confirms termination
+before swapping; unconfirmed helper/replacement termination or rollback preserves
+the reservation and both trees. Armed and readiness PIDs are published by atomic
+rename so polling never consumes partial contents. Runtime manifests
+require a pinned Ed25519 signature, and every redirect hop is subject to the
+HTTPS-or-loopback rule. `publish-all.ts` publishes the host-platform native package.
+The external phase journal is written through before each namespace transition.
+After helper death or reboot, bootstrap reconciles it before loading the native
+core: pre-commit targets roll back through an external PowerShell helper and
+committed targets finish backup cleanup. Windows x64 CI executes both a real WMI
+launch with injected failure immediately after TxF exchange and a successful
+replacement/readiness commit path. The bundled standalone `mirin-codec.exe`
+provides both updater atomic exchange and release-time compression without a CEF
+or Bun FFI dependency.
 
 Windows arm64 currently uses an x64 host/core/CEF compatibility payload because
 Bun's native Windows arm64 runtime does not provide `bun:ffi`. Windows 11 ARM runs

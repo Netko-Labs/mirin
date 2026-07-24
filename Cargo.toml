@@ -13,6 +13,8 @@ license = "MIT"
 cef = "148.4.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+url = "2"
 objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", default-features = false }
 objc2-foundation = "0.3.2"
@@ -30,6 +32,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_Security",
+    "Win32_Storage_FileSystem",
     "Win32_System_Registry",
     "Win32_System_Ole",
     "Win32_System_Threading",
@@ -40,6 +43,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
+    "Wdk_System_SystemInformation",
 ] }
 
 [profile.release]

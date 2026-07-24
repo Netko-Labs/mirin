@@ -14,10 +14,22 @@
  *     their `app://` URLs served from Contents/Resources.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
+import { resolveHostSingleInstance } from "./host-config.ts";
 import { Core } from "./native.ts";
+import {
+  EXCLUSIVE_UPDATER_CAPABILITY,
+  HOST_RUNTIME_PROTOCOL,
+  inspectUpdateHandoff,
+  UPDATE_HANDOFF_TOKEN_ENV,
+  type UpdateHandoffDecision,
+} from "./update-handoff.ts";
+import {
+  finalizeCommittedUpdateRecovery,
+  launchRollbackUpdateRecovery,
+} from "./update-recovery.ts";
 
 // Bundle layout differs by platform: macOS `.app` puts the host in
 // `Contents/MacOS` with resources in `../Resources`; Windows and Linux are flat app
@@ -40,19 +52,46 @@ const workerPath = process.env.MIRIN_WORKER ?? join(resourcesDir, "worker.js");
 const sidecarDir = process.env.MIRIN_SIDECAR_DIR ?? join(resourcesDir, "sidecars");
 const workersDir = process.env.MIRIN_WORKERS_DIR ?? join(resourcesDir, "workers");
 
+const coreConfig = JSON.parse(
+  process.env.MIRIN_CONFIG_JSON ??
+    JSON.stringify(process.env.MIRIN_DEV_URL ? { dev: true } : { resources_path: resourcesDir }),
+);
+const updateHandoffToken = process.env[UPDATE_HANDOFF_TOKEN_ENV];
+delete process.env[UPDATE_HANDOFF_TOKEN_ENV];
+const bundledIdentifier = readIdentifierFromBundle();
+let handoff: UpdateHandoffDecision = bundledIdentifier
+  ? inspectUpdateHandoff(
+      bundledIdentifier,
+      resourcesDir,
+      Boolean(coreConfig.dev),
+      updateHandoffToken,
+    )
+  : { blocked: false };
+if (bundledIdentifier) enforceUpdateHandoff(handoff);
+
+const manifest = JSON.parse(process.env.MIRIN_MANIFEST_JSON ?? readManifestFromBundle() ?? "{}");
+if (!bundledIdentifier && typeof manifest.id === "string") {
+  handoff = inspectUpdateHandoff(
+    manifest.id,
+    resourcesDir,
+    Boolean(coreConfig.dev),
+    updateHandoffToken,
+  );
+  enforceUpdateHandoff(handoff);
+}
+
 if (!existsSync(corePath) || !existsSync(workerPath)) {
   console.error(`[mirin host] missing core (${corePath}) or worker (${workerPath})`);
   process.exit(1);
 }
 
-const manifest = JSON.parse(process.env.MIRIN_MANIFEST_JSON ?? readManifestFromBundle() ?? "{}");
-
-const coreConfig = JSON.parse(
-  process.env.MIRIN_CONFIG_JSON ??
-    JSON.stringify(process.env.MIRIN_DEV_URL ? { dev: true } : { resources_path: resourcesDir }),
+// Resolve one value for both the native host and Worker. The internal native
+// override must not leave the updater believing single-instance is still active.
+const singleInstance = resolveHostSingleInstance(
+  manifest.singleInstance,
+  coreConfig.single_instance,
 );
-// Opt out of single-instance (the core default) when the app allows multiple.
-if (manifest.singleInstance === false) coreConfig.single_instance = false;
+coreConfig.single_instance = singleInstance;
 // The app's bundle id keys the per-app CEF cache dir (Windows has no OS bundle id).
 if (typeof manifest.id === "string") coreConfig.identifier = manifest.id;
 // Linux prod: the CLI stages the resolved app icon at resources/icon.png; the core
@@ -68,11 +107,27 @@ if (process.platform === "linux" && !coreConfig.icon_path) {
 // Worker serializes the first-time load instead of racing two concurrent
 // dlopens across threads.
 const core = new Core(corePath);
+const instanceLock = core.acquireInstanceLock(JSON.stringify(coreConfig));
+if (!instanceLock) {
+  console.error("[mirin host] another app instance owns an incompatible process lock");
+  process.exit(0);
+}
+const singleInstanceAcquired = instanceLock === "exclusive";
+if (handoff.readyPath && !singleInstanceAcquired) {
+  console.error("[mirin host] updater replacement did not acquire the exclusive app lock");
+  process.exit(1);
+}
 
 const worker = new Worker(workerPath, {
   workerData: {
     corePath,
     manifest,
+    // Legacy Workers must fail closed under version skew. Current Workers only
+    // trust the versioned positive capability below.
+    singleInstance: false,
+    runtimeProtocol: HOST_RUNTIME_PROTOCOL,
+    updaterApplyCapability: singleInstanceAcquired ? EXCLUSIVE_UPDATER_CAPABILITY : undefined,
+    updateReadyPath: singleInstanceAcquired ? handoff.readyPath : undefined,
     id: typeof manifest.id === "string" ? manifest.id : undefined,
     devUrl: process.env.MIRIN_DEV_URL,
     resourcesDir,
@@ -91,4 +146,37 @@ process.exit(exitCode);
 function readManifestFromBundle(): string | undefined {
   const path = join(resourcesDir, "mirin.manifest.json");
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+}
+
+function readIdentifierFromBundle(): string | undefined {
+  try {
+    const path = join(resourcesDir, "version.json");
+    const metadata = lstatSync(path);
+    if (!metadata.isFile() || metadata.size <= 0 || metadata.size > 16 * 1024) return undefined;
+    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+    const identifier = (value as Record<string, unknown>).identifier;
+    return typeof identifier === "string" && identifier.length > 0 ? identifier : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function enforceUpdateHandoff(decision: UpdateHandoffDecision): void {
+  if (decision.blocked) {
+    console.error("[mirin host] an updater owns the app launch handoff");
+    process.exit(0);
+  }
+  if (!decision.recovery) return;
+  try {
+    if (decision.recovery.mode === "commit") {
+      finalizeCommittedUpdateRecovery(decision.recovery);
+    } else {
+      launchRollbackUpdateRecovery(decision.recovery);
+      process.exit(0);
+    }
+  } catch (error) {
+    console.error("[mirin host] updater transaction recovery failed", error);
+    process.exit(1);
+  }
 }

@@ -49,7 +49,7 @@ pub(crate) fn parse_hex_rgba(hex: &str) -> Option<[f64; 4]> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
+pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) -> bool {
     let mtm = objc2::MainThreadMarker::new().expect("create_window must run on the main thread");
     let title_bar_style = match opts.title_bar_style.as_deref() {
         Some("hidden") => mac::TitleBarStyle::Hidden,
@@ -88,11 +88,16 @@ pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
         info
     };
 
-    create_browser(id, &opts.url, window_info, client.as_mut(), transparent);
+    let created = create_browser(id, &opts.url, window_info, client.as_mut(), transparent);
+    if !created {
+        osr::discard_window(id);
+        mac::discard_window(id);
+    }
+    created
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
+pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) -> bool {
     let title_bar_style = match opts.title_bar_style.as_deref() {
         Some("hidden") => win::TitleBarStyle::Hidden,
         Some("hiddenInset") => win::TitleBarStyle::HiddenInset,
@@ -113,7 +118,9 @@ pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
         transparent,
         show: opts.visible,
     };
-    let (parent, bounds) = win::create_window(&params);
+    let Some((parent, bounds)) = win::create_window(&params) else {
+        return false;
+    };
     let mut client = CLIENT.with(|c| c.borrow().clone());
 
     let parent = cef::sys::HWND(parent as *mut _);
@@ -130,13 +137,18 @@ pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
     };
     window_info.runtime_style = RuntimeStyle::ALLOY;
 
-    create_browser(id, &opts.url, window_info, client.as_mut(), transparent);
+    let created = create_browser(id, &opts.url, window_info, client.as_mut(), transparent);
+    if !created {
+        osr::discard_window(id);
+        win::close_window(id);
+    }
+    created
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
+pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) -> bool {
     let mut client = CLIENT.with(|c| c.borrow().clone());
-    let mut extra_info = browser_extra_info(id);
+    let mut extra_info = browser_extra_info(id, &opts.url);
     let url = CefString::from(opts.url.as_str());
     let browser_settings = BrowserSettings {
         background_color: 0xFF_FF_FF_FF,
@@ -144,24 +156,24 @@ pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
     };
 
     let mut bv_delegate = linux::MirinBrowserViewDelegate::new();
-    let browser_view = browser_view_create(
+    let Some(browser_view) = browser_view_create(
         client.as_mut(),
         Some(&url),
         Some(&browser_settings),
         extra_info.as_mut(),
         None,
         Some(&mut bv_delegate),
-    );
-    if let Some(bv) = browser_view.as_ref() {
-        linux::tag_browser_view(bv, id);
-    }
+    ) else {
+        return false;
+    };
+    linux::tag_browser_view(&browser_view, id);
 
     let frameless = matches!(
         opts.title_bar_style.as_deref(),
         Some("hidden") | Some("hiddenInset")
     );
     let mut win_delegate = linux::MirinWindowDelegate::new(
-        RefCell::new(browser_view),
+        RefCell::new(Some(browser_view.clone())),
         opts.title.clone(),
         opts.width as i32,
         opts.height as i32,
@@ -169,9 +181,16 @@ pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
         opts.always_on_top,
         frameless,
     );
-    if let Some(window) = window_create_top_level(Some(&mut win_delegate)) {
-        linux::register_window(id, window);
-    }
+    let Some(window) = window_create_top_level(Some(&mut win_delegate)) else {
+        if let Some(browser) = browser_view.browser() {
+            if let Some(host) = browser.host() {
+                host.close_browser(1);
+            }
+        }
+        return false;
+    };
+    linux::register_window(id, window);
+    true
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -181,8 +200,8 @@ fn create_browser(
     window_info: WindowInfo,
     client: Option<&mut Client>,
     transparent: bool,
-) {
-    let mut extra_info = browser_extra_info(id);
+) -> bool {
+    let mut extra_info = browser_extra_info(id, url);
     let browser_settings = BrowserSettings {
         background_color: if transparent { 0 } else { 0xFF_FF_FF_FF },
         ..Default::default()
@@ -195,10 +214,10 @@ fn create_browser(
         Some(&browser_settings),
         extra_info.as_mut(),
         None,
-    );
+    ) != 0
 }
 
-fn browser_extra_info(id: u32) -> Option<DictionaryValue> {
+fn browser_extra_info(id: u32, initial_url: &str) -> Option<DictionaryValue> {
     let mut extra_info = dictionary_value_create();
     if let Some(dict) = extra_info.as_mut() {
         dict.set_int(
@@ -211,6 +230,10 @@ fn browser_extra_info(id: u32) -> Option<DictionaryValue> {
             Some(&CefString::from(token.as_str())),
         );
         dict.set_int(Some(&CefString::from("windowId")), id as i32);
+        dict.set_string(
+            Some(&CefString::from("initialUrl")),
+            Some(&CefString::from(initial_url)),
+        );
     }
     extra_info
 }

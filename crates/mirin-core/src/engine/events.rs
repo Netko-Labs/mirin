@@ -49,3 +49,8 @@ pub fn poll_event() -> *const c_char {
         None => std::ptr::null(),
     }
 }
+
+#[cfg(test)]
+pub(crate) fn take_event_for_test() -> Option<String> {
+    EVENT_QUEUE.lock().expect("event queue").pop_front()
+}

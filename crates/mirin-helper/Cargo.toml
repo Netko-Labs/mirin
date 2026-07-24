@@ -10,3 +10,4 @@ sandbox = ["cef/sandbox"]
 
 [dependencies]
 cef.workspace = true
+url.workspace = true

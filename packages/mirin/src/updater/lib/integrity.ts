@@ -1,55 +1,94 @@
-import { rmSync } from "node:fs";
+import { statSync } from "node:fs";
 import type { UpdateProgress } from "../types.ts";
-import { assertTrustedUpdateUrl } from "./urls.ts";
+import { removePathBestEffort } from "./cleanup.ts";
+import { MAX_ARTIFACT_BYTES, MAX_TAR_BYTES } from "./limits.ts";
+import { fetchTrustedUpdateUrl, UPDATE_ARTIFACT_TIMEOUT_MS } from "./urls.ts";
 
 interface DownloadOptions {
   url: string;
   destination: string;
   sha256: string;
-  size?: number;
+  size: number;
   onProgress?: (progress: UpdateProgress) => void;
 }
 
-export async function downloadVerifiedArtifact(options: DownloadOptions): Promise<void> {
-  const response = await fetch(options.url, { redirect: "follow" });
-  assertTrustedUpdateUrl(response.url);
-  if (!response.ok || !response.body) throw new Error(`download ${response.status}`);
+function contentLength(response: Response): number | undefined {
+  const raw = response.headers.get("content-length");
+  if (raw === null) return undefined;
+  if (!/^\d+$/.test(raw)) throw new Error("invalid download content-length");
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) throw new Error("invalid download content-length");
+  return value;
+}
 
-  const total = Number(response.headers.get("content-length") ?? 0);
-  if (options.size !== undefined && total > 0 && total !== options.size) {
-    throw new Error(`download size mismatch (expected ${options.size}, got ${total})`);
+export async function downloadVerifiedArtifact(options: DownloadOptions): Promise<void> {
+  if (
+    !Number.isSafeInteger(options.size) ||
+    options.size <= 0 ||
+    options.size > MAX_ARTIFACT_BYTES
+  ) {
+    throw new Error("download requires a bounded declared size");
   }
 
-  const reader = response.body.getReader();
-  const writer = Bun.file(options.destination).writer();
-  const hasher = new Bun.CryptoHasher("sha256");
-  let received = 0;
+  removePathBestEffort(options.destination);
   try {
+    const response = await fetchTrustedUpdateUrl(options.url, {
+      timeoutMs: UPDATE_ARTIFACT_TIMEOUT_MS,
+    });
+    if (!response.ok || !response.body) throw new Error(`download ${response.status}`);
+
+    const declared = contentLength(response);
+    if (declared !== undefined && declared !== options.size) {
+      throw new Error(`download size mismatch (expected ${options.size}, got ${declared})`);
+    }
+
+    const reader = response.body.getReader();
+    const writer = Bun.file(options.destination).writer();
+    const hasher = new Bun.CryptoHasher("sha256");
+    let received = 0;
+    let failure: { error: unknown } | undefined;
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         received += value.byteLength;
-        if (options.size !== undefined && received > options.size) {
+        if (received > options.size || received > MAX_ARTIFACT_BYTES) {
+          try {
+            await reader.cancel();
+          } catch {
+            // Cancellation cannot replace the declared-size failure.
+          }
           throw new Error(`download exceeds expected size ${options.size}`);
         }
         hasher.update(value);
-        writer.write(value);
+        const written = writer.write(value);
+        if (written !== value.byteLength) throw new Error("download write was incomplete");
         options.onProgress?.({
           received,
-          total,
-          fraction: total ? received / total : 0,
+          total: options.size,
+          fraction: received / options.size,
         });
       }
-    } finally {
-      await writer.end();
+    } catch (error) {
+      failure = { error };
     }
-    if (options.size !== undefined && received !== options.size) {
+    try {
+      reader.releaseLock();
+    } catch {
+      // Releasing the reader cannot replace the download result.
+    }
+    try {
+      await writer.end();
+    } catch (error) {
+      if (!failure) failure = { error };
+    }
+    if (failure) throw failure.error;
+    if (received !== options.size) {
       throw new Error(`download size mismatch (expected ${options.size}, got ${received})`);
     }
     if (hasher.digest("hex") !== options.sha256) throw new Error("download hash mismatch");
   } catch (error) {
-    rmSync(options.destination, { force: true });
+    removePathBestEffort(options.destination);
     throw error;
   }
 }
@@ -58,13 +97,28 @@ export async function verifyFileSha256(
   path: string,
   expectedSha256: string,
   errorMessage: string,
+  expectedSize: number,
 ): Promise<void> {
+  if (
+    !Number.isSafeInteger(expectedSize) ||
+    expectedSize <= 0 ||
+    expectedSize > MAX_TAR_BYTES ||
+    statSync(path).size !== expectedSize
+  ) {
+    throw new Error(`${errorMessage}: invalid file size`);
+  }
+
   const hasher = new Bun.CryptoHasher("sha256");
   const reader = Bun.file(path).stream().getReader();
+  let received = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
+    received += value.byteLength;
+    if (received > expectedSize) throw new Error(`${errorMessage}: file exceeds expected size`);
     hasher.update(value);
   }
-  if (hasher.digest("hex") !== expectedSha256) throw new Error(errorMessage);
+  if (received !== expectedSize || hasher.digest("hex") !== expectedSha256) {
+    throw new Error(errorMessage);
+  }
 }

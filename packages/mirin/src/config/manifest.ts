@@ -37,7 +37,10 @@ export interface WindowMaterialOptions {
 }
 
 export interface WindowConfig {
-  /** Page to load: `app://` (bundled assets) or http(s). */
+  /**
+   * Page to load: `app://` (bundled assets) or http(s). The privileged
+   * `window.mirin` bridge is limited to this URL's top-level origin.
+   */
   url: string;
   title?: string;
   width?: number;
@@ -78,8 +81,15 @@ export interface WindowConfig {
 }
 
 export interface MirinConfig {
-  /** Reverse-DNS app id, e.g. "dev.peje.hello". */
+  /**
+   * Reverse-DNS app id, e.g. "dev.peje.hello". Uses at least two ASCII DNS-style
+   * labels and is validated before any build/dev output is created.
+   */
   id: string;
+  /**
+   * Portable bundle filename/display name: ASCII letters/digits plus spaces,
+   * `.`, `_`, `(`, `)`, and `-`; no reserved Windows names or trailing dot/space.
+   */
   name: string;
   /**
    * Publisher / company name (e.g. "Netko Labs"). Shown in the Windows installer,
@@ -145,7 +155,9 @@ export interface MirinConfig {
    * root) or a {@link SidecarSpec}. Names must be filename-safe (`A-Z`, `a-z`,
    * `0-9`, `.`, `_`, `-`) and paths must stay under the project root. Each binary is copied into
    * `Contents/Resources/sidecars/<name>`, codesigned (hardened runtime), and —
-   * when notary credentials are set — notarized with the rest of the app.
+   * when notary credentials are set — notarized with the rest of the app. Sources
+   * must resolve to regular files inside the canonical project root; escaping
+   * symlinks, directories, missing paths, and special files are rejected.
    *
    * Prefer a binary already on the user's PATH (`Bun.spawn("git", …)`) or a
    * download-on-first-run when size/licensing matter; bundle only when you need
@@ -171,9 +183,14 @@ export interface MirinConfig {
   urlSchemes?: string[];
   windows: Record<string, WindowConfig>;
   /**
-   * Single-instance app (default true): a second launch focuses the running
-   * window and exits, instead of opening another window. Set false to allow
-   * multiple instances (each gets its own CEF cache dir).
+   * Single-instance app (default true): the native host acquires an exclusive
+   * process-lifetime app lock before user code starts; a second launch exits and
+   * focuses the running window on Windows. Set false to allow multiple instances,
+   * which hold compatible shared locks and each get their own CEF cache dir.
+   * Automatic updater apply is unavailable when false because replacing an install
+   * while sibling app processes are running is unsafe. Apply also requires an
+   * exact CLI/runtime protocol match and a successfully acquired exclusive lock;
+   * the replacement must retain exclusive mode through its readiness receipt.
    */
   singleInstance?: boolean;
 }
@@ -260,12 +277,16 @@ export interface NsisConfig {
   include?: string;
 }
 
-/**
- * Inno Setup installer options — the same knobs as {@link NsisConfig}
- * (perMachine, oneClick, shortcuts, license, publisher, runAfterFinish,
- * installerIcon, and a raw `include` injected as `.iss` instead of NSIS script).
- */
-export type InnoConfig = NsisConfig;
+/** Inno Setup installer options, sharing the common NSIS installer knobs. */
+export interface InnoConfig extends Omit<NsisConfig, "installDir" | "include"> {
+  /**
+   * Default install directory: an absolute Windows path, or a path beginning with
+   * `{autopf}` or `{localappdata}`.
+   */
+  installDir?: string;
+  /** Raw Inno Setup script injected near the top of the generated `.iss` file. */
+  include?: string;
+}
 
 /** A Linux distributable package format `mirin` can emit. */
 export type LinuxPackageFormat = "appimage" | "deb" | "rpm";
@@ -309,9 +330,20 @@ export interface LinuxConfig {
 export interface ReleaseConfig {
   /** Flat directory URL hosting `{channel}-{platform}-{arch}-*` update files. */
   baseUrl: string;
-  /** Update channel; baked into artifact names + support dir. Default "stable". */
+  /**
+   * Base64 DER SubjectPublicKeyInfo for the Ed25519 key that signs update
+   * manifests. May instead be supplied through `MIRIN_UPDATE_PUBLIC_KEY` during
+   * the build. `mirin release` reads the matching private key from
+   * `MIRIN_UPDATE_PRIVATE_KEY`.
+   */
+  publicKey?: string;
+  /**
+   * Flat release path/artifact segment (ASCII letters, digits, `.`, `_`, `-`,
+   * maximum 64 characters). Baked into artifact names and the support directory.
+   * Default "stable".
+   */
   channel?: string;
-  /** Optional markdown release notes embedded in the update manifest. */
+  /** Optional markdown release notes embedded in the update manifest (maximum 64 Ki characters). */
   notes?: string;
 }
 
