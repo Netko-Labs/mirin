@@ -13,6 +13,16 @@ export interface GenerationOwner {
 
 export const UPDATER_PROCESS_SESSION = randomUUID().replaceAll("-", "");
 
+let processGeneration = 0;
+
+function nextProcessGeneration(): number {
+  if (processGeneration >= Number.MAX_SAFE_INTEGER) {
+    throw new Error("updater generation space exhausted");
+  }
+  processGeneration += 1;
+  return processGeneration;
+}
+
 export interface StagedGeneration extends PendingGeneration {
   staged: string;
   workDir: string;
@@ -50,7 +60,7 @@ export class UpdateTransactionState {
     if (this.isApplying) throw new Error("cannot check for updates while applying");
     if (this.#downloading !== null) throw new Error("cannot check while an update is downloading");
     if (this.#staged) throw new Error("cannot check while an update is staged");
-    this.#generation += 1;
+    this.#generation = nextProcessGeneration();
     this.#pending = null;
     return this.#generation;
   }
@@ -113,7 +123,7 @@ export class UpdateTransactionState {
 
   invalidate(): StagedGeneration | null {
     const staged = this.#staged;
-    this.#generation += 1;
+    this.#generation = nextProcessGeneration();
     this.#pending = null;
     this.#staged = null;
     return staged;

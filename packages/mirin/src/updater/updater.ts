@@ -13,6 +13,7 @@ import {
 import { parseManifestBytes, readBoundedManifestBytes, readBoundedSignature } from "./lib/http.ts";
 import { prepareInstallSibling, pruneInstallSiblingDirectories } from "./lib/install-staging.ts";
 import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
+import { enterTerminalUpdateHandoff } from "./lib/lifecycle.ts";
 import { MAX_PATCH_MEMORY_INPUT_BYTES, MAX_TAR_BYTES } from "./lib/limits.ts";
 import { parseManifest } from "./lib/manifest.ts";
 import { IS_LINUX, IS_MAC, IS_WINDOWS, platformName } from "./lib/platform.ts";
@@ -361,8 +362,10 @@ export class Updater {
 
     this.#transactions.finishApply(true);
     this.stopAutoCheck();
-    this.#setStatus("complete");
-    runtime().core.quitForUpdate();
+    enterTerminalUpdateHandoff(
+      () => runtime().core.quitForUpdate(),
+      () => this.#setStatus("complete"),
+    );
   }
 
   startAutoCheck(intervalMs = 6 * 60 * 60 * 1000): () => void {

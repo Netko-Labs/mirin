@@ -188,9 +188,12 @@ and the helper acknowledges its prerequisites. Its token-bearing successor must
 acquire the exclusive app lock; the helper retains its unique backup until that exact
 PID reports Worker/native readiness. Early exit or timeout uses bounded termination,
 removes the partial replacement, clears the reservation, restores, verifies, and
-relaunches the old app. Handoff reservations expire after a bounded 24-hour stale
+relaunches the old app. Native shutdown begins before synchronous updater completion
+listeners, and process-wide generation allocation keeps public updater instances
+disjoint. Handoff reservations expire after a bounded 24-hour stale
 lease so reused process IDs cannot block launch indefinitely. Startup prunes abandoned generations
-and, after readiness, asynchronously prunes exact dead-owner install-side staging
+and, after its first internal `ready` listener writes replacement readiness ahead of
+user listeners, asynchronously prunes exact dead-owner install-side staging
 siblings with session ownership and bounded live-PID leases. Non-current generation
 owners share the same bounded lease. Runtime manifests require a pinned Ed25519
 signature, and every redirect hop is subject to the HTTPS-or-loopback rule. Managed

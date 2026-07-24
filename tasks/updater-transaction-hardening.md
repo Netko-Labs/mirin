@@ -70,6 +70,9 @@
 - [x] Keep recursive startup pruning off the replacement-readiness critical path.
 - [x] Bound install-stage and helper PID reuse with session/creation leases.
 - [x] Bound non-current generation-owner PID reuse with a modification-time lease.
+- [x] Request terminal native quit before synchronous completion listeners.
+- [x] Write replacement readiness before synchronous user ready listeners.
+- [x] Keep public updater-instance generation work directories disjoint.
 
 ## Checkpoints
 
@@ -218,3 +221,11 @@
   pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 241
   tests with the two expected Windows lifecycle skips on macOS; the focused
   startup-cleanup suite passed 3 tests; `git diff --check` passed.
+- Sixteenth clean-context review remediation: request native terminal quit before
+  completion observers, synchronously acknowledge replacement readiness before user
+  `ready` listeners while deferring cleanup, and allocate generations process-wide
+  across public updater instances.
+- Sixteenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 244
+  tests with the two expected Windows lifecycle skips on macOS; the focused
+  lifecycle/transaction suite passed 9 tests; `git diff --check` passed.

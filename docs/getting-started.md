@@ -124,7 +124,8 @@ detached Ed25519 signature before parsing the manifest, validate its target, and
 only strictly newer SemVer precedence. Artifact requests have a 15-minute deadline.
 Checks are single-flight and defer while a download is active or an update is staged;
 repeated downloads of an already staged generation are rejected. Downloads and applies
-are guarded operations correlated to a version/hash generation. `mirin build` validates
+are guarded operations correlated to a version/hash generation allocated uniquely
+across all `Updater` instances in the process. `mirin build` validates
 the same strict SemVer grammar consumed by the runtime before packaging. Apps configured
 with `singleInstance: false` may check and download, but automatic apply is rejected;
 close every instance and install their update externally. The guard requires a
@@ -134,7 +135,8 @@ launch overrides. `mirin build` and `mirin dev` reject mismatched CLI/project
 `mirinjs` versions. Multi-instance processes hold shared locks, preventing them
 from overlapping an exclusive updater-capable process. Accepted helper launch is
 a terminal handoff, so manual updater work and auto-check scheduling remain
-blocked until the process exits. Before that handoff, the validated tree is copied
+blocked until the process exits; native shutdown is requested before synchronous
+`complete` listeners run. Before that handoff, the validated tree is copied
 and revalidated beside the install and the helper writes an armed acknowledgement.
 The helper reserves the next launch for its token-bearing target with a bounded
 24-hour lease that recovers safely from stale PID reuse, and retains the
@@ -144,9 +146,10 @@ AppImage/deb/rpm payloads omit updater metadata and update through their
 package channel. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation
 directory, and startup prunes abandoned generations while preserving work owned by
-live app processes or an apply-helper PID. After writing any replacement-readiness
-receipt, startup asynchronously removes exact dead-owner install-side staging
-siblings left by interrupted copies. Stage names carry process-session and creation
+live app processes or an apply-helper PID. Mirin's first internal `ready` listener
+writes any replacement-readiness receipt before user `ready` listeners, then startup
+asynchronously removes exact dead-owner install-side staging siblings left by
+interrupted copies. Stage names carry process-session and creation
 leases; current-PID reuse is rejected, and other live owner/helper PIDs expire after
 24 hours. Non-current live generation owners use the same bounded lease from their
 generation directory's last modification time. Manifest bodies, downloads, decompressed patches,

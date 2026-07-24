@@ -128,10 +128,13 @@ PowerShell folder swap + relaunch. WMI launches PowerShell directly and records 
 actual PID before the running app quits, so startup cleanup cannot delete its generation
 and a failed marker write can terminate the complete helper. Accepted WMI launch is the
 terminal handoff, so checks, downloads, applies, and auto-check scheduling remain blocked
-until exit. Successful helpers remove their generation and launcher files; launch failures
+until exit; native terminal shutdown is requested before synchronous completion listeners.
+Process-wide generation allocation keeps public updater instances from sharing work.
+Successful helpers remove their generation and launcher files; launch failures
 clean launcher files best-effort, and startup prunes abandoned generations without touching
-live app/helper work. After readiness, it asynchronously prunes exact dead-owner
-install-side staging siblings with session ownership and bounded live-PID leases.
+live app/helper work. Mirin's first internal `ready` listener writes replacement
+readiness before user listeners, then asynchronously prunes exact dead-owner install-side
+staging siblings with session ownership and bounded live-PID leases.
 Non-current generation-owner PIDs share the same bounded lease.
 The validated payload is first copied and revalidated beside
 the install. The swap uses literal PowerShell paths, a unique backup, rejects stale

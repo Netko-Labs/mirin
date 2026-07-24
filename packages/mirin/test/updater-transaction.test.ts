@@ -68,6 +68,21 @@ describe("updater transaction generations", () => {
     ).toBe(`generation-42-${"d".repeat(32)}-7-2.0.0-beta.1-${"c".repeat(16)}`);
   });
 
+  test("allocates distinct generations across public updater instances", () => {
+    const first = new UpdateTransactionState();
+    const second = new UpdateTransactionState();
+    const firstGeneration = first.beginCheck();
+    const secondGeneration = second.beginCheck();
+    const version = "2.0.0";
+    const tarHash = "e".repeat(64);
+    const owner = { pid: 42, session: "f".repeat(32) };
+
+    expect(firstGeneration).not.toBe(secondGeneration);
+    expect(
+      generationDirectoryName({ generation: firstGeneration, version, tarHash }, owner),
+    ).not.toBe(generationDirectoryName({ generation: secondGeneration, version, tarHash }, owner));
+  });
+
   test("allows an event listener to download after the in-flight check commits", () => {
     const state = new UpdateTransactionState();
     const generation = state.beginCheck();

@@ -256,7 +256,8 @@ off the main-process API:
   validated output is first copied and revalidated beside the install. After the
   detached apply helper writes a PID-bound armed acknowledgement, the updater enters a terminal handoff:
   checks, downloads, applies, and auto-check scheduling remain blocked until
-  process exit. A private handoff reservation blocks ordinary launches after the
+  process exit. Native terminal shutdown is requested before synchronous
+  `complete` status listeners run. A private handoff reservation blocks ordinary launches after the
   OS lock is released; only the helper's token-bearing target may proceed, and it
   must acquire the exclusive lock. The backup remains until that exact launched
   PID writes a Worker/native readiness receipt. Every post-exit failure rolls back
@@ -271,7 +272,8 @@ off the main-process API:
   `release.channel` supports validated safe
   dotted names consistently across build/release output, embedded identity, manifest
   matching, artifact names, and support directories, excluding Windows reserved names.
-  Downloads require
+  Process-wide generation allocation keeps separate public `Updater` instances
+  from sharing a download work directory. Downloads require
   generated size bounds; streaming reconstructed tar/decompression output is capped at
   8 GiB, in-memory patch inputs at 512 MiB combined, and release bsdiff sources at
   128 MiB each. Larger deltas fall back to the full bundle. Compressed artifacts,
@@ -285,8 +287,9 @@ off the main-process API:
   regular host executable. Failed operations release latches before best-effort
   cleanup, successful helpers remove their generation directory, and startup prunes
   abandoned generations while preserving work owned by live app processes and apply
-  helpers recorded by PID. After writing any replacement-readiness receipt, exact
-  install-side staging siblings left by interrupted copies are pruned asynchronously.
+  helpers recorded by PID. Mirin's first internal `ready` listener writes any
+  replacement-readiness receipt before user `ready` listeners; only then are exact
+  install-side staging siblings left by interrupted copies pruned asynchronously.
   Session ownership rejects current-PID reuse, and live owner/helper preservation has
   a bounded 24-hour lease. Non-current live generation owners are likewise trusted
   only within a 24-hour lease from their generation directory's last modification.
