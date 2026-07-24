@@ -76,12 +76,17 @@ platform so each target does not download and unpack the same runtime again.
 Set `release.baseUrl` in `mirin.config.ts` to a flat HTTPS directory that hosts
 those files, such as GitHub Releases' `.../releases/latest/download`. Before any
 build/dev output is created, Mirin requires a portable app `name`, a reverse-DNS
-`id`, a flat bounded `release.channel`, and a strict SemVer package/override
-version. Sidecar and extra-worker sources must resolve to regular files within
+`id`, a bounded `release.channel` made of alphanumeric runs separated by single
+`.`, `_`, or `-` characters, and a strict SemVer package/override version. On
+macOS the full SemVer remains in updater metadata while the bundle plist uses
+its Apple-compatible numeric `major.minor.patch` core. Sidecar and extra-worker
+sources must resolve to regular files within
 the canonical project root; missing paths, directories, special files, and
 escaping symlinks fail preflight. App icons must resolve to a project-owned
 regular file or a flat `.iconset` containing no symlinks; bundle and package
-sinks revalidate them before use. Runtime
+sinks revalidate them before use. Bundle and release directories are assembled
+in unique sibling staging paths, so a failed copy/sign/package run preserves the
+last successful output. Runtime
 updates reject non-HTTPS URLs except `http://localhost` / loopback for local
 testing, validate the manifest target, verify SHA-256 hashes, and check the
 archive layout before extraction. Artifact names, versions, and sizes are

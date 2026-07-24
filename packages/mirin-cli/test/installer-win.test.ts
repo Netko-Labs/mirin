@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type RenderNsisInput, renderNsisScript } from "../src/installer-win.ts";
 
 const base: RenderNsisInput = {
@@ -14,6 +17,7 @@ const base: RenderNsisInput = {
   options: {},
   projectDir: "C:\\project path",
 };
+const compileTest = Bun.which("makensis") ? test : test.skip;
 
 describe("NSIS script rendering", () => {
   test("cleans the owned app directory before overlay and quotes executable commands", () => {
@@ -34,16 +38,45 @@ describe("NSIS script rendering", () => {
     expect(script).toContain('"UninstallString" \'"$INSTDIR\\Uninstall.exe"\'');
     expect(script).toContain('"QuietUninstallString" \'"$INSTDIR\\Uninstall.exe" /S\'');
     expect(script).toContain('"DisplayIcon" "$INSTDIR\\app\\Safe App.exe"');
+    expect(script).toContain("  Call RequireOwnedNestedOrEmpty");
+    expect(script).toContain('IfFileExists "$INSTDIR\\app\\*" 0 require_owned_done');
+    expect(script).toContain(
+      'IfFileExists "$INSTDIR\\.mirin-dev.example.safe-app.owned" require_owned_done 0',
+    );
+    expect(script).toContain('FileOpen $0 "$INSTDIR\\.mirin-dev.example.safe-app.owned" w');
   });
 
   test("uninstalls only owned entries and removes the root non-recursively", () => {
     const lines = renderNsisScript(base).split("\n");
 
     expect(lines).toContain('  RMDir /r "$INSTDIR\\app"');
+    expect(lines).toContain(
+      '  IfFileExists "$INSTDIR\\.mirin-dev.example.safe-app.owned" 0 .payloadDone',
+    );
     expect(lines).toContain('  Delete "$INSTDIR\\Uninstall.exe"');
     expect(lines).toContain('  RMDir "$INSTDIR"');
     expect(lines).not.toContain('  RMDir /r "$INSTDIR"');
     expect(lines.some((line) => line.includes("DeleteRegKey HKCU"))).toBe(true);
+  });
+
+  test("removes a prior Inno uninstaller only after matching the ownership marker", () => {
+    const script = renderNsisScript(base);
+    const cleanup = script.indexOf("Function CleanupOwnedNestedInstall");
+
+    expect(cleanup).toBeGreaterThan(-1);
+    expect(
+      script.indexOf(
+        'IfFileExists "$INSTDIR\\.mirin-dev.example.safe-app.owned" 0 cleanup_owned_done',
+        cleanup,
+      ),
+    ).toBeGreaterThan(cleanup);
+    expect(script.indexOf('Delete "$INSTDIR\\unins000.exe"', cleanup)).toBeGreaterThan(cleanup);
+    expect(
+      script.indexOf(
+        'DeleteRegKey HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{dev.example.safe-app}_is1"',
+        cleanup,
+      ),
+    ).toBeGreaterThan(cleanup);
   });
 
   test("guards exact legacy flat cleanup and provides an uninstall fallback", () => {
@@ -54,11 +87,19 @@ describe("NSIS script rendering", () => {
 
     expect(script).toContain("Function CleanupLegacyFlatPayload");
     expect(script).toContain("Function un.CleanupLegacyFlatPayload");
-    expect(script).toContain('IfFileExists "$INSTDIR\\Safe App.exe" 0 .done');
-    expect(script).toContain('IfFileExists "$INSTDIR\\mirin_core.dll" 0 .done');
-    expect(script).toContain('IfFileExists "$INSTDIR\\mirin-helper.exe" 0 .done');
-    expect(script).toContain('IfFileExists "$INSTDIR\\libcef.dll" 0 .done');
-    expect(script).toContain('IfFileExists "$INSTDIR\\resources\\mirin.manifest.json" 0 .done');
+    expect(script).toContain(
+      'IfFileExists "$INSTDIR\\Safe App.exe" 0 CleanupLegacyFlatPayload_done',
+    );
+    expect(script).toContain(
+      'IfFileExists "$INSTDIR\\mirin_core.dll" 0 CleanupLegacyFlatPayload_done',
+    );
+    expect(script).toContain(
+      'IfFileExists "$INSTDIR\\mirin-helper.exe" 0 CleanupLegacyFlatPayload_done',
+    );
+    expect(script).toContain('IfFileExists "$INSTDIR\\libcef.dll" 0 CleanupLegacyFlatPayload_done');
+    expect(script).toContain(
+      'IfFileExists "$INSTDIR\\resources\\mirin.manifest.json" 0 CleanupLegacyFlatPayload_done',
+    );
     expect(script).toContain('  Delete "$INSTDIR\\removed-runtime.dll"');
     expect(script).not.toContain('  Delete "$INSTDIR\\sentinel.txt"');
     expect(script).toContain('  RMDir /r "$INSTDIR\\resources"');
@@ -101,5 +142,30 @@ describe("NSIS script rendering", () => {
     expect(() => renderNsisScript({ ...base, appName: 'Safe App"\nSection' })).toThrow(
       "invalid app name",
     );
+  });
+
+  compileTest("compiles the ownership and cross-installer lifecycle script", () => {
+    const root = mkdtempSync(join(tmpdir(), "mirin-nsis-compile-"));
+    try {
+      const payload = join(root, "payload");
+      mkdirSync(payload);
+      writeFileSync(join(payload, "Safe App.exe"), "app");
+      const script = join(root, "installer.nsi");
+      writeFileSync(
+        script,
+        renderNsisScript({
+          ...base,
+          appDir: payload,
+          outDir: root,
+          out: join(root, "setup.exe"),
+          projectDir: root,
+        }),
+      );
+
+      const result = Bun.spawnSync(["makensis", "-V2", script]);
+      expect(result.exitCode, result.stderr.toString()).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

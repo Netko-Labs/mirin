@@ -83,6 +83,8 @@ export function renderInnoScript(input: RenderInnoInput): string {
   );
   const baseName = fileName.slice(0, -".exe".length);
   const legacyRootFiles = normalizedLegacyRootFiles(exeName, input.legacyRootFiles);
+  const ownershipMarker = `.mirin-${bundleId}.owned`;
+  const nsisKey = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${bundleId}`;
 
   const lines: string[] = [];
   lines.push("[Setup]");
@@ -123,7 +125,8 @@ export function renderInnoScript(input: RenderInnoInput): string {
   // isolated beneath `app` so an upgrade can replace it without retaining files
   // removed by a newer release or deleting unrelated files from a custom root.
   lines.push("", "[InstallDelete]");
-  lines.push('Type: filesandordirs; Name: "{app}\\app"');
+  lines.push('Type: filesandordirs; Name: "{app}\\app"; Check: IsOwnedNestedInstall');
+  lines.push('Type: files; Name: "{app}\\Uninstall.exe"; Check: IsPriorMirinInstall');
   for (const file of legacyRootFiles) {
     lines.push(
       `Type: files; Name: "{app}\\${innoQuotedPath(file, "legacy payload file")}"; ` +
@@ -135,6 +138,10 @@ export function renderInnoScript(input: RenderInnoInput): string {
       `Type: filesandordirs; Name: "{app}\\${directory}"; Check: IsLegacyMirinFlatInstall`,
     );
   }
+
+  lines.push("", "[UninstallDelete]");
+  lines.push('Type: filesandordirs; Name: "{app}\\app"; Check: IsOwnedNestedInstall');
+  lines.push(`Type: files; Name: "{app}\\${ownershipMarker}"`);
 
   if (desktop) {
     lines.push("", "[Tasks]");
@@ -172,6 +179,8 @@ export function renderInnoScript(input: RenderInnoInput): string {
     "var",
     "  LegacyMirinFlatInstallChecked: Boolean;",
     "  LegacyMirinFlatInstall: Boolean;",
+    "  OwnedNestedInstallChecked: Boolean;",
+    "  OwnedNestedInstall: Boolean;",
     "",
     "function IsLegacyMirinFlatInstall: Boolean;",
     "begin",
@@ -186,6 +195,44 @@ export function renderInnoScript(input: RenderInnoInput): string {
     "    LegacyMirinFlatInstallChecked := True;",
     "  end;",
     "  Result := LegacyMirinFlatInstall;",
+    "end;",
+    "",
+    "function IsOwnedNestedInstall: Boolean;",
+    "begin",
+    "  if not OwnedNestedInstallChecked then",
+    "  begin",
+    `    OwnedNestedInstall := FileExists(ExpandConstant('{app}\\${ownershipMarker}'));`,
+    "    OwnedNestedInstallChecked := True;",
+    "  end;",
+    "  Result := OwnedNestedInstall;",
+    "end;",
+    "",
+    "function IsPriorMirinInstall: Boolean;",
+    "begin",
+    "  Result := IsLegacyMirinFlatInstall or IsOwnedNestedInstall;",
+    "end;",
+    "",
+    "function PrepareToInstall(var NeedsRestart: Boolean): String;",
+    "begin",
+    "  Result := '';",
+    "  if DirExists(ExpandConstant('{app}\\app')) and not IsOwnedNestedInstall then",
+    "    Result := 'The selected install directory already contains an app folder that is not owned by this Mirin application. Choose another directory.';",
+    "end;",
+    "",
+    "procedure CurStepChanged(CurStep: TSetupStep);",
+    "begin",
+    "  if (CurStep = ssInstall) and IsPriorMirinInstall then",
+    "  begin",
+    `    RegDeleteKeyIncludingSubkeys(HKCU32, '${nsisKey}');`,
+    `    RegDeleteKeyIncludingSubkeys(HKLM32, '${nsisKey}');`,
+    `    RegDeleteKeyIncludingSubkeys(HKCU64, '${nsisKey}');`,
+    `    RegDeleteKeyIncludingSubkeys(HKLM64, '${nsisKey}');`,
+    "  end;",
+    "  if CurStep = ssPostInstall then",
+    "  begin",
+    `    if not SaveStringToFile(ExpandConstant('{app}\\${ownershipMarker}'), '${bundleId}', False) then`,
+    "      RaiseException('Could not record Mirin installer ownership');",
+    "  end;",
     "end;",
   );
 

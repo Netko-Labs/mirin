@@ -58,7 +58,9 @@ describe("Inno Setup script rendering", () => {
       legacyRootFiles: ["Safe App.exe", "mirin_core.dll", "removed-runtime.bin"],
     });
 
-    expect(script).toContain('Type: filesandordirs; Name: "{app}\\app"');
+    expect(script).toContain(
+      'Type: filesandordirs; Name: "{app}\\app"; Check: IsOwnedNestedInstall',
+    );
     expect(script).toContain("UninstallDisplayIcon={app}\\app\\Safe App.exe");
     expect(script).toContain('Filename: "{app}\\app\\Safe App.exe"');
     expect(script).not.toContain('Filename: "{app}\\Safe App.exe"');
@@ -70,6 +72,39 @@ describe("Inno Setup script rendering", () => {
       "FileExists(ExpandConstant('{app}\\resources\\mirin.manifest.json'));",
     );
     expect(script).not.toContain('Name: "{app}\\*"');
+  });
+
+  test("refuses unowned nested collisions and removes stale NSIS ownership", () => {
+    const script = renderInnoScript(base);
+
+    expect(script).toContain(
+      "if DirExists(ExpandConstant('{app}\\app')) and not IsOwnedNestedInstall then",
+    );
+    expect(script).toContain(
+      "FileExists(ExpandConstant('{app}\\.mirin-dev.example.safe-app.owned'))",
+    );
+    expect(script).toContain(
+      'Type: files; Name: "{app}\\Uninstall.exe"; Check: IsPriorMirinInstall',
+    );
+    expect(script).toContain(
+      "RegDeleteKeyIncludingSubkeys(HKCU32, 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\dev.example.safe-app');",
+    );
+    expect(script).toContain(
+      "SaveStringToFile(ExpandConstant('{app}\\.mirin-dev.example.safe-app.owned')",
+    );
+  });
+
+  test("recursively removes only the marker-owned updater payload on uninstall", () => {
+    const script = renderInnoScript(base);
+    const uninstall = script.indexOf("[UninstallDelete]");
+
+    expect(uninstall).toBeGreaterThan(-1);
+    expect(
+      script.indexOf('Name: "{app}\\app"; Check: IsOwnedNestedInstall', uninstall),
+    ).toBeGreaterThan(uninstall);
+    expect(
+      script.indexOf('Name: "{app}\\.mirin-dev.example.safe-app.owned"', uninstall),
+    ).toBeGreaterThan(uninstall);
   });
 
   test("rejects unsafe names in enumerated legacy cleanup", () => {

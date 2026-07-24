@@ -16,13 +16,15 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { $ } from "bun";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
+import { writeAtomicOutputDirectory } from "../../shared/fs/atomic-output.ts";
 import {
   assertProjectIcon,
   copyProjectFile,
@@ -104,6 +106,13 @@ ${keys}
 </dict>
 </plist>
 `;
+}
+
+/** Convert strict SemVer to the numeric three-component format Apple requires. */
+export function macBundleVersion(version: string): string {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (!match) throw new Error(`[mirin] invalid app version for macOS bundle metadata: ${version}`);
+  return `${match[1]}.${match[2]}.${match[3]}`;
 }
 
 /** The 10 standard iconset renditions (point size + @1x/@2x pixel size). */
@@ -200,140 +209,149 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     join(opts.outDir, `${appName}.app`),
     "macOS bundle output directory",
   );
-  const contents = join(app, "Contents");
-  const macos = join(contents, "MacOS");
-  const frameworks = join(contents, "Frameworks");
+  await writeAtomicOutputDirectory(
+    opts.projectDir,
+    app,
+    "macOS bundle output directory",
+    async (staging) => {
+      const contents = join(staging, "Contents");
+      const macos = join(contents, "MacOS");
+      const frameworks = join(contents, "Frameworks");
+      const appleVersion = macBundleVersion(version);
 
-  rmSync(app, { recursive: true, force: true });
-  mkdirSync(macos, { recursive: true });
-  mkdirSync(frameworks, { recursive: true });
-  mkdirSync(join(contents, "Resources"), { recursive: true });
+      mkdirSync(macos, { recursive: true });
+      mkdirSync(frameworks, { recursive: true });
+      mkdirSync(join(contents, "Resources"), { recursive: true });
 
-  cpSync(opts.hostExe, join(macos, appName));
-  cpSync(opts.coreDylib, join(macos, "libmirin_core.dylib"));
+      cpSync(opts.hostExe, join(macos, appName));
+      cpSync(opts.coreDylib, join(macos, "libmirin_core.dylib"));
 
-  // Render the icon (if any) into Resources before writing the plist, so we
-  // only set CFBundleIconFile when an icon was actually produced.
-  const iconFile = icon ? await writeIcon(icon, join(contents, "Resources")) : undefined;
+      // Render the icon (if any) into Resources before writing the plist, so we
+      // only set CFBundleIconFile when an icon was actually produced.
+      const iconFile = icon ? await writeIcon(icon, join(contents, "Resources")) : undefined;
 
-  const info: Record<string, PlistValue> = {
-    CFBundleDevelopmentRegion: "en",
-    CFBundleDisplayName: appName,
-    CFBundleExecutable: appName,
-    CFBundleIdentifier: bundleId,
-    CFBundleInfoDictionaryVersion: "6.0",
-    CFBundleName: appName,
-    CFBundlePackageType: "APPL",
-    CFBundleShortVersionString: version,
-    CFBundleVersion: version,
-    LSMinimumSystemVersion: "13.0",
-    NSHighResolutionCapable: true,
-    NSSupportsAutomaticGraphicsSwitching: true,
-    LSFileQuarantineEnabled: true,
-    LSEnvironment: { MallocNanoZone: "0" },
-  };
-  if (iconFile) info.CFBundleIconFile = iconFile;
-  // Deep-link schemes: register this app as the macOS handler for app://-style
-  // URLs (e.g. anko://…). Delivered at runtime via app.on("open-url").
-  if (opts.urlSchemes?.length) {
-    info.CFBundleURLTypes = [{ CFBundleURLName: bundleId, CFBundleURLSchemes: opts.urlSchemes }];
-  }
-
-  writeFileSync(join(contents, "Info.plist"), plist(info));
-
-  const bundledFramework = join(frameworks, FRAMEWORK);
-  cpSync(join(cefPath, FRAMEWORK), bundledFramework, {
-    recursive: true,
-    verbatimSymlinks: true,
-  });
-  pruneMacCefLocales(bundledFramework, opts.cefLocales);
-
-  // Production resources: the served UI, the Worker bundle, and the manifest.
-  const resources = join(contents, "Resources");
-  if (opts.resources?.uiDir) {
-    cpSync(opts.resources.uiDir, join(resources, "ui"), { recursive: true });
-  }
-  if (opts.resources?.workerJs) {
-    cpSync(opts.resources.workerJs, join(resources, "worker.js"));
-  }
-  if (opts.resources?.manifestJson != null) {
-    writeFileSync(join(resources, "mirin.manifest.json"), opts.resources.manifestJson);
-  }
-  // version.json is the running app's self-knowledge for the updater. Written
-  // before the codesign loop below so the signature covers it.
-  if (opts.resources?.versionJson != null) {
-    writeFileSync(join(resources, "version.json"), opts.resources.versionJson);
-  }
-  // Extra Bun Worker bundles -> Resources/workers/<name>.js (resolveWorker()).
-  if (opts.resources?.workers && Object.keys(opts.resources.workers).length) {
-    const workersDir = join(resources, "workers");
-    mkdirSync(workersDir, { recursive: true });
-    for (const [name, src] of Object.entries(opts.resources.workers)) {
-      const safeName = safeExtraAssetName(name, "worker name");
-      copyProjectFile(
-        opts.projectDir,
-        src,
-        join(workersDir, `${safeName}.js`),
-        `worker "${safeName}" bundle`,
-      );
-    }
-  }
-  // Sidecar binaries -> Resources/sidecars/<name> (chmod +x; signed below). Paths
-  // collected here so the codesign loop can sign them inside-out with the app.
-  const sidecarDests: SidecarBundle[] = [];
-  if (opts.resources?.sidecars?.length) {
-    const sidecarsDir = join(resources, "sidecars");
-    mkdirSync(sidecarsDir, { recursive: true });
-    for (const sc of opts.resources.sidecars) {
-      const safeName = safeExtraAssetName(sc.name, "sidecar name");
-      const dest = join(sidecarsDir, safeName);
-      copyProjectFile(opts.projectDir, sc.src, dest, `sidecar "${safeName}"`);
-      chmodSync(dest, 0o755);
-      sidecarDests.push({ name: safeName, src: dest, entitlements: sc.entitlements });
-    }
-  }
-
-  for (const { suffix, id } of HELPER_TYPES) {
-    const name = `${appName} Helper${suffix}`;
-    const helperApp = join(frameworks, `${name}.app`);
-    mkdirSync(join(helperApp, "Contents", "MacOS"), { recursive: true });
-    cpSync(opts.helperBin, join(helperApp, "Contents", "MacOS", name));
-    writeFileSync(
-      join(helperApp, "Contents", "Info.plist"),
-      plist({
+      const info: Record<string, PlistValue> = {
         CFBundleDevelopmentRegion: "en",
-        CFBundleDisplayName: name,
-        CFBundleExecutable: name,
-        CFBundleIdentifier: `${bundleId}.${id}`,
+        CFBundleDisplayName: appName,
+        CFBundleExecutable: appName,
+        CFBundleIdentifier: bundleId,
         CFBundleInfoDictionaryVersion: "6.0",
-        CFBundleName: name,
+        CFBundleName: appName,
         CFBundlePackageType: "APPL",
-        CFBundleShortVersionString: version,
-        CFBundleVersion: version,
+        CFBundleShortVersionString: appleVersion,
+        CFBundleVersion: appleVersion,
         LSMinimumSystemVersion: "13.0",
-        LSUIElement: "1",
         NSHighResolutionCapable: true,
+        NSSupportsAutomaticGraphicsSwitching: true,
+        LSFileQuarantineEnabled: true,
         LSEnvironment: { MallocNanoZone: "0" },
-      }),
-    );
-  }
+      };
+      if (iconFile) info.CFBundleIconFile = iconFile;
+      // Deep-link schemes: register this app as the macOS handler for app://-style
+      // URLs (e.g. anko://…). Delivered at runtime via app.on("open-url").
+      if (opts.urlSchemes?.length) {
+        info.CFBundleURLTypes = [
+          { CFBundleURLName: bundleId, CFBundleURLSchemes: opts.urlSchemes },
+        ];
+      }
 
-  // Sign inside-out. Ad-hoc ("-") by default for local builds; pass a Developer
-  // ID to produce a distributable, notarizable app. Notarization requires the
-  // hardened runtime (--options runtime), a secure timestamp (--timestamp), and
-  // entitlements that let CEF + Bun JIT and load unsigned executable memory —
-  // without all three the Apple notary service returns "Invalid".
-  const identity = opts.signIdentity ?? "-";
-  const notarizable = identity !== "-";
-  const cef = join(frameworks, FRAMEWORK);
+      writeFileSync(join(contents, "Info.plist"), plist(info));
 
-  if (notarizable) {
-    // Mirrors the entitlement set Electrobun ships for Bun + CEF under hardened
-    // runtime (electrobun-reference/package/src/cli/index.ts).
-    const entitlements = join(opts.outDir, "_entitlements.plist");
-    writeFileSync(
-      entitlements,
-      `<?xml version="1.0" encoding="UTF-8"?>
+      const bundledFramework = join(frameworks, FRAMEWORK);
+      cpSync(join(cefPath, FRAMEWORK), bundledFramework, {
+        recursive: true,
+        verbatimSymlinks: true,
+      });
+      pruneMacCefLocales(bundledFramework, opts.cefLocales);
+
+      // Production resources: the served UI, the Worker bundle, and the manifest.
+      const resources = join(contents, "Resources");
+      if (opts.resources?.uiDir) {
+        cpSync(opts.resources.uiDir, join(resources, "ui"), { recursive: true });
+      }
+      if (opts.resources?.workerJs) {
+        cpSync(opts.resources.workerJs, join(resources, "worker.js"));
+      }
+      if (opts.resources?.manifestJson != null) {
+        writeFileSync(join(resources, "mirin.manifest.json"), opts.resources.manifestJson);
+      }
+      // version.json is the running app's self-knowledge for the updater. Written
+      // before the codesign loop below so the signature covers it.
+      if (opts.resources?.versionJson != null) {
+        writeFileSync(join(resources, "version.json"), opts.resources.versionJson);
+      }
+      // Extra Bun Worker bundles -> Resources/workers/<name>.js (resolveWorker()).
+      if (opts.resources?.workers && Object.keys(opts.resources.workers).length) {
+        const workersDir = join(resources, "workers");
+        mkdirSync(workersDir, { recursive: true });
+        for (const [name, src] of Object.entries(opts.resources.workers)) {
+          const safeName = safeExtraAssetName(name, "worker name");
+          copyProjectFile(
+            opts.projectDir,
+            src,
+            join(workersDir, `${safeName}.js`),
+            `worker "${safeName}" bundle`,
+          );
+        }
+      }
+      // Sidecar binaries -> Resources/sidecars/<name> (chmod +x; signed below). Paths
+      // collected here so the codesign loop can sign them inside-out with the app.
+      const sidecarDests: SidecarBundle[] = [];
+      if (opts.resources?.sidecars?.length) {
+        const sidecarsDir = join(resources, "sidecars");
+        mkdirSync(sidecarsDir, { recursive: true });
+        for (const sc of opts.resources.sidecars) {
+          const safeName = safeExtraAssetName(sc.name, "sidecar name");
+          const dest = join(sidecarsDir, safeName);
+          copyProjectFile(opts.projectDir, sc.src, dest, `sidecar "${safeName}"`);
+          chmodSync(dest, 0o755);
+          sidecarDests.push({ name: safeName, src: dest, entitlements: sc.entitlements });
+        }
+      }
+
+      for (const { suffix, id } of HELPER_TYPES) {
+        const name = `${appName} Helper${suffix}`;
+        const helperApp = join(frameworks, `${name}.app`);
+        mkdirSync(join(helperApp, "Contents", "MacOS"), { recursive: true });
+        cpSync(opts.helperBin, join(helperApp, "Contents", "MacOS", name));
+        writeFileSync(
+          join(helperApp, "Contents", "Info.plist"),
+          plist({
+            CFBundleDevelopmentRegion: "en",
+            CFBundleDisplayName: name,
+            CFBundleExecutable: name,
+            CFBundleIdentifier: `${bundleId}.${id}`,
+            CFBundleInfoDictionaryVersion: "6.0",
+            CFBundleName: name,
+            CFBundlePackageType: "APPL",
+            CFBundleShortVersionString: appleVersion,
+            CFBundleVersion: appleVersion,
+            LSMinimumSystemVersion: "13.0",
+            LSUIElement: "1",
+            NSHighResolutionCapable: true,
+            LSEnvironment: { MallocNanoZone: "0" },
+          }),
+        );
+      }
+
+      // Sign inside-out. Ad-hoc ("-") by default for local builds; pass a Developer
+      // ID to produce a distributable, notarizable app. Notarization requires the
+      // hardened runtime (--options runtime), a secure timestamp (--timestamp), and
+      // entitlements that let CEF + Bun JIT and load unsigned executable memory —
+      // without all three the Apple notary service returns "Invalid".
+      const identity = opts.signIdentity ?? "-";
+      const notarizable = identity !== "-";
+      const cef = join(frameworks, FRAMEWORK);
+
+      if (notarizable) {
+        // Mirrors the entitlement set Electrobun ships for Bun + CEF under hardened
+        // runtime (electrobun-reference/package/src/cli/index.ts).
+        const signingTemp = mkdtempSync(join(dirname(staging), ".mirin-sign-"));
+        const entitlements = join(signingTemp, "app.plist");
+        try {
+          writeFileSync(
+            entitlements,
+            `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -343,56 +361,60 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
 </dict>
 </plist>
 `,
-    );
-    const sign = (path: string, ents = false) =>
-      ents
-        ? $`codesign --force --timestamp --options runtime --entitlements ${entitlements} --sign ${identity} ${path}`.quiet()
-        : $`codesign --force --timestamp --options runtime --sign ${identity} ${path}`.quiet();
+            { flag: "wx", mode: 0o600 },
+          );
+          const sign = (path: string, ents = false) =>
+            ents
+              ? $`codesign --force --timestamp --options runtime --entitlements ${entitlements} --sign ${identity} ${path}`.quiet()
+              : $`codesign --force --timestamp --options runtime --sign ${identity} ${path}`.quiet();
 
-    // 1. CEF's nested libraries, then 2. the framework bundle itself.
-    const cefLibs = join(cef, "Libraries");
-    if (existsSync(cefLibs)) {
-      for (const lib of readdirSync(cefLibs)) {
-        if (lib.endsWith(".dylib")) await sign(join(cefLibs, lib));
-      }
-    }
-    await sign(cef);
-    // 3. our FFI core dylib.
-    await sign(join(macos, "libmirin_core.dylib"));
-    // 3b. sidecars: hardened runtime + timestamp; per-binary entitlements only
-    //     when the spec asks (most CLIs need none — over-entitling is a smell).
-    for (const sc of sidecarDests) {
-      if (sc.entitlements.length) {
-        const ent = join(opts.outDir, `_sidecar_${sc.name}.plist`);
-        writeFileSync(ent, entitlementsPlist(sc.entitlements));
-        await $`codesign --force --timestamp --options runtime --entitlements ${ent} --sign ${identity} ${sc.src}`.quiet();
-        rmSync(ent, { force: true });
+          // 1. CEF's nested libraries, then 2. the framework bundle itself.
+          const cefLibs = join(cef, "Libraries");
+          if (existsSync(cefLibs)) {
+            for (const lib of readdirSync(cefLibs)) {
+              if (lib.endsWith(".dylib")) await sign(join(cefLibs, lib));
+            }
+          }
+          await sign(cef);
+          // 3. our FFI core dylib.
+          await sign(join(macos, "libmirin_core.dylib"));
+          // 3b. sidecars: hardened runtime + timestamp; per-binary entitlements only
+          //     when the spec asks (most CLIs need none — over-entitling is a smell).
+          for (const sc of sidecarDests) {
+            if (sc.entitlements.length) {
+              const ent = join(signingTemp, `${sc.name}.plist`);
+              writeFileSync(ent, entitlementsPlist(sc.entitlements), { flag: "wx", mode: 0o600 });
+              await $`codesign --force --timestamp --options runtime --entitlements ${ent} --sign ${identity} ${sc.src}`.quiet();
+            } else {
+              await sign(sc.src);
+            }
+          }
+          // 4. each helper: the inner executable, then the .app wrapper (entitlements
+          //    on both — the renderer/GPU helpers are what actually JIT).
+          for (const { suffix } of HELPER_TYPES) {
+            const name = `${appName} Helper${suffix}`;
+            const helperApp = join(frameworks, `${name}.app`);
+            await sign(join(helperApp, "Contents", "MacOS", name), true);
+            await sign(helperApp, true);
+          }
+          // 5. finally the outer app.
+          await sign(staging, true);
+        } finally {
+          rmSync(signingTemp, { recursive: true, force: true });
+        }
       } else {
-        await sign(sc.src);
+        // Ad-hoc: enough to launch locally; not distributable or notarizable.
+        await $`codesign --force --sign ${identity} ${cef}`.quiet();
+        for (const sc of sidecarDests) {
+          await $`codesign --force --sign ${identity} ${sc.src}`.quiet();
+        }
+        for (const { suffix } of HELPER_TYPES) {
+          await $`codesign --force --sign ${identity} ${join(frameworks, `${appName} Helper${suffix}.app`)}`.quiet();
+        }
+        await $`codesign --force --sign ${identity} ${staging}`.quiet();
       }
-    }
-    // 4. each helper: the inner executable, then the .app wrapper (entitlements
-    //    on both — the renderer/GPU helpers are what actually JIT).
-    for (const { suffix } of HELPER_TYPES) {
-      const name = `${appName} Helper${suffix}`;
-      const helperApp = join(frameworks, `${name}.app`);
-      await sign(join(helperApp, "Contents", "MacOS", name), true);
-      await sign(helperApp, true);
-    }
-    // 5. finally the outer app.
-    await sign(app, true);
-    rmSync(entitlements, { force: true });
-  } else {
-    // Ad-hoc: enough to launch locally; not distributable or notarizable.
-    await $`codesign --force --sign ${identity} ${cef}`.quiet();
-    for (const sc of sidecarDests) {
-      await $`codesign --force --sign ${identity} ${sc.src}`.quiet();
-    }
-    for (const { suffix } of HELPER_TYPES) {
-      await $`codesign --force --sign ${identity} ${join(frameworks, `${appName} Helper${suffix}.app`)}`.quiet();
-    }
-    await $`codesign --force --sign ${identity} ${app}`.quiet();
-  }
+    },
+  );
 
-  return { app, exe: join(macos, appName) };
+  return { app, exe: join(app, "Contents", "MacOS", appName) };
 }

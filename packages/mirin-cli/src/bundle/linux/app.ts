@@ -24,12 +24,12 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
+import { writeAtomicOutputDirectory } from "../../shared/fs/atomic-output.ts";
 import {
   assertProjectIcon,
   copyProjectFile,
@@ -218,67 +218,69 @@ export async function buildLinuxBundle(
     join(opts.outDir, appName),
     "Linux bundle output directory",
   );
-  rmSync(app, { recursive: true, force: true });
-  mkdirSync(app, { recursive: true });
+  await writeAtomicOutputDirectory(
+    opts.projectDir,
+    app,
+    "Linux bundle output directory",
+    async (staging) => {
+      const exe = join(staging, appName);
+      cpSync(opts.hostExe, exe);
+      chmodSync(exe, 0o755);
+      cpSync(opts.coreDll, join(staging, "libmirin_core.so"));
+      const helper = join(staging, "mirin-helper");
+      cpSync(opts.helperExe, helper);
+      chmodSync(helper, 0o755);
 
-  const exe = join(app, appName);
-  cpSync(opts.hostExe, exe);
-  chmodSync(exe, 0o755);
-  cpSync(opts.coreDll, join(app, "libmirin_core.so"));
-  const helper = join(app, "mirin-helper");
-  cpSync(opts.helperExe, helper);
-  chmodSync(helper, 0o755);
+      copyCefRuntime(cefPath, staging, opts.cefLocales);
 
-  copyCefRuntime(cefPath, app, opts.cefLocales);
-
-  // The window taskbar/dock icon (`_NET_WM_ICON`) is set by the core from a PNG at
-  // `resources/icon.png`; host.ts points the init config's `icon_path` there in prod.
-  // (Dev serves it directly from the project via MIRIN_CONFIG_JSON, not the bundle.)
-  const iconPng = icon ? resolveLinuxIconPng(icon) : undefined;
-  if (iconPng) {
-    const res = join(app, "resources");
-    mkdirSync(res, { recursive: true });
-    cpSync(iconPng, join(res, "icon.png"));
-  }
-
-  // Production resources (dev passes none — paths come from env + the Vite URL).
-  if (opts.resources) {
-    const res = join(app, "resources");
-    mkdirSync(res, { recursive: true });
-    if (opts.resources.uiDir) cpSync(opts.resources.uiDir, join(res, "ui"), { recursive: true });
-    if (opts.resources.workerJs) cpSync(opts.resources.workerJs, join(res, "worker.js"));
-    if (opts.resources.manifestJson != null) {
-      writeFileSync(join(res, "mirin.manifest.json"), opts.resources.manifestJson);
-    }
-    if (opts.resources.versionJson != null) {
-      writeFileSync(join(res, "version.json"), opts.resources.versionJson);
-    }
-    if (opts.resources.workers && Object.keys(opts.resources.workers).length) {
-      const workersDir = join(res, "workers");
-      mkdirSync(workersDir, { recursive: true });
-      for (const [name, src] of Object.entries(opts.resources.workers)) {
-        const safeName = safeExtraAssetName(name, "worker name");
-        copyProjectFile(
-          opts.projectDir,
-          src,
-          join(workersDir, `${safeName}.js`),
-          `worker "${safeName}" bundle`,
-        );
+      const iconPng = icon ? resolveLinuxIconPng(icon) : undefined;
+      if (iconPng) {
+        const res = join(staging, "resources");
+        mkdirSync(res, { recursive: true });
+        cpSync(iconPng, join(res, "icon.png"));
       }
-    }
-    if (opts.resources.sidecars?.length) {
-      const sidecarsDir = join(res, "sidecars");
-      mkdirSync(sidecarsDir, { recursive: true });
-      for (const sc of opts.resources.sidecars) {
-        const safeName = safeExtraAssetName(sc.name, "sidecar name");
-        const dst = join(sidecarsDir, safeName);
-        copyProjectFile(opts.projectDir, sc.src, dst, `sidecar "${safeName}"`);
-        chmodSync(dst, 0o755);
-      }
-    }
-  }
 
-  return { app, exe };
+      if (opts.resources) {
+        const res = join(staging, "resources");
+        mkdirSync(res, { recursive: true });
+        if (opts.resources.uiDir) {
+          cpSync(opts.resources.uiDir, join(res, "ui"), { recursive: true });
+        }
+        if (opts.resources.workerJs) cpSync(opts.resources.workerJs, join(res, "worker.js"));
+        if (opts.resources.manifestJson != null) {
+          writeFileSync(join(res, "mirin.manifest.json"), opts.resources.manifestJson);
+        }
+        if (opts.resources.versionJson != null) {
+          writeFileSync(join(res, "version.json"), opts.resources.versionJson);
+        }
+        if (opts.resources.workers && Object.keys(opts.resources.workers).length) {
+          const workersDir = join(res, "workers");
+          mkdirSync(workersDir, { recursive: true });
+          for (const [name, src] of Object.entries(opts.resources.workers)) {
+            const safeName = safeExtraAssetName(name, "worker name");
+            copyProjectFile(
+              opts.projectDir,
+              src,
+              join(workersDir, `${safeName}.js`),
+              `worker "${safeName}" bundle`,
+            );
+          }
+        }
+        if (opts.resources.sidecars?.length) {
+          const sidecarsDir = join(res, "sidecars");
+          mkdirSync(sidecarsDir, { recursive: true });
+          for (const sc of opts.resources.sidecars) {
+            const safeName = safeExtraAssetName(sc.name, "sidecar name");
+            const dst = join(sidecarsDir, safeName);
+            copyProjectFile(opts.projectDir, sc.src, dst, `sidecar "${safeName}"`);
+            chmodSync(dst, 0o755);
+          }
+        }
+      }
+    },
+  );
+
+  return { app, exe: join(app, appName) };
 }
 
 /** Copy the CEF runtime (shared libs, paks, snapshot, icu data, locales) into `dest`. */

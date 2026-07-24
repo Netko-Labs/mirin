@@ -86,7 +86,8 @@ installed-mode + CEF release download (platform-generic). `mirin release` (verif
 emits `{channel}-win32-{arch}-update.json` + `.tar.zst` updater bundle + a real
 **NSIS installer** (`…-setup.exe`, `installer-win.ts`). The generated script keeps
 the owned payload under `$INSTDIR\\app` and the stable `Uninstall.exe` at the root.
-Upgrades remove `app` before copying so deleted release files cannot survive an overlay.
+A bundle-specific root marker gates recursive replacement and uninstall cleanup;
+first install refuses a pre-existing unowned `app` collision.
 A guarded migration recognizes the former flat Mirin layout from the app/core/helper/CEF/
 manifest fingerprint, removes only enumerated payload files plus owned `resources` and
 `locales`, and leaves unrelated root files intact. Uninstall repeats that guarded cleanup
@@ -97,7 +98,10 @@ new-v1 → new-v2 → uninstall while preserving a root sentinel. Customizable v
 config (perMachine/oneClick, shortcuts, license, publisher, runAfterFinish, installerIcon,
 raw `include`); needs `makensis`, else falls back to the portable `.zip`. The Inno
 alternative also replaces an owned `{app}\\app` payload on upgrade and marker-gates
-enumerated cleanup of its legacy flat payload. It accepts only absolute Windows install
+enumerated cleanup of its legacy flat payload. Both generators share the ownership
+marker, remove stale cross-tool uninstallers and exact bundle-keyed registry entries,
+and preserve unrelated root files; Inno also recursively removes updater-added payload
+files during uninstall. It accepts only absolute Windows install
 paths or `{autopf}`/`{localappdata}` prefixes and escapes literal filesystem paths before
 rendering `.iss`. Anko's
 `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,

@@ -52,9 +52,17 @@ describe("CLI app identity validation", () => {
     (value) => expect(() => validateBundleId(value)).toThrow("invalid app id"),
   );
 
-  test.each(["../beta", "nested/beta", "NUL", "beta.", "space channel"])(
-    "rejects unsafe release channel %s",
-    (value) => expect(() => validateReleaseChannel(value)).toThrow("invalid release channel"),
+  test.each([
+    "../beta",
+    "nested/beta",
+    "NUL",
+    "beta.",
+    "beta_",
+    "beta..preview",
+    "beta--preview",
+    "space channel",
+  ])("rejects unsafe release channel %s", (value) =>
+    expect(() => validateReleaseChannel(value)).toThrow("invalid release channel"),
   );
 
   test.each(["1", "1.2", "01.2.3", "1.2.3-01", "v1.2.3", "1.2.3/"])(

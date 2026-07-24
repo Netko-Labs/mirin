@@ -126,6 +126,7 @@ export function renderNsisScript(input: RenderNsisInput): string {
   const key = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${bundleId}`;
   const context = perMachine ? "all" : "current";
   const appExe = `$INSTDIR\\app\\${nsisLiteral(exeName)}`;
+  const ownershipMarker = `.mirin-${bundleId}.owned`;
   const legacyRootFiles = normalizedLegacyRootFiles(exeName, input.legacyRootFiles);
   appendLegacyCleanupFunction(lines, {
     name: "CleanupLegacyFlatPayload",
@@ -133,6 +134,11 @@ export function renderNsisScript(input: RenderNsisInput): string {
     bundleId,
     rootFiles: legacyRootFiles,
     deleteNsisUninstaller: true,
+  });
+  appendOwnedNestedCleanupFunction(lines, {
+    name: "CleanupOwnedNestedInstall",
+    ownershipMarker,
+    bundleId,
   });
   appendLegacyCleanupFunction(lines, {
     name: "un.CleanupLegacyFlatPayload",
@@ -145,6 +151,16 @@ export function renderNsisScript(input: RenderNsisInput): string {
   lines.push("Section");
   lines.push(`  SetShellVarContext ${context}`);
   lines.push("  Call CleanupLegacyFlatPayload");
+  lines.push("  Call RequireOwnedNestedOrEmpty");
+  lines.push('  CreateDirectory "$INSTDIR"');
+  lines.push("  ClearErrors");
+  lines.push(`  FileOpen $0 "$INSTDIR\\${nsisLiteral(ownershipMarker)}" w`);
+  lines.push("  IfErrors 0 +3");
+  lines.push('  MessageBox MB_ICONSTOP "Could not record Mirin installer ownership."');
+  lines.push("  Abort");
+  lines.push(`  FileWrite $0 "${nsisLiteral(bundleId)}$\\r$\\n"`);
+  lines.push("  FileClose $0");
+  lines.push("  Call CleanupOwnedNestedInstall");
   lines.push('  RMDir /r "$INSTDIR\\app"');
   lines.push('  SetOutPath "$INSTDIR\\app"');
   lines.push(`  File /r "${nsisLiteral(appDir)}\\*"`);
@@ -186,13 +202,55 @@ export function renderNsisScript(input: RenderNsisInput): string {
     lines.push(`  RMDir "$SMPROGRAMS\\${nsisLiteral(appName)}"`);
   }
   lines.push("  Call un.CleanupLegacyFlatPayload");
+  lines.push(`  IfFileExists "$INSTDIR\\${nsisLiteral(ownershipMarker)}" 0 .payloadDone`);
   lines.push('  RMDir /r "$INSTDIR\\app"');
+  lines.push(`  Delete "$INSTDIR\\${nsisLiteral(ownershipMarker)}"`);
+  lines.push("  .payloadDone:");
   lines.push('  Delete "$INSTDIR\\Uninstall.exe"');
   lines.push(`  DeleteRegKey ${root} "${key}"`);
   lines.push('  RMDir "$INSTDIR"');
   lines.push("SectionEnd");
 
   return `${lines.join("\n")}\n`;
+}
+
+interface OwnedNestedCleanupOptions {
+  name: string;
+  ownershipMarker: string;
+  bundleId: string;
+}
+
+function appendOwnedNestedCleanupFunction(
+  lines: string[],
+  options: OwnedNestedCleanupOptions,
+): void {
+  const { name, ownershipMarker, bundleId } = options;
+  const innoKey = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{${bundleId}}_is1`;
+  lines.push(
+    "",
+    "Function RequireOwnedNestedOrEmpty",
+    '  IfFileExists "$INSTDIR\\app\\*" 0 require_owned_done',
+    `  IfFileExists "$INSTDIR\\${nsisLiteral(ownershipMarker)}" require_owned_done 0`,
+    '  MessageBox MB_ICONSTOP "The selected install directory already contains an app folder that is not owned by this Mirin application. Choose another directory."',
+    "  Abort",
+    "require_owned_done:",
+    "FunctionEnd",
+    "",
+    `Function ${name}`,
+    `  IfFileExists "$INSTDIR\\${nsisLiteral(ownershipMarker)}" 0 cleanup_owned_done`,
+    '  Delete "$INSTDIR\\unins000.exe"',
+    '  Delete "$INSTDIR\\unins000.dat"',
+    '  Delete "$INSTDIR\\unins000.msg"',
+    "  SetRegView 32",
+    `  DeleteRegKey HKCU "${innoKey}"`,
+    `  DeleteRegKey HKLM "${innoKey}"`,
+    "  SetRegView 64",
+    `  DeleteRegKey HKCU "${innoKey}"`,
+    `  DeleteRegKey HKLM "${innoKey}"`,
+    "  SetRegView 32",
+    "cleanup_owned_done:",
+    "FunctionEnd",
+  );
 }
 
 /** Build the installer with `makensis`, returning the setup.exe path. */
@@ -255,11 +313,12 @@ interface LegacyCleanupOptions {
 
 function appendLegacyCleanupFunction(lines: string[], options: LegacyCleanupOptions): void {
   const { name, exeName, bundleId, rootFiles, deleteNsisUninstaller } = options;
+  const done = `${name.replace(".", "_")}_done`;
   lines.push("", `Function ${name}`);
   for (const marker of [exeName, "mirin_core.dll", "mirin-helper.exe", "libcef.dll"]) {
-    lines.push(`  IfFileExists "$INSTDIR\\${nsisLiteral(marker)}" 0 .done`);
+    lines.push(`  IfFileExists "$INSTDIR\\${nsisLiteral(marker)}" 0 ${done}`);
   }
-  lines.push('  IfFileExists "$INSTDIR\\resources\\mirin.manifest.json" 0 .done');
+  lines.push(`  IfFileExists "$INSTDIR\\resources\\mirin.manifest.json" 0 ${done}`);
   lines.push('  RMDir /r "$INSTDIR\\resources"');
   lines.push('  RMDir /r "$INSTDIR\\locales"');
   for (const file of rootFiles) {
@@ -270,9 +329,14 @@ function appendLegacyCleanupFunction(lines: string[], options: LegacyCleanupOpti
   lines.push('  Delete "$INSTDIR\\unins000.msg"');
   if (deleteNsisUninstaller) lines.push('  Delete "$INSTDIR\\Uninstall.exe"');
   const innoKey = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{${bundleId}}_is1`;
+  lines.push("  SetRegView 32");
   lines.push(`  DeleteRegKey HKCU "${innoKey}"`);
   lines.push(`  DeleteRegKey HKLM "${innoKey}"`);
-  lines.push(".done:");
+  lines.push("  SetRegView 64");
+  lines.push(`  DeleteRegKey HKCU "${innoKey}"`);
+  lines.push(`  DeleteRegKey HKLM "${innoKey}"`);
+  lines.push("  SetRegView 32");
+  lines.push(`${done}:`);
   lines.push("FunctionEnd");
 }
 

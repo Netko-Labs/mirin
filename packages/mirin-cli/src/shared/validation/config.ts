@@ -9,7 +9,7 @@ const MAX_VERSION_LENGTH = 128;
 const WINDOWS_RESERVED_NAME =
   /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i;
 const PORTABLE_APP_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._()-]*$/;
-const FLAT_CHANNEL = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const FLAT_CHANNEL = /^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/;
 const IDENTIFIER_LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
 const STRICT_SEMVER =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -89,7 +89,7 @@ export function validateReleaseChannel(value: unknown): string {
   ) {
     throw new Error(
       `[mirin] invalid release channel ${quoted(channel)} — use 1–${MAX_CHANNEL_LENGTH} letters, ` +
-        'digits, ".", "_" or "-" in one non-reserved path segment.',
+        'digits, ".", "_" or "-" in one non-reserved path segment, with separators between names.',
     );
   }
   return channel;

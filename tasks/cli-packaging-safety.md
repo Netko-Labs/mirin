@@ -16,6 +16,12 @@
 - [x] Inno validates `installDir` and safely escapes all structured literal paths.
 - [x] Inno replaces an owned `{app}\\app` payload so removed release files do not survive upgrades.
 - [x] Inno marker-gates enumerated cleanup of legacy flat payloads without deleting unrelated root files.
+- [x] Inno and NSIS reject unowned nested payload collisions and share a bundle-specific ownership marker.
+- [x] Inno and NSIS remove stale cross-tool uninstallers and exact registry entries during a verified migration.
+- [x] Bundle and release outputs stage in unique sibling directories and replace the prior successful output only after success.
+- [x] macOS signing entitlements live in exclusive private temporary files with `finally` cleanup.
+- [x] macOS derives numeric Apple bundle metadata while preserving full SemVer in updater metadata.
+- [x] Release-channel grammar matches the updater contract and rejects repeated or trailing separators.
 
 ## Verification
 
