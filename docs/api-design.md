@@ -285,8 +285,10 @@ off the main-process API:
   regular host executable. Failed operations release latches before best-effort
   cleanup, successful helpers remove their generation directory, and startup prunes
   abandoned generations while preserving work owned by live app processes and apply
-  helpers recorded by PID. Exact install-side staging siblings left by interrupted
-  copies are likewise pruned only after their owner and any recorded helper are gone.
+  helpers recorded by PID. After writing any replacement-readiness receipt, exact
+  install-side staging siblings left by interrupted copies are pruned asynchronously.
+  Session ownership rejects current-PID reuse, and live owner/helper preservation has
+  a bounded 24-hour lease.
 
 `release.notes` accepts at most 64 Ki characters, and the CLI rejects a generated
 manifest above the runtime's 256 KiB response ceiling before signing it.

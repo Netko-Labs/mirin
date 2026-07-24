@@ -67,6 +67,8 @@
 - [x] Retire renderer RPC endpoints without deleting a same-id replacement generation.
 - [x] Preserve relative macOS framework symlinks in install-filesystem staging.
 - [x] Prune abandoned install-side staging siblings without touching live owner/helper work.
+- [x] Keep recursive startup pruning off the replacement-readiness critical path.
+- [x] Bound install-stage and helper PID reuse with session/creation leases.
 
 ## Checkpoints
 
@@ -197,6 +199,14 @@
   install-side staging siblings at startup while preserving live owner PIDs,
   recorded apply-helper work, symlinks, and prefix lookalikes.
 - Thirteenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 241
+  tests with the two expected Windows lifecycle skips on macOS; focused cleanup
+  and staged-bundle coverage passed 8 tests; `git diff --check` passed.
+- Fourteenth clean-context review remediation: write replacement readiness before
+  asynchronous startup pruning, bind install stages to process sessions and creation
+  timestamps, reject current-PID reuse, and expire unverifiable live owner/helper
+  preservation after 24 hours.
+- Fourteenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
   pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 241
   tests with the two expected Windows lifecycle skips on macOS; focused cleanup
   and staged-bundle coverage passed 8 tests; `git diff --check` passed.

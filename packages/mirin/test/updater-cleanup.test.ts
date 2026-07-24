@@ -1,16 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   APPLY_HELPER_PID_FILE,
   hasLiveApplyHelper,
+  MAX_APPLY_HELPER_AGE_MS,
   pruneGenerationDirectories,
 } from "../src/updater/lib/cleanup.ts";
 import { generationDirectoryName } from "../src/updater/lib/transaction.ts";
 
 describe("updater generation cleanup", () => {
-  test("prunes strict generation directories without following symlinks", () => {
+  test("prunes strict generation directories without following symlinks", async () => {
     const root = mkdtempSync(join(tmpdir(), "mirin-updater-cleanup-"));
     const updates = join(root, "updates");
     const abandoned = join(updates, "generation-1-1.2.3-beta.1-aaaaaaaaaaaaaaaa");
@@ -24,8 +33,8 @@ describe("updater generation cleanup", () => {
     symlinkSync(outside, linked, "dir");
 
     try {
-      expect(hasLiveApplyHelper(updates, () => true)).toBe(false);
-      pruneGenerationDirectories(updates);
+      expect(await hasLiveApplyHelper(updates, { isProcessAlive: () => true })).toBe(false);
+      await pruneGenerationDirectories(updates);
       expect(existsSync(abandoned)).toBe(false);
       expect(existsSync(unrelated)).toBe(true);
       expect(existsSync(linked)).toBe(true);
@@ -35,7 +44,7 @@ describe("updater generation cleanup", () => {
     }
   });
 
-  test("preserves generations owned by live updater processes", () => {
+  test("preserves generations owned by live updater processes", async () => {
     const root = mkdtempSync(join(tmpdir(), "mirin-updater-owners-"));
     const updates = join(root, "updates");
     mkdirSync(updates);
@@ -61,7 +70,7 @@ describe("updater generation cleanup", () => {
     }
 
     try {
-      pruneGenerationDirectories(updates, {
+      await pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
         isProcessAlive: (pid) => pid === 200,
@@ -75,7 +84,7 @@ describe("updater generation cleanup", () => {
     }
   });
 
-  test("preserves a generation transferred to a live apply helper", () => {
+  test("preserves a generation transferred to a live apply helper within its lease", async () => {
     const root = mkdtempSync(join(tmpdir(), "mirin-updater-helper-owner-"));
     const updates = join(root, "updates");
     const generation = join(
@@ -85,23 +94,54 @@ describe("updater generation cleanup", () => {
         { pid: 300, session: "e".repeat(32) },
       ),
     );
+    const reusedHelperGeneration = join(
+      updates,
+      generationDirectoryName(
+        { generation: 2, version: "1.2.4", tarHash: "b".repeat(64) },
+        { pid: 301, session: "f".repeat(32) },
+      ),
+    );
     mkdirSync(generation, { recursive: true });
-    writeFileSync(join(generation, APPLY_HELPER_PID_FILE), "400");
+    mkdirSync(reusedHelperGeneration);
+    const helperMarker = join(generation, APPLY_HELPER_PID_FILE);
+    writeFileSync(helperMarker, "400");
+    writeFileSync(join(reusedHelperGeneration, APPLY_HELPER_PID_FILE), "100");
+    const markerMtimeMs = statSync(helperMarker).mtimeMs;
 
     try {
-      expect(hasLiveApplyHelper(updates, (pid) => pid === 400)).toBe(true);
-      pruneGenerationDirectories(updates, {
+      expect(
+        await hasLiveApplyHelper(updates, {
+          currentPid: 400,
+          isProcessAlive: (pid) => pid === 400,
+        }),
+      ).toBe(false);
+      expect(
+        await hasLiveApplyHelper(updates, {
+          currentPid: 100,
+          isProcessAlive: (pid) => pid === 400,
+        }),
+      ).toBe(true);
+      await pruneGenerationDirectories(updates, {
+        currentPid: 100,
+        currentSession: "b".repeat(32),
+        isProcessAlive: (pid) => pid === 100 || pid === 400,
+      });
+      expect(existsSync(generation)).toBe(true);
+      expect(existsSync(reusedHelperGeneration)).toBe(false);
+
+      const expiredNowMs = markerMtimeMs + MAX_APPLY_HELPER_AGE_MS + 1;
+      expect(
+        await hasLiveApplyHelper(updates, {
+          currentPid: 100,
+          isProcessAlive: (pid) => pid === 400,
+          nowMs: expiredNowMs,
+        }),
+      ).toBe(false);
+      await pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
         isProcessAlive: (pid) => pid === 400,
-      });
-      expect(existsSync(generation)).toBe(true);
-
-      expect(hasLiveApplyHelper(updates, () => false)).toBe(false);
-      pruneGenerationDirectories(updates, {
-        currentPid: 100,
-        currentSession: "b".repeat(32),
-        isProcessAlive: () => false,
+        nowMs: expiredNowMs,
       });
       expect(existsSync(generation)).toBe(false);
     } finally {

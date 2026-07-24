@@ -1,5 +1,7 @@
-import { lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
+import { lstat, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { MAX_UPDATE_HANDOFF_AGE_MS } from "../../update-handoff.ts";
 import { UPDATER_PROCESS_SESSION } from "./transaction.ts";
 
 const LEGACY_GENERATION_DIRECTORY = /^generation-[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.+-]*-[a-f0-9]{16}$/;
@@ -7,11 +9,19 @@ const OWNED_GENERATION_DIRECTORY =
   /^generation-([1-9]\d*)-([a-f0-9]{32})-[1-9]\d*-[0-9A-Za-z][0-9A-Za-z.+-]*-[a-f0-9]{16}$/;
 export const APPLY_HELPER_PID_FILE = ".apply-helper.pid";
 export const APPLY_HELPER_ARMED_FILE = ".apply-helper-armed";
+export const MAX_APPLY_HELPER_AGE_MS = MAX_UPDATE_HANDOFF_AGE_MS;
 
 interface PruneGenerationOptions {
   currentPid?: number;
   currentSession?: string;
   isProcessAlive?: (pid: number) => boolean;
+  nowMs?: number;
+}
+
+interface LiveApplyHelperOptions {
+  currentPid?: number;
+  isProcessAlive?: (pid: number) => boolean;
+  nowMs?: number;
 }
 
 export function removePathBestEffort(path: string, recursive = false): void {
@@ -22,13 +32,13 @@ export function removePathBestEffort(path: string, recursive = false): void {
   }
 }
 
-export function pruneGenerationDirectories(
+export async function pruneGenerationDirectories(
   updatesDir: string,
   options: PruneGenerationOptions = {},
-): void {
+): Promise<void> {
   let entries: string[];
   try {
-    entries = readdirSync(updatesDir);
+    entries = await readdir(updatesDir);
   } catch {
     return;
   }
@@ -47,25 +57,31 @@ export function pruneGenerationDirectories(
     }
     const path = join(updatesDir, entry);
     try {
-      const metadata = lstatSync(path);
+      const metadata = await lstat(path);
       if (metadata.isSymbolicLink() || !metadata.isDirectory()) continue;
     } catch {
       continue;
     }
-    const helperPid = applyHelperPid(path);
+    const helperPid = await applyHelperPid(path, options.nowMs ?? Date.now());
     const isProcessAlive = options.isProcessAlive ?? processIsAlive;
-    if (helperPid !== undefined && isProcessAlive(helperPid)) continue;
-    removePathBestEffort(path, true);
+    if (
+      helperPid !== undefined &&
+      helperPid !== (options.currentPid ?? process.pid) &&
+      isProcessAlive(helperPid)
+    ) {
+      continue;
+    }
+    await removePathBestEffortAsync(path);
   }
 }
 
-export function hasLiveApplyHelper(
+export async function hasLiveApplyHelper(
   updatesDir: string,
-  isProcessAlive: (pid: number) => boolean = processIsAlive,
-): boolean {
+  options: LiveApplyHelperOptions = {},
+): Promise<boolean> {
   let entries: string[];
   try {
-    entries = readdirSync(updatesDir);
+    entries = await readdir(updatesDir);
   } catch {
     return false;
   }
@@ -76,27 +92,50 @@ export function hasLiveApplyHelper(
     }
     const path = join(updatesDir, entry);
     try {
-      const metadata = lstatSync(path);
+      const metadata = await lstat(path);
       if (metadata.isSymbolicLink() || !metadata.isDirectory()) continue;
     } catch {
       continue;
     }
-    const helperPid = applyHelperPid(path);
-    if (helperPid !== undefined && isProcessAlive(helperPid)) return true;
+    const helperPid = await applyHelperPid(path, options.nowMs ?? Date.now());
+    if (
+      helperPid !== undefined &&
+      helperPid !== (options.currentPid ?? process.pid) &&
+      (options.isProcessAlive ?? processIsAlive)(helperPid)
+    ) {
+      return true;
+    }
   }
   return false;
 }
 
-function applyHelperPid(workDir: string): number | undefined {
+async function applyHelperPid(workDir: string, nowMs: number): Promise<number | undefined> {
   try {
     const marker = join(workDir, APPLY_HELPER_PID_FILE);
-    if (!lstatSync(marker).isFile()) return undefined;
-    const value = readFileSync(marker, "utf8");
+    const metadata = await lstat(marker);
+    if (
+      !metadata.isFile() ||
+      metadata.size < 1 ||
+      metadata.size > 32 ||
+      !Number.isFinite(nowMs) ||
+      Math.abs(nowMs - metadata.mtimeMs) > MAX_APPLY_HELPER_AGE_MS
+    ) {
+      return undefined;
+    }
+    const value = await readFile(marker, "utf8");
     if (!/^[1-9]\d*$/.test(value)) return undefined;
     const pid = Number(value);
     return Number.isSafeInteger(pid) ? pid : undefined;
   } catch {
     return undefined;
+  }
+}
+
+async function removePathBestEffortAsync(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch {
+    // Startup cleanup is best-effort and must not prevent app launch.
   }
 }
 

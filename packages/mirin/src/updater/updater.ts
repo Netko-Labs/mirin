@@ -565,6 +565,10 @@ function supportDir(version: VersionInfo): string {
 }
 
 export function initializeUpdater(): void {
+  void pruneUpdaterStartupState();
+}
+
+async function pruneUpdaterStartupState(): Promise<void> {
   let resourcesDir: string | undefined;
   try {
     resourcesDir = runtime().resourcesDir;
@@ -576,9 +580,9 @@ export function initializeUpdater(): void {
   try {
     const version = readVersionJsonFile(join(resourcesDir, "version.json"));
     const updatesDir = join(supportDir(version), "updates");
-    const liveHelper = hasLiveApplyHelper(updatesDir);
-    pruneGenerationDirectories(updatesDir);
-    pruneInstallSiblingDirectories({
+    const liveHelper = await hasLiveApplyHelper(updatesDir);
+    await pruneGenerationDirectories(updatesDir);
+    await pruneInstallSiblingDirectories({
       resourcesDir,
       platform: platformName(),
       hasLiveHelper: liveHelper,

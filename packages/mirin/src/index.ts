@@ -63,9 +63,13 @@ export type { UpdateInfo, UpdateProgress, UpdaterEvents, UpdaterStatus } from ".
 export { Updater, updater } from "./updater/index.ts";
 
 wireAppEvents();
-app.on("ready", () => queueMicrotask(signalUpdaterReady));
+app.on("ready", () =>
+  queueMicrotask(() => {
+    signalUpdaterReady();
+    initializeUpdater();
+  }),
+);
 boot();
-initializeUpdater();
 
 // Re-export so `import mirin from "mirin"` style also works if desired.
 export default app;

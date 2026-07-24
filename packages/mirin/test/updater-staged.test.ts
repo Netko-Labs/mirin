@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  MAX_INSTALL_SIBLING_AGE_MS,
   prepareInstallSibling,
   pruneInstallSiblingDirectories,
 } from "../src/updater/lib/install-staging.ts";
@@ -181,41 +182,73 @@ describe("staged update bundle validation", () => {
     }
   });
 
-  test("prunes only dead-owned install siblings and preserves live helper work", () => {
+  test("prunes leased install siblings without trusting a reused startup PID", async () => {
     const root = mkdtempSync(join(tmpdir(), "mirin-install-staging-cleanup-"));
     const install = join(root, "install", installed.name);
     const resources = join(install, "resources");
     const parent = dirname(install);
     const prefix = `.${installed.name}.mirin-new-`;
-    const abandoned = join(parent, `${prefix}300-11111111-1111-1111-1111-111111111111`);
-    const live = join(parent, `${prefix}200-22222222-2222-2222-2222-222222222222`);
+    const nowMs = 1_800_000_000_000;
+    const currentSession = "a".repeat(32);
+    const owned = (pid: number, session: string, createdAtMs: number, uuid: string) =>
+      join(parent, `${prefix}${pid}-${session}-${createdAtMs}-${uuid}`);
+    const abandoned = owned(300, "c".repeat(32), nowMs, "11111111-1111-1111-1111-111111111111");
+    const live = owned(200, "d".repeat(32), nowMs, "22222222-2222-2222-2222-222222222222");
+    const current = owned(100, currentSession, nowMs, "33333333-3333-3333-3333-333333333333");
+    const reusedCurrent = owned(100, "b".repeat(32), nowMs, "55555555-5555-5555-5555-555555555555");
+    const agedLive = owned(
+      201,
+      "e".repeat(32),
+      nowMs - MAX_INSTALL_SIBLING_AGE_MS - 1,
+      "66666666-6666-6666-6666-666666666666",
+    );
+    const legacyCurrent = join(parent, `${prefix}100-77777777-7777-7777-7777-777777777777`);
     const unrelated = join(parent, `${prefix}300-not-a-uuid`);
     const outside = join(root, "outside");
     const linked = join(parent, `${prefix}400-44444444-4444-4444-4444-444444444444`);
     mkdirSync(resources, { recursive: true });
-    mkdirSync(abandoned);
-    mkdirSync(live);
-    mkdirSync(unrelated);
+    for (const directory of [
+      abandoned,
+      live,
+      current,
+      reusedCurrent,
+      agedLive,
+      legacyCurrent,
+      unrelated,
+    ]) {
+      mkdirSync(directory);
+    }
     mkdirSync(outside);
     symlinkSync(outside, linked, "dir");
 
     try {
-      pruneInstallSiblingDirectories({
+      await pruneInstallSiblingDirectories({
         resourcesDir: resources,
         platform: "linux",
         hasLiveHelper: true,
+        currentPid: 100,
+        currentSession,
         isProcessAlive: () => false,
+        nowMs,
       });
       expect(existsSync(abandoned)).toBe(true);
       expect(existsSync(live)).toBe(true);
+      expect(existsSync(agedLive)).toBe(true);
 
-      pruneInstallSiblingDirectories({
+      await pruneInstallSiblingDirectories({
         resourcesDir: resources,
         platform: "linux",
-        isProcessAlive: (pid) => pid === 200,
+        currentPid: 100,
+        currentSession,
+        isProcessAlive: (pid) => pid === 100 || pid === 200 || pid === 201,
+        nowMs,
       });
       expect(existsSync(abandoned)).toBe(false);
       expect(existsSync(live)).toBe(true);
+      expect(existsSync(current)).toBe(true);
+      expect(existsSync(reusedCurrent)).toBe(false);
+      expect(existsSync(agedLive)).toBe(false);
+      expect(existsSync(legacyCurrent)).toBe(false);
       expect(existsSync(unrelated)).toBe(true);
       expect(existsSync(linked)).toBe(true);
       expect(existsSync(outside)).toBe(true);

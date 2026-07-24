@@ -130,8 +130,9 @@ and a failed marker write can terminate the complete helper. Accepted WMI launch
 terminal handoff, so checks, downloads, applies, and auto-check scheduling remain blocked
 until exit. Successful helpers remove their generation and launcher files; launch failures
 clean launcher files best-effort, and startup prunes abandoned generations without touching
-live app/helper work. It also prunes exact dead-owner install-side staging siblings
-left by interrupted copies. The validated payload is first copied and revalidated beside
+live app/helper work. After readiness, it asynchronously prunes exact dead-owner
+install-side staging siblings with session ownership and bounded live-PID leases.
+The validated payload is first copied and revalidated beside
 the install. The swap uses literal PowerShell paths, a unique backup, rejects stale
 backup collisions, removes partial replacements before rollback, verifies
 restoration, and removes its generation work before relaunching the restored app.

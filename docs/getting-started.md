@@ -144,9 +144,11 @@ AppImage/deb/rpm payloads omit updater metadata and update through their
 package channel. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation
 directory, and startup prunes abandoned generations while preserving work owned by
-live app processes or an apply-helper PID. Startup also removes exact dead-owner
-install-side staging siblings left by interrupted copies while preserving live
-owner/helper work. Manifest bodies, downloads, decompressed patches,
+live app processes or an apply-helper PID. After writing any replacement-readiness
+receipt, startup asynchronously removes exact dead-owner install-side staging
+siblings left by interrupted copies. Stage names carry process-session and creation
+leases; current-PID reuse is rejected, and other live owner/helper PIDs expire after
+24 hours. Manifest bodies, downloads, decompressed patches,
 archive entries, and path/link lengths are bounded; streaming reconstructed tar output
 has an 8 GiB ceiling, while in-memory patch inputs have a 512 MiB combined ceiling and
 release bsdiff sources a 128 MiB per-source ceiling. Larger deltas use the full bundle.

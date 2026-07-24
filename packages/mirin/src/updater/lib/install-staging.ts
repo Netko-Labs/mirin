@@ -1,10 +1,16 @@
-import { cpSync, lstatSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, lstatSync, rmSync } from "node:fs";
+import { lstat, readdir, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { MAX_UPDATE_HANDOFF_AGE_MS } from "../../update-handoff.ts";
 import type { VersionInfo } from "../types.ts";
 import { type UpdatePlatform, validateStagedBundle } from "./staged.ts";
+import { UPDATER_PROCESS_SESSION } from "./transaction.ts";
 
 const OWNED_INSTALL_SIBLING_SUFFIX =
+  /^([1-9]\d*)-([a-f0-9]{32})-([1-9]\d*)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const LEGACY_INSTALL_SIBLING_SUFFIX =
   /^([1-9]\d*)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const MAX_INSTALL_SIBLING_AGE_MS = MAX_UPDATE_HANDOFF_AGE_MS;
 
 interface PrepareInstallSiblingOptions {
   resourcesDir: string;
@@ -19,7 +25,10 @@ interface PruneInstallSiblingOptions {
   resourcesDir: string;
   platform: UpdatePlatform;
   hasLiveHelper?: boolean;
+  currentPid?: number;
+  currentSession?: string;
   isProcessAlive?: (pid: number) => boolean;
+  nowMs?: number;
 }
 
 /**
@@ -37,7 +46,7 @@ export async function prepareInstallSibling(
   }
   const staged = join(
     parent,
-    `.${basename(runningApp)}.mirin-new-${process.pid}-${crypto.randomUUID()}`,
+    `.${basename(runningApp)}.mirin-new-${process.pid}-${UPDATER_PROCESS_SESSION}-${Date.now()}-${crypto.randomUUID()}`,
   );
   try {
     cpSync(options.downloadedStage, staged, {
@@ -68,33 +77,51 @@ export async function prepareInstallSibling(
 /**
  * Remove strict install-side staging siblings left by dead updater owners.
  * A live apply helper can own one after its app parent exits, so conservatively
- * preserve every matching sibling until that helper is gone.
+ * preserve matching siblings within its bounded ownership lease.
  */
-export function pruneInstallSiblingDirectories(options: PruneInstallSiblingOptions): void {
+export async function pruneInstallSiblingDirectories(
+  options: PruneInstallSiblingOptions,
+): Promise<void> {
   const runningApp = runningAppPath(options.resourcesDir, options.platform);
   const parent = dirname(runningApp);
   const prefix = `.${basename(runningApp)}.mirin-new-`;
   let entries: string[];
   try {
-    entries = readdirSync(parent);
+    entries = await readdir(parent);
   } catch {
     return;
   }
 
   for (const entry of entries) {
     if (!entry.startsWith(prefix)) continue;
-    const owner = OWNED_INSTALL_SIBLING_SUFFIX.exec(entry.slice(prefix.length));
-    if (!owner) continue;
-    const ownerPid = Number(owner[1]);
+    const suffix = entry.slice(prefix.length);
+    const owner = OWNED_INSTALL_SIBLING_SUFFIX.exec(suffix);
+    const legacyOwner = owner ? null : LEGACY_INSTALL_SIBLING_SUFFIX.exec(suffix);
+    if (!owner && !legacyOwner) continue;
+    const ownerPidText = owner?.[1] ?? legacyOwner?.[1];
+    if (!ownerPidText) continue;
+    const ownerPid = Number(ownerPidText);
     if (!Number.isSafeInteger(ownerPid)) continue;
-    const isProcessAlive = options.isProcessAlive ?? processIsAlive;
-    if (isProcessAlive(ownerPid) || options.hasLiveHelper) continue;
 
     const candidate = join(parent, entry);
     try {
-      const metadata = lstatSync(candidate);
+      const metadata = await lstat(candidate);
       if (metadata.isSymbolicLink() || !metadata.isDirectory()) continue;
-      rmSync(candidate, { recursive: true, force: true });
+      const currentPid = options.currentPid ?? process.pid;
+      const currentSession = options.currentSession ?? UPDATER_PROCESS_SESSION;
+      const createdAtMs = owner ? Number(owner[3]) : metadata.mtimeMs;
+      const nowMs = options.nowMs ?? Date.now();
+      const withinLease =
+        Number.isFinite(nowMs) &&
+        Number.isFinite(createdAtMs) &&
+        Math.abs(nowMs - createdAtMs) <= MAX_INSTALL_SIBLING_AGE_MS;
+      const sameSession = ownerPid === currentPid && owner?.[2] === currentSession;
+      const liveLeasedOwner =
+        ownerPid !== currentPid &&
+        withinLease &&
+        (options.isProcessAlive ?? processIsAlive)(ownerPid);
+      if (options.hasLiveHelper || sameSession || liveLeasedOwner) continue;
+      await rm(candidate, { recursive: true, force: true });
     } catch {
       // Startup cleanup is best-effort and must not prevent app launch.
     }
