@@ -288,7 +288,8 @@ off the main-process API:
   helpers recorded by PID. After writing any replacement-readiness receipt, exact
   install-side staging siblings left by interrupted copies are pruned asynchronously.
   Session ownership rejects current-PID reuse, and live owner/helper preservation has
-  a bounded 24-hour lease.
+  a bounded 24-hour lease. Non-current live generation owners are likewise trusted
+  only within a 24-hour lease from their generation directory's last modification.
 
 `release.notes` accepts at most 64 Ki characters, and the CLI rejects a generated
 manifest above the runtime's 256 KiB response ceiling before signing it.

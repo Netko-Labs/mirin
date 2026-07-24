@@ -10,6 +10,7 @@ const OWNED_GENERATION_DIRECTORY =
 export const APPLY_HELPER_PID_FILE = ".apply-helper.pid";
 export const APPLY_HELPER_ARMED_FILE = ".apply-helper-armed";
 export const MAX_APPLY_HELPER_AGE_MS = MAX_UPDATE_HANDOFF_AGE_MS;
+export const MAX_GENERATION_OWNER_AGE_MS = MAX_UPDATE_HANDOFF_AGE_MS;
 
 interface PruneGenerationOptions {
   currentPid?: number;
@@ -37,6 +38,7 @@ export async function pruneGenerationDirectories(
   options: PruneGenerationOptions = {},
 ): Promise<void> {
   let entries: string[];
+  const nowMs = options.nowMs ?? Date.now();
   try {
     entries = await readdir(updatesDir);
   } catch {
@@ -46,23 +48,29 @@ export async function pruneGenerationDirectories(
   for (const entry of entries) {
     const owner = OWNED_GENERATION_DIRECTORY.exec(entry);
     if (!owner && !LEGACY_GENERATION_DIRECTORY.test(entry)) continue;
+    const path = join(updatesDir, entry);
+    let modifiedAtMs: number;
+    try {
+      const metadata = await lstat(path);
+      if (metadata.isSymbolicLink() || !metadata.isDirectory()) continue;
+      modifiedAtMs = metadata.mtimeMs;
+    } catch {
+      continue;
+    }
     if (owner) {
       const pid = Number(owner[1]);
       const session = owner[2];
       const currentPid = options.currentPid ?? process.pid;
       const currentSession = options.currentSession ?? UPDATER_PROCESS_SESSION;
       if (pid === currentPid && session === currentSession) continue;
+      const withinLease =
+        Number.isFinite(nowMs) &&
+        Number.isFinite(modifiedAtMs) &&
+        Math.abs(nowMs - modifiedAtMs) <= MAX_GENERATION_OWNER_AGE_MS;
       const isProcessAlive = options.isProcessAlive ?? processIsAlive;
-      if (pid !== currentPid && isProcessAlive(pid)) continue;
+      if (pid !== currentPid && withinLease && isProcessAlive(pid)) continue;
     }
-    const path = join(updatesDir, entry);
-    try {
-      const metadata = await lstat(path);
-      if (metadata.isSymbolicLink() || !metadata.isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    const helperPid = await applyHelperPid(path, options.nowMs ?? Date.now());
+    const helperPid = await applyHelperPid(path, nowMs);
     const isProcessAlive = options.isProcessAlive ?? processIsAlive;
     if (
       helperPid !== undefined &&

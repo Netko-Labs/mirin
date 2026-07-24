@@ -132,6 +132,7 @@ until exit. Successful helpers remove their generation and launcher files; launc
 clean launcher files best-effort, and startup prunes abandoned generations without touching
 live app/helper work. After readiness, it asynchronously prunes exact dead-owner
 install-side staging siblings with session ownership and bounded live-PID leases.
+Non-current generation-owner PIDs share the same bounded lease.
 The validated payload is first copied and revalidated beside
 the install. The swap uses literal PowerShell paths, a unique backup, rejects stale
 backup collisions, removes partial replacements before rollback, verifies

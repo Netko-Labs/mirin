@@ -14,6 +14,7 @@ import {
   APPLY_HELPER_PID_FILE,
   hasLiveApplyHelper,
   MAX_APPLY_HELPER_AGE_MS,
+  MAX_GENERATION_OWNER_AGE_MS,
   pruneGenerationDirectories,
 } from "../src/updater/lib/cleanup.ts";
 import { generationDirectoryName } from "../src/updater/lib/transaction.ts";
@@ -44,7 +45,7 @@ describe("updater generation cleanup", () => {
     }
   });
 
-  test("preserves generations owned by live updater processes", async () => {
+  test("leases generations owned by non-current live updater processes", async () => {
     const root = mkdtempSync(join(tmpdir(), "mirin-updater-owners-"));
     const updates = join(root, "updates");
     mkdirSync(updates);
@@ -68,17 +69,28 @@ describe("updater generation cleanup", () => {
     for (const directory of [current, reusedPid, live, abandoned]) {
       mkdirSync(directory);
     }
+    const liveMtimeMs = statSync(live).mtimeMs;
 
     try {
       await pruneGenerationDirectories(updates, {
         currentPid: 100,
         currentSession: "b".repeat(32),
         isProcessAlive: (pid) => pid === 200,
+        nowMs: liveMtimeMs,
       });
       expect(existsSync(current)).toBe(true);
       expect(existsSync(live)).toBe(true);
       expect(existsSync(reusedPid)).toBe(false);
       expect(existsSync(abandoned)).toBe(false);
+
+      await pruneGenerationDirectories(updates, {
+        currentPid: 100,
+        currentSession: "b".repeat(32),
+        isProcessAlive: (pid) => pid === 200,
+        nowMs: liveMtimeMs + MAX_GENERATION_OWNER_AGE_MS + 1,
+      });
+      expect(existsSync(current)).toBe(true);
+      expect(existsSync(live)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

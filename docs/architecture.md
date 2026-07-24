@@ -143,7 +143,9 @@ uses asynchronous filesystem operations, keeping recursive deletion off the help
 above is recognized as a legacy owned sibling; new siblings use
 `.mirin-new-<pid>-<session>-<createdAt>-<uuid>`. Current-PID reuse must match the
 process session, while otherwise unverifiable live owner/helper PIDs have a 24-hour
-lease before cleanup may reclaim their trees.
+lease before cleanup may reclaim their trees. Non-current generation owners use the
+same bounded lease from their generation directory's last modification time, so a
+recycled long-lived PID cannot retain an abandoned multi-gigabyte generation forever.
 
 Install-filesystem updater staging preserves relative symlink text before
 revalidation, so macOS framework links remain scoped to the copied app instead

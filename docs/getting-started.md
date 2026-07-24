@@ -148,7 +148,8 @@ live app processes or an apply-helper PID. After writing any replacement-readine
 receipt, startup asynchronously removes exact dead-owner install-side staging
 siblings left by interrupted copies. Stage names carry process-session and creation
 leases; current-PID reuse is rejected, and other live owner/helper PIDs expire after
-24 hours. Manifest bodies, downloads, decompressed patches,
+24 hours. Non-current live generation owners use the same bounded lease from their
+generation directory's last modification time. Manifest bodies, downloads, decompressed patches,
 archive entries, and path/link lengths are bounded; streaming reconstructed tar output
 has an 8 GiB ceiling, while in-memory patch inputs have a 512 MiB combined ceiling and
 release bsdiff sources a 128 MiB per-source ceiling. Larger deltas use the full bundle.

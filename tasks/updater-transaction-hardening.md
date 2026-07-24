@@ -69,6 +69,7 @@
 - [x] Prune abandoned install-side staging siblings without touching live owner/helper work.
 - [x] Keep recursive startup pruning off the replacement-readiness critical path.
 - [x] Bound install-stage and helper PID reuse with session/creation leases.
+- [x] Bound non-current generation-owner PID reuse with a modification-time lease.
 
 ## Checkpoints
 
@@ -210,3 +211,10 @@
   pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 241
   tests with the two expected Windows lifecycle skips on macOS; focused cleanup
   and staged-bundle coverage passed 8 tests; `git diff --check` passed.
+- Fifteenth clean-context review remediation: expire non-current live generation
+  owners after the shared 24-hour handoff lease so recycled PIDs cannot retain
+  abandoned generation trees indefinitely.
+- Fifteenth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 241
+  tests with the two expected Windows lifecycle skips on macOS; the focused
+  startup-cleanup suite passed 3 tests; `git diff --check` passed.
