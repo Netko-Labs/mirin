@@ -70,7 +70,7 @@ interface WindowsScriptOptions extends ShellScriptOptions {
   launchArguments?: string[];
   parentWaitMs?: number;
   readyWaitMs?: number;
-  failurePoint?: "after-exchange" | "replacement-token";
+  failurePoint?: "after-exchange" | "armed-durability" | "replacement-token";
 }
 
 class PreservedHelperOwnershipError extends Error {
@@ -169,12 +169,19 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
       ["durable-write", options.phase, "activated"],
       "Could not journal updater helper activation",
     ),
-    ...durableDynamicWrite(
-      options.armed,
-      "$selfIdentity",
-      "Could not publish updater helper acceptance",
-    ),
     "  $accepted=$true",
+    `  & ${psq(options.swapTool)} ${psq("durable-write")} ${psq(options.armed)} $selfIdentity`,
+    "  $armedWriteExit=$LASTEXITCODE",
+    ...(options.failurePoint === "armed-durability" ? ["  $armedWriteExit=1"] : []),
+    "  if ($armedWriteExit -ne 0) {",
+    "    # A matching visible receipt is already an irreversible acceptance boundary.",
+    "    $visibleArmedIdentity=$null",
+    `    if (Test-Path -LiteralPath ${psq(options.armed)} -PathType Leaf) {`,
+    `      $visibleArmedIdentity=(Get-Content -LiteralPath ${psq(options.armed)} -Raw).Trim()`,
+    "    }",
+    "    if ($visibleArmedIdentity -ne $selfIdentity) { throw 'Could not publish updater helper acceptance' }",
+    `    & ${psq(options.swapTool)} ${psq("sync-parent")} ${psq(options.armed)}`,
+    "  }",
     `  & ${psq(options.swapTool)} wait-process ${psq(String(pid))} ${psq(parentToken)} ${psq(String(parentWaitMs))}`,
     "  if ($LASTEXITCODE -ne 0) {",
     `    & ${psq(options.swapTool)} terminate-process ${psq(String(pid))} ${psq(parentToken)}`,
@@ -471,8 +478,15 @@ function renderPosixApplyShell(
     "  sleep 0.05",
     "done",
     '"$SWAP" durable-write "$PHASE" activated',
-    '"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"',
     "ACCEPTED=1",
+    "armed_status=0",
+    '"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY" || armed_status=$?',
+    'if [ "$armed_status" -ne 0 ]; then',
+    "  # A matching visible receipt is already an irreversible acceptance boundary.",
+    '  ARMED_IDENTITY=""; if [ -f "$ARMED" ]; then IFS= read -r ARMED_IDENTITY < "$ARMED" || true; fi',
+    '  test "$ARMED_IDENTITY" = "$SELF_IDENTITY"',
+    '  "$SWAP" sync-parent "$ARMED" 2>/dev/null || true',
+    "fi",
     'if ! "$SWAP" wait-process "$PID" "$PARENT_TOKEN" 30000; then',
     '  "$SWAP" terminate-process "$PID" "$PARENT_TOKEN"',
     "fi",

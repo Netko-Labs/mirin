@@ -134,7 +134,10 @@ terminal handoff, so checks, downloads, applies, and auto-check scheduling remai
 until exit; native terminal shutdown is requested before synchronous completion listeners.
 The parent durably records the PowerShell process identity in the reservation
 before publishing its identity-bound activation; PowerShell refuses to arm or
-swap without that activation.
+swap without that activation. A matching armed receipt remains accepted if its
+publication became visible before the parent sync failed; PowerShell reconciles
+the exact identity, retries the sync, and preserves ownership instead of
+deleting the handoff.
 Process-wide terminal/apply latches stop every updater instance's auto-checks, while
 process-wide generation allocation keeps public updater instances from sharing work.
 Successful helpers remove their generation and launcher files; launch failures

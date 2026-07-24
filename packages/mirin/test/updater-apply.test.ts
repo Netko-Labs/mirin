@@ -109,6 +109,11 @@ describe("Windows updater launcher", () => {
     ).toBeGreaterThan(activated);
     expect(armed).toBeGreaterThan(activated);
     expect(armed).toBeLessThan(script.indexOf("wait-process"));
+    expect(script.indexOf("$accepted=$true")).toBeLessThan(
+      script.indexOf("durable-write' 'C:\\Updates\\generation\\.apply-helper-armed"),
+    );
+    expect(script).toContain("$visibleArmedIdentity -ne $selfIdentity");
+    expect(script).toContain("sync-parent' 'C:\\Updates\\generation\\.apply-helper-armed");
     expect(script).toContain("durable-write");
     expect(script).toContain("swap-pending");
     expect(script).toContain("backup-pending");
@@ -497,6 +502,7 @@ describe("Windows updater launcher", () => {
         parentWaitMs: 5_000,
         readyWaitMs: 5_000,
         launchArguments: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand],
+        failurePoint: "armed-durability",
       }),
     );
     writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperLaunchPidFile));
@@ -624,6 +630,89 @@ describe("POSIX updater helpers", () => {
     }
   });
 
+  test("continues an accepted handoff when the armed receipt is visible before sync fails", async () => {
+    if (process.platform === "win32") return;
+    const root = mkdtempSync(join(tmpdir(), "mirin-helper-armed-visible-"));
+    const runningApp = join(root, "Mirin.app");
+    const staged = join(root, ".Mirin.app.mirin-new");
+    const state = join(root, "state");
+    const workDir = join(root, "work");
+    const swapTool = join(workDir, ".mirin-atomic-swap");
+    const armed = join(workDir, ".apply-helper-armed");
+    const owner = { pid: process.pid, token: `token-${process.pid}` };
+    let helperIdentity: UpdateProcessIdentity | undefined;
+    try {
+      mkdirSync(runningApp);
+      mkdirSync(staged);
+      mkdirSync(state);
+      mkdirSync(workDir);
+      writeFileSync(join(runningApp, "old-sentinel"), "old");
+      writeFileSync(join(staged, "new-sentinel"), "new");
+      writeTestSwapTool(swapTool, {
+        visibleWriteFailurePath: armed,
+        visibleWriteFailureDelayMs: 200,
+        denyTermination: true,
+      });
+      const handoff = prepareUpdateHandoff(
+        "dev.example.armed-visible",
+        "2.0.0",
+        state,
+        Date.now(),
+        {
+          sourceVersion: "1.0.0",
+          runningApp,
+          staged,
+        },
+        owner,
+      );
+      const helper = Bun.spawn([
+        "/bin/sh",
+        "-c",
+        renderMacApplyShell({
+          runningApp,
+          staged,
+          workDir,
+          executable: join(runningApp, "Mirin"),
+          backup: handoff.backup,
+          marker: handoff.markerPath,
+          ready: handoff.readyPath,
+          activated: join(workDir, ".apply-helper-activated"),
+          armed,
+          phase: handoff.phasePath as string,
+          replacement: handoff.replacementPath,
+          swapTool,
+          token: handoff.token,
+          pid: owner.pid,
+          parentToken: owner.token,
+        }),
+      ]);
+      await waitForFile(join(workDir, ".apply-helper.pid"));
+      helperIdentity = parseProcessIdentity(
+        readFileSync(join(workDir, ".apply-helper.pid"), "utf8"),
+      );
+      expect(helperIdentity.pid).toBe(helper.pid);
+      writeFileSync(
+        join(workDir, ".apply-helper-activated"),
+        formatProcessIdentity(helperIdentity),
+      );
+      await waitForFile(armed);
+      await Bun.sleep(350);
+      expect(processIdentity(helperIdentity.pid, swapTool)?.token).toBe(helperIdentity.token);
+      expect(existsSync(handoff.markerPath)).toBe(true);
+      expect(existsSync(staged)).toBe(true);
+      expect(existsSync(workDir)).toBe(true);
+    } finally {
+      if (
+        helperIdentity &&
+        processIdentity(helperIdentity.pid, swapTool)?.token === helperIdentity.token
+      ) {
+        process.kill(helperIdentity.pid, "SIGKILL");
+        await waitForProcessExit(helperIdentity, swapTool);
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("macOS retains the backup through open and restores and reopens on failure", () => {
     const script = renderMacApplyShell({
       runningApp: "/Applications/Mirin App.app",
@@ -662,6 +751,11 @@ describe("POSIX updater helpers", () => {
     expect(script).toContain('"$SWAP" sync-parent "$APP"');
     expect(script).toContain('terminate-process "$PID" "$PARENT_TOKEN"');
     expect(script).toContain('elif [ "$ACCEPTED" -eq 0 ]; then');
+    expect(script.indexOf("ACCEPTED=1")).toBeLessThan(
+      script.indexOf('"$SWAP" durable-write "$ARMED" "$SELF_IDENTITY"'),
+    );
+    expect(script).toContain('test "$ARMED_IDENTITY" = "$SELF_IDENTITY"');
+    expect(script).toContain('"$SWAP" sync-parent "$ARMED"');
     expect(script).not.toContain('mv "$APP" "$OLD"');
     expect(script).not.toContain('mv "$NEW" "$APP"');
     expect(script.indexOf('test "$ACTIVATED_IDENTITY" = "$SELF_IDENTITY"')).toBeLessThan(
@@ -874,6 +968,7 @@ function writeTestSwapTool(
   path: string,
   options: {
     visibleWriteFailurePath?: string;
+    visibleWriteFailureDelayMs?: number;
     denyTermination?: boolean;
     postSwapDurabilityFailureOnce?: boolean;
   } = {},
@@ -908,7 +1003,14 @@ function writeTestSwapTool(
       "  durable-write)",
       '    temporary="$1.tmp.$$"; printf "%s" "$2" > "$temporary"; mv "$temporary" "$1"',
       ...(visibleWriteFailurePath
-        ? [`    if [ "$1" = ${visibleWriteFailurePath} ]; then exit 1; fi`]
+        ? [
+            `    if [ "$1" = ${visibleWriteFailurePath} ]; then`,
+            ...(options.visibleWriteFailureDelayMs
+              ? [`      sleep ${options.visibleWriteFailureDelayMs / 1000}`]
+              : []),
+            "      exit 1",
+            "    fi",
+          ]
         : []),
       "    ;;",
       "  durable-move)",

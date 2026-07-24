@@ -86,6 +86,7 @@
 - [x] Validate the real swap operands' device/volume identity and reject Windows reparse points.
 - [x] Exercise real Windows WMI/PowerShell/TxF rollback and successful readiness commit paths in CI.
 - [x] Bound maximum accepted Windows updater support and generation work paths.
+- [x] Treat visible exact helper/recovery arming receipts as irreversible acceptance.
 
 ## Checkpoints
 
@@ -396,5 +397,14 @@
 - Twenty-seventh-remediation verification: `bun run fmt-lint` passed with the
   repository's existing 52 warnings, `bun run typecheck` passed, and `bun run
   test` passed 271 tests with the two expected Windows installer skips.
+  `cargo fmt --all --check`, workspace clippy with warnings denied, all 29 local
+  Rust workspace tests, and `git diff --check` passed.
+- Twenty-eighth clean-context review remediation: mark helper ownership before
+  publishing armed receipts, reconcile an exact visible receipt after a
+  post-publication durability error, retry its parent sync without undoing
+  acceptance, and apply the same rule to POSIX and Windows recovery helpers.
+- Twenty-eighth-remediation verification: `bun run fmt-lint` passed with the
+  repository's existing 52 warnings, `bun run typecheck` passed, and `bun run
+  test` passed 273 tests with the two expected Windows installer skips.
   `cargo fmt --all --check`, workspace clippy with warnings denied, all 29 local
   Rust workspace tests, and `git diff --check` passed.

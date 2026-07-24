@@ -299,8 +299,11 @@ off the main-process API:
   attempt is treated as potentially visible even when its final durability sync
   reports failure, so the parent releases ownership only after confirmed exact
   helper exit. Armed acknowledgement and replacement identity/readiness use
-  temp-file-plus-rename publication. Before launch, the helper durably writes a
-  boot-identity-bound ambiguity guard, narrows it to a pending PID after spawn,
+  temp-file-plus-rename publication. A matching armed receipt is irreversible
+  acceptance once visible; apply and recovery helpers mark ownership before
+  publishing it, reconcile the exact receipt after a sync error, and retry the
+  parent sync without deleting accepted state. Before launch, the helper durably
+  writes a boot-identity-bound ambiguity guard, narrows it to a pending PID after spawn,
   and finally replaces it with the exact process identity. If identity
   lookup fails, the helper waits on its owned process handle or child until exit
   before rollback; if the helper crashes anywhere across launch, startup sees

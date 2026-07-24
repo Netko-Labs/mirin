@@ -176,8 +176,12 @@ identity-bound activation file;
 the helper verifies that activation before writing its armed acknowledgement or
 allowing parent death to authorize a swap. A crash before activation cannot swap
 the install, while a crash after activation leaves the live helper represented in
-the reservation. Arming and replacement readiness are each published durably, so
-readers never accept a partial or PID-reused receipt. Before launching the
+the reservation. Arming and replacement readiness use atomic exact-identity
+receipts, so readers never accept a partial or PID-reused receipt. A matching
+armed receipt is irreversible acceptance as soon as it is visible: the helper
+marks ownership before publication, and a post-publication parent-sync error
+causes exact receipt reconciliation plus a sync retry rather than cleanup.
+Recovery-helper arming follows the same rule. Before launching the
 target, the helper durably publishes a boot-identity-bound ambiguity guard,
 narrows it to a pending PID after spawn, and then replaces it with the exact
 creation identity; the target republishes that identity before readiness.
@@ -189,10 +193,9 @@ boundary, startup blocks recovery on a same-boot guard rather than exchanging
 files beneath a potentially live unidentified process. A guard from an earlier
 boot cannot represent a surviving process and is therefore reconciled through
 the normal single-winner recovery path; failure to query current boot identity
-remains fail-safe. Because activation
-replacement can become visible before
-its final parent-directory sync reports failure, every activation publication
-attempt is treated as potentially accepted. If activation or arming fails, the
+remains fail-safe. Because activation or arming can become visible before
+its final parent-directory sync reports failure, every such publication attempt
+is treated as potentially accepted. If activation or arming fails, the
 parent performs bounded exact-process termination and abandons the reservation
 only after confirmed helper death; otherwise the helper keeps terminal ownership
 and all recovery files. Apply ownership and terminal state are process-wide: all
@@ -418,7 +421,10 @@ PowerShell and records its actual PID. The helper preflights its literal app,
 backup, same-volume stage paths, and a successful TxF probe and atomically writes
 an armed acknowledgement, so the
 running app quits only after the complete helper is accepted. That acceptance is the terminal handoff point: updater
-operations and auto-check scheduling remain blocked through process exit. Successful
+operations and auto-check scheduling remain blocked through process exit. A
+matching receipt remains accepted if publication became visible before its
+parent sync failed; PowerShell reconciles the exact identity, retries the sync,
+and preserves ownership instead of deleting the handoff. Successful
 helpers remove their generation and temporary launcher files; launch failures clean
 temporary files best-effort, and the next startup prunes abandoned generations while
 preserving work owned by live app processes.
