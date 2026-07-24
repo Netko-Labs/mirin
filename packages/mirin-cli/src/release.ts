@@ -37,7 +37,10 @@ import {
   signUpdateManifest,
   verifyUpdateManifest,
 } from "./release/signature.ts";
-import { writeAtomicOutputDirectory } from "./shared/fs/atomic-output.ts";
+import {
+  createAtomicOutputOperations,
+  writeAtomicOutputDirectory,
+} from "./shared/fs/atomic-output.ts";
 import { safeDestructiveDirectory } from "./shared/fs/project-source.ts";
 import { validateAppIdentity } from "./shared/validation/config.ts";
 
@@ -156,6 +159,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
     result.projectDir,
     outDir,
     "release output directory",
+    createAtomicOutputOperations(result.codecBin),
     async (outDir) => {
       // Notarize + staple the .app (Developer ID, macOS) before packing, when
       // credentials are present. The .tar.zst / patch updater bundles are made from

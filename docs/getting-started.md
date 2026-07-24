@@ -98,10 +98,13 @@ sinks revalidate them before use. Bundle and release directories are assembled
 in unique sibling staging paths, so a failed required copy/sign/updater or
 Windows-installer run preserves the last successful output. DMG and Linux
 packages are best-effort exceptions: failures are logged and the atomic release
-can still commit its signed updater artifacts without them. Cleanup of the old
-backup after a successful canonical swap is non-fatal; aged leftovers are pruned
-by later runs only when their exact PID/UUID ownership name matches and their
-owner process is gone.
+can still commit its signed updater artifacts without them. Completed staging
+trees are recursively flushed and atomically exchanged with existing output; a
+first output uses a durable sibling move. Cleanup of the old tree after a
+successful canonical swap is non-fatal; aged stages/backups are pruned by later
+runs only when their exact PID/UUID ownership name matches and their owner
+process is gone. A legacy interrupted replacement restores its exact dead-owner
+backup when the canonical path is absent.
 
 Generate a long-lived Ed25519 update key pair once:
 
@@ -139,24 +142,28 @@ blocked until the process exits; native shutdown is requested before synchronous
 `complete` listeners run. This latch and auto-check shutdown are shared by every
 public `Updater` instance. Before that handoff, the validated tree is copied
 and revalidated beside the install, including its bundled recovery codec, then
-recursively flushed. The parent durably records the helper PID plus OS creation
-identity in the reservation and publishes an identity-bound activation acknowledgement; only
+recursively flushed. The helper first durably self-publishes its PID plus OS
+creation identity; the parent validates that receipt, records it in the
+reservation, and publishes an identity-bound activation acknowledgement. Only
 then may the helper arm and treat parent death as swap authorization.
 The bundled native swap tool first validates the real app/stage operands and is
 probed on the exact install filesystem; an unsupported mount, reparse point, or
 volume fails before terminal handoff. The helper durably journals each phase and atomically exchanges
 the complete old and staged directories, keeping the canonical launch path present
-through interruption, and forces/confirms parent termination if graceful shutdown
-exceeds its deadline. An activated helper whose death cannot be confirmed retains
-the reservation and recovery trees.
+through interruption. Linux and Windows force and confirm handle-bound parent
+termination if graceful shutdown exceeds its deadline. macOS declines unsafe
+numeric-PID forced signaling and preserves the transaction when exact
+termination is unavailable. An activated helper whose death cannot be confirmed
+retains the reservation and recovery trees.
 The helper reserves the next launch for its token-bearing target and binds all
 ownership, wait, termination, and readiness decisions to OS process creation
 identity rather than a reusable PID. It retains the backup until that exact
 process acquires the exclusive lock and durably publishes Worker/native readiness;
 timeout or early exit atomically restores and relaunches the old install. If the
-helper dies or the machine restarts, the next host launch claims the external
-phase journal before loading native runtime files, rolls back any pre-commit
-target through an external helper, or finishes committed backup cleanup.
+helper dies or the machine restarts, the next host launch atomically claims the
+external phase journal for one recovery winner before loading native runtime
+files, rolls back any pre-commit target through an external helper, or finishes
+committed backup cleanup.
 AppImage/deb/rpm payloads omit updater metadata and update through their
 package channel. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation

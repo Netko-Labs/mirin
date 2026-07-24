@@ -85,9 +85,6 @@ fn platform_process_token(pid: u32) -> io::Result<String> {
 fn platform_wait_for_exit(pid: u32, expected: &str, timeout: Duration) -> io::Result<()> {
     use std::os::fd::RawFd;
 
-    if !process_matches(pid, expected) {
-        return Ok(());
-    }
     // SAFETY: pidfd_open takes a numeric PID and flags=0.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) as RawFd };
     if fd < 0 {
@@ -106,6 +103,11 @@ fn platform_wait_for_exit(pid: u32, expected: &str, timeout: Duration) -> io::Re
         }
     }
     let fd = PidFd(fd);
+    // Opening first pins the kernel process object. Re-checking the creation
+    // token afterward prevents a recycled numeric PID from binding this pidfd.
+    if !process_matches(pid, expected) {
+        return Ok(());
+    }
     let mut poll_fd = libc::pollfd {
         fd: fd.0,
         events: libc::POLLIN,
@@ -128,9 +130,6 @@ fn platform_wait_for_exit(pid: u32, expected: &str, timeout: Duration) -> io::Re
 
 #[cfg(target_os = "linux")]
 fn platform_terminate_process(pid: u32, expected: &str) -> io::Result<()> {
-    if !process_matches(pid, expected) {
-        return Ok(());
-    }
     // SAFETY: pidfd_open takes a numeric PID and flags=0.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) as libc::c_int };
     if fd < 0 {
@@ -149,6 +148,10 @@ fn platform_terminate_process(pid: u32, expected: &str) -> io::Result<()> {
         }
     }
     let fd = PidFd(fd);
+    // The pidfd pins the target across PID reuse; validate only after it exists.
+    if !process_matches(pid, expected) {
+        return Ok(());
+    }
     send_pidfd_signal(fd.0, libc::SIGTERM)?;
     if platform_wait_for_pidfd_exit(fd.0, Duration::from_secs(2)) {
         return Ok(());
@@ -224,17 +227,45 @@ fn platform_wait_for_exit(pid: u32, expected: &str, timeout: Duration) -> io::Re
         data: 0,
         udata: std::ptr::null_mut(),
     };
-    let seconds = timeout.as_secs().min(i64::MAX as u64) as libc::time_t;
-    let nanoseconds = timeout.subsec_nanos() as libc::c_long;
+    // Register the filter first, then revalidate the creation token. The kqueue
+    // filter remains attached to that process object if its PID is later reused.
+    // SAFETY: change describes one initialized event and no output is requested.
+    let registered = unsafe {
+        libc::kevent(
+            queue.0,
+            &change,
+            1,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    };
+    if registered < 0 {
+        if !process_matches(pid, expected) {
+            return Ok(());
+        }
+        return Err(io::Error::last_os_error());
+    }
+    if !process_matches(pid, expected) {
+        return Ok(());
+    }
     let deadline = libc::timespec {
-        tv_sec: seconds,
-        tv_nsec: nanoseconds,
+        tv_sec: timeout.as_secs().min(i64::MAX as u64) as libc::time_t,
+        tv_nsec: timeout.subsec_nanos() as libc::c_long,
     };
     let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
-    // SAFETY: all event pointers and counts describe initialized writable or
-    // readable storage for exactly one event.
-    let result = unsafe { libc::kevent(queue.0, &change, 1, event.as_mut_ptr(), 1, &deadline) };
-    if result > 0 || !process_matches(pid, expected) {
+    // SAFETY: the filter is registered and event points to one writable value.
+    let result = unsafe {
+        libc::kevent(
+            queue.0,
+            std::ptr::null(),
+            0,
+            event.as_mut_ptr(),
+            1,
+            &deadline,
+        )
+    };
+    if result > 0 {
         Ok(())
     } else if result == 0 {
         Err(io::Error::new(
@@ -251,27 +282,14 @@ fn platform_terminate_process(pid: u32, expected: &str) -> io::Result<()> {
     if !process_matches(pid, expected) {
         return Ok(());
     }
-    // SAFETY: the creation token was checked immediately before signalling.
-    if unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } != 0 {
-        if !process_matches(pid, expected) {
-            return Ok(());
-        }
-        return Err(io::Error::last_os_error());
-    }
-    if platform_wait_for_exit(pid, expected, Duration::from_secs(2)).is_ok() {
-        return Ok(());
-    }
-    if !process_matches(pid, expected) {
-        return Ok(());
-    }
-    // SAFETY: the creation token was checked immediately before signalling.
-    if unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) } != 0 {
-        if !process_matches(pid, expected) {
-            return Ok(());
-        }
-        return Err(io::Error::last_os_error());
-    }
-    platform_wait_for_exit(pid, expected, Duration::from_secs(5))
+    // Darwin exposes process-bound kqueue monitoring but no unprivileged
+    // handle-bound signal API. A raw kill(pid) after token validation would
+    // still be able to hit a process that reused the PID in between. Fail safe
+    // and leave the durable updater transaction for a later recovery instead.
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "exact process termination is unavailable on macOS",
+    ))
 }
 
 #[cfg(windows)]
@@ -426,8 +444,21 @@ mod tests {
 
         terminate_process(pid, "different-creation-token").unwrap();
         assert!(process_matches(pid, &token));
-        terminate_process(pid, &token).unwrap();
-        child.0.as_mut().unwrap().wait().unwrap();
+        #[cfg(not(target_os = "macos"))]
+        {
+            terminate_process(pid, &token).unwrap();
+            child.0.as_mut().unwrap().wait().unwrap();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(
+                terminate_process(pid, &token).unwrap_err().kind(),
+                io::ErrorKind::Unsupported
+            );
+            assert!(process_matches(pid, &token));
+            child.0.as_mut().unwrap().kill().unwrap();
+            child.0.as_mut().unwrap().wait().unwrap();
+        }
         child.0 = None;
         assert!(!process_matches(pid, &token));
     }

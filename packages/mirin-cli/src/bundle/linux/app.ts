@@ -30,7 +30,11 @@ import {
 } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
-import { writeAtomicOutputDirectory } from "../../shared/fs/atomic-output.ts";
+import {
+  type AtomicOutputOperations,
+  createAtomicOutputOperations,
+  writeAtomicOutputDirectory,
+} from "../../shared/fs/atomic-output.ts";
 import {
   assertProjectIcon,
   copyProjectFile,
@@ -60,6 +64,8 @@ export interface LinuxBundleOptions {
   hostExe: string; // compiled Bun host (no extension)
   coreDll: string; // libmirin_core.so
   codecBin: string; // mirin-codec (atomic updater swap + release codecs)
+  /** Test seam for filesystem transaction behavior. Production uses codecBin. */
+  atomicOutputOperations?: AtomicOutputOperations;
   helperExe: string; // mirin-helper
   cefPath: string; // dir containing the Linux CEF runtime (vendor/cef)
   /** Production CEF locale allowlist. Undefined keeps every locale. */
@@ -224,6 +230,7 @@ export async function buildLinuxBundle(
     opts.projectDir,
     app,
     "Linux bundle output directory",
+    opts.atomicOutputOperations ?? createAtomicOutputOperations(opts.codecBin),
     async (staging) => {
       const exe = join(staging, appName);
       cpSync(opts.hostExe, exe);

@@ -15,7 +15,6 @@ import {
   bundledCodecPath,
   formatProcessIdentity,
   parseProcessIdentity,
-  processIdentity,
   processIdentityMatches,
   type UpdateProcessIdentity,
 } from "./update-process.ts";
@@ -37,6 +36,7 @@ export function finalizeCommittedUpdateRecovery(recovery: UpdateHandoffRecovery)
       );
     }
   }
+  for (const path of recovery.claimPaths) removeStateFileDurably(tool, path);
   removeStateFileDurably(tool, recovery.markerPath);
   removeStateFileDurably(tool, recovery.readyPath);
   removeStateFileDurably(tool, recovery.phasePath);
@@ -67,11 +67,20 @@ export function launchRollbackUpdateRecovery(
   const script = join(state, `.update-recovery-${recovery.token}-${randomUUID()}.${extension}`);
   const activated = join(state, `.update-recovery-activated-${recovery.token}`);
   const armed = join(state, `.update-recovery-armed-${recovery.token}`);
+  const identity = join(state, `.update-recovery-identity-${recovery.token}-${randomUUID()}`);
   writeFileSync(
     script,
     process.platform === "win32"
-      ? renderWindowsRecovery(recovery, tool, executableRelative, activated, armed, script)
-      : renderPosixRecovery(recovery, tool, executableRelative, activated, armed, script),
+      ? renderWindowsRecovery(
+          recovery,
+          tool,
+          executableRelative,
+          activated,
+          armed,
+          identity,
+          script,
+        )
+      : renderPosixRecovery(recovery, tool, executableRelative, activated, armed, identity, script),
     { encoding: "utf8", flag: "wx", mode: 0o700 },
   );
   if (process.platform !== "win32") chmodSync(script, 0o700);
@@ -98,7 +107,7 @@ export function launchRollbackUpdateRecovery(
 
   let helperIdentity: UpdateProcessIdentity | undefined;
   try {
-    helperIdentity = waitForIdentity(helper.pid, tool);
+    helperIdentity = waitForIdentity(identity, helper.pid, tool);
     activateUpdateRecovery(recovery, helperIdentity);
     runCodec(
       tool,
@@ -106,6 +115,7 @@ export function launchRollbackUpdateRecovery(
       "could not activate updater recovery helper",
     );
     waitForArmed(armed, helperIdentity, tool);
+    for (const path of recovery.claimPaths) removeStateFileDurably(tool, path);
   } catch (error) {
     if (helperIdentity) {
       Bun.spawnSync([tool, "terminate-process", String(helperIdentity.pid), helperIdentity.token], {
@@ -117,6 +127,7 @@ export function launchRollbackUpdateRecovery(
     removeFileBestEffort(script);
     removeFileBestEffort(activated);
     removeFileBestEffort(armed);
+    removeFileBestEffort(identity);
     throw error;
   }
   helper.unref();
@@ -128,6 +139,7 @@ function renderPosixRecovery(
   executableRelative: string,
   activated: string,
   armed: string,
+  identity: string,
   script: string,
 ): string {
   const executable = join(recovery.runningApp, executableRelative);
@@ -143,12 +155,14 @@ function renderPosixRecovery(
     `READY=${sh(recovery.readyPath)}`,
     `ACTIVATED=${sh(activated)}`,
     `ARMED=${sh(armed)}`,
+    `IDENTITY=${sh(identity)}`,
     `SCRIPT=${sh(script)}`,
     `OWNER_PID=${recovery.owner.pid}`,
     `OWNER_TOKEN=${sh(recovery.owner.token)}`,
     `EXE=${sh(executable)}`,
     'SELF_TOKEN=$("$TOOL" process-token "$$")',
     'SELF_IDENTITY="$$|$SELF_TOKEN"',
+    '"$TOOL" durable-write "$IDENTITY" "$SELF_IDENTITY"',
     "i=0",
     "while :; do",
     '  if [ -f "$ACTIVATED" ]; then',
@@ -168,10 +182,13 @@ function renderPosixRecovery(
     "fi",
     '"$TOOL" atomic-swap "$APP" "$RESTORE"',
     '"$TOOL" durable-remove-directory "$RESTORE"',
+    ...recovery.claimPaths.map(
+      (path) => `if [ -f ${sh(path)} ]; then "$TOOL" durable-remove-file ${sh(path)}; fi`,
+    ),
     'if [ -f "$MARKER" ]; then "$TOOL" durable-remove-file "$MARKER"; fi',
     'if [ -f "$READY" ]; then "$TOOL" durable-remove-file "$READY"; fi',
     'if [ -f "$PHASE" ]; then "$TOOL" durable-remove-file "$PHASE"; fi',
-    'rm -f "$ACTIVATED" "$ARMED" "$TOOL"',
+    'rm -f "$ACTIVATED" "$ARMED" "$IDENTITY" "$TOOL"',
     ...(process.platform === "darwin"
       ? ['open "$APP" >/dev/null 2>&1 || "$EXE" >/dev/null 2>&1 &']
       : ['setsid "$EXE" >/dev/null 2>&1 < /dev/null &']),
@@ -187,6 +204,7 @@ function renderWindowsRecovery(
   executableRelative: string,
   activated: string,
   armed: string,
+  identity: string,
   script: string,
 ): string {
   const executable = join(recovery.runningApp, executableRelative);
@@ -196,6 +214,8 @@ function renderWindowsRecovery(
     `$tool=${psq(tool)}`,
     "$selfToken=(& $tool process-token ([string]$PID)).Trim()",
     "$selfIdentity=[string]$PID+'|'+$selfToken",
+    `& $tool durable-write ${psq(identity)} $selfIdentity`,
+    "if ($LASTEXITCODE -ne 0) { throw 'Could not publish updater recovery identity' }",
     "$deadline=(Get-Date).AddSeconds(5)",
     "while ($true) {",
     `  if (Test-Path -LiteralPath ${psq(activated)} -PathType Leaf) {`,
@@ -219,10 +239,14 @@ function renderWindowsRecovery(
     "if ($LASTEXITCODE -ne 0) { throw 'Could not restore previous app' }",
     `& $tool durable-remove-directory ${psq(restorePath)}`,
     "if ($LASTEXITCODE -ne 0) { throw 'Could not remove failed replacement' }",
+    ...recovery.claimPaths.map(
+      (path) =>
+        `if (Test-Path -LiteralPath ${psq(path)} -PathType Leaf) { & $tool durable-remove-file ${psq(path)} }`,
+    ),
     `if (Test-Path -LiteralPath ${psq(recovery.markerPath)} -PathType Leaf) { & $tool durable-remove-file ${psq(recovery.markerPath)} }`,
     `if (Test-Path -LiteralPath ${psq(recovery.readyPath)} -PathType Leaf) { & $tool durable-remove-file ${psq(recovery.readyPath)} }`,
     `if (Test-Path -LiteralPath ${psq(recovery.phasePath)} -PathType Leaf) { & $tool durable-remove-file ${psq(recovery.phasePath)} }`,
-    `Remove-Item -LiteralPath ${psq(activated)},${psq(armed)} -Force -ErrorAction SilentlyContinue`,
+    `Remove-Item -LiteralPath ${psq(activated)},${psq(armed)},${psq(identity)} -Force -ErrorAction SilentlyContinue`,
     "Remove-Item -LiteralPath $tool -Force -ErrorAction SilentlyContinue",
     `Start-Process -FilePath ${psq(executable)} -WorkingDirectory ${psq(recovery.runningApp)} -ErrorAction Stop`,
     `Remove-Item -LiteralPath ${psq(script)} -Force -ErrorAction SilentlyContinue`,
@@ -269,10 +293,17 @@ function removeStateFileDurably(tool: string, path: string): void {
   runCodec(tool, ["durable-remove-file", path], "could not clear updater recovery state");
 }
 
-function waitForIdentity(pid: number, tool: string): UpdateProcessIdentity {
+function waitForIdentity(path: string, pid: number, tool: string): UpdateProcessIdentity {
   for (let index = 0; index < 200; index += 1) {
-    const identity = processIdentity(pid, tool);
-    if (identity) return identity;
+    try {
+      const identity = parseProcessIdentity(readFileSync(path, "utf8"));
+      if (identity.pid !== pid || !processIdentityMatches(identity, tool)) {
+        throw new Error("updater recovery helper identity is not live");
+      }
+      return identity;
+    } catch (error) {
+      if (existsSync(path)) throw error;
+    }
     Atomics.wait(WAIT_BUFFER, 0, 0, 25);
   }
   throw new Error("could not identify updater recovery helper");

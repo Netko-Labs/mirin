@@ -25,7 +25,10 @@ import {
 import { dirname, join } from "node:path";
 import { $ } from "bun";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
-import { writeAtomicOutputDirectory } from "../../shared/fs/atomic-output.ts";
+import {
+  createAtomicOutputOperations,
+  writeAtomicOutputDirectory,
+} from "../../shared/fs/atomic-output.ts";
 import {
   assertProjectIcon,
   copyProjectFile,
@@ -238,6 +241,7 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     opts.projectDir,
     app,
     "macOS bundle output directory",
+    createAtomicOutputOperations(opts.codecBin),
     async (staging) => {
       const contents = join(staging, "Contents");
       const macos = join(contents, "MacOS");

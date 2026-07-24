@@ -89,14 +89,17 @@ bundles retain the complete downloaded runtime.
 Bundle and release assembly use unique sibling staging directories. A failed
 copy, icon conversion, required signing/updater operation, or Windows installer
 operation leaves the previous successful canonical output intact; the staged
-directory replaces it only after the required operation succeeds. DMG and Linux
+tree is recursively flushed and atomically exchanged with an existing canonical
+directory only after the required operation succeeds. A first output uses a
+durable sibling move. DMG and Linux
 packages are best-effort: their failures are logged and a valid updater release
 may atomically replace the prior output without those optional artifacts. Linux
 package failures remove every expected package before that commit; if cleanup
 cannot prove the release package-free, the release fails closed. Cleanup of the
-old backup after a successful swap is non-fatal, and later runs prune aged
-leftovers only when they have Mirin's exact PID/UUID ownership name and their
-owner process is gone.
+old tree after a successful swap is non-fatal, and later runs prune aged
+stage/backup leftovers only when they have Mirin's exact PID/UUID ownership name
+and their owner process is gone. A legacy interrupted two-move replacement with
+no canonical output restores its newest exact dead-owner backup before building.
 
 `app://` is mirin's bundled-asset scheme, served from the app bundle through a CEF scheme handler (dev mode points it at the working tree).
 
@@ -266,8 +269,9 @@ off the main-process API:
   so interruption never removes the canonical launch path. The backup remains
   until that exact launched process durably publishes a Worker/native readiness
   receipt. The phase journal lives outside the replaceable app; a later launch
-  claims an inactive pre-commit transaction and rolls it back before loading the
-  native core/Worker, or completes cleanup for a committed transaction. Every
+  atomically claims an inactive pre-commit transaction for one bootstrap winner
+  and rolls it back before loading the native core/Worker, or completes cleanup
+  for a committed transaction. Every
   recoverable post-exit failure atomically rolls back and reopens
   the prior install; parent/replacement termination is bounded, while unconfirmed
   termination or rollback preserves terminal ownership and both trees. Managed Linux
@@ -278,13 +282,17 @@ off the main-process API:
   signature verification happens before JSON parsing, and every redirect hop must
   satisfy the HTTPS-or-loopback policy and a bounded request deadline. Embedded and
   staged `version.json` files are size-bounded before allocation/decoding.
-  Before the helper may arm, the parent durably records its PID plus OS creation
-  identity in the reservation and publishes an identity-bound activation
-  acknowledgement. A helper
+  Before the helper may arm, it durably self-publishes its PID plus OS creation
+  identity; the parent validates that receipt, records it in the reservation,
+  and publishes an identity-bound activation acknowledgement. A helper
   without that acknowledgement exits without swapping. Armed acknowledgement and
   replacement readiness use temp-file-plus-rename publication. An accepted helper
-  forces and confirms parent termination after the graceful-shutdown deadline;
-  it never discards the transaction merely because that deadline elapsed. Apply and terminal state
+  forces and confirms handle-bound parent termination after the
+  graceful-shutdown deadline on Linux and Windows. macOS has creation-bound
+  kqueue waiting but no unprivileged handle-bound signal operation, so a timed-out
+  forced termination fails safe and preserves the transaction instead of risking
+  a recycled PID. The helper never discards the transaction merely because that
+  deadline elapsed. Apply and terminal state
   are shared by every public `Updater` instance, including auto-check shutdown.
   `release.channel` supports validated safe
   dotted names consistently across build/release output, embedded identity, manifest

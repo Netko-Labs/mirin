@@ -20,7 +20,10 @@ import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:
 import { extname, join } from "node:path";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
 import { makeWindowsIcon } from "../../icons/windows/index.ts";
-import { writeAtomicOutputDirectory } from "../../shared/fs/atomic-output.ts";
+import {
+  createAtomicOutputOperations,
+  writeAtomicOutputDirectory,
+} from "../../shared/fs/atomic-output.ts";
 import {
   assertProjectIcon,
   copyProjectFile,
@@ -94,6 +97,7 @@ export async function buildWindowsBundle(
     opts.projectDir,
     app,
     "Windows bundle output directory",
+    createAtomicOutputOperations(opts.codecBin),
     async (staging) => {
       const exe = join(staging, `${appName}.exe`);
       cpSync(opts.hostExe, exe);

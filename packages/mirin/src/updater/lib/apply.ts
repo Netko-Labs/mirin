@@ -30,6 +30,7 @@ import type { VersionInfo } from "../types.ts";
 import {
   APPLY_HELPER_ACTIVATED_FILE,
   APPLY_HELPER_ARMED_FILE,
+  APPLY_HELPER_LAUNCH_PID_FILE,
   APPLY_HELPER_PID_FILE,
   removePathBestEffort,
 } from "./cleanup.ts";
@@ -118,6 +119,7 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
   const launchArguments = options.launchArguments?.length
     ? ` -ArgumentList ${options.launchArguments.map(psq).join(",")}`
     : "";
+  const helperIdentity = join(options.workDir, APPLY_HELPER_PID_FILE);
   const codec = (args: string[], failure: string, indent = "  "): string[] => [
     `${indent}& ${psq(options.swapTool)} ${args.map(psq).join(" ")}`,
     `${indent}if ($LASTEXITCODE -ne 0) { throw ${psq(failure)} }`,
@@ -139,6 +141,8 @@ export function renderWindowsApplyPowerShell(options: WindowsScriptOptions): str
     `$selfToken=(& ${psq(options.swapTool)} process-token ([string]$PID)).Trim()`,
     "if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($selfToken)) { throw 'Could not identify updater helper process' }",
     "$selfIdentity=[string]$PID+'|'+$selfToken",
+    `& ${psq(options.swapTool)} ${psq("durable-write")} ${psq(helperIdentity)} $selfIdentity`,
+    "if ($LASTEXITCODE -ne 0) { throw 'Could not publish updater helper identity' }",
     "try {",
     `  if (Test-Path -LiteralPath ${psq(options.backup)}) { throw 'Updater backup path already exists' }`,
     `  if (-not (Test-Path -LiteralPath ${psq(options.runningApp)} -PathType Container)) { throw 'Installed app path is unavailable' }`,
@@ -301,6 +305,7 @@ function renderPosixApplyShell(
     `READY=${sh(options.ready)}`,
     `ACTIVATED=${sh(options.activated)}`,
     `ARMED=${sh(options.armed)}`,
+    `HELPER_IDENTITY=${sh(join(options.workDir, APPLY_HELPER_PID_FILE))}`,
     `PHASE=${sh(options.phase)}`,
     `SWAP=${sh(options.swapTool)}`,
     `TOKEN=${sh(options.token)}`,
@@ -365,6 +370,7 @@ function renderPosixApplyShell(
     'test -x "$SWAP"',
     'SELF_TOKEN=$("$SWAP" process-token "$$")',
     'SELF_IDENTITY="$$|$SELF_TOKEN"',
+    '"$SWAP" durable-write "$HELPER_IDENTITY" "$SELF_IDENTITY"',
     ...(platform === "linux" ? ["command -v setsid >/dev/null 2>&1"] : []),
     "i=0",
     "while :; do",
@@ -482,6 +488,7 @@ async function applyWindows(
   const launchVbs = join(tmpdir(), `mirin-launch-${token}.vbs`);
   const helperFiles = [script, launchVbs];
   const helperPidFile = join(workDir, APPLY_HELPER_PID_FILE);
+  const helperLaunchPidFile = join(workDir, APPLY_HELPER_LAUNCH_PID_FILE);
   const activated = join(workDir, APPLY_HELPER_ACTIVATED_FILE);
   const armed = join(workDir, APPLY_HELPER_ARMED_FILE);
   const swapTool = await prepareAtomicSwapTool(
@@ -510,7 +517,7 @@ async function applyWindows(
     }),
     "utf8",
   );
-  writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperPidFile), "utf8");
+  writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperLaunchPidFile), "utf8");
 
   try {
     const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs], {
@@ -522,21 +529,20 @@ async function applyWindows(
     if (exitCode !== 0) {
       throw new Error(`failed to launch Windows updater via WMI (${exitCode})`);
     }
-    const helperPid = parseHelperPid(readFileSync(helperPidFile, "utf8"));
-    const helperIdentity = await waitForProcessIdentity(helperPid, swapTool);
-    writeDurableIdentity(
-      helperPidFile,
-      helperIdentity,
-      swapTool,
-      "could not record updater helper identity",
-    );
+    const helperPid = parseHelperPid(readFileSync(helperLaunchPidFile, "utf8"));
+    let helperIdentity: UpdateProcessIdentity | undefined;
     let activationPublished = false;
     try {
+      helperIdentity = await waitForHelperIdentity(helperPidFile, helperPid, swapTool);
       authorizeHelperSwap(handoff, helperIdentity, activated, swapTool);
       activationPublished = true;
       await waitForHelperArmed(armed, helperIdentity, swapTool);
     } catch (error) {
-      if (!(await terminateExactProcess(helperIdentity, swapTool)) && activationPublished) {
+      if (
+        helperIdentity &&
+        !(await terminateExactProcess(helperIdentity, swapTool)) &&
+        activationPublished
+      ) {
         throw new PreservedHelperOwnershipError(error);
       }
       throw error;
@@ -632,13 +638,12 @@ async function spawnShellSwap(
   });
   const swapTool = join(workDir, ".mirin-atomic-swap");
   let activationPublished = false;
+  let helperIdentity: UpdateProcessIdentity | undefined;
   try {
-    const helperIdentity = await waitForProcessIdentity(helper.pid, swapTool);
-    writeDurableIdentity(
+    helperIdentity = await waitForHelperIdentity(
       join(workDir, APPLY_HELPER_PID_FILE),
-      helperIdentity,
+      helper.pid,
       swapTool,
-      "could not record updater helper identity",
     );
     authorizeHelperSwap(
       handoff,
@@ -649,7 +654,6 @@ async function spawnShellSwap(
     activationPublished = true;
     await waitForHelperArmed(join(workDir, APPLY_HELPER_ARMED_FILE), helperIdentity, swapTool);
   } catch (error) {
-    const helperIdentity = processIdentity(helper.pid, swapTool);
     const terminated =
       helperIdentity === undefined || (await terminateExactProcess(helperIdentity, swapTool));
     if (!terminated && activationPublished) {
@@ -785,14 +789,22 @@ async function prepareAtomicSwapTool(
   return tool;
 }
 
-async function waitForProcessIdentity(
+async function waitForHelperIdentity(
+  path: string,
   pid: number,
   swapTool: string,
 ): Promise<UpdateProcessIdentity> {
-  const deadline = Date.now() + 2000;
+  const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    const identity = processIdentity(pid, swapTool);
-    if (identity) return identity;
+    try {
+      const identity = parseProcessIdentity(readFileSync(path, "utf8"));
+      if (identity.pid !== pid || !processIdentityMatches(identity, swapTool)) {
+        throw new Error("updater helper identity receipt is not live");
+      }
+      return identity;
+    } catch (error) {
+      if (existsSync(path)) throw error;
+    }
     await Bun.sleep(25);
   }
   throw new Error("could not identify updater helper process");

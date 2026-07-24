@@ -143,6 +143,7 @@ describe("Windows updater launcher", () => {
     const script = join(root, "apply.ps1");
     const launchVbs = join(root, "launch.vbs");
     const helperPidFile = join(work, ".apply-helper.pid");
+    const helperLaunchPidFile = join(work, ".apply-helper-launch.pid");
     const executable = join(app, "Mirin.exe");
     const powershell = join(
       process.env.SystemRoot as string,
@@ -189,13 +190,16 @@ describe("Windows updater launcher", () => {
         failurePoint: "after-exchange",
       }),
     );
-    writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperPidFile));
+    writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperLaunchPidFile));
 
     try {
       const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs]);
       expect(await launcher.exited).toBe(0);
-      const helperPid = Number(readFileSync(helperPidFile, "utf8"));
-      const helperIdentity = await waitForTestIdentity(helperPid, codec);
+      const helperPid = Number(readFileSync(helperLaunchPidFile, "utf8"));
+      await waitForFile(helperPidFile);
+      const helperIdentity = parseProcessIdentity(readFileSync(helperPidFile, "utf8"));
+      expect(helperIdentity.pid).toBe(helperPid);
+      expect(processIdentity(helperPid, codec)?.token).toBe(helperIdentity.token);
       runTestCodec(codec, ["durable-write", activated, formatProcessIdentity(helperIdentity)]);
       await waitForFile(armed);
       expect(parseProcessIdentity(readFileSync(armed, "utf8"))).toEqual(helperIdentity);
@@ -236,6 +240,7 @@ describe("Windows updater launcher", () => {
     const script = join(root, "apply.ps1");
     const launchVbs = join(root, "launch.vbs");
     const helperPidFile = join(work, ".apply-helper.pid");
+    const helperLaunchPidFile = join(work, ".apply-helper-launch.pid");
     const executable = join(app, "Mirin.exe");
     const powershell = join(
       process.env.SystemRoot as string,
@@ -292,14 +297,17 @@ describe("Windows updater launcher", () => {
         launchArguments: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand],
       }),
     );
-    writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperPidFile));
+    writeFileSync(launchVbs, renderWindowsLaunchVbs(script, helperLaunchPidFile));
 
     let replacementIdentity: UpdateProcessIdentity | undefined;
     try {
       const launcher = Bun.spawn(["wscript.exe", "//B", "//Nologo", launchVbs]);
       expect(await launcher.exited).toBe(0);
-      const helperPid = Number(readFileSync(helperPidFile, "utf8"));
-      const helperIdentity = await waitForTestIdentity(helperPid, codec);
+      const helperPid = Number(readFileSync(helperLaunchPidFile, "utf8"));
+      await waitForFile(helperPidFile);
+      const helperIdentity = parseProcessIdentity(readFileSync(helperPidFile, "utf8"));
+      expect(helperIdentity.pid).toBe(helperPid);
+      expect(processIdentity(helperPid, codec)?.token).toBe(helperIdentity.token);
       runTestCodec(codec, ["durable-write", activated, formatProcessIdentity(helperIdentity)]);
       await waitForFile(armed);
       runTestCodec(codec, ["terminate-process", String(parentIdentity.pid), parentIdentity.token]);

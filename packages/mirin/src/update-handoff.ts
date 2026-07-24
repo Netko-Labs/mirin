@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -22,11 +23,14 @@ import {
 
 const HANDOFF_FILE = ".update-handoff.json";
 const PHASE_FILE_PREFIX = ".update-phase-";
+const RECOVERY_CLAIM_PREFIX = ".update-recovery-claim-";
 const MAX_HANDOFF_BYTES = 4096;
 const MAX_PHASE_BYTES = 32;
 const MAX_VERSION_BYTES = 16 * 1024;
 const HANDOFF_TOKEN = /^[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const READY_FILE = /^\.update-ready-[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const RECOVERY_CLAIM =
+  /^\.update-recovery-claim-([1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})--([1-9]\d*)-([0-9a-f]{64})$/;
 
 export const HOST_RUNTIME_PROTOCOL = 1;
 export const EXCLUSIVE_UPDATER_CAPABILITY = "exclusive-app-lock-v1";
@@ -46,6 +50,13 @@ interface UpdateHandoffMarker {
   staged?: string;
   backup?: string;
   phasePath?: string;
+}
+
+interface RecoveryClaim {
+  path: string;
+  token: string;
+  ownerPid: number;
+  ownerTokenHash: string;
 }
 
 export interface PreparedUpdateHandoff extends UpdateHandoffMarker {
@@ -80,6 +91,7 @@ export interface UpdateHandoffRecovery {
   backup: string;
   restorePath?: string;
   owner: UpdateProcessIdentity;
+  claimPaths: string[];
 }
 
 export interface UpdateHandoffDecision {
@@ -231,8 +243,15 @@ export function inspectUpdateHandoff(
   nowMs = Date.now(),
 ): UpdateHandoffDecision {
   const markerPath = join(directory, HANDOFF_FILE);
-  if (!existsSync(markerPath)) return { blocked: false };
-  const marker = readMarker(markerPath);
+  if (!existsSync(markerPath)) {
+    if (restoreOrphanedRecoveryClaim(directory, markerPath, getProcessIdentity) === "active") {
+      return { blocked: true };
+    }
+    if (!existsSync(markerPath)) {
+      return recoveryClaimPaths(directory).length > 0 ? { blocked: true } : { blocked: false };
+    }
+  }
+  let marker = readMarker(markerPath);
   if (!marker) {
     removeFileBestEffort(markerPath);
     return { blocked: false };
@@ -250,48 +269,93 @@ export function inspectUpdateHandoff(
     return launchedTarget ? { blocked: false, readyPath } : { blocked: true };
   }
 
+  const owner = getProcessIdentity(process.pid);
+  if (!owner || owner.pid !== process.pid || !isProcessToken(owner.token)) {
+    return { blocked: true };
+  }
+  const claimPath = join(
+    directory,
+    `${RECOVERY_CLAIM_PREFIX}${marker.token}--${owner.pid}-${processTokenHash(owner.token)}`,
+  );
+  try {
+    renameSync(markerPath, claimPath);
+    syncNamespace(claimPath);
+  } catch {
+    // Another bootstrap either claimed or refreshed the marker after our read.
+    return { blocked: true };
+  }
+  const claimedMarker = readMarker(claimPath);
+  if (!claimedMarker) {
+    removeFileBestEffort(claimPath);
+    return { blocked: false };
+  }
+  marker = claimedMarker;
+  const claimPaths = recoveryClaimPaths(directory, marker.token);
+  const claimedActive =
+    getProcessIdentity(marker.ownerPid)?.token === marker.ownerToken ||
+    (marker.helperPid !== undefined &&
+      marker.helperToken !== undefined &&
+      getProcessIdentity(marker.helperPid)?.token === marker.helperToken);
+  const claimedReadyPath = join(directory, `.update-ready-${marker.token}`);
+  const claimedTarget =
+    launchToken === marker.token && installedVersion(resourcesDir) === marker.targetVersion;
+  if (claimedActive) {
+    restoreClaimedMarker(markerPath, claimPath);
+    return claimedTarget ? { blocked: false, readyPath: claimedReadyPath } : { blocked: true };
+  }
+
   if (!markerTransactionIsValid(marker, resourcesDir, directory)) {
-    removeFileBestEffort(markerPath);
-    removeFileBestEffort(readyPath);
-    if (marker.phasePath) removeFileBestEffort(marker.phasePath);
+    removeFilesBestEffort(claimPaths);
+    removeFileBestEffort(claimedReadyPath);
     return { blocked: false };
   }
 
   const phase = readPhase(marker.phasePath);
   const installed = installedVersion(resourcesDir);
-  if (!phase) return { blocked: true };
 
   if (installed === marker.sourceVersion) {
     if (
       !removeOwnedDirectoryBestEffort(marker.staged) ||
       !removeOwnedDirectoryBestEffort(marker.backup)
     ) {
+      restoreClaimedMarker(markerPath, claimPath);
       return { blocked: true };
     }
-    removeFileBestEffort(markerPath);
+    removeFilesBestEffort(claimPaths);
     removeFileBestEffort(marker.phasePath);
-    removeFileBestEffort(readyPath);
+    removeFileBestEffort(claimedReadyPath);
     return { blocked: false };
   }
-  if (installed !== marker.targetVersion) return { blocked: true };
+  if (!phase || installed !== marker.targetVersion) {
+    restoreClaimedMarker(markerPath, claimPath);
+    return { blocked: true };
+  }
 
-  const owner = getProcessIdentity(process.pid);
-  if (!owner || owner.pid !== process.pid) return { blocked: true };
   const restorePath = realDirectory(marker.backup) ?? realDirectory(marker.staged) ?? undefined;
   const mode = phase === "committed" ? "commit" : "rollback";
-  if (mode === "rollback" && !restorePath) return { blocked: true };
+  if (mode === "rollback" && !restorePath) {
+    restoreClaimedMarker(markerPath, claimPath);
+    return { blocked: true };
+  }
 
-  writeDurableReplacement(
-    markerPath,
-    serializeMarker({
-      ...marker,
-      ownerPid: owner.pid,
-      ownerToken: owner.token,
-      helperPid: undefined,
-      helperToken: undefined,
-      createdAtMs: validTimestamp(nowMs) ? nowMs : marker.createdAtMs,
-    }),
-  );
+  try {
+    writeDurableInitialFile(
+      markerPath,
+      serializeMarker({
+        ...marker,
+        ownerPid: owner.pid,
+        ownerToken: owner.token,
+        helperPid: undefined,
+        helperToken: undefined,
+        createdAtMs: validTimestamp(nowMs) ? nowMs : marker.createdAtMs,
+      }),
+    );
+  } catch {
+    // Preserve the claim if no competing marker exists so a later bootstrap can
+    // reconstruct the journal. If a marker does exist, it is the winner.
+    if (existsSync(markerPath)) removeFileBestEffort(claimPath);
+    return { blocked: true };
+  }
   return {
     blocked: false,
     recovery: {
@@ -299,12 +363,13 @@ export function inspectUpdateHandoff(
       token: marker.token,
       markerPath,
       phasePath: marker.phasePath,
-      readyPath,
+      readyPath: claimedReadyPath,
       runningApp: marker.runningApp,
       staged: marker.staged,
       backup: marker.backup,
       ...(restorePath ? { restorePath } : {}),
       owner,
+      claimPaths,
     },
   };
 }
@@ -497,6 +562,91 @@ function removeOwnedDirectoryBestEffort(path: string): boolean {
   }
 }
 
+function recoveryClaims(directory: string, token?: string): RecoveryClaim[] {
+  try {
+    return readdirSync(directory)
+      .map((entry): RecoveryClaim | undefined => {
+        const match = RECOVERY_CLAIM.exec(entry);
+        if (!match || (token !== undefined && match[1] !== token)) return undefined;
+        const ownerPid = Number(match[2]);
+        if (!validPid(ownerPid)) return undefined;
+        return {
+          path: join(directory, entry),
+          token: match[1] as string,
+          ownerPid,
+          ownerTokenHash: match[3] as string,
+        };
+      })
+      .filter((claim): claim is RecoveryClaim => claim !== undefined)
+      .sort((left, right) => left.path.localeCompare(right.path));
+  } catch {
+    return [];
+  }
+}
+
+function recoveryClaimPaths(directory: string, token?: string): string[] {
+  return recoveryClaims(directory, token).map((claim) => claim.path);
+}
+
+function restoreOrphanedRecoveryClaim(
+  directory: string,
+  markerPath: string,
+  getProcessIdentity: (pid: number) => UpdateProcessIdentity | undefined,
+): "active" | "restored" | "none" {
+  const claims = recoveryClaims(directory);
+  if (
+    claims.some((claim) => {
+      const identity = getProcessIdentity(claim.ownerPid);
+      return identity !== undefined && processTokenHash(identity.token) === claim.ownerTokenHash;
+    })
+  ) {
+    return "active";
+  }
+  const candidates = claims
+    .map((claim) => ({ claim, marker: readMarker(claim.path) }))
+    .filter(
+      (
+        candidate,
+      ): candidate is {
+        claim: RecoveryClaim;
+        marker: UpdateHandoffMarker;
+      } => candidate.marker !== undefined,
+    )
+    .sort((left, right) => right.marker.createdAtMs - left.marker.createdAtMs);
+  for (const candidate of candidates) {
+    if (existsSync(markerPath)) return "restored";
+    try {
+      renameSync(candidate.claim.path, markerPath);
+      syncNamespace(markerPath);
+      return "restored";
+    } catch {
+      if (existsSync(markerPath)) return "restored";
+    }
+  }
+  return "none";
+}
+
+function restoreClaimedMarker(markerPath: string, claimPath: string): void {
+  if (!existsSync(markerPath)) {
+    try {
+      renameSync(claimPath, markerPath);
+      syncNamespace(markerPath);
+      return;
+    } catch {
+      if (!existsSync(markerPath)) return;
+    }
+  }
+  removeFileBestEffort(claimPath);
+}
+
+function processTokenHash(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function removeFilesBestEffort(paths: string[]): void {
+  for (const path of paths) removeFileBestEffort(path);
+}
+
 function writeDurableInitialFile(path: string, contents: string): void {
   if (process.platform === "win32") {
     if (existsSync(path)) throw new Error("updater handoff reservation already exists");
@@ -554,6 +704,21 @@ function syncFileAndParent(path: string): void {
     if (process.platform !== "win32") throw error;
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function syncNamespace(path: string): void {
+  if (process.platform !== "win32") {
+    syncFileAndParent(path);
+    return;
+  }
+  const result = Bun.spawnSync([bundledCodecPath(), "sync-parent", path], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  if (result.exitCode !== 0) {
+    throw new Error("could not make updater namespace transition durable");
   }
 }
 

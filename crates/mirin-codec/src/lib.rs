@@ -14,7 +14,8 @@ use std::thread;
 
 pub use atomic_swap::{atomic_swap_directories, validate_atomic_swap_directories};
 pub use durable_fs::{
-    durable_move_directory, durable_remove_directory, durable_remove_file, durable_write, sync_tree,
+    durable_move_directory, durable_remove_directory, durable_remove_file, durable_write,
+    sync_parent, sync_tree,
 };
 pub use process_identity::{
     process_matches, process_token, terminate_process, wait_for_process_exit,

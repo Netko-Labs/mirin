@@ -1,7 +1,7 @@
 use mirin_codec::{
     atomic_swap_directories, bsdiff_file, bspatch_file, bspatch_file_bounded,
     durable_move_directory, durable_remove_directory, durable_remove_file, durable_write,
-    process_token, sync_tree, terminate_process, validate_atomic_swap_directories,
+    process_token, sync_parent, sync_tree, terminate_process, validate_atomic_swap_directories,
     wait_for_process_exit, zstd_compress_file, zstd_decompress_file, zstd_decompress_file_bounded,
 };
 use std::env;
@@ -81,6 +81,7 @@ fn run() -> io::Result<()> {
             Path::new(argument(&args, 2, "missing second directory")?),
         ),
         "sync-tree" => sync_tree(Path::new(argument(&args, 1, "missing tree path")?)),
+        "sync-parent" => sync_parent(Path::new(argument(&args, 1, "missing child path")?)),
         "durable-write" => durable_write(
             Path::new(argument(&args, 1, "missing destination path")?),
             argument(&args, 2, "missing durable contents")?.as_bytes(),

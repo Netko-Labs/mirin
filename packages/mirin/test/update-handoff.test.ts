@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -100,7 +101,14 @@ describe("update handoff reservations", () => {
     activateUpdateHandoff(handoff, helper);
 
     expect(
-      inspectUpdateHandoff("dev.example.app", oldResources, false, undefined, () => false, state),
+      inspectUpdateHandoff(
+        "dev.example.app",
+        oldResources,
+        false,
+        undefined,
+        (pid) => (pid === process.pid ? { pid, token: "stale-cleanup-owner" } : undefined),
+        state,
+      ),
     ).toEqual({ blocked: false });
     expect(existsSync(handoff.markerPath)).toBe(false);
   });
@@ -125,7 +133,10 @@ describe("update handoff reservations", () => {
         oldResources,
         false,
         undefined,
-        (pid) => ({ pid, token: "reused-process-token" }),
+        (pid) =>
+          pid === process.pid
+            ? { pid, token: "stale-cleanup-owner" }
+            : { pid, token: "reused-process-token" },
         state,
       ),
     ).toEqual({ blocked: false });
@@ -146,6 +157,9 @@ describe("update handoff reservations", () => {
     );
 
     expect(decision.blocked).toBe(false);
+    expect(decision.recovery?.claimPaths).toHaveLength(1);
+    const claimPaths = decision.recovery?.claimPaths as string[];
+    expect(existsSync(claimPaths[0] as string)).toBe(true);
     expect(decision.recovery).toEqual({
       mode: "rollback",
       token: fixture.handoff.token,
@@ -157,6 +171,7 @@ describe("update handoff reservations", () => {
       backup: fixture.handoff.backup,
       restorePath: fixture.handoff.backup,
       owner: recoveryOwner,
+      claimPaths,
     });
     expect(
       inspectUpdateHandoff(
@@ -168,6 +183,107 @@ describe("update handoff reservations", () => {
         fixture.state,
       ),
     ).toEqual({ blocked: true });
+  });
+
+  test("blocks on a live exact-identity recovery claim and restores it only after owner death", () => {
+    const fixture = interruptedTransaction("backed-up");
+    const claimOwner = { pid: 424242, token: "live-recovery-claim" };
+    const recoveryOwner = { pid: process.pid, token: "next-recovery-owner" };
+    const ownerHash = createHash("sha256").update(claimOwner.token).digest("hex");
+    const claimPath = join(
+      fixture.state,
+      `.update-recovery-claim-${fixture.handoff.token}--${claimOwner.pid}-${ownerHash}`,
+    );
+    renameSync(fixture.handoff.markerPath, claimPath);
+
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        fixture.resources,
+        false,
+        undefined,
+        (pid) => (pid === claimOwner.pid ? claimOwner : recoveryOwner),
+        fixture.state,
+      ),
+    ).toEqual({ blocked: true });
+    expect(existsSync(claimPath)).toBe(true);
+    expect(existsSync(fixture.handoff.markerPath)).toBe(false);
+
+    const decision = inspectUpdateHandoff(
+      "dev.example.app",
+      fixture.resources,
+      false,
+      undefined,
+      (pid) => (pid === process.pid ? recoveryOwner : undefined),
+      fixture.state,
+    );
+    expect(decision.blocked).toBe(false);
+    expect(decision.recovery?.owner).toEqual(recoveryOwner);
+    expect(existsSync(fixture.handoff.markerPath)).toBe(true);
+  });
+
+  test("recovers a crash between durable marker and phase creation", () => {
+    const root = temporaryDirectory();
+    const state = join(root, "state");
+    const app = join(root, "Mirin");
+    const installedResources = resourcesAt(app, "1.0.0");
+    const staged = join(root, ".Mirin.mirin-new-test");
+    resourcesAt(staged, "2.0.0");
+    const handoff = prepareUpdateHandoff(
+      "dev.example.app",
+      "2.0.0",
+      state,
+      Date.now(),
+      { sourceVersion: "1.0.0", runningApp: app, staged },
+      owner,
+    );
+    rmSync(handoff.phasePath as string);
+
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        installedResources,
+        false,
+        undefined,
+        (pid) => (pid === process.pid ? { pid, token: "phase-cleanup-owner" } : undefined),
+        state,
+      ),
+    ).toEqual({ blocked: false });
+    expect(existsSync(handoff.markerPath)).toBe(false);
+    expect(existsSync(staged)).toBe(false);
+  });
+
+  test("does not delete an untrusted phase path from an invalid marker", () => {
+    const root = temporaryDirectory();
+    const state = join(root, "state");
+    const app = join(root, "Mirin");
+    const installedResources = resourcesAt(app, "1.0.0");
+    const staged = join(root, ".Mirin.mirin-new-test");
+    resourcesAt(staged, "2.0.0");
+    const handoff = prepareUpdateHandoff(
+      "dev.example.app",
+      "2.0.0",
+      state,
+      Date.now(),
+      { sourceVersion: "1.0.0", runningApp: app, staged },
+      owner,
+    );
+    const sentinel = join(root, "sentinel");
+    writeFileSync(sentinel, "keep");
+    const marker = JSON.parse(readFileSync(handoff.markerPath, "utf8"));
+    writeFileSync(handoff.markerPath, JSON.stringify({ ...marker, phasePath: sentinel }));
+
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        installedResources,
+        false,
+        undefined,
+        (pid) => (pid === process.pid ? { pid, token: "invalid-marker-cleanup" } : undefined),
+        state,
+      ),
+    ).toEqual({ blocked: false });
+    expect(readFileSync(sentinel, "utf8")).toBe("keep");
   });
 
   test("claims a ready transaction for committed backup cleanup", () => {

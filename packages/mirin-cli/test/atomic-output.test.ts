@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -11,12 +12,29 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type AtomicOutputOperations,
   pruneStaleAtomicOutputBackups,
   removeAtomicOutputDirectoryBestEffort,
   writeAtomicOutputDirectory,
 } from "../src/shared/fs/atomic-output.ts";
 
 const temporaryDirectories: string[] = [];
+const testOperations: AtomicOutputOperations = {
+  syncTree() {},
+  validateSwap(left, right) {
+    expect(existsSync(left)).toBe(true);
+    expect(existsSync(right)).toBe(true);
+  },
+  atomicSwap(left, right) {
+    const temporary = `${left}.test-swap`;
+    renameSync(left, temporary);
+    renameSync(right, left);
+    renameSync(temporary, right);
+  },
+  durableMove(source, destination) {
+    renameSync(source, destination);
+  },
+};
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -28,12 +46,12 @@ describe("atomic output directories", () => {
   test("preserves the previous output when assembly fails", async () => {
     const root = temporaryDirectory();
     const output = join(root, "build", "app");
-    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+    await writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
       writeFileSync(join(staging, "version.txt"), "old");
     });
 
     await expect(
-      writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+      writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
         writeFileSync(join(staging, "version.txt"), "partial");
         throw new Error("assembly failed");
       }),
@@ -46,10 +64,10 @@ describe("atomic output directories", () => {
   test("replaces the previous output only after successful assembly", async () => {
     const root = temporaryDirectory();
     const output = join(root, "build", "app");
-    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+    await writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
       writeFileSync(join(staging, "version.txt"), "old");
     });
-    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+    await writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
       writeFileSync(join(staging, "version.txt"), "new");
     });
 
@@ -76,7 +94,7 @@ describe("atomic output directories", () => {
   test("prunes aged committed backups on a later run", async () => {
     const root = temporaryDirectory();
     const output = join(root, "build", "app");
-    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+    await writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
       writeFileSync(join(staging, "version.txt"), "current");
     });
     const backup = join(
@@ -94,10 +112,34 @@ describe("atomic output directories", () => {
     expect(readFileSync(join(output, "version.txt"), "utf8")).toBe("current");
   });
 
+  test("restores an owned interrupted backup when the canonical output is absent", () => {
+    const root = temporaryDirectory();
+    const output = join(root, "build", "app");
+    const backup = join(
+      root,
+      "build",
+      ".app.mirin-backup-123-12345678-1234-1234-1234-123456789abc",
+    );
+    mkdirSync(backup, { recursive: true });
+    writeFileSync(join(backup, "version.txt"), "last-good");
+
+    pruneStaleAtomicOutputBackups(
+      root,
+      output,
+      "test output",
+      Date.now(),
+      () => false,
+      testOperations,
+    );
+
+    expect(readFileSync(join(output, "version.txt"), "utf8")).toBe("last-good");
+    expect(existsSync(backup)).toBe(false);
+  });
+
   test("preserves aged prefix-sharing directories without an owned backup name", async () => {
     const root = temporaryDirectory();
     const output = join(root, "build", "release");
-    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+    await writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
       writeFileSync(join(staging, "version.txt"), "current");
     });
     const lookalike = join(root, "build", ".release.mirin-backup-manual");
@@ -113,7 +155,7 @@ describe("atomic output directories", () => {
   test("preserves an aged owned backup while its process is alive", async () => {
     const root = temporaryDirectory();
     const output = join(root, "build", "release");
-    await writeAtomicOutputDirectory(root, output, "test output", (staging) => {
+    await writeAtomicOutputDirectory(root, output, "test output", testOperations, (staging) => {
       writeFileSync(join(staging, "version.txt"), "current");
     });
     const backup = join(

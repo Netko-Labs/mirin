@@ -281,3 +281,21 @@
 - Nineteenth-review full Rust: `cargo fmt --all --check`, workspace clippy with
   warnings denied, and workspace tests passed (26 tests across codec, core, and
   helper).
+- Twentieth clean-context review remediation: claim inactive recovery journals
+  through an exact-owner single-winner namespace transition before native-core
+  loading, flush marker/claim parent-directory transitions through the native
+  codec on Windows, avoid deleting untrusted phase paths from invalid markers,
+  recover marker-without-phase crashes while the source tree is canonical, have
+  helpers self-publish their creation identity before parent activation, pin
+  Linux pidfds before identity validation, and refuse unsafe numeric-PID forced
+  termination on macOS. Bundle/release output now recursively flushes its stage
+  and uses the native directory exchange, with durable first-output moves and
+  legacy missing-canonical backup restoration.
+- Twentieth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 255
+  tests with the two expected Windows lifecycle skips on macOS; focused
+  handoff/apply/atomic-output coverage passed 25 tests; `git diff --check`
+  passed.
+- Twentieth-review full Rust: `cargo fmt --all --check`, workspace clippy with
+  warnings denied, and workspace tests passed (26 tests across codec, core, and
+  helper).

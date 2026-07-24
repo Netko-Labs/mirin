@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -159,6 +160,18 @@ describe("sidecar bundle copies", () => {
       hostExe: host,
       coreDll: core,
       codecBin: codec,
+      atomicOutputOperations: {
+        syncTree() {},
+        validateSwap() {
+          throw new Error("unexpected existing output");
+        },
+        atomicSwap() {
+          throw new Error("unexpected existing output");
+        },
+        durableMove(sourcePath, destinationPath) {
+          renameSync(sourcePath, destinationPath);
+        },
+      },
       helperExe: helper,
       cefPath,
       resources: { sidecars: [sidecar] },
