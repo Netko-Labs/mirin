@@ -23,6 +23,7 @@ import {
   EXCLUSIVE_UPDATER_CAPABILITY,
   HOST_RUNTIME_PROTOCOL,
   inspectUpdateHandoff,
+  UPDATE_HANDOFF_TOKEN_ENV,
 } from "./update-handoff.ts";
 
 // Bundle layout differs by platform: macOS `.app` puts the host in
@@ -74,9 +75,11 @@ if (process.platform === "linux" && !coreConfig.icon_path) {
   if (existsSync(iconPng)) coreConfig.icon_path = iconPng;
 }
 
+const updateHandoffToken = process.env[UPDATE_HANDOFF_TOKEN_ENV];
+delete process.env[UPDATE_HANDOFF_TOKEN_ENV];
 const handoff =
   typeof manifest.id === "string"
-    ? inspectUpdateHandoff(manifest.id, resourcesDir, Boolean(coreConfig.dev))
+    ? inspectUpdateHandoff(manifest.id, resourcesDir, Boolean(coreConfig.dev), updateHandoffToken)
     : { blocked: false };
 if (handoff.blocked) {
   console.error("[mirin host] an updater owns the app launch handoff");
@@ -94,6 +97,10 @@ if (!instanceLock) {
   process.exit(0);
 }
 const singleInstanceAcquired = instanceLock === "exclusive";
+if (handoff.readyPath && !singleInstanceAcquired) {
+  console.error("[mirin host] updater replacement did not acquire the exclusive app lock");
+  process.exit(1);
+}
 
 const worker = new Worker(workerPath, {
   workerData: {
@@ -104,7 +111,7 @@ const worker = new Worker(workerPath, {
     singleInstance: false,
     runtimeProtocol: HOST_RUNTIME_PROTOCOL,
     updaterApplyCapability: singleInstanceAcquired ? EXCLUSIVE_UPDATER_CAPABILITY : undefined,
-    updateReadyPath: handoff.readyPath,
+    updateReadyPath: singleInstanceAcquired ? handoff.readyPath : undefined,
     id: typeof manifest.id === "string" ? manifest.id : undefined,
     devUrl: process.env.MIRIN_DEV_URL,
     resourcesDir,

@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   assertLinuxInstallCanApply,
   renderLinuxApplyShell,
@@ -25,16 +28,18 @@ describe("Windows updater launcher", () => {
     expect(script).toContain('""Update""');
   });
 
-  test("cleans the backup and generation only after relaunch succeeds", () => {
+  test("uses literal paths and commits only after the exact replacement reports ready", () => {
     const script = renderWindowsApplyPowerShell({
-      runningApp: "C:\\Apps\\Mirin",
-      staged: "C:\\Updates\\generation\\extract\\Mirin",
+      runningApp: "C:\\Apps\\[beta]\\Mirin",
+      staged: "C:\\Apps\\[beta]\\.Mirin.mirin-new-42-token",
       workDir: "C:\\Updates\\generation",
-      executable: "C:\\Apps\\Mirin\\Mirin.exe",
-      backup: "C:\\Apps\\Mirin.old",
+      executable: "C:\\Apps\\[beta]\\Mirin\\Mirin.exe",
+      backup: "C:\\Apps\\[beta]\\Mirin.old",
       helperFiles: ["C:\\Temp\\apply.ps1", "C:\\Temp\\apply.vbs"],
       marker: "C:\\State\\.update-handoff.json",
       ready: "C:\\State\\.update-ready-42-token",
+      armed: "C:\\Updates\\generation\\.apply-helper-armed",
+      token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
     });
     const launch = script.indexOf("Start-Process -FilePath");
@@ -42,15 +47,17 @@ describe("Windows updater launcher", () => {
     expect(launch).toBeGreaterThan(0);
     expect(readiness).toBeGreaterThan(launch);
     expect(script.indexOf("C:\\Updates\\generation", launch)).toBeGreaterThan(launch);
-    expect(script.indexOf("C:\\Apps\\Mirin.old", launch)).toBeGreaterThan(launch);
+    expect(script.indexOf("C:\\Apps\\[beta]\\Mirin.old", launch)).toBeGreaterThan(launch);
     expect(script.indexOf("C:\\State\\.update-handoff.json", readiness)).toBeGreaterThan(readiness);
     expect(script).toContain("Updater backup path already exists");
-    expect(script).toContain(
-      "if ((Test-Path 'C:\\Apps\\Mirin') -or -not (Test-Path 'C:\\Apps\\Mirin.old'))",
-    );
-    expect(script).toContain(
-      "Remove-Item -Recurse -Force 'C:\\Apps\\Mirin' -ErrorAction SilentlyContinue",
-    );
+    expect(script).toContain("Replacement readiness receipt has the wrong process id");
+    expect(script).toContain("$readyPid -ne [string]$newProcess.Id");
+    expect(script.indexOf(".apply-helper-armed")).toBeLessThan(script.indexOf("$parentDeadline"));
+    for (const line of script.split("\n")) {
+      if (/\b(?:Test-Path|Get-Content|Move-Item|Remove-Item)\b/.test(line)) {
+        expect(line).toContain("-LiteralPath");
+      }
+    }
     if (process.platform === "win32") {
       const parsed = Bun.spawnSync({
         cmd: [
@@ -76,19 +83,23 @@ describe("POSIX updater helpers", () => {
       executable: "/Applications/Mirin App.app/Contents/MacOS/Mirin App",
       marker: "/tmp/state/.update-handoff.json",
       ready: "/tmp/state/.update-ready-42-token",
+      armed: "/tmp/generation/.apply-helper-armed",
+      token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
     });
     const launch = script.indexOf('nohup "$EXE"');
     const readiness = script.indexOf('[ -f "$READY" ]', launch);
     const deleteBackup = script.indexOf('rm -rf "$OLD"', readiness);
     const restoreBackup = script.indexOf('mv "$OLD" "$APP"', launch);
-    const reopenOld = script.indexOf('open "$APP" || true', launch);
+    const reopenOld = script.indexOf("then relaunch_old", restoreBackup);
     expect(launch).toBeGreaterThan(0);
     expect(readiness).toBeGreaterThan(launch);
     expect(deleteBackup).toBeGreaterThan(readiness);
     expect(restoreBackup).toBeGreaterThan(launch);
     expect(reopenOld).toBeGreaterThan(restoreBackup);
-    expect(script.indexOf('rm -rf "$WORK"')).toBeGreaterThan(readiness);
+    expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
+    expect(script).toContain('if [ "$READY_PID" = "$NEW_PID" ]');
+    expect(script).toContain('kill -KILL "$NEW_PID"');
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
     }
@@ -102,6 +113,8 @@ describe("POSIX updater helpers", () => {
       executable: "/opt/Mirin App/Mirin App",
       marker: "/tmp/state/.update-handoff.json",
       ready: "/tmp/state/.update-ready-42-token",
+      armed: "/tmp/generation/.apply-helper-armed",
+      token: "42-00000000-0000-0000-0000-000000000000",
       pid: 42,
     });
     const launch = script.indexOf("setsid ");
@@ -112,8 +125,61 @@ describe("POSIX updater helpers", () => {
     expect(script.indexOf('mv "$OLD" "$APP"', launch)).toBeGreaterThan(launch);
     expect(script.indexOf('rm -rf "$OLD"', readiness)).toBeGreaterThan(readiness);
     expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
+    expect(script.indexOf('printf "%s" "$$" > "$ARMED"')).toBeLessThan(
+      script.indexOf('while kill -0 "$PID"'),
+    );
     if (process.platform !== "win32") {
       expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
+    }
+  });
+
+  test("an accepted helper restores the old app after replacement startup fails", async () => {
+    if (process.platform === "win32") return;
+    const root = mkdtempSync(join(tmpdir(), "mirin-helper-rollback-"));
+    const runningApp = join(root, "Mirin.app");
+    const staged = join(root, ".Mirin.app.mirin-new-42-token");
+    const workDir = join(root, "work");
+    const marker = join(root, ".update-handoff.json");
+    const ready = join(root, ".update-ready-42-token");
+    const armed = join(workDir, ".apply-helper-armed");
+    const executable = join(runningApp, "Contents", "MacOS", "Mirin");
+    const stagedExecutable = join(staged, "Contents", "MacOS", "Mirin");
+    try {
+      mkdirSync(join(runningApp, "Contents", "MacOS"), { recursive: true });
+      mkdirSync(join(staged, "Contents", "MacOS"), { recursive: true });
+      mkdirSync(workDir);
+      writeFileSync(executable, "#!/bin/sh\nexit 0\n");
+      writeFileSync(stagedExecutable, "#!/bin/sh\nexit 1\n");
+      writeFileSync(join(runningApp, "old-sentinel"), "old");
+      writeFileSync(join(staged, "new-sentinel"), "new");
+      writeFileSync(marker, "{}");
+      chmodSync(executable, 0o755);
+      chmodSync(stagedExecutable, 0o755);
+
+      const script = renderMacApplyShell({
+        runningApp,
+        staged,
+        workDir,
+        executable,
+        marker,
+        ready,
+        armed,
+        token: "42-00000000-0000-0000-0000-000000000000",
+        pid: 2_147_483_647,
+      });
+      const helper = Bun.spawn(["/bin/sh", "-c", script], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      expect(await helper.exited).not.toBe(0);
+      expect(existsSync(join(runningApp, "old-sentinel"))).toBe(true);
+      expect(existsSync(join(runningApp, "new-sentinel"))).toBe(false);
+      expect(existsSync(`${runningApp}.mirin-old-2147483647`)).toBe(false);
+      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(staged)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

@@ -249,10 +249,6 @@ impl MirinHandler {
                 should_force_close(force_close, handler.quit_requested, state::quit_requested()),
             )
         };
-        if browsers.is_empty() {
-            quit_message_loop();
-            return;
-        }
         for browser in browsers {
             if let Some(host) = browser.host() {
                 host.close_browser(force_close.into());

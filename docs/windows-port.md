@@ -26,6 +26,8 @@ import lib), `default_cache_dir` (`%LOCALAPPDATA%`), `derive_subprocess_path`
 (`mirin-helper.exe`). Before spawning the Worker, the host takes an exclusive or
 shared process-lifetime app-file handle; single-instance mode also acquires the
 bundle-ID-scoped named mutex for compatibility and existing-window activation.
+The matching bundle-specific Win32 window class prevents activation from
+foregrounding an unrelated Mirin app.
 Only a protocol-compatible Worker's exclusive capability reaches the updater
 apply path. `cargo build --workspace`
 warning-clean. **The `cef` crate compiles and links on Windows** — the project's
@@ -125,11 +127,13 @@ and a failed marker write can terminate the complete helper. Accepted WMI launch
 terminal handoff, so checks, downloads, applies, and auto-check scheduling remain blocked
 until exit. Successful helpers remove their generation and launcher files; launch failures
 clean launcher files best-effort, and startup prunes abandoned generations without touching
-live app/helper work. The swap uses a unique backup, rejects stale backup collisions,
-removes partial replacements before rollback, and verifies restoration. A private
-handoff reservation admits only the staged version after the old PID releases its
-OS lock. PowerShell keeps the backup until the replacement process writes a
-Worker/native readiness receipt; early exit or timeout stops it, restores the old
+live app/helper work. The validated payload is first copied and revalidated beside
+the install. The swap uses literal PowerShell paths, a unique backup, rejects stale
+backup collisions, removes partial replacements before rollback, and verifies
+restoration. A private handoff reservation admits only the helper's token-bearing
+target after the old PID releases its OS lock. PowerShell keeps the backup until
+that exact replacement PID acquires the exclusive lock and writes a Worker/native
+readiness receipt; every post-exit failure stops it, restores the old
 folder, clears the reservation, and relaunches the prior executable. Runtime manifests
 require a pinned Ed25519 signature, and every redirect hop is subject to the
 HTTPS-or-loopback rule. `publish-all.ts` publishes the host-platform native package.

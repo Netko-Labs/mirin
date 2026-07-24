@@ -252,12 +252,14 @@ off the main-process API:
   starts, including internal launch overrides. Build/dev reject mismatched
   `mirinjs` runtime versions. Multi-instance processes hold compatible shared
   locks, so they cannot overlap an exclusive updater-capable process. Once a
-  detached apply helper is accepted, the updater enters a terminal handoff:
+  validated output is first copied and revalidated beside the install. After the
+  detached apply helper writes a PID-bound armed acknowledgement, the updater enters a terminal handoff:
   checks, downloads, applies, and auto-check scheduling remain blocked until
-  process exit. A private handoff reservation blocks the old version from
-  relaunching after the OS lock is released; the backup remains until the staged
-  target acquires the lock and writes a Worker/native readiness receipt. Failure
-  or timeout rolls back and reopens the prior install. Managed Linux
+  process exit. A private handoff reservation blocks ordinary launches after the
+  OS lock is released; only the helper's token-bearing target may proceed, and it
+  must acquire the exclusive lock. The backup remains until that exact launched
+  PID writes a Worker/native readiness receipt. Every post-exit failure rolls back
+  and reopens the prior install; POSIX replacement termination is bounded. Managed Linux
   AppImage/deb/rpm payloads omit updater metadata and update through their package
   channel. Malformed embedded `version.json` metadata,
   including its Ed25519 public-key trust anchor, disables

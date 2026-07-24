@@ -133,10 +133,12 @@ launch overrides. `mirin build` and `mirin dev` reject mismatched CLI/project
 `mirinjs` versions. Multi-instance processes hold shared locks, preventing them
 from overlapping an exclusive updater-capable process. Accepted helper launch is
 a terminal handoff, so manual updater work and auto-check scheduling remain
-blocked until the process exits. The helper reserves the next launch for the
-validated staged version and retains the backup until that successor reports
-Worker/native readiness; timeout or early exit restores and relaunches the old
-install. AppImage/deb/rpm payloads omit updater metadata and update through their
+blocked until the process exits. Before that handoff, the validated tree is copied
+and revalidated beside the install and the helper writes an armed acknowledgement.
+The helper reserves the next launch for its token-bearing target and retains the
+backup until that exact PID acquires the exclusive lock and reports Worker/native
+readiness; timeout or early exit restores and relaunches the old install.
+AppImage/deb/rpm payloads omit updater metadata and update through their
 package channel. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation
 directory, and startup prunes abandoned generations while preserving work owned by

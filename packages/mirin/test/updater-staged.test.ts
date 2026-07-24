@@ -9,7 +9,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { prepareInstallSibling } from "../src/updater/lib/install-staging.ts";
 import { validateStagedBundle } from "../src/updater/lib/staged.ts";
 
 const installed = {
@@ -92,6 +93,34 @@ describe("staged update bundle validation", () => {
           expectedVersion: "1.1.0",
         }),
       ).toThrow("symlink escapes the bundle");
+    } finally {
+      rmSync(stage.root, { recursive: true, force: true });
+    }
+  });
+
+  test("revalidates a sibling stage on the install filesystem before handoff", async () => {
+    const stage = createLinuxStage();
+    const install = join(stage.root, "install", installed.name);
+    const resources = join(install, "resources");
+    mkdirSync(resources, { recursive: true });
+    try {
+      const sibling = await prepareInstallSibling({
+        resourcesDir: resources,
+        downloadedStage: stage.staged,
+        platform: "linux",
+        installed,
+        expectedVersion: "1.1.0",
+      });
+      expect(dirname(sibling)).toBe(dirname(install));
+      expect(
+        validateStagedBundle({
+          staged: sibling,
+          extractionRoot: dirname(install),
+          platform: "linux",
+          installed,
+          expectedVersion: "1.1.0",
+        }).version,
+      ).toBe("1.1.0");
     } finally {
       rmSync(stage.root, { recursive: true, force: true });
     }

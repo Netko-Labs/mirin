@@ -52,7 +52,7 @@ fn acquire_platform_lock(config: &CoreConfig) -> InstanceLock {
     let Some(file) = try_lock_file(&path, requested) else {
         #[cfg(target_os = "windows")]
         if config.single_instance {
-            crate::win::activate_existing_instance();
+            crate::win::activate_existing_instance(config.dev, &config.identifier);
         }
         return InstanceLock::Unavailable;
     };
@@ -61,7 +61,7 @@ fn acquire_platform_lock(config: &CoreConfig) -> InstanceLock {
     if config.single_instance
         && !crate::win::acquire_single_instance(config.dev, &config.identifier)
     {
-        crate::win::activate_existing_instance();
+        crate::win::activate_existing_instance(config.dev, &config.identifier);
         return InstanceLock::Unavailable;
     }
 

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::sync::OnceLock;
 
 use windows_sys::Win32::Foundation::HINSTANCE;
 use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
@@ -28,13 +29,33 @@ thread_local! {
     static APP_ICON: RefCell<Option<isize>> = const { RefCell::new(None) };
 }
 
+static WINDOW_CLASS_NAME: OnceLock<Vec<u16>> = OnceLock::new();
+
 /// UTF-16, NUL-terminated, for the Win32 *W APIs.
 pub(super) fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+pub(super) fn class_name_for(identity: &str) -> Vec<u16> {
+    wide(&format!("MirinWindow.{identity}"))
+}
+
+pub(super) fn set_class_identity(identity: &str) {
+    let name = class_name_for(identity);
+    if let Err(rejected) = WINDOW_CLASS_NAME.set(name) {
+        assert_eq!(
+            WINDOW_CLASS_NAME.get(),
+            Some(&rejected),
+            "window class identity changed after initialization"
+        );
+    }
+}
+
 pub(super) fn class_name() -> Vec<u16> {
-    wide("MirinWindow")
+    WINDOW_CLASS_NAME
+        .get()
+        .cloned()
+        .unwrap_or_else(|| wide("MirinWindow.App"))
 }
 
 pub(super) fn module_handle() -> HINSTANCE {

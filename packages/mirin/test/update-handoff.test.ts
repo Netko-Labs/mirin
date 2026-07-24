@@ -27,12 +27,36 @@ describe("update handoff reservations", () => {
     const handoff = prepareUpdateHandoff("dev.example.app", "2.0.0", state);
     activateUpdateHandoff(handoff, 456);
 
-    expect(inspectUpdateHandoff("dev.example.app", oldResources, false, () => true, state)).toEqual(
-      { blocked: true },
-    );
-    expect(inspectUpdateHandoff("dev.example.app", newResources, false, () => true, state)).toEqual(
-      { blocked: false, readyPath: handoff.readyPath },
-    );
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        oldResources,
+        false,
+        handoff.token,
+        () => true,
+        state,
+      ),
+    ).toEqual({ blocked: true });
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        newResources,
+        false,
+        "wrong-token",
+        () => true,
+        state,
+      ),
+    ).toEqual({ blocked: true });
+    expect(
+      inspectUpdateHandoff(
+        "dev.example.app",
+        newResources,
+        false,
+        handoff.token,
+        () => true,
+        state,
+      ),
+    ).toEqual({ blocked: false, readyPath: handoff.readyPath });
 
     signalUpdateReady(handoff.readyPath);
     expect(existsSync(handoff.readyPath)).toBe(true);
@@ -49,7 +73,7 @@ describe("update handoff reservations", () => {
     activateUpdateHandoff(handoff, 456);
 
     expect(
-      inspectUpdateHandoff("dev.example.app", oldResources, false, () => false, state),
+      inspectUpdateHandoff("dev.example.app", oldResources, false, undefined, () => false, state),
     ).toEqual({ blocked: false });
     expect(existsSync(handoff.markerPath)).toBe(false);
   });

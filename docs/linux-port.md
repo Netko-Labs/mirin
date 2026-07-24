@@ -183,11 +183,12 @@ that validation. It also requires matching `resources/version.json`, bounded
 manifest/download/codec output with an 8 GiB streaming reconstructed-tar/decompression
 ceiling and a 512 MiB combined in-memory patch-input ceiling,
 and safe tar entry/link types before launching the asynchronous folder swap. Before
-handoff the runtime proves that the portable install's parent can be modified. Accepted
-helper launch reserves the app lock for the staged version and force-quits the old
-process; the helper retains its unique backup until the successor reports Worker/native
-readiness. Early exit or timeout removes the partial replacement, clears the reservation,
-restores, verifies, and relaunches the old app. Startup prunes abandoned generations
+handoff the runtime copies and revalidates the payload beside the portable install,
+and the helper acknowledges its prerequisites. Its token-bearing successor must
+acquire the exclusive app lock; the helper retains its unique backup until that exact
+PID reports Worker/native readiness. Early exit or timeout uses bounded termination,
+removes the partial replacement, clears the reservation, restores, verifies, and
+relaunches the old app. Startup prunes abandoned generations
 without touching live app/helper PID work. Runtime manifests require a pinned Ed25519
 signature, and every redirect hop is subject to the HTTPS-or-loopback rule. Managed
 deb/rpm/AppImage payload copies omit updater metadata and update through their package

@@ -34,7 +34,7 @@ pub fn run_core(mut config: CoreConfig) -> i32 {
     #[cfg(target_os = "windows")]
     {
         win::set_dpi_awareness();
-        win::set_app_id(config.dev);
+        win::set_app_id(config.dev, &config.identifier);
     }
     if !config.single_instance {
         let cache_path = if config.cache_path.is_empty() {

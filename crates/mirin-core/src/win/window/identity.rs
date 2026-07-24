@@ -5,10 +5,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE,
 };
 
-use super::create::{class_name, wide};
+use super::create::{class_name_for, set_class_identity, wide};
 
-/// The host exe's file stem (the app name): the basis for the AppUserModelID
-/// and the fallback single-instance key. Falls back to "App".
+/// The host exe's file stem (the app name): the fallback identity key when a
+/// validated bundle identifier is unavailable. Falls back to "App".
 fn exe_file_stem() -> String {
     std::env::current_exe()
         .ok()
@@ -17,17 +17,7 @@ fn exe_file_stem() -> String {
         .unwrap_or_else(|| "App".to_string())
 }
 
-/// The app's identity key for the AUMID + single-instance lock.
-fn app_key(dev: bool) -> String {
-    let stem = exe_file_stem();
-    if dev {
-        format!("{stem}-dev")
-    } else {
-        stem
-    }
-}
-
-fn singleton_key(dev: bool, identifier: &str) -> String {
+fn app_identity_key(dev: bool, identifier: &str) -> String {
     let identifier: String = identifier
         .chars()
         .map(|character| {
@@ -54,10 +44,13 @@ fn singleton_key(dev: bool, identifier: &str) -> String {
 /// this is the first/only instance, false if another instance already holds it.
 /// The handle is intentionally leaked so the lock lives for the whole process.
 pub fn acquire_single_instance(dev: bool, identifier: &str) -> bool {
-    let name: Vec<u16> = format!("Local\\mirin.{}.singleton", singleton_key(dev, identifier))
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
+    let name: Vec<u16> = format!(
+        "Local\\mirin.{}.singleton",
+        app_identity_key(dev, identifier)
+    )
+    .encode_utf16()
+    .chain(std::iter::once(0))
+    .collect();
     // SAFETY: a standard named-mutex creation; we own or close the returned handle.
     unsafe {
         let h = CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
@@ -74,8 +67,8 @@ pub fn acquire_single_instance(dev: bool, identifier: &str) -> bool {
 }
 
 /// Bring an already-running instance's window to the foreground (best-effort).
-pub fn activate_existing_instance() {
-    let class = class_name();
+pub fn activate_existing_instance(dev: bool, identifier: &str) {
+    let class = class_name_for(&app_identity_key(dev, identifier));
     // SAFETY: FindWindowW by class name; returns null when not found.
     unsafe {
         let hwnd = FindWindowW(class.as_ptr(), std::ptr::null());
@@ -88,25 +81,32 @@ pub fn activate_existing_instance() {
 
 /// Give the process an explicit AppUserModelID so the taskbar groups this app
 /// under its own identity.
-pub fn set_app_id(dev: bool) {
-    let id = wide(&format!("mirin.{}", app_key(dev)));
+pub fn set_app_id(dev: bool, identifier: &str) {
+    let key = app_identity_key(dev, identifier);
+    set_class_identity(&key);
+    let id = wide(&format!("mirin.{key}"));
     // SAFETY: valid null-terminated wide string; the returned HRESULT is ignorable.
     unsafe { SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) };
 }
 
 #[cfg(test)]
 mod tests {
-    use super::singleton_key;
+    use super::super::create::class_name_for;
+    use super::app_identity_key;
 
     #[test]
     fn singleton_key_uses_bundle_identity_instead_of_executable_name() {
         assert_eq!(
-            singleton_key(false, "dev.example.first"),
+            app_identity_key(false, "dev.example.first"),
             "dev.example.first"
         );
         assert_eq!(
-            singleton_key(true, "dev.example.second"),
+            app_identity_key(true, "dev.example.second"),
             "dev.example.second-dev"
+        );
+        assert_ne!(
+            class_name_for(&app_identity_key(false, "dev.example.first")),
+            class_name_for(&app_identity_key(false, "dev.example.second"))
         );
     }
 }

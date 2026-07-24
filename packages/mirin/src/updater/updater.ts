@@ -7,6 +7,7 @@ import { applyUpdateAndRelaunch, assertLinuxInstallCanApply } from "./lib/apply.
 import { verifyArchiveLayout } from "./lib/archive.ts";
 import { pruneGenerationDirectories, removePathBestEffort } from "./lib/cleanup.ts";
 import { parseManifestBytes, readBoundedManifestBytes, readBoundedSignature } from "./lib/http.ts";
+import { prepareInstallSibling } from "./lib/install-staging.ts";
 import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
 import { MAX_PATCH_MEMORY_INPUT_BYTES, MAX_TAR_BYTES } from "./lib/limits.ts";
 import { parseManifest } from "./lib/manifest.ts";
@@ -326,17 +327,27 @@ export class Updater {
     }
     if (IS_LINUX) assertLinuxInstallCanApply(resourcesDir);
     const staged = this.#transactions.beginApply();
+    let installStaged: string | undefined;
 
     this.#setStatus("applying");
     try {
+      installStaged = await prepareInstallSibling({
+        resourcesDir,
+        downloadedStage: staged.staged,
+        platform: platformName(),
+        installed,
+        expectedVersion: staged.version,
+        verifyMacIdentity: verifyMacCodeIdentity,
+      });
       await applyUpdateAndRelaunch({
         resourcesDir,
-        staged: staged.staged,
+        staged: installStaged,
         workDir: staged.workDir,
         version: installed,
         targetVersion: staged.version,
       });
     } catch (error) {
+      if (installStaged) removePathBestEffort(installStaged, true);
       this.#transactions.finishApply(false);
       this.#pendingManifest = null;
       removePathBestEffort(staged.workDir, true);

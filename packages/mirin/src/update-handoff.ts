@@ -18,6 +18,7 @@ const READY_FILE = /^\.update-ready-[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9
 
 export const HOST_RUNTIME_PROTOCOL = 1;
 export const EXCLUSIVE_UPDATER_CAPABILITY = "exclusive-app-lock-v1";
+export const UPDATE_HANDOFF_TOKEN_ENV = "MIRIN_UPDATE_HANDOFF_TOKEN";
 
 interface UpdateHandoffMarker {
   token: string;
@@ -118,6 +119,7 @@ export function inspectUpdateHandoff(
   identifier: string,
   resourcesDir: string,
   dev = false,
+  launchToken?: string,
   isProcessAlive: (pid: number) => boolean = processIsAlive,
   directory = instanceStateDirectory(identifier, dev),
 ): UpdateHandoffDecision {
@@ -139,7 +141,7 @@ export function inspectUpdateHandoff(
     return { blocked: false };
   }
 
-  return installedVersion(resourcesDir) === marker.targetVersion
+  return launchToken === marker.token && installedVersion(resourcesDir) === marker.targetVersion
     ? { blocked: false, readyPath }
     : { blocked: true };
 }

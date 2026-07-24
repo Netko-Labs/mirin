@@ -51,6 +51,13 @@
 - [x] Disable the standalone updater inside managed Linux package payloads.
 - [x] Force terminal updater shutdown through zero-window and beforeunload cases.
 - [x] Scope the Windows compatibility mutex to the bundle identifier.
+- [x] Reuse monotonic lifecycle quit so pending and late windows cannot defeat handoff.
+- [x] Bind reservation and readiness to the exact helper-launched PID and exclusive lock.
+- [x] Use literal PowerShell filesystem paths for wildcard-bearing install locations.
+- [x] Acknowledge helper prerequisites before quit and relaunch after every post-exit failure.
+- [x] Bound POSIX replacement termination and preserve recoverable trees if it cannot stop.
+- [x] Copy and revalidate the staged app beside the install before terminal handoff.
+- [x] Scope Windows existing-window activation to the bundle-specific window class.
 
 ## Checkpoints
 
@@ -127,3 +134,17 @@
 - Stacked lifecycle integration: the readiness receipt is queued from the app
   bootstrap's `ready` listener, so the lifecycle branch can wait for every
   automatic native window without conflicting in the shared event-wiring block.
+- Seventh clean-context review remediation: merged the lifecycle branch without
+  rewriting history, made updater quit monotonic, bound the token/lock/receipt
+  to the exact successor PID, moved validated staging onto the install
+  filesystem, added helper arming and uniform rollback/relaunch, bounded POSIX
+  termination, made PowerShell paths literal, and bundle-scoped Windows
+  existing-window activation.
+- Seventh-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 236
+  tests with the two expected Windows lifecycle skips on macOS; the focused
+  updater/lifecycle suite passed 26 tests; `git diff --check` passed.
+- Seventh-review full Rust: `cargo fmt --all --check`, workspace clippy with
+  warnings denied, and workspace tests passed (19 tests across codec, core, and
+  helper). Windows window-class identity and generated PowerShell parsing remain
+  enforced by the Windows x64 CI job.
