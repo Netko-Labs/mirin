@@ -183,10 +183,12 @@ that can block the already-settled canonical app.
 
 Linux opens its pidfd before validating the boot/start token, and Windows
 validates creation time through the same process handle used for waiting or
-termination. macOS kqueue waiting is creation-bound, but macOS does not expose an
-unprivileged handle-bound signal operation. Mirin therefore refuses unsafe
-numeric-PID forced termination there; timeout preserves the durable transaction
-and both trees for recovery instead of risking a recycled PID.
+termination. Windows token queries also require that handle to remain
+unsignaled, because an exited process object can stay queryable while another
+handle retains it. macOS kqueue waiting is creation-bound, but macOS does not
+expose an unprivileged handle-bound signal operation. Mirin therefore refuses
+unsafe numeric-PID forced termination there; timeout preserves the durable
+transaction and both trees for recovery instead of risking a recycled PID.
 
 Mirin's first internal `ready` listener writes any replacement-readiness receipt
 synchronously before user `ready` listeners run. It defers only startup cleanup,

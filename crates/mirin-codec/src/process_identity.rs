@@ -72,13 +72,25 @@ fn platform_process_token(pid: u32) -> io::Result<String> {
 
 #[cfg(windows)]
 fn platform_process_token(pid: u32) -> io::Result<String> {
-    let process = open_process(
-        pid,
-        windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
-    )?;
-    let result = token_from_handle(process.0);
-    drop(process);
-    result
+    use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::{
+        WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    };
+
+    let process = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE)?;
+    let token = token_from_handle(process.0)?;
+    // An exited Windows process object remains queryable while any handle keeps
+    // it alive. Creation time alone therefore identifies the object but does not
+    // establish that the process is still running.
+    // SAFETY: process owns a valid synchronization handle.
+    match unsafe { WaitForSingleObject(process.0, 0) } {
+        WAIT_TIMEOUT => Ok(token),
+        WAIT_OBJECT_0 => Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "process has exited",
+        )),
+        _ => Err(io::Error::last_os_error()),
+    }
 }
 
 #[cfg(target_os = "linux")]

@@ -312,3 +312,14 @@
 - Twenty-first-remediation Rust verification: `cargo fmt --all --check`,
   workspace clippy with warnings denied, and workspace tests passed (26 tests
   across codec, core, and helper).
+- Exact-head CI run `30092485118` passed static, dependency, Linux, macOS, and
+  Windows x64 checks, including the repaired updater integration. Windows arm64
+  then exposed that a signaled process object could retain a queryable creation
+  token while another handle kept the object alive; Windows token lookup now
+  requires an unsignaled synchronization handle before reporting the identity
+  as live.
+- Windows liveness remediation verification: `cargo fmt --all --check`,
+  workspace clippy with warnings denied, and all 26 workspace tests passed.
+  Cross-checking the Windows target from macOS reached the C dependencies but
+  requires a Windows SDK, so the exact Windows compile/test remains covered by
+  CI.
