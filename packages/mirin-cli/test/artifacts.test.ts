@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  assertRuntimePackageCompatibility,
   resolveCliPackageFile,
   validateArchiveEntries,
   validateExtractedSymlinks,
@@ -31,8 +32,13 @@ describe("CLI dependency resolution", () => {
     mkdirSync(native, { recursive: true });
     writeFileSync(
       join(runtime, "package.json"),
-      JSON.stringify({ name: "mirinjs", exports: { "./host": "./host.ts" } }),
+      JSON.stringify({
+        name: "mirinjs",
+        version: "1.2.3",
+        exports: { ".": "./index.ts", "./host": "./host.ts" },
+      }),
     );
+    writeFileSync(join(runtime, "index.ts"), "export {};\n");
     writeFileSync(join(runtime, "host.ts"), "export {};\n");
     writeFileSync(join(native, "package.json"), JSON.stringify({ name: "@mirinjs/test-platform" }));
 
@@ -51,6 +57,38 @@ describe("CLI dependency resolution", () => {
 
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout.toString())).toEqual([expectedHost, expectedNative]);
+  });
+
+  test("rejects a project runtime that differs from the CLI-owned host runtime", () => {
+    const root = mkdtempSync(join(tmpdir(), "mirin-runtime-version-test-"));
+    temporaryDirectories.push(root);
+    const cliDir = join(root, "cli", "src");
+    const cliRuntime = join(root, "cli", "node_modules", "mirinjs");
+    const project = join(root, "project");
+    const projectRuntime = join(project, "node_modules", "mirinjs");
+    for (const runtime of [cliRuntime, projectRuntime]) {
+      mkdirSync(runtime, { recursive: true });
+      writeFileSync(join(runtime, "index.ts"), "export {};\n");
+    }
+    mkdirSync(cliDir, { recursive: true });
+    writeFileSync(
+      join(cliRuntime, "package.json"),
+      JSON.stringify({ name: "mirinjs", version: "1.2.3", exports: "./index.ts" }),
+    );
+    writeFileSync(
+      join(projectRuntime, "package.json"),
+      JSON.stringify({ name: "mirinjs", version: "1.2.4", exports: "./index.ts" }),
+    );
+
+    expect(() => assertRuntimePackageCompatibility(project, cliDir)).toThrow(
+      "runtime version mismatch",
+    );
+
+    writeFileSync(
+      join(projectRuntime, "package.json"),
+      JSON.stringify({ name: "mirinjs", version: "1.2.3", exports: "./index.ts" }),
+    );
+    expect(assertRuntimePackageCompatibility(project, cliDir)).toBe("1.2.3");
   });
 });
 

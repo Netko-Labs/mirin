@@ -19,6 +19,11 @@ import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { resolveHostSingleInstance } from "./host-config.ts";
 import { Core } from "./native.ts";
+import {
+  EXCLUSIVE_UPDATER_CAPABILITY,
+  HOST_RUNTIME_PROTOCOL,
+  inspectUpdateHandoff,
+} from "./update-handoff.ts";
 
 // Bundle layout differs by platform: macOS `.app` puts the host in
 // `Contents/MacOS` with resources in `../Resources`; Windows and Linux are flat app
@@ -69,6 +74,15 @@ if (process.platform === "linux" && !coreConfig.icon_path) {
   if (existsSync(iconPng)) coreConfig.icon_path = iconPng;
 }
 
+const handoff =
+  typeof manifest.id === "string"
+    ? inspectUpdateHandoff(manifest.id, resourcesDir, Boolean(coreConfig.dev))
+    : { blocked: false };
+if (handoff.blocked) {
+  console.error("[mirin host] an updater owns the app launch handoff");
+  process.exit(0);
+}
+
 // Load the native core on the main thread FIRST. The Worker also dlopens the
 // same dylib in its boot; doing the main-thread dlopen before spawning the
 // Worker serializes the first-time load instead of racing two concurrent
@@ -85,7 +99,12 @@ const worker = new Worker(workerPath, {
   workerData: {
     corePath,
     manifest,
-    singleInstance: singleInstanceAcquired,
+    // Legacy Workers must fail closed under version skew. Current Workers only
+    // trust the versioned positive capability below.
+    singleInstance: false,
+    runtimeProtocol: HOST_RUNTIME_PROTOCOL,
+    updaterApplyCapability: singleInstanceAcquired ? EXCLUSIVE_UPDATER_CAPABILITY : undefined,
+    updateReadyPath: handoff.readyPath,
     id: typeof manifest.id === "string" ? manifest.id : undefined,
     devUrl: process.env.MIRIN_DEV_URL,
     resourcesDir,

@@ -177,15 +177,16 @@ staged root and regular `<App>` executable, then ensures owner execute only afte
 that validation. It also requires matching `resources/version.json`, bounded
 manifest/download/codec output with an 8 GiB streaming reconstructed-tar/decompression
 ceiling and a 512 MiB combined in-memory patch-input ceiling,
-and safe tar entry/link types before launching the asynchronous folder swap. Accepted
-helper launch is a terminal handoff; successful helpers remove their generation and
-startup prunes abandoned generations without touching live app/helper PID work. The
-helper uses a unique backup, removes partial replacements before rollback, verifies
-restoration, and treats an immediately exiting replacement as a failed launch before
-restoring and relaunching the old app. Runtime manifests require a pinned Ed25519
-signature, and every redirect hop is subject to the HTTPS-or-loopback rule. This does
-not redesign Linux updates around
-deb/rpm/AppImage package managers; that remains out of scope.
+and safe tar entry/link types before launching the asynchronous folder swap. Before
+handoff the runtime proves that the portable install's parent can be modified. Accepted
+helper launch reserves the app lock for the staged version and force-quits the old
+process; the helper retains its unique backup until the successor reports Worker/native
+readiness. Early exit or timeout removes the partial replacement, clears the reservation,
+restores, verifies, and relaunches the old app. Startup prunes abandoned generations
+without touching live app/helper PID work. Runtime manifests require a pinned Ed25519
+signature, and every redirect hop is subject to the HTTPS-or-loopback rule. Managed
+deb/rpm/AppImage payload copies omit updater metadata and update through their package
+channel instead.
 
 ### L4 — App-shell native features — 🚧 PARTIAL
 `examples/kitchen-sink` renders and runs the full "Native feature tour" over RPC.
@@ -222,6 +223,8 @@ Linux packaging lives in `packages/mirin-cli`:
   **`.deb` / `.rpm`** (`fpm`) from the assembled flat app folder.
 - Each package stages a `.desktop` entry with a matching `StartupWMClass`, a hicolor
   icon, and a wrapper/AppRun that executes the real host binary inside the payload.
+- Package-managed payload copies omit `resources/version.json`, disabling the
+  standalone folder updater for read-only AppImages and `/opt` deb/rpm installs.
 - Package metadata is validated before writing launchers or desktop files: app ids are
   single path segments, desktop fields reject line injection, and CLI/config package
   formats are restricted to `appimage`, `deb`, and `rpm`.

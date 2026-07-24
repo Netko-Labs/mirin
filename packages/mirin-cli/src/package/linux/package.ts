@@ -190,6 +190,7 @@ function stageFsTree(input: LinuxPackageInput, binName: string, root: string): v
   const prefix = join(root, "opt", input.bundleId);
   mkdirSync(prefix, { recursive: true });
   cpSync(input.appDir, prefix, { recursive: true });
+  stripUpdaterMetadataForManagedPackage(prefix);
 
   // /usr/bin/<bin>: a wrapper that exec's the real binary so process.execPath (and
   // thus the host's core/resources/helper resolution) points into /opt/<id>.
@@ -319,6 +320,7 @@ async function buildAppImage(
       const payload = join(appDirRoot, "usr", "lib", input.bundleId);
       mkdirSync(payload, { recursive: true });
       cpSync(input.appDir, payload, { recursive: true });
+      stripUpdaterMetadataForManagedPackage(payload);
 
       // AppRun: exec the real host binary (resolves core/resources/helper from its dir).
       const appRun = join(appDirRoot, "AppRun");
@@ -368,6 +370,11 @@ async function buildAppImage(
   } catch (error) {
     throwAfterLinuxOutputCleanup([out], error);
   }
+}
+
+/** System packages and read-only AppImages update through their package channel. */
+export function stripUpdaterMetadataForManagedPackage(payload: string): void {
+  rmSync(join(payload, "resources", "version.json"), { force: true });
 }
 
 function linuxPackageArch(kind: "appimage" | "deb" | "rpm"): string {

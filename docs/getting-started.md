@@ -126,12 +126,18 @@ repeated downloads of an already staged generation are rejected. Downloads and a
 are guarded operations correlated to a version/hash generation. `mirin build` validates
 the same strict SemVer grammar consumed by the runtime before packaging. Apps configured
 with `singleInstance: false` may check and download, but automatic apply is rejected;
-close every instance and install their update externally. The guard requires the
-process-lifetime exclusive app lock actually acquired by the native host before
-the Worker starts, including internal launch overrides. Multi-instance processes
-hold shared locks, preventing them from overlapping an exclusive updater-capable
-process. Accepted helper launch is a terminal handoff, so manual updater work and
-auto-check scheduling remain blocked until the process exits. Failed operations release
+close every instance and install their update externally. The guard requires a
+protocol-compatible host/Worker pair and the process-lifetime exclusive app lock
+actually acquired by the native host before the Worker starts, including internal
+launch overrides. `mirin build` and `mirin dev` reject mismatched CLI/project
+`mirinjs` versions. Multi-instance processes hold shared locks, preventing them
+from overlapping an exclusive updater-capable process. Accepted helper launch is
+a terminal handoff, so manual updater work and auto-check scheduling remain
+blocked until the process exits. The helper reserves the next launch for the
+validated staged version and retains the backup until that successor reports
+Worker/native readiness; timeout or early exit restores and relaunches the old
+install. AppImage/deb/rpm payloads omit updater metadata and update through their
+package channel. Failed operations release
 their latch before best-effort cleanup, successful helpers remove their generation
 directory, and startup prunes abandoned generations while preserving work owned by
 live app processes or an apply-helper PID. Manifest bodies, downloads, decompressed patches,

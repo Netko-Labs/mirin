@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadCodec } from "../codec.ts";
 import { runtime } from "../runtime.ts";
-import { applyUpdateAndRelaunch } from "./lib/apply.ts";
+import { applyUpdateAndRelaunch, assertLinuxInstallCanApply } from "./lib/apply.ts";
 import { verifyArchiveLayout } from "./lib/archive.ts";
 import { pruneGenerationDirectories, removePathBestEffort } from "./lib/cleanup.ts";
 import { parseManifestBytes, readBoundedManifestBytes, readBoundedSignature } from "./lib/http.ts";
@@ -321,13 +321,11 @@ export class Updater {
     assertUpdaterApplyAllowed(runtime().singleInstance);
     const installed = this.#version();
     const resourcesDir = this.#resourcesDir();
-    const staged = this.#transactions.beginApply();
     if (!installed || !resourcesDir) {
-      this.#transactions.finishApply(false);
-      this.#pendingManifest = null;
-      removePathBestEffort(staged.workDir, true);
       throw new Error("installed update metadata is unavailable");
     }
+    if (IS_LINUX) assertLinuxInstallCanApply(resourcesDir);
+    const staged = this.#transactions.beginApply();
 
     this.#setStatus("applying");
     try {
@@ -336,6 +334,7 @@ export class Updater {
         staged: staged.staged,
         workDir: staged.workDir,
         version: installed,
+        targetVersion: staged.version,
       });
     } catch (error) {
       this.#transactions.finishApply(false);
@@ -348,7 +347,7 @@ export class Updater {
     this.#transactions.finishApply(true);
     this.stopAutoCheck();
     this.#setStatus("complete");
-    runtime().core.quit();
+    runtime().core.quitForUpdate();
   }
 
   startAutoCheck(intervalMs = 6 * 60 * 60 * 1000): () => void {
@@ -446,7 +445,7 @@ export class Updater {
 export function assertUpdaterApplyAllowed(singleInstance: boolean): void {
   if (!singleInstance) {
     throw new Error(
-      "automatic update apply is unavailable when singleInstance is false; install the update after closing every app instance",
+      "automatic update apply requires a compatible host and an acquired exclusive app lock",
     );
   }
 }

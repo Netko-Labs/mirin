@@ -58,7 +58,9 @@ fn acquire_platform_lock(config: &CoreConfig) -> InstanceLock {
     };
 
     #[cfg(target_os = "windows")]
-    if config.single_instance && !crate::win::acquire_single_instance(config.dev) {
+    if config.single_instance
+        && !crate::win::acquire_single_instance(config.dev, &config.identifier)
+    {
         crate::win::activate_existing_instance();
         return InstanceLock::Unavailable;
     }

@@ -16,7 +16,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
-import { resolveArtifacts } from "./artifacts.ts";
+import { assertRuntimePackageCompatibility, resolveArtifacts } from "./artifacts.ts";
 import { buildLinuxBundle } from "./bundle/linux/index.ts";
 import { buildAppBundle } from "./bundle/macos/index.ts";
 import { normalizeCefLocales } from "./bundle/shared/cef-locales.ts";
@@ -206,6 +206,7 @@ export async function build(
   const cefLocales = normalizeCefLocales(config.cef?.locales);
   const sidecars = normalizeSidecars(root, config.sidecars);
   const workers = normalizeWorkers(root, config.workers);
+  assertRuntimePackageCompatibility(root);
   const versionJson =
     config.release === undefined
       ? undefined

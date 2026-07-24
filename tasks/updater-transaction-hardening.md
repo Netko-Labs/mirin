@@ -45,6 +45,12 @@
 - [x] Acquire the cross-platform exclusive/shared app lock before starting user code.
 - [x] Gate automatic apply on the acquired native capability, not configuration.
 - [x] Prune only exact PID/UUID atomic backups and preserve prefix lookalikes.
+- [x] Fail closed across host/Worker skew and reject mismatched runtime packages.
+- [x] Reserve the post-exit launch for the validated staged updater version.
+- [x] Retain backups until the replacement writes a durable readiness receipt.
+- [x] Disable the standalone updater inside managed Linux package payloads.
+- [x] Force terminal updater shutdown through zero-window and beforeunload cases.
+- [x] Scope the Windows compatibility mutex to the bundle identifier.
 
 ## Checkpoints
 
@@ -106,3 +112,15 @@
 - Fifth-review full Rust: `cargo fmt --all --check`, workspace clippy with
   warnings denied, workspace build, and workspace tests passed (9 tests,
   including shared/exclusive lock exclusion).
+- Sixth clean-context review remediation: made updater capability negotiation
+  protocol-versioned and build-version checked, reserved the lock handoff for
+  the staged version, required a Worker/native readiness receipt before deleting
+  backups, removed updater metadata from managed Linux packages, added forced
+  zero-window-safe shutdown, and bundle-scoped the Windows compatibility mutex.
+- Sixth-review full TypeScript: `bun run fmt-lint` passed with the same 52
+  pre-existing warnings; `bun run typecheck` passed; `bun run test` passed 220
+  tests with the two expected Windows lifecycle skips on macOS;
+  `git diff --check` passed.
+- Sixth-review full Rust: `cargo fmt --all --check`, workspace clippy with
+  warnings denied, and workspace tests passed (9 tests). Windows mutex identity
+  and PowerShell parser coverage are enforced in the Windows x64 CI job.

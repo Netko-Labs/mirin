@@ -185,7 +185,8 @@ export interface MirinConfig {
    * focuses the running window on Windows. Set false to allow multiple instances,
    * which hold compatible shared locks and each get their own CEF cache dir.
    * Automatic updater apply is unavailable when false because replacing an install
-   * while sibling app processes are running is unsafe.
+   * while sibling app processes are running is unsafe. Apply also requires an
+   * exact CLI/runtime protocol match and a successfully acquired exclusive lock.
    */
   singleInstance?: boolean;
 }

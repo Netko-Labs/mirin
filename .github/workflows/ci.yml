@@ -116,6 +116,10 @@ jobs:
         if: matrix.name == 'Windows x64'
         run: bun test packages/mirin-cli/test/installer-win.integration.test.ts
 
+      - name: Test Windows updater scripts
+        if: matrix.name == 'Windows x64'
+        run: bun test packages/mirin/test/updater-apply.test.ts
+
       - name: Build native
         run: cargo build --workspace
 

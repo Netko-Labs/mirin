@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  assertLinuxInstallCanApply,
   renderLinuxApplyShell,
   renderMacApplyShell,
   renderWindowsApplyPowerShell,
@@ -32,12 +33,17 @@ describe("Windows updater launcher", () => {
       executable: "C:\\Apps\\Mirin\\Mirin.exe",
       backup: "C:\\Apps\\Mirin.old",
       helperFiles: ["C:\\Temp\\apply.ps1", "C:\\Temp\\apply.vbs"],
+      marker: "C:\\State\\.update-handoff.json",
+      ready: "C:\\State\\.update-ready-42-token",
       pid: 42,
     });
     const launch = script.indexOf("Start-Process -FilePath");
+    const readiness = script.indexOf("Replacement did not report ready", launch);
     expect(launch).toBeGreaterThan(0);
+    expect(readiness).toBeGreaterThan(launch);
     expect(script.indexOf("C:\\Updates\\generation", launch)).toBeGreaterThan(launch);
     expect(script.indexOf("C:\\Apps\\Mirin.old", launch)).toBeGreaterThan(launch);
+    expect(script.indexOf("C:\\State\\.update-handoff.json", readiness)).toBeGreaterThan(readiness);
     expect(script).toContain("Updater backup path already exists");
     expect(script).toContain(
       "if ((Test-Path 'C:\\Apps\\Mirin') -or -not (Test-Path 'C:\\Apps\\Mirin.old'))",
@@ -45,6 +51,19 @@ describe("Windows updater launcher", () => {
     expect(script).toContain(
       "Remove-Item -Recurse -Force 'C:\\Apps\\Mirin' -ErrorAction SilentlyContinue",
     );
+    if (process.platform === "win32") {
+      const parsed = Bun.spawnSync({
+        cmd: [
+          "powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "[void][scriptblock]::Create($env:MIRIN_TEST_SCRIPT)",
+        ],
+        env: { ...process.env, MIRIN_TEST_SCRIPT: script },
+      });
+      expect(parsed.exitCode).toBe(0);
+    }
   });
 });
 
@@ -54,17 +73,25 @@ describe("POSIX updater helpers", () => {
       runningApp: "/Applications/Mirin App.app",
       staged: "/tmp/generation/extract/Mirin App.app",
       workDir: "/tmp/generation",
+      executable: "/Applications/Mirin App.app/Contents/MacOS/Mirin App",
+      marker: "/tmp/state/.update-handoff.json",
+      ready: "/tmp/state/.update-ready-42-token",
       pid: 42,
     });
-    const firstOpen = script.indexOf('if open "$APP"; then');
-    const deleteBackup = script.indexOf('rm -rf "$OLD"', firstOpen);
-    const restoreBackup = script.indexOf('mv "$OLD" "$APP"', firstOpen);
-    const reopenOld = script.indexOf('open "$APP" || true', firstOpen);
-    expect(firstOpen).toBeGreaterThan(0);
-    expect(deleteBackup).toBeGreaterThan(firstOpen);
-    expect(restoreBackup).toBeGreaterThan(firstOpen);
+    const launch = script.indexOf('nohup "$EXE"');
+    const readiness = script.indexOf('[ -f "$READY" ]', launch);
+    const deleteBackup = script.indexOf('rm -rf "$OLD"', readiness);
+    const restoreBackup = script.indexOf('mv "$OLD" "$APP"', launch);
+    const reopenOld = script.indexOf('open "$APP" || true', launch);
+    expect(launch).toBeGreaterThan(0);
+    expect(readiness).toBeGreaterThan(launch);
+    expect(deleteBackup).toBeGreaterThan(readiness);
+    expect(restoreBackup).toBeGreaterThan(launch);
     expect(reopenOld).toBeGreaterThan(restoreBackup);
-    expect(script.indexOf('rm -rf "$WORK"')).toBeGreaterThan(firstOpen);
+    expect(script.indexOf('rm -rf "$WORK"')).toBeGreaterThan(readiness);
+    if (process.platform !== "win32") {
+      expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
+    }
   });
 
   test("Linux observes immediate launch failure before deleting the backup and generation", () => {
@@ -73,13 +100,39 @@ describe("POSIX updater helpers", () => {
       staged: "/tmp/generation/extract/Mirin App",
       workDir: "/tmp/generation",
       executable: "/opt/Mirin App/Mirin App",
+      marker: "/tmp/state/.update-handoff.json",
+      ready: "/tmp/state/.update-ready-42-token",
       pid: 42,
     });
     const launch = script.indexOf("setsid ");
+    const readiness = script.indexOf('[ -f "$READY" ]', launch);
     expect(launch).toBeGreaterThan(0);
+    expect(readiness).toBeGreaterThan(launch);
     expect(script.indexOf('kill -0 "$NEW_PID"', launch)).toBeGreaterThan(launch);
     expect(script.indexOf('mv "$OLD" "$APP"', launch)).toBeGreaterThan(launch);
-    expect(script.indexOf('rm -rf "$OLD"', launch)).toBeGreaterThan(launch);
-    expect(script.indexOf('rm -rf "$WORK"', launch)).toBeGreaterThan(launch);
+    expect(script.indexOf('rm -rf "$OLD"', readiness)).toBeGreaterThan(readiness);
+    expect(script.indexOf('rm -rf "$WORK"', readiness)).toBeGreaterThan(readiness);
+    if (process.platform !== "win32") {
+      expect(Bun.spawnSync(["/bin/sh", "-n", "-c", script]).exitCode).toBe(0);
+    }
+  });
+
+  test("rejects AppImage and non-writable package installs before handoff", () => {
+    expect(() =>
+      assertLinuxInstallCanApply("/mount/usr/lib/app/resources", "/tmp/App.AppImage"),
+    ).toThrow("AppImage");
+    expect(() =>
+      assertLinuxInstallCanApply("/opt/app/resources", undefined, () => {
+        throw new Error("read-only");
+      }),
+    ).toThrow("system package manager");
+    expect(() =>
+      assertLinuxInstallCanApply(
+        "/home/user/app/resources",
+        undefined,
+        () => "/home/user/.mirin-update-probe-test",
+        () => {},
+      ),
+    ).not.toThrow();
   });
 });

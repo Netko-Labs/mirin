@@ -25,8 +25,9 @@ pub mod tray;
 pub use boot::run_core;
 pub use clipboard::{clipboard_read_text, clipboard_write_text};
 pub use commands::{
-    close_window, create_window, load_url, quit, request_window_close, set_dock_visible,
-    set_material, set_title, window_control, window_maybe_start_drag, window_set_position,
+    close_window, create_window, load_url, quit, quit_for_update, request_window_close,
+    set_dock_visible, set_material, set_title, window_control, window_maybe_start_drag,
+    window_set_position,
 };
 pub use config::{CoreConfig, WindowOpts};
 pub use dialog::dialog_show;

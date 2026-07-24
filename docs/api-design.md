@@ -222,12 +222,19 @@ off the main-process API:
   download/apply operations are rejected. Apps with `singleInstance: false` can
   check and download, but automatic apply is rejected because replacing the shared
   install while sibling app processes may be running is unsafe. Automatic apply
-  requires the process-lifetime exclusive app lock actually acquired by the native
-  host before the Worker starts, including internal launch overrides. Multi-instance
-  processes hold compatible shared locks, so they cannot overlap an exclusive
-  updater-capable process. Once a detached apply helper is accepted, the updater enters a
-  terminal handoff: checks, downloads, applies, and auto-check scheduling remain
-  blocked until process exit. Malformed embedded `version.json` metadata,
+  requires a protocol-compatible host/Worker pair and the process-lifetime
+  exclusive app lock actually acquired by the native host before the Worker
+  starts, including internal launch overrides. Build/dev reject mismatched
+  `mirinjs` runtime versions. Multi-instance processes hold compatible shared
+  locks, so they cannot overlap an exclusive updater-capable process. Once a
+  detached apply helper is accepted, the updater enters a terminal handoff:
+  checks, downloads, applies, and auto-check scheduling remain blocked until
+  process exit. A private handoff reservation blocks the old version from
+  relaunching after the OS lock is released; the backup remains until the staged
+  target acquires the lock and writes a Worker/native readiness receipt. Failure
+  or timeout rolls back and reopens the prior install. Managed Linux
+  AppImage/deb/rpm payloads omit updater metadata and update through their package
+  channel. Malformed embedded `version.json` metadata,
   including its Ed25519 public-key trust anchor, disables
   the updater. Each manifest must have a detached `.sig` over its exact bytes;
   signature verification happens before JSON parsing, and every redirect hop must

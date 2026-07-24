@@ -9,6 +9,11 @@ import { workerData } from "node:worker_threads";
 import type { WindowConfig } from "./config/index.ts";
 import { Core } from "./native.ts";
 import { RpcServer } from "./rpc-server.ts";
+import {
+  EXCLUSIVE_UPDATER_CAPABILITY,
+  HOST_RUNTIME_PROTOCOL,
+  signalUpdateReady,
+} from "./update-handoff.ts";
 
 export interface ManifestWindowConfig extends WindowConfig {
   name: string;
@@ -33,6 +38,8 @@ export interface Runtime {
   sidecarDir?: string;
   /** Dir holding bundled extra-worker JS (for `resolveWorker`). */
   workersDir?: string;
+  /** Internal receipt path for a helper-owned update handoff. */
+  updateReadyPath?: string;
 }
 
 export class NotAttachedError extends Error {
@@ -43,6 +50,16 @@ export class NotAttachedError extends Error {
 }
 
 let current: Runtime | undefined;
+
+export function hasExclusiveUpdaterCapability(data: {
+  runtimeProtocol?: number;
+  updaterApplyCapability?: string;
+}): boolean {
+  return (
+    data.runtimeProtocol === HOST_RUNTIME_PROTOCOL &&
+    data.updaterApplyCapability === EXCLUSIVE_UPDATER_CAPABILITY
+  );
+}
 
 /** The live runtime; throws if the native host isn't attached. */
 export function runtime(): Runtime {
@@ -99,6 +116,9 @@ export function boot(): void {
     corePath?: string;
     manifest?: { windows?: Record<string, WindowConfig> };
     singleInstance?: boolean;
+    runtimeProtocol?: number;
+    updaterApplyCapability?: string;
+    updateReadyPath?: string;
     id?: string;
     devUrl?: string;
     resourcesDir?: string;
@@ -147,14 +167,24 @@ export function boot(): void {
     manifestWindows,
     id: data.id,
     isDev: !!data.devUrl,
-    singleInstance: data.singleInstance !== false,
+    singleInstance: hasExclusiveUpdaterCapability(data),
     devUrl: data.devUrl,
     resourcesDir: data.resourcesDir,
     corePath,
     sidecarDir: data.sidecarDir,
     workersDir: data.workersDir,
+    updateReadyPath: data.updateReadyPath,
   };
   core.onEvent(dispatch);
+}
+
+/** Complete a helper-owned relaunch only after the Worker and native core are ready. */
+export function signalUpdaterReady(): void {
+  const attached = current;
+  const path = attached?.updateReadyPath;
+  if (!path) return;
+  signalUpdateReady(path);
+  attached.updateReadyPath = undefined;
 }
 
 /**

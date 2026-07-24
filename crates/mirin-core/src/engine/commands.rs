@@ -43,6 +43,14 @@ pub fn quit() {
     }
 }
 
+pub fn quit_for_update() {
+    if let Some(handler) = MirinHandler::instance() {
+        MirinHandler::close_all_browsers(&handler, true);
+    } else {
+        tasks::post_quit();
+    }
+}
+
 pub fn set_dock_visible(visible: bool) {
     tasks::post_set_dock_visible(visible);
 }

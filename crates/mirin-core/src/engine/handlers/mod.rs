@@ -172,6 +172,10 @@ impl MirinHandler {
             let handler = this.lock().expect("failed to lock MirinHandler");
             handler.browser_list.clone()
         };
+        if browsers.is_empty() {
+            quit_message_loop();
+            return;
+        }
         for browser in browsers {
             if let Some(host) = browser.host() {
                 host.close_browser(force_close.into());

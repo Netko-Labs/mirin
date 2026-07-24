@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   LinuxPackageCleanupError,
   runWithLinuxStagingCleanup,
   settleLinuxPackageBuilds,
+  stripUpdaterMetadataForManagedPackage,
 } from "../src/package/linux/package.ts";
 
 const temporaryDirectories: string[] = [];
@@ -61,5 +62,18 @@ describe("parallel Linux package settlement", () => {
         },
       ),
     ).rejects.toBeInstanceOf(LinuxPackageCleanupError);
+  });
+
+  test("removes standalone updater metadata from package-managed payloads", () => {
+    const root = mkdtempSync(join(tmpdir(), "mirin-linux-managed-package-"));
+    temporaryDirectories.push(root);
+    const resources = join(root, "resources");
+    mkdirSync(resources);
+    const version = join(resources, "version.json");
+    writeFileSync(version, "{}");
+
+    stripUpdaterMetadataForManagedPackage(root);
+
+    expect(existsSync(version)).toBe(false);
   });
 });

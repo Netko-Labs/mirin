@@ -59,6 +59,12 @@ pub extern "C" fn mirin_app_quit() {
     engine::quit();
 }
 
+/// Force application shutdown after an updater helper has accepted handoff.
+#[no_mangle]
+pub extern "C" fn mirin_app_quit_for_update() {
+    engine::quit_for_update();
+}
+
 /// Show (1) or hide (0) the app's Dock icon / menu-bar presence (macOS).
 #[no_mangle]
 pub extern "C" fn mirin_app_set_dock_visible(visible: c_int) {

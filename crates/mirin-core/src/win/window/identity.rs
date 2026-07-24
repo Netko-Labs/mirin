@@ -7,8 +7,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use super::create::{class_name, wide};
 
-/// The host exe's file stem (the app name): the basis for the AppUserModelID and
-/// the single-instance lock. Falls back to "App".
+/// The host exe's file stem (the app name): the basis for the AppUserModelID
+/// and the fallback single-instance key. Falls back to "App".
 fn exe_file_stem() -> String {
     std::env::current_exe()
         .ok()
@@ -27,11 +27,34 @@ fn app_key(dev: bool) -> String {
     }
 }
 
+fn singleton_key(dev: bool, identifier: &str) -> String {
+    let identifier: String = identifier
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let key = if identifier.is_empty() {
+        exe_file_stem()
+    } else {
+        identifier
+    };
+    if dev {
+        format!("{key}-dev")
+    } else {
+        key
+    }
+}
+
 /// Try to take the app's single-instance lock (a named mutex). Returns true if
 /// this is the first/only instance, false if another instance already holds it.
 /// The handle is intentionally leaked so the lock lives for the whole process.
-pub fn acquire_single_instance(dev: bool) -> bool {
-    let name: Vec<u16> = format!("Local\\mirin.{}.singleton", app_key(dev))
+pub fn acquire_single_instance(dev: bool, identifier: &str) -> bool {
+    let name: Vec<u16> = format!("Local\\mirin.{}.singleton", singleton_key(dev, identifier))
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
@@ -69,4 +92,21 @@ pub fn set_app_id(dev: bool) {
     let id = wide(&format!("mirin.{}", app_key(dev)));
     // SAFETY: valid null-terminated wide string; the returned HRESULT is ignorable.
     unsafe { SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::singleton_key;
+
+    #[test]
+    fn singleton_key_uses_bundle_identity_instead_of_executable_name() {
+        assert_eq!(
+            singleton_key(false, "dev.example.first"),
+            "dev.example.first"
+        );
+        assert_eq!(
+            singleton_key(true, "dev.example.second"),
+            "dev.example.second-dev"
+        );
+    }
 }

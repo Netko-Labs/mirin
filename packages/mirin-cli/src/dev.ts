@@ -13,7 +13,7 @@ import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { resolveArtifacts } from "./artifacts.ts";
+import { assertRuntimePackageCompatibility, resolveArtifacts } from "./artifacts.ts";
 import {
   buildLinuxBundle,
   desktopEntry,
@@ -58,6 +58,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     config.icon === undefined ? undefined : resolveProjectIcon(root, config.icon, "app icon");
   const sidecars = normalizeSidecars(root, config.sidecars);
   const workers = normalizeWorkers(root, config.workers);
+  assertRuntimePackageCompatibility(root);
   // Linux: resolve the app icon to a concrete PNG the core stamps onto the window
   // as `_NET_WM_ICON` (cosmic dock/taskbar). Passed straight through in dev — no
   // bundling; the file is read from the project at window-create time.

@@ -5,7 +5,13 @@
 
 import type { WindowMaterial, WindowMaterialOptions } from "../config/index.ts";
 import type { Router } from "../rpc.ts";
-import { type NativeEvent, onNativeEvent, resolveUrl, runtime } from "../runtime.ts";
+import {
+  type NativeEvent,
+  onNativeEvent,
+  resolveUrl,
+  runtime,
+  signalUpdaterReady,
+} from "../runtime.ts";
 import type { SidecarOptions, SidecarProcess } from "../sidecar.ts";
 import { sidecar as spawnSidecar } from "../sidecar.ts";
 import type { Updater } from "../updater/index.ts";
@@ -282,6 +288,7 @@ export function wireAppEvents(): void {
       void app.windows.open(cfg as WindowOpenOptions);
     }
     app._emit("ready", undefined);
+    signalUpdaterReady();
   });
 
   onNativeEvent("window.closed", (event: NativeEvent) => {

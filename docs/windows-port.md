@@ -23,8 +23,9 @@ Cargo `windows-sys` deps; `lib.rs` `win` module; `engine` arms for `load_cef`
 import lib), `default_cache_dir` (`%LOCALAPPDATA%`), `derive_subprocess_path`
 (`mirin-helper.exe`). Before spawning the Worker, the host takes an exclusive or
 shared process-lifetime app-file handle; single-instance mode also acquires the
-existing named mutex for compatibility and existing-window activation. Only the
-exclusive capability reaches the updater apply path. `cargo build --workspace`
+bundle-ID-scoped named mutex for compatibility and existing-window activation.
+Only a protocol-compatible Worker's exclusive capability reaches the updater
+apply path. `cargo build --workspace`
 warning-clean. **The `cef` crate compiles and links on Windows** — the project's
 biggest risk, cleared.
 
@@ -120,8 +121,11 @@ terminal handoff, so checks, downloads, applies, and auto-check scheduling remai
 until exit. Successful helpers remove their generation and launcher files; launch failures
 clean launcher files best-effort, and startup prunes abandoned generations without touching
 live app/helper work. The swap uses a unique backup, rejects stale backup collisions,
-removes partial replacements before rollback, and verifies restoration. The post-exit swap
-still has no durable success acknowledgement and is not field-tested. Runtime manifests
+removes partial replacements before rollback, and verifies restoration. A private
+handoff reservation admits only the staged version after the old PID releases its
+OS lock. PowerShell keeps the backup until the replacement process writes a
+Worker/native readiness receipt; early exit or timeout stops it, restores the old
+folder, clears the reservation, and relaunches the prior executable. Runtime manifests
 require a pinned Ed25519 signature, and every redirect hop is subject to the
 HTTPS-or-loopback rule. `publish-all.ts` publishes the host-platform native package.
 Release-time compression uses the standalone `mirin-codec.exe`, which has no CEF or Bun
