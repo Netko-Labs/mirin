@@ -6,6 +6,10 @@ import {
   releaseArtifactUrl,
   trustedReleaseBaseUrl,
 } from "../src/release/previous.ts";
+import {
+  assertDeltaSourcesFitMemoryBudget,
+  MAX_RELEASE_DELTA_SOURCE_BYTES,
+} from "../src/release.ts";
 
 const expected = { channel: "stable", platform: "linux", arch: "x64" };
 const manifest = {
@@ -85,6 +89,20 @@ describe("previous release validation", () => {
     expect(() => trustedReleaseBaseUrl("http://example.com/releases")).toThrow("must use HTTPS");
     expect(() => releaseArtifactUrl("https://example.com", "nested/file")).toThrow(
       "unsafe previous update artifact name",
+    );
+  });
+});
+
+describe("release delta memory budget", () => {
+  test("accepts bounded sources and rejects a source that would overcommit bsdiff", () => {
+    expect(() =>
+      assertDeltaSourcesFitMemoryBudget(
+        MAX_RELEASE_DELTA_SOURCE_BYTES,
+        MAX_RELEASE_DELTA_SOURCE_BYTES,
+      ),
+    ).not.toThrow();
+    expect(() => assertDeltaSourcesFitMemoryBudget(MAX_RELEASE_DELTA_SOURCE_BYTES + 1, 1)).toThrow(
+      "in-memory codec limit",
     );
   });
 });

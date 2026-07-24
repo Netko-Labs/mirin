@@ -35,6 +35,23 @@ import {
 const RELEASE_COMPRESSION_LEVEL = 10;
 const MAX_RELEASE_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const MAX_RELEASE_TAR_BYTES = 8 * 1024 * 1024 * 1024;
+// qbsdiff holds both sources and a suffix index in memory. Larger apps retain the
+// full updater bundle but skip the optional delta instead of risking an OOM abort.
+export const MAX_RELEASE_DELTA_SOURCE_BYTES = 128 * 1024 * 1024;
+
+export function assertDeltaSourcesFitMemoryBudget(
+  previousTarSize: number,
+  newTarSize: number,
+): void {
+  if (
+    previousTarSize > MAX_RELEASE_DELTA_SOURCE_BYTES ||
+    newTarSize > MAX_RELEASE_DELTA_SOURCE_BYTES
+  ) {
+    throw new Error(
+      `delta source tar exceeds the in-memory codec limit (${MAX_RELEASE_DELTA_SOURCE_BYTES} bytes)`,
+    );
+  }
+}
 
 interface ReleaseCodec {
   compress(src: string, dst: string, level: number): void;
@@ -164,6 +181,7 @@ export async function release(projectDir = process.cwd()): Promise<number> {
         arch,
       });
       if (prev.version !== result.version) {
+        assertDeltaSourcesFitMemoryBudget(prev.tarSize, tarSize);
         console.log(`[mirin release] generating delta ${prev.version} → ${result.version}…`);
         const tmp = mkdtempSync(join(tmpdir(), "mirin-release-"));
         try {

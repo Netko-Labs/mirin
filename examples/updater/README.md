@@ -15,13 +15,15 @@ the `mirin release` artifacts, hostable on **GitHub Releases** or **any static h
   and downloads a delta patch from its installed version when available (else the
   full bundle). Checks are single-flight, defer during an active download, and each
   download is tied to the checked version/hash generation. The updater enforces
-  declared compressed and patch sizes plus an 8 GiB reconstructed-tar/decompression
-  ceiling; verifies SHA-256; rejects unsafe tar node/link layouts; validates the real
+  declared compressed and patch sizes plus an 8 GiB streaming reconstructed-tar ceiling
+  and a 512 MiB combined in-memory patch-input ceiling; larger deltas use the full bundle.
+  It verifies SHA-256; rejects unsafe tar node/link layouts; validates the real
   staged root, executable mode, embedded identity, and codesign; then **swaps the whole
   `.app`** and relaunches. Accepted helper launch is a terminal handoff that blocks
   further check/download/apply and auto-check work until exit. The helper retains the
   old app through replacement launch, restores and reopens it if `open` fails, removes
-  successful generation state, and the next startup prunes abandoned generations. (A
+  successful generation state, and the next startup prunes abandoned generations without
+  touching live-process work. (A
   signed/notarized `.app` must be replaced whole — never edited in place.)
 
 > Production update hosts must use HTTPS. The runtime only allows HTTP for

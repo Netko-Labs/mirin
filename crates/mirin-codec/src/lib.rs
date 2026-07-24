@@ -10,6 +10,7 @@ use std::thread;
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const MAX_ZSTD_WINDOW_LOG: u32 = 27;
+const MAX_BOUNDED_PATCH_INPUT_BYTES: u64 = 512 * 1024 * 1024;
 
 fn limit_error(limit: u64) -> io::Error {
     io::Error::new(
@@ -197,6 +198,15 @@ pub fn bspatch_file_bounded(
     max_patch_bytes: u64,
     max_output_bytes: u64,
 ) -> io::Result<()> {
+    let old_len = File::open(old)?.metadata()?.len();
+    let patch_len = File::open(patch)?.metadata()?.len();
+    validate_patch_input_lengths(
+        old_len,
+        patch_len,
+        max_old_bytes,
+        max_patch_bytes,
+        MAX_BOUNDED_PATCH_INPUT_BYTES,
+    )?;
     let old = read_all_bounded(old, max_old_bytes)?;
     let patch = read_all_bounded(patch, max_patch_bytes)?;
     let patcher = Bspatch::new(&patch)?;
@@ -208,6 +218,31 @@ pub fn bspatch_file_bounded(
         patcher.apply(&old, output)?;
         Ok(())
     })
+}
+
+fn validate_patch_input_lengths(
+    old_bytes: u64,
+    patch_bytes: u64,
+    max_old_bytes: u64,
+    max_patch_bytes: u64,
+    max_total_bytes: u64,
+) -> io::Result<()> {
+    if old_bytes > max_old_bytes || patch_bytes > max_patch_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "codec patch input exceeds its declared limit",
+        ));
+    }
+    if old_bytes
+        .checked_add(patch_bytes)
+        .is_none_or(|total| total > max_total_bytes)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("codec patch inputs exceed {max_total_bytes} bytes"),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -331,5 +366,14 @@ mod tests {
         output.write_all(b"mirin").unwrap();
         assert_eq!(output.remaining, limit - 5);
         assert_eq!(output.inner, b"mirin");
+    }
+
+    #[test]
+    fn bounded_patch_rejects_the_combined_memory_budget() {
+        let mib = 1024 * 1024;
+        let error =
+            validate_patch_input_lengths(400 * mib, 200 * mib, u64::MAX, u64::MAX, 512 * mib)
+                .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }

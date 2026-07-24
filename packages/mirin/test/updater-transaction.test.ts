@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  assertDownloadCanStart,
   generationDirectoryName,
   SingleFlight,
   UpdateTransactionState,
@@ -51,8 +52,21 @@ describe("updater transaction generations", () => {
 
   test("uses generation, version, and hash in work-directory identity", () => {
     expect(
-      generationDirectoryName({ generation: 7, version: "2.0.0-beta.1", tarHash: "c".repeat(64) }),
-    ).toBe(`generation-7-2.0.0-beta.1-${"c".repeat(16)}`);
+      generationDirectoryName(
+        { generation: 7, version: "2.0.0-beta.1", tarHash: "c".repeat(64) },
+        { pid: 42, session: "d".repeat(32) },
+      ),
+    ).toBe(`generation-42-${"d".repeat(32)}-7-2.0.0-beta.1-${"c".repeat(16)}`);
+  });
+
+  test("allows an event listener to download after the in-flight check commits", () => {
+    const state = new UpdateTransactionState();
+    const generation = state.beginCheck();
+    expect(() => assertDownloadCanStart(state, true)).toThrow("check is in progress");
+
+    state.commitCheck(generation, "1.1.0", "a".repeat(64));
+    expect(() => assertDownloadCanStart(state, true)).not.toThrow();
+    expect(state.beginDownload().generation).toBe(generation);
   });
 });
 

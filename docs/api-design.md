@@ -186,21 +186,24 @@ off the main-process API:
 - `app.updater` for packaged apps built with `release.baseUrl`. `checkForUpdate()`
   is single-flight, resolves `null` rather than starting a check while downloading or
   applying, and reports only releases with strictly newer SemVer precedence; equal
-  versions, downgrades, and build-metadata-only changes return `null`. `download()` and
-  `applyAndRelaunch()` reject concurrent operations. Once a detached apply helper is
+  versions, downgrades, and build-metadata-only changes return `null`. A listener may call
+  `download()` directly from `update-available`; downloads before a check commits and
+  concurrent download/apply operations are rejected. Once a detached apply helper is
   accepted, the updater enters a terminal handoff: checks, downloads, applies, and
   auto-check scheduling remain blocked until process exit. Malformed embedded
   `version.json` metadata disables the updater. `release.channel` supports validated
   safe dotted names consistently across build/release output, embedded identity,
   manifest matching, artifact names, and support directories. Downloads require
-  generated size bounds; reconstructed tar/decompression output is capped at 8 GiB,
-  with compressed artifacts, patches, archive structure, and subprocess output bounded
-  separately. A download is not staged until archive structure, platform executable,
+  generated size bounds; streaming reconstructed tar/decompression output is capped at
+  8 GiB, in-memory patch inputs at 512 MiB combined, and release bsdiff sources at
+  128 MiB each. Larger deltas fall back to the full bundle. Compressed artifacts,
+  archive structure, and subprocess output are bounded separately. A download is not
+  staged until archive structure, platform executable,
   embedded identity, integrity, and platform signature checks pass. macOS verifies
   executable mode and codesign; Linux preserves archive permissions and ensures owner
   execute on the validated regular host executable. Failed operations release latches
   before best-effort cleanup, successful helpers remove their generation directory, and
-  startup prunes abandoned generations.
+  startup prunes abandoned generations while preserving work owned by live app processes.
 
 Still future: multi-webview-per-window (BrowserView equivalent), user preload
 scripts, session/cookie controls, payload encryption or a CEF IPC replacement for

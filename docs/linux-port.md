@@ -173,10 +173,11 @@ with the typed RPC data plane connected; `ldd` confirms `libcef.so` resolves via
 `$ORIGIN`. The portable-folder updater extracts with `tar -xpf`, requires a real
 staged root and regular `<App>` executable, then ensures owner execute only after
 that validation. It also requires matching `resources/version.json`, bounded
-manifest/download/codec output with an 8 GiB reconstructed-tar/decompression ceiling,
+manifest/download/codec output with an 8 GiB streaming reconstructed-tar/decompression
+ceiling and a 512 MiB combined in-memory patch-input ceiling,
 and safe tar entry/link types before launching the asynchronous folder swap. Accepted
 helper launch is a terminal handoff; successful helpers remove their generation and
-startup prunes abandoned generations. This does not redesign Linux updates around
+startup prunes abandoned generations without touching live-process work. This does not redesign Linux updates around
 deb/rpm/AppImage package managers; that remains out of scope.
 
 ### L4 — App-shell native features — 🚧 PARTIAL

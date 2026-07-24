@@ -1,8 +1,17 @@
+import { randomUUID } from "node:crypto";
+
 export interface PendingGeneration {
   generation: number;
   version: string;
   tarHash: string;
 }
+
+export interface GenerationOwner {
+  pid: number;
+  session: string;
+}
+
+export const UPDATER_PROCESS_SESSION = randomUUID().replaceAll("-", "");
 
 export interface StagedGeneration extends PendingGeneration {
   staged: string;
@@ -164,6 +173,19 @@ export class SingleFlight<T> {
   }
 }
 
-export function generationDirectoryName(snapshot: PendingGeneration): string {
-  return `generation-${snapshot.generation}-${snapshot.version}-${snapshot.tarHash.slice(0, 16)}`;
+/** Reject downloads only while a check has not yet committed usable metadata. */
+export function assertDownloadCanStart(
+  state: UpdateTransactionState,
+  checkIsRunning: boolean,
+): void {
+  if (checkIsRunning && state.pending === null) {
+    throw new Error("cannot download while an update check is in progress");
+  }
+}
+
+export function generationDirectoryName(
+  snapshot: PendingGeneration,
+  owner: GenerationOwner = { pid: process.pid, session: UPDATER_PROCESS_SESSION },
+): string {
+  return `generation-${owner.pid}-${owner.session}-${snapshot.generation}-${snapshot.version}-${snapshot.tarHash.slice(0, 16)}`;
 }

@@ -79,9 +79,12 @@ and applies are guarded operations correlated to a version/hash generation. Acce
 helper launch is a terminal handoff, so manual updater work and auto-check scheduling
 remain blocked until the process exits. Failed operations release their latch before
 best-effort cleanup, successful helpers remove their generation directory, and startup
-prunes abandoned generations. Manifest bodies, downloads, decompressed patches,
-archive entries, and path/link lengths are bounded; reconstructed tar/decompression
-output has an 8 GiB ceiling. SHA-256, archive node/link safety, the real staged root
+prunes abandoned generations while preserving work owned by live app processes. Manifest
+bodies, downloads, decompressed patches,
+archive entries, and path/link lengths are bounded; streaming reconstructed tar output
+has an 8 GiB ceiling, while in-memory patch inputs have a 512 MiB combined ceiling and
+release bsdiff sources a 128 MiB per-source ceiling. Larger deltas use the full bundle.
+SHA-256, archive node/link safety, the real staged root
 and platform executable, and staged `version.json` identity are verified before apply.
 macOS verifies executable mode and codesign; Linux extracts with permission
 preservation and ensures owner execute on the validated regular executable. Set

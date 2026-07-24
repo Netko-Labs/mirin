@@ -16,12 +16,13 @@ import { verifyArchiveLayout } from "./lib/archive.ts";
 import { pruneGenerationDirectories, removePathBestEffort } from "./lib/cleanup.ts";
 import { readBoundedManifestJson } from "./lib/http.ts";
 import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
-import { MAX_TAR_BYTES } from "./lib/limits.ts";
+import { MAX_PATCH_MEMORY_INPUT_BYTES, MAX_TAR_BYTES } from "./lib/limits.ts";
 import { parseManifest } from "./lib/manifest.ts";
 import { IS_LINUX, IS_MAC, IS_WINDOWS, platformName } from "./lib/platform.ts";
 import { isStrictlyNewer } from "./lib/semver.ts";
 import { validateStagedBundle } from "./lib/staged.ts";
 import {
+  assertDownloadCanStart,
   generationDirectoryName,
   type PendingGeneration,
   runDownloadOperation,
@@ -155,9 +156,7 @@ export class Updater {
 
   /** Download, bound, verify, extract, and structurally validate the pending update. */
   async download(onProgress?: (progress: UpdateProgress) => void): Promise<void> {
-    if (this.#checks.isRunning) {
-      throw new Error("cannot download while an update check is in progress");
-    }
+    assertDownloadCanStart(this.#transactions, this.#checks.isRunning);
     const snapshot = this.#transactions.beginDownload();
     let workDir: string | undefined;
 
@@ -201,6 +200,9 @@ export class Updater {
             const oldTarSize = statSync(cachedTar).size;
             if (oldTarSize <= 0 || oldTarSize > MAX_TAR_BYTES) {
               throw new Error("cached update tar exceeds the updater limit");
+            }
+            if (oldTarSize + patch.uncompressedSize > MAX_PATCH_MEMORY_INPUT_BYTES) {
+              throw new Error("delta patch inputs exceed the updater memory limit");
             }
             const patchZst = join(workDir, "patch.zst");
             await downloadVerifiedArtifact({
