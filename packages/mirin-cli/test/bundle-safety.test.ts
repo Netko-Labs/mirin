@@ -143,6 +143,28 @@ describe("bundle sink validation", () => {
     ).rejects.toThrow("symlink or reparse point");
     expect(existsSync(sentinel)).toBe(true);
   });
+
+  test("rejects an icon outside the project before removing the app folder", async () => {
+    const paths = fixture("Safe App");
+    const outside = mkdtempSync(join(tmpdir(), "mirin-bundle-icon-outside-"));
+    temporaryDirectories.push(outside);
+    const icon = join(outside, "icon.png");
+    writeFileSync(icon, "png");
+
+    await expect(
+      buildWindowsBundle({
+        ...paths.common,
+        appName: "Safe App",
+        bundleId: "dev.example.safe-app",
+        version: "1.2.3",
+        channel: "stable",
+        coreDll: paths.core,
+        helperExe: paths.helper,
+        icon,
+      }),
+    ).rejects.toThrow("escapes the project root");
+    expect(existsSync(paths.sentinel)).toBe(true);
+  });
 });
 
 function fixture(appDirectoryName: string): {

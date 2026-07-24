@@ -19,7 +19,11 @@ import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } fro
 import { extname, join } from "node:path";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
 import { makeWindowsIcon } from "../../icons/windows/index.ts";
-import { copyProjectFile, safeDestructiveDirectory } from "../../shared/fs/project-source.ts";
+import {
+  assertProjectIcon,
+  copyProjectFile,
+  safeDestructiveDirectory,
+} from "../../shared/fs/project-source.ts";
 import { validateAppIdentity } from "../../shared/validation/config.ts";
 import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { copyFlatCefLocales } from "../shared/cef-locales.ts";
@@ -71,6 +75,7 @@ export async function buildWindowsBundle(
   });
   validateVersionMetadataForBundle(opts.resources?.versionJson, identity);
   validateBundleExtras(opts.projectDir, opts.resources?.sidecars, opts.resources?.workers);
+  const icon = opts.icon ? assertProjectIcon(opts.projectDir, opts.icon, "app icon") : undefined;
   const { appName } = identity;
   const { cefPath } = opts;
   if (!existsSync(join(cefPath, CEF_MARKER))) {
@@ -94,7 +99,7 @@ export async function buildWindowsBundle(
 
   // App icon → <App>/icon.ico, loaded at runtime by the core and set as the window
   // icon (taskbar / Alt-Tab / title). Sits beside the exe so the core finds it.
-  if (opts.icon) makeWindowsIcon(opts.icon, join(app, "icon.ico"));
+  if (icon) makeWindowsIcon(icon, join(app, "icon.ico"));
 
   // Production resources (dev passes none — paths come from env + the Vite URL).
   if (opts.resources) {

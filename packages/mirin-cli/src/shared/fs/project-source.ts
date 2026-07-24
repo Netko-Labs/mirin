@@ -1,4 +1,4 @@
-import { copyFileSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { copyFileSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 
 /** Resolve a real project root once so containment checks share one anchor. */
@@ -33,6 +33,21 @@ export function resolveProjectFile(projectRoot: string, file: unknown, label: st
   return assertProjectFile(root, lexicalPath, label);
 }
 
+/** Resolve an app icon, which may be a regular file or a flat `.iconset` directory. */
+export function resolveProjectIcon(projectRoot: string, icon: unknown, label: string): string {
+  if (typeof icon !== "string" || icon.length === 0) {
+    throw new Error(`[mirin] ${label} must be a non-empty project-relative path.`);
+  }
+  if (isAbsolute(icon) || win32.isAbsolute(icon)) {
+    throw new Error(`[mirin] ${label} must be relative to the project root: ${icon}`);
+  }
+
+  const root = canonicalProjectRoot(projectRoot);
+  const lexicalPath = resolve(root, icon);
+  assertContained(root, lexicalPath, label, icon);
+  return assertProjectIcon(root, lexicalPath, label);
+}
+
 /** Re-resolve a source at its point of use and prove it remains in the project. */
 export function assertProjectFile(projectRoot: string, source: string, label: string): string {
   const root = canonicalProjectRoot(projectRoot);
@@ -45,6 +60,34 @@ export function assertProjectFile(projectRoot: string, source: string, label: st
   assertContained(root, canonicalPath, label, source);
   if (!statSync(canonicalPath).isFile()) {
     throw new Error(`[mirin] ${label} must be a regular file: ${source}`);
+  }
+  return canonicalPath;
+}
+
+/** Revalidate a project-owned app icon immediately before a bundle or package reads it. */
+export function assertProjectIcon(projectRoot: string, source: string, label: string): string {
+  const root = canonicalProjectRoot(projectRoot);
+  let canonicalPath: string;
+  try {
+    canonicalPath = realpathSync(source);
+  } catch {
+    throw new Error(`[mirin] ${label} does not exist: ${source}`);
+  }
+  assertContained(root, canonicalPath, label, source);
+
+  const metadata = statSync(canonicalPath);
+  if (metadata.isFile()) return canonicalPath;
+  if (!metadata.isDirectory() || !canonicalPath.toLowerCase().endsWith(".iconset")) {
+    throw new Error(`[mirin] ${label} must be a regular file or .iconset directory: ${source}`);
+  }
+
+  for (const entry of readdirSync(canonicalPath)) {
+    const child = join(canonicalPath, entry);
+    const childMetadata = lstatSync(child);
+    if (childMetadata.isSymbolicLink() || !childMetadata.isFile()) {
+      throw new Error(`[mirin] ${label} .iconset must contain only regular files: ${child}`);
+    }
+    assertContained(root, realpathSync(child), label, child);
   }
   return canonicalPath;
 }

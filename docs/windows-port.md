@@ -96,8 +96,10 @@ quote executable paths containing spaces. Windows x64 CI covers flat → new →
 new-v1 → new-v2 → uninstall while preserving a root sentinel. Customizable via the `nsis`
 config (perMachine/oneClick, shortcuts, license, publisher, runAfterFinish, installerIcon,
 raw `include`); needs `makensis`, else falls back to the portable `.zip`. The Inno
-alternative accepts only absolute Windows install paths or `{autopf}`/`{localappdata}`
-prefixes and escapes literal filesystem paths before rendering `.iss`. Anko's
+alternative also replaces an owned `{app}\\app` payload on upgrade and marker-gates
+enumerated cleanup of its legacy flat payload. It accepts only absolute Windows install
+paths or `{autopf}`/`{localappdata}` prefixes and escapes literal filesystem paths before
+rendering `.iss`. Anko's
 `build-windows` CI installs NSIS via choco. `updater/updater.ts` Windows arm: `win32` prefix,
 `%LOCALAPPDATA%` support dir, detached-PowerShell folder swap + relaunch (implemented;
 the runtime swap isn't field-tested). `publish-all.ts` publishes the host-platform

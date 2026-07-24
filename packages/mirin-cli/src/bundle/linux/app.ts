@@ -30,7 +30,11 @@ import {
 } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
-import { copyProjectFile, safeDestructiveDirectory } from "../../shared/fs/project-source.ts";
+import {
+  assertProjectIcon,
+  copyProjectFile,
+  safeDestructiveDirectory,
+} from "../../shared/fs/project-source.ts";
 import { validateAppIdentity } from "../../shared/validation/config.ts";
 import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { copyFlatCefLocales } from "../shared/cef-locales.ts";
@@ -202,6 +206,7 @@ export async function buildLinuxBundle(
   });
   validateVersionMetadataForBundle(opts.resources?.versionJson, identity);
   validateBundleExtras(opts.projectDir, opts.resources?.sidecars, opts.resources?.workers);
+  const icon = opts.icon ? assertProjectIcon(opts.projectDir, opts.icon, "app icon") : undefined;
   const { appName } = identity;
   const { cefPath } = opts;
   if (!existsSync(join(cefPath, CEF_MARKER))) {
@@ -229,7 +234,7 @@ export async function buildLinuxBundle(
   // The window taskbar/dock icon (`_NET_WM_ICON`) is set by the core from a PNG at
   // `resources/icon.png`; host.ts points the init config's `icon_path` there in prod.
   // (Dev serves it directly from the project via MIRIN_CONFIG_JSON, not the bundle.)
-  const iconPng = opts.icon ? resolveLinuxIconPng(opts.icon) : undefined;
+  const iconPng = icon ? resolveLinuxIconPng(icon) : undefined;
   if (iconPng) {
     const res = join(app, "resources");
     mkdirSync(res, { recursive: true });

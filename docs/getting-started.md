@@ -79,7 +79,9 @@ build/dev output is created, Mirin requires a portable app `name`, a reverse-DNS
 `id`, a flat bounded `release.channel`, and a strict SemVer package/override
 version. Sidecar and extra-worker sources must resolve to regular files within
 the canonical project root; missing paths, directories, special files, and
-escaping symlinks fail preflight. Runtime
+escaping symlinks fail preflight. App icons must resolve to a project-owned
+regular file or a flat `.iconset` containing no symlinks; bundle and package
+sinks revalidate them before use. Runtime
 updates reject non-HTTPS URLs except `http://localhost` / loopback for local
 testing, validate the manifest target, verify SHA-256 hashes, and check the
 archive layout before extraction. Artifact names, versions, and sizes are

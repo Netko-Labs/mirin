@@ -49,7 +49,36 @@ describe("Inno Setup script rendering", () => {
     expect(script).toContain("SetupIconFile=C:\\project {{cache}\\icon.ico");
     expect(script).toContain("LicenseFile=C:\\project {{cache}\\license.txt");
     expect(script).toContain('Source: "C:\\build {{cache}\\Safe App\\*"');
-    expect(script).toContain('DestDir: "{app}"');
+    expect(script).toContain('DestDir: "{app}\\app"');
+  });
+
+  test("replaces an owned nested payload and points every launcher at it", () => {
+    const script = renderInnoScript({
+      ...base,
+      legacyRootFiles: ["Safe App.exe", "mirin_core.dll", "removed-runtime.bin"],
+    });
+
+    expect(script).toContain('Type: filesandordirs; Name: "{app}\\app"');
+    expect(script).toContain("UninstallDisplayIcon={app}\\app\\Safe App.exe");
+    expect(script).toContain('Filename: "{app}\\app\\Safe App.exe"');
+    expect(script).not.toContain('Filename: "{app}\\Safe App.exe"');
+    expect(script).toContain(
+      'Type: files; Name: "{app}\\removed-runtime.bin"; Check: IsLegacyMirinFlatInstall',
+    );
+    expect(script).toContain("FileExists(ExpandConstant('{app}\\Safe App.exe')) and");
+    expect(script).toContain(
+      "FileExists(ExpandConstant('{app}\\resources\\mirin.manifest.json'));",
+    );
+    expect(script).not.toContain('Name: "{app}\\*"');
+  });
+
+  test("rejects unsafe names in enumerated legacy cleanup", () => {
+    expect(() => renderInnoScript({ ...base, legacyRootFiles: ["../outside"] })).toThrow(
+      "unsafe legacy payload file name",
+    );
+    expect(() => renderInnoScript({ ...base, legacyRootFiles: ["unins000.exe"] })).toThrow(
+      "unsafe legacy payload file name",
+    );
   });
 
   test("rejects structured control characters and leaves include as the raw extension point", () => {

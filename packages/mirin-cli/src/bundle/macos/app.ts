@@ -23,7 +23,11 @@ import {
 import { join } from "node:path";
 import { $ } from "bun";
 import { safeExtraAssetName, validateBundleExtras } from "../../extras.ts";
-import { copyProjectFile, safeDestructiveDirectory } from "../../shared/fs/project-source.ts";
+import {
+  assertProjectIcon,
+  copyProjectFile,
+  safeDestructiveDirectory,
+} from "../../shared/fs/project-source.ts";
 import { validateAppIdentity } from "../../shared/validation/config.ts";
 import { validateVersionMetadataForBundle } from "../../shared/validation/version-json.ts";
 import { pruneMacCefLocales } from "../shared/cef-locales.ts";
@@ -184,6 +188,7 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   });
   validateVersionMetadataForBundle(opts.resources?.versionJson, appIdentity);
   validateBundleExtras(opts.projectDir, opts.resources?.sidecars, opts.resources?.workers);
+  const icon = opts.icon ? assertProjectIcon(opts.projectDir, opts.icon, "app icon") : undefined;
   const { appName, bundleId, version } = appIdentity;
   const { cefPath } = opts;
   if (!existsSync(join(cefPath, FRAMEWORK))) {
@@ -209,7 +214,7 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
 
   // Render the icon (if any) into Resources before writing the plist, so we
   // only set CFBundleIconFile when an icon was actually produced.
-  const iconFile = opts.icon ? await writeIcon(opts.icon, join(contents, "Resources")) : undefined;
+  const iconFile = icon ? await writeIcon(icon, join(contents, "Resources")) : undefined;
 
   const info: Record<string, PlistValue> = {
     CFBundleDevelopmentRegion: "en",

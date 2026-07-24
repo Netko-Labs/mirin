@@ -31,6 +31,7 @@ import {
   assertProjectFile,
   canonicalProjectRoot,
   resolveProjectFile,
+  resolveProjectIcon,
   validateOwnedOutputDirectory,
 } from "./shared/fs/project-source.ts";
 import { resolveAppVersion, validateAppIdentity } from "./shared/validation/config.ts";
@@ -53,7 +54,8 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   });
   const { appName, bundleId, version, channel } = identity;
   const mainEntry = resolveProjectFile(root, config.main ?? "main/main.ts", "main entry");
-  const iconSrc = config.icon ? join(root, config.icon) : undefined;
+  const iconSrc =
+    config.icon === undefined ? undefined : resolveProjectIcon(root, config.icon, "app icon");
   const sidecars = normalizeSidecars(root, config.sidecars);
   const workers = normalizeWorkers(root, config.workers);
   // Linux: resolve the app icon to a concrete PNG the core stamps onto the window

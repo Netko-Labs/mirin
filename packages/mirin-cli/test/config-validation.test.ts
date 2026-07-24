@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateScaffoldName } from "create-mirinjs";
 import { build } from "../src/build.ts";
 import { dev } from "../src/dev.ts";
+import { resolveProjectIcon } from "../src/shared/fs/project-source.ts";
 import {
   validateAppIdentity,
   validateAppName,
@@ -114,6 +115,33 @@ describe("build and dev preflight", () => {
     await expect(dev(root)).rejects.toThrow("invalid app id");
     expect(existsSync(stale)).toBe(true);
     expect(existsSync(join(root, ".mirin"))).toBe(false);
+  });
+});
+
+describe("app icon source validation", () => {
+  test("rejects an icon outside the project", () => {
+    const root = project({});
+    const outside = mkdtempSync(join(tmpdir(), "mirin-icon-outside-"));
+    temporaryDirectories.push(outside);
+    const icon = join(outside, "icon.png");
+    writeFileSync(icon, "png");
+
+    expect(() => resolveProjectIcon(root, icon, "app icon")).toThrow("relative to the project");
+  });
+
+  test("rejects symlinked files inside an iconset", () => {
+    const root = project({});
+    const outside = mkdtempSync(join(tmpdir(), "mirin-iconset-outside-"));
+    temporaryDirectories.push(outside);
+    const externalPng = join(outside, "icon.png");
+    writeFileSync(externalPng, "png");
+    const iconset = join(root, "app.iconset");
+    mkdirSync(iconset);
+    symlinkSync(externalPng, join(iconset, "icon_256x256.png"), "file");
+
+    expect(() => resolveProjectIcon(root, "app.iconset", "app icon")).toThrow(
+      "must contain only regular files",
+    );
   });
 });
 

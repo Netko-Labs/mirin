@@ -25,8 +25,10 @@ import { compileWorkers, normalizeSidecars, normalizeWorkers } from "./extras.ts
 import { makeWindowsIcon } from "./icons/windows/index.ts";
 import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
 import {
+  assertProjectIcon,
   canonicalProjectRoot,
   resolveProjectFile,
+  resolveProjectIcon,
   validateOwnedOutputDirectory,
 } from "./shared/fs/project-source.ts";
 import { resolveAppVersion, validateAppIdentity } from "./shared/validation/config.ts";
@@ -90,9 +92,8 @@ async function brandWindowsExe(
   }
   const args: string[] = [];
   if (opts.icon) {
-    const ico = makeWindowsIcon(join(opts.projectDir, opts.icon), join(opts.work, "exe-icon.ico"), {
-      onlyLargest: true,
-    });
+    const icon = assertProjectIcon(opts.projectDir, opts.icon, "app icon");
+    const ico = makeWindowsIcon(icon, join(opts.work, "exe-icon.ico"), { onlyLargest: true });
     if (ico) args.push("--set-icon", ico);
   }
   const fv = winFileVersion(opts.version);
@@ -177,6 +178,8 @@ export async function build(
   });
   const { appName, bundleId, version, channel } = identity;
   const mainEntry = resolveProjectFile(root, config.main ?? "main/main.ts", "main entry");
+  const icon =
+    config.icon === undefined ? undefined : resolveProjectIcon(root, config.icon, "app icon");
   const baseUrl: string | undefined =
     config.release === undefined ? undefined : config.release.baseUrl;
   const releaseNotes: string | undefined = config.release?.notes;
@@ -226,7 +229,7 @@ export async function build(
         work,
         appName,
         version,
-        icon: config.icon,
+        icon,
         publisher,
       });
     }
@@ -266,7 +269,7 @@ export async function build(
         helperExe: artifacts.helperBin,
         cefPath: artifacts.cefPath,
         cefLocales,
-        icon: config.icon ? join(root, config.icon) : undefined,
+        icon,
         resources: { ...resources, sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })) },
       })
     : IS_LINUX
@@ -282,7 +285,7 @@ export async function build(
           helperExe: artifacts.helperBin,
           cefPath: artifacts.cefPath,
           cefLocales,
-          icon: config.icon ? join(root, config.icon) : undefined,
+          icon,
           resources: {
             ...resources,
             sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })),
@@ -300,7 +303,7 @@ export async function build(
           helperBin: artifacts.helperBin,
           cefPath: artifacts.cefPath,
           cefLocales,
-          icon: config.icon ? join(root, config.icon) : undefined,
+          icon,
           signIdentity,
           urlSchemes: config.urlSchemes,
           resources: { ...resources, sidecars },
@@ -322,7 +325,7 @@ export async function build(
       publisher,
       outDir,
       projectDir: root,
-      icon: config.icon ? join(root, config.icon) : undefined,
+      icon,
       options: typeof linux === "object" ? linux : {},
       formats,
     });
@@ -346,7 +349,7 @@ export async function build(
     inno,
     linux,
     publisher,
-    icon: config.icon ? join(root, config.icon) : undefined,
+    icon,
     signIdentity,
   };
 }

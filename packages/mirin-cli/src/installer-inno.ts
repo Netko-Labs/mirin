@@ -3,7 +3,7 @@
  * escaped; `include` remains the documented raw advanced extension point.
  */
 
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 import type { InnoConfig } from "mirinjs";
@@ -31,7 +31,27 @@ export interface BuildInnoInput {
 export interface RenderInnoInput extends BuildInnoInput {
   icon?: string;
   license?: string;
+  /** Additional flat payload files owned by this build and safe to remove from legacy installs. */
+  legacyRootFiles?: readonly string[];
 }
+
+const LEGACY_CEF_ROOT_FILES = [
+  "chrome_100_percent.pak",
+  "chrome_200_percent.pak",
+  "d3dcompiler_47.dll",
+  "dxcompiler.dll",
+  "dxil.dll",
+  "icudtl.dat",
+  "libcef.dll",
+  "libEGL.dll",
+  "libGLESv2.dll",
+  "resources.pak",
+  "snapshot_blob.bin",
+  "v8_context_snapshot.bin",
+  "vk_swiftshader.dll",
+  "vk_swiftshader_icd.json",
+  "vulkan-1.dll",
+] as const;
 
 /** Whether the Inno Setup compiler `iscc` is on PATH. */
 export function hasInno(): boolean {
@@ -62,6 +82,7 @@ export function renderInnoScript(input: RenderInnoInput): string {
       (perMachine ? `{autopf}\\${appName}` : `{localappdata}\\Programs\\${appName}`),
   );
   const baseName = fileName.slice(0, -".exe".length);
+  const legacyRootFiles = normalizedLegacyRootFiles(exeName, input.legacyRootFiles);
 
   const lines: string[] = [];
   lines.push("[Setup]");
@@ -81,7 +102,7 @@ export function renderInnoScript(input: RenderInnoInput): string {
   lines.push("SolidCompression=yes");
   lines.push("ArchitecturesAllowed=x64compatible");
   lines.push("ArchitecturesInstallIn64BitMode=x64compatible");
-  lines.push(`UninstallDisplayIcon={app}\\${innoLiteralPath(exeName, "executable name")}`);
+  lines.push(`UninstallDisplayIcon={app}\\app\\${innoLiteralPath(exeName, "executable name")}`);
   if (icon) lines.push(`SetupIconFile=${innoLiteralPath(icon, "installer icon")}`);
   if (license) lines.push(`LicenseFile=${innoLiteralPath(license, "license file")}`);
   if (minimal) {
@@ -95,8 +116,25 @@ export function renderInnoScript(input: RenderInnoInput): string {
   lines.push("", "[Files]");
   lines.push(
     `Source: "${innoQuotedPath(appDir, "app directory")}\\*"; ` +
-      'DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs',
+      'DestDir: "{app}\\app"; Flags: ignoreversion recursesubdirs createallsubdirs',
   );
+
+  // The stable install root belongs to the installer; the application payload is
+  // isolated beneath `app` so an upgrade can replace it without retaining files
+  // removed by a newer release or deleting unrelated files from a custom root.
+  lines.push("", "[InstallDelete]");
+  lines.push('Type: filesandordirs; Name: "{app}\\app"');
+  for (const file of legacyRootFiles) {
+    lines.push(
+      `Type: files; Name: "{app}\\${innoQuotedPath(file, "legacy payload file")}"; ` +
+        "Check: IsLegacyMirinFlatInstall",
+    );
+  }
+  for (const directory of ["resources", "locales"]) {
+    lines.push(
+      `Type: filesandordirs; Name: "{app}\\${directory}"; Check: IsLegacyMirinFlatInstall`,
+    );
+  }
 
   if (desktop) {
     lines.push("", "[Tasks]");
@@ -109,23 +147,47 @@ export function renderInnoScript(input: RenderInnoInput): string {
   lines.push("", "[Icons]");
   if (startMenu) {
     lines.push(
-      `Name: "{group}\\${innoQuoted(appName)}"; ` + `Filename: "{app}\\${innoQuoted(exeName)}"`,
+      `Name: "{group}\\${innoQuoted(appName)}"; ` +
+        `Filename: "{app}\\app\\${innoQuoted(exeName)}"`,
     );
   }
   if (desktop) {
     lines.push(
       `Name: "{autodesktop}\\${innoQuoted(appName)}"; ` +
-        `Filename: "{app}\\${innoQuoted(exeName)}"; Tasks: desktopicon`,
+        `Filename: "{app}\\app\\${innoQuoted(exeName)}"; Tasks: desktopicon`,
     );
   }
 
   if (runAfter) {
     lines.push("", "[Run]");
     lines.push(
-      `Filename: "{app}\\${innoQuoted(exeName)}"; ` +
+      `Filename: "{app}\\app\\${innoQuoted(exeName)}"; ` +
         `Description: "Launch ${innoQuoted(appName)}"; Flags: nowait postinstall skipifsilent`,
     );
   }
+
+  lines.push(
+    "",
+    "[Code]",
+    "var",
+    "  LegacyMirinFlatInstallChecked: Boolean;",
+    "  LegacyMirinFlatInstall: Boolean;",
+    "",
+    "function IsLegacyMirinFlatInstall: Boolean;",
+    "begin",
+    "  if not LegacyMirinFlatInstallChecked then",
+    "  begin",
+    "    LegacyMirinFlatInstall :=",
+    `      FileExists(ExpandConstant('{app}\\${exeName}')) and`,
+    "      FileExists(ExpandConstant('{app}\\mirin_core.dll')) and",
+    "      FileExists(ExpandConstant('{app}\\mirin-helper.exe')) and",
+    "      FileExists(ExpandConstant('{app}\\libcef.dll')) and",
+    "      FileExists(ExpandConstant('{app}\\resources\\mirin.manifest.json'));",
+    "    LegacyMirinFlatInstallChecked := True;",
+    "  end;",
+    "  Result := LegacyMirinFlatInstall;",
+    "end;",
+  );
 
   return `${lines.join("\n")}\n`;
 }
@@ -162,7 +224,11 @@ export async function buildInnoInstaller(input: BuildInnoInput): Promise<string>
       )
     : undefined;
 
-  const rendered = renderInnoScript({ ...input, icon, license });
+  const legacyRootFiles = readdirSync(input.appDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
+
+  const rendered = renderInnoScript({ ...input, icon, license, legacyRootFiles });
   const out = join(input.outDir, input.fileName);
   rmSync(out, { force: true });
   const script = join(input.outDir, "_installer.iss");
@@ -227,5 +293,44 @@ function validateInstallerFileName(value: string): void {
     !/^[A-Za-z0-9][A-Za-z0-9._-]*\.exe$/.test(value)
   ) {
     throw new Error("inno: fileName must be a flat portable .exe name");
+  }
+}
+
+function normalizedLegacyRootFiles(
+  exeName: string,
+  additionalFiles: readonly string[] | undefined,
+): string[] {
+  const candidates = [
+    exeName,
+    "mirin_core.dll",
+    "mirin-helper.exe",
+    "icon.ico",
+    ...LEGACY_CEF_ROOT_FILES,
+    ...(additionalFiles ?? []),
+  ];
+  const seen = new Set<string>();
+  const files: string[] = [];
+  for (const file of candidates) {
+    validateLegacyRootFileName(file);
+    const key = file.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push(file);
+  }
+  return files;
+}
+
+function validateLegacyRootFileName(value: string): void {
+  if (
+    value.length === 0 ||
+    value.length > 255 ||
+    value === "." ||
+    value === ".." ||
+    value.endsWith(".") ||
+    value.endsWith(" ") ||
+    /[\0\r\n/\\"{}]/.test(value) ||
+    /^(?:unins\d*\.(?:exe|dat|msg)|Uninstall\.exe)$/i.test(value)
+  ) {
+    throw new Error(`inno: unsafe legacy payload file name: ${value}`);
   }
 }
