@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "mirin dev",
+    "check": "mirin check",
+    "doctor": "mirin doctor",
     "build": "mirin build",
     "release": "mirin release",
     "serve": "bun serve.ts",

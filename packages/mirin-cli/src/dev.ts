@@ -31,6 +31,7 @@ const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
 
 import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { createReporter } from "./shared/report.ts";
 import { DevSession } from "./shared/session.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
@@ -42,7 +43,29 @@ const DEV_PORT_BASE = 5173;
  *  so concurrent dev sessions of different apps don't fight over either. */
 const CDP_PORT_BASE = 9222;
 
-export async function dev(projectDir = process.cwd()): Promise<number> {
+/** What a launch hook receives once the app process is up. */
+export interface DevLaunchContext {
+  session?: DevSession;
+  devUrl: string;
+  cdpPort: number;
+  pid: number;
+  /** Stop the app and the Vite server. */
+  stop(): void;
+}
+
+export interface DevOptions {
+  /** Emit newline-delimited JSON progress instead of prose. */
+  json?: boolean;
+  /**
+   * Called once the app is running. `mirin check` uses this to probe the app and
+   * then stop it; plain `mirin dev` passes no hook and runs until the app quits.
+   * The app is always stopped after the hook settles, whether it threw or not.
+   */
+  onLaunched?(context: DevLaunchContext): Promise<void> | void;
+}
+
+export async function dev(projectDir = process.cwd(), options?: DevOptions): Promise<number> {
+  const reporter = createReporter(options?.json === true);
   const work = join(projectDir, ".mirin");
   mkdirSync(work, { recursive: true });
   // `bun build --compile` drops temp *.bun-build files in the cwd; clear any left
@@ -73,7 +96,8 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
 
   // --- compile the Bun host + bundle the Worker ---
   const compilePhase = session?.phase("compile");
-  console.log("[mirin dev] compiling host + bundling main process…");
+  reporter.info("[mirin dev] compiling host + bundling main process…");
+  reporter.event("compile");
   // `bun build --compile` emits an `.exe` on Windows; name it so explicitly.
   const hostExe = join(work, IS_WINDOWS ? "host.exe" : "host");
   const workerJs = join(work, "worker.js");
@@ -100,7 +124,8 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
 
   // --- assemble the dev bundle (Windows/Linux app folder, or macOS .app) ---
   const bundlePhase = session?.phase("bundle");
-  console.log("[mirin dev] assembling dev bundle…");
+  reporter.info("[mirin dev] assembling dev bundle…");
+  reporter.event("bundle");
   const { app, exe } = IS_WINDOWS
     ? await buildWindowsBundle({
         appName,
@@ -165,7 +190,8 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   const devUrl = `http://127.0.0.1:${port}`;
   const vitePhase = session?.phase("vite");
   session?.setDevUrl(devUrl);
-  console.log(`[mirin dev] starting Vite dev server on ${devUrl}…`);
+  reporter.info(`[mirin dev] starting Vite dev server on ${devUrl}…`);
+  reporter.event("vite", { devUrl });
   const vite = Bun.spawn(
     [
       "bunx",
@@ -194,7 +220,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
 
   // --- launch the app ---
   const launchPhase = session?.phase("launch");
-  console.log(`[mirin dev] launching ${appName}…`);
+  reporter.info(`[mirin dev] launching ${appName}…`);
   const appProc = Bun.spawn([exe], {
     cwd: projectDir,
     env: {
@@ -239,15 +265,22 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   });
   session?.setPid(appProc.pid);
   launchPhase?.ok();
+  reporter.event("launch", {
+    pid: appProc.pid,
+    devUrl,
+    cdpPort,
+    session: session?.paths.dir ?? null,
+  });
   if (session) {
-    console.log(`[mirin dev] dev session: ${session.paths.dir}`);
+    reporter.info(`[mirin dev] dev session: ${session.paths.dir}`);
     // The app publishes its inspector endpoint once the Worker binds it; report it
     // when it lands, without holding up the dev loop if it never does.
     void session.waitForInspector().then((endpoint) => {
       if (endpoint === undefined) return;
-      console.log(
+      reporter.info(
         `[mirin dev] inspector: http://127.0.0.1:${endpoint.port} — token in inspector.json`,
       );
+      reporter.event("inspector", { url: `http://127.0.0.1:${endpoint.port}` });
     });
   }
 
@@ -257,6 +290,24 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   };
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
+
+  if (options?.onLaunched !== undefined) {
+    try {
+      await options.onLaunched({
+        ...(session !== undefined ? { session } : {}),
+        devUrl,
+        cdpPort,
+        pid: appProc.pid,
+        stop: cleanup,
+      });
+    } catch (err) {
+      console.error(`[mirin] launch hook failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      // A hooked run is a one-shot: stop the app whether the hook succeeded or not,
+      // so the command can never hang holding a window open.
+      cleanup();
+    }
+  }
 
   const code = await appProc.exited;
   vite.kill();

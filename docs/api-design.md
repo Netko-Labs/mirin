@@ -184,6 +184,10 @@ off the main-process API:
   extra workers declared in `mirin.config.ts`; config names are safe filename
   segments and source paths are project-relative.
 - `app.updater` for packaged apps built with `release.baseUrl`.
+- `devtools.event({ type, msg?, data? })` to publish a domain event into the
+  development event stream, and `devtools.expose(name, () => state)` to publish live
+  app state at the inspector's `/state`. Both are inert in a packaged build.
+  See `docs/agent-devtools.md`.
 
 Still future: multi-webview-per-window (BrowserView equivalent), user preload
 scripts, session/cookie controls, payload encryption or a CEF IPC replacement for
@@ -197,7 +201,8 @@ the localhost RPC data plane, and a Windows WebView2 backend option.
 | `mirinjs/config` | manifest (build-time) | `defineConfig` + manifest types |
 | `mirinjs/rpc` | shared (types + handlers) | `rpc.router/query/mutation/event` |
 | `mirinjs/client` | webview (browser) | `client<Router>()`, `window.mirin` typings, `windowControls` |
-| `@mirinjs/cli` (`mirin`) | dev machine | `init`, `dev`, `build`, `release` |
+| `mirinjs/devtools/session` | any process (no FFI) | the `.mirin/dev/` session protocol: paths, readers, writers, record types |
+| `@mirinjs/cli` (`mirin`) | dev machine | `init`, `dev`, `check`, `doctor`, `build`, `release` |
 
 ## 6. Resolved & open items
 

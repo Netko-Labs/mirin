@@ -95,6 +95,15 @@ Rationale: this avoids routing the data plane through CEF process messages → b
 
 Preload injection is renderer-side: `mirin-helper` implements CEF's render-process handler and evaluates the (build-time-bundled) preload bootstrap in `on_context_created`. The bootstrap is part of mirin, not user-supplied, for the MVP; user preloads come later.
 
+**Observability plane (development only).** A third plane exists under `mirin dev`, for tools outside the app process. `docs/agent-devtools.md` is its source of truth; the parts that touch this document:
+
+1. Every diagnostic signal is normalized into one JSON envelope and buffered in the Worker: `logger` lines, `RpcServer` request/response traces, all native events (via a wildcard hook on the runtime's dispatcher), Worker failures, and renderer console output — which the core's display handler now forwards as a structured `webview.console` event instead of an `eprintln!`.
+2. The Worker binds a second loopback `Bun.serve` server (the **inspector**), token-authenticated and separate from the RPC data plane, exposing the stream plus window/RPC state.
+3. Screenshots, accessibility snapshots, page evaluation, and synthetic input use **CEF's remote-debugging port**, set through `Settings::remote_debugging_port` from `CoreConfig::remote_debugging_port`. The protocol client is entirely in the Worker; the core contributes only that setting. `mirin dev` picks a free loopback port and passes it as `MIRIN_CDP_PORT`, which the host translates into the core config.
+4. Session artifacts (the event stream, the inspector endpoint, a phase timeline, a post-mortem) live under the project's gitignored `.mirin/dev/`, one writer per file.
+
+All of it resolves to disabled in a packaged build unless `devtools.production` is set: the inspector can evaluate code in a webview.
+
 ## 5. CEF integration
 
 - **Version pinning.** Mirin pins one CEF version per mirin release (whatever current `cef`/`cef-dll-sys` crates target). A fetch step (`scripts/fetch-cef.ts`) downloads the matching CEF binary distribution from the Spotify CDN into `vendor/cef/` (gitignored) and the dev bundle generator copies the framework from there.
