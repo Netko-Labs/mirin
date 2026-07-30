@@ -144,16 +144,20 @@ export function startDevtools(override?: DevtoolsConfig): void {
   teardown.push(installProcessTaps());
 
   const port = options.cdp ? cdpPort() : undefined;
-  if (port !== undefined) bridge = startCdpBridge(port);
+  // Bound to a local so the route closure captures a definite bridge rather than
+  // the reassignable module-level slot.
+  const attached = port !== undefined ? startCdpBridge(port) : undefined;
+  bridge = attached;
+  const screenshotDir = paths?.screenshots;
 
   inspector = startInspector({
     exposed: () => devtools.state(),
-    ...(bridge !== undefined
+    ...(attached !== undefined
       ? {
           extraRoutes: () =>
             cdpRoutes({
-              bridge: bridge as CdpBridge,
-              ...(paths !== undefined ? { screenshotDir: paths.screenshots } : {}),
+              bridge: attached,
+              ...(screenshotDir !== undefined ? { screenshotDir } : {}),
             }),
         }
       : {}),

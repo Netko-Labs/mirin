@@ -80,6 +80,34 @@ describe("devtools sink subscribers", () => {
   });
 });
 
+describe("devtools sink serializability", () => {
+  // Left unchecked, one circular `data` object would make every later /logs
+  // response throw — a single bad log line taking out the whole surface.
+  test("replaces data that cannot be JSON-encoded, keeping the event", () => {
+    const sink = new DevEventSink(4);
+    const circular: Record<string, unknown> = { name: "loop" };
+    circular.self = circular;
+
+    const event = sink.emit({ ...line(1), data: circular });
+    expect(event.data).toEqual({ unserializable: true });
+    expect(event.msg).toBe("line 1");
+    expect(() => JSON.stringify(sink.snapshot())).not.toThrow();
+  });
+
+  test("handles a BigInt in data the same way", () => {
+    const sink = new DevEventSink(4);
+    sink.emit({ ...line(1), data: { size: BigInt(9) } });
+    expect(() => JSON.stringify(sink.snapshot())).not.toThrow();
+    expect(sink.snapshot()[0]?.data).toEqual({ unserializable: true });
+  });
+
+  test("leaves encodable data untouched", () => {
+    const sink = new DevEventSink(4);
+    const data = { method: "todos.list", ms: 1.2, nested: { ok: true } };
+    expect(sink.emit({ ...line(1), data }).data).toEqual(data);
+  });
+});
+
 describe("devtools sink file handling", () => {
   test("an unwritable path degrades to memory-only instead of throwing", () => {
     const sink = new DevEventSink(4);

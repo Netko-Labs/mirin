@@ -51,12 +51,13 @@ function detail(event: NativeEvent): Record<string, unknown> {
 function recordConsole(event: NativeEvent): void {
   const source = typeof event.source === "string" ? event.source : "";
   const line = typeof event.line === "number" ? event.line : 0;
+  const window = asWindowId(event.id);
   record({
     src: "renderer",
     level: asLevel(event.level) ?? "info",
     type: "console",
     msg: typeof event.message === "string" ? event.message : "",
-    ...(asWindowId(event.id) !== undefined ? { window: asWindowId(event.id) } : {}),
+    ...(window !== undefined ? { window } : {}),
     data: {
       ...(source.length > 0 ? { source } : {}),
       ...(line > 0 ? { line } : {}),

@@ -23,9 +23,6 @@ import { stateSnapshot } from "./state.ts";
 /** Keepalive cadence for SSE, so an idle stream is not mistaken for a dead one. */
 const SSE_PING_MS = 15_000;
 
-/** Most events replayed to a stream that asks for history without a cursor. */
-const SSE_REPLAY_LIMIT = 100;
-
 export interface InspectorDeps {
   /** Slices registered with `devtools.expose`, evaluated per request. */
   exposed(): Record<string, unknown>;
@@ -102,9 +99,10 @@ function streamResponse(req: Request, url: URL): Response {
       // nothing yet and replay is off.
       controller.enqueue(encoder.encode(": mirin inspector stream\n\n"));
 
+      // Replay is bounded by the same `limit` the polling route uses (200 unless
+      // the caller says otherwise), so `?since=` on a stream behaves like `/logs`.
       if (wantsReplay) {
-        const replay = sink.read({ ...query, limit: query.limit ?? SSE_REPLAY_LIMIT });
-        for (const event of replay) frame(event);
+        for (const event of sink.read(query)) frame(event);
       }
 
       // Live events pass the same predicate the polling route uses, so `/logs`

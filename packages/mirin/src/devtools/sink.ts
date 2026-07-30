@@ -35,6 +35,25 @@ const MAX_PENDING_LINES = 256;
 export type DevEventListener = (event: DevEvent) => void;
 
 /**
+ * Render an event as a JSONL line, replacing `data` in place when it cannot be
+ * encoded. Mutating the event is deliberate: the stored record and the written line
+ * must agree, so a reader of `/logs` sees exactly what the file holds.
+ */
+function encode(event: DevEvent): string {
+  try {
+    return `${JSON.stringify(event)}\n`;
+  } catch {
+    event.data = { unserializable: true };
+    try {
+      return `${JSON.stringify(event)}\n`;
+    } catch {
+      // Only reachable if a top-level field is itself hostile; keep the envelope.
+      return `${JSON.stringify({ seq: event.seq, ts: event.ts, src: event.src, level: event.level, type: event.type, msg: "" })}\n`;
+    }
+  }
+}
+
+/**
  * Bounded event store. One instance per process; `sink` below is that instance.
  * Exported as a class so tests can exercise eviction without touching disk.
  */
@@ -102,7 +121,7 @@ export class DevEventSink {
     this.#fileBroken = false;
     // Backfill whatever the buffer already holds so the file is a complete
     // record of the session, not just of the part after the file was attached.
-    this.#pending = this.snapshot().map((event) => `${JSON.stringify(event)}\n`);
+    this.#pending = this.snapshot().map(encode);
     this.#startTimer();
     this.flush();
   }
@@ -120,10 +139,16 @@ export class DevEventSink {
       ...(input.data !== undefined ? { data: input.data } : {}),
     };
 
+    // Serialize once, here, so a `data` object that cannot be JSON-encoded (a
+    // circular reference, a BigInt) is caught at the source. Left unchecked, one
+    // such event would make every later `/logs` response throw, taking out the
+    // whole surface over a single bad log line.
+    const line = encode(event);
+
     this.#push(event);
 
     if (this.#filePath !== undefined && !this.#fileBroken) {
-      this.#pending.push(`${JSON.stringify(event)}\n`);
+      this.#pending.push(line);
       if (this.#pending.length >= MAX_PENDING_LINES) this.flush();
     }
 
