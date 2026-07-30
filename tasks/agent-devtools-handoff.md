@@ -16,7 +16,11 @@ fails before touching mirin's own code. No CEF also means no window, so no comma
 that boots the app was ever exercised.
 
 The Rust surface was kept deliberately tiny for exactly this reason — 94 lines
-across 4 files, no new FFI symbols — but tiny is not verified.
+across 4 files, no new FFI symbols.
+
+CI has since covered the compile half (Step 1). What remains is the half no CI job
+can reach: **actually looking at a running app.** Every capability this branch adds
+is about seeing and driving a window, and none of it has been pointed at a real one.
 
 ## Branch
 
@@ -39,8 +43,8 @@ d8c6a5e  feat: structured devtools event stream for agents
 | `bun run fmt-lint` | ✅ pass (57 warnings, all pre-existing) |
 | `cargo fmt --all --check` | ✅ pass |
 | `mirin doctor`, both outcomes | ✅ ran for real |
-| `cargo clippy` / `cargo build` | ❌ **never ran** |
-| `cargo test --workspace` | ❌ never ran |
+| `cargo clippy` / `cargo build` | ✅ **by CI** — see Step 1 |
+| `cargo test --workspace` | ✅ by CI |
 | `mirin dev` (any platform) | ❌ never ran |
 | `mirin check` | ❌ never ran |
 | Screenshot / snapshot / eval / act | ❌ never ran |
@@ -51,19 +55,28 @@ injection, click event pairing, the JSON-serializability guard.
 
 ---
 
-## Step 1 — compile gate (blocking)
+## Step 1 — compile gate (CI owns this)
+
+**Do not duplicate this locally unless CI is red.** `.github/workflows/ci.yml`'s
+`Native checks` job fetches CEF and runs exactly the gate the authoring environment
+could not:
 
 ```sh
-bun install
-bun scripts/fetch-cef.ts            # needs network to cef-builds.spotifycdn.com
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The whole Rust diff is 4 files; read it in one go with
-`git diff main..HEAD -- crates/`.
+…on macOS arm64, Linux x64, Linux arm64, Windows x64, and Windows arm64. On the
+first run of this branch (`06859b4`) macOS arm64 and Linux x64 came back green,
+which is what closed the compile risk; check the PR for the current run's full
+matrix.
+
+So the local machine's job is **Step 2** — the real-app verification CI cannot do,
+because CI has no display and never opens a window.
+
+If CI *is* red on a native job, the whole Rust diff is 4 files; read it in one go
+with `git diff main..HEAD -- crates/`.
 
 | File | Change |
 | --- | --- |
