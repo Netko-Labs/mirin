@@ -38,6 +38,10 @@ import { sweepBuildTemps } from "./temps.ts";
  *  second dev session (or anything already on 5173) doesn't collide. */
 const DEV_PORT_BASE = 5173;
 
+/** Where the CEF DevTools-protocol port search starts. Well clear of Vite's range
+ *  so concurrent dev sessions of different apps don't fight over either. */
+const CDP_PORT_BASE = 9222;
+
 export async function dev(projectDir = process.cwd()): Promise<number> {
   const work = join(projectDir, ".mirin");
   mkdirSync(work, { recursive: true });
@@ -157,6 +161,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   // both sides to 127.0.0.1 avoids the family mismatch (and matches the loopback
   // RPC server). `--host 127.0.0.1` forces Vite's bind.
   const port = await findFreePort(DEV_PORT_BASE);
+  const cdpPort = await findFreePort(CDP_PORT_BASE);
   const devUrl = `http://127.0.0.1:${port}`;
   const vitePhase = session?.phase("vite");
   session?.setDevUrl(devUrl);
@@ -224,6 +229,10 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       }),
       MIRIN_SIDECAR_DIR: sidecarsDir,
       MIRIN_WORKERS_DIR: workersDir,
+      // CEF's DevTools-protocol port, which the devtools use for screenshots,
+      // accessibility snapshots, page evaluation, and synthetic input. Loopback
+      // only, and only ever set for a dev run (docs/agent-devtools.md).
+      MIRIN_CDP_PORT: String(cdpPort),
       ...(session?.env() ?? {}),
     },
     stdio: ["ignore", "inherit", "inherit"],

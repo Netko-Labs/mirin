@@ -37,6 +37,13 @@ export type {
 /** Env var carrying the active session dir into the app process. */
 export const DEV_SESSION_ENV = "MIRIN_DEV_SESSION";
 
+/**
+ * Env var carrying CEF's remote-debugging port. Read twice in the app process: by
+ * the host, which passes it to the native core as `remote_debugging_port`, and by
+ * the Worker, whose CDP client connects to it.
+ */
+export const DEV_CDP_PORT_ENV = "MIRIN_CDP_PORT";
+
 export const SESSION_FILE = "session.json";
 export const INSPECTOR_FILE = "inspector.json";
 export const EVENTS_FILE = "events.jsonl";

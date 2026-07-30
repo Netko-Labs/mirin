@@ -20,11 +20,14 @@
  */
 
 import type { DevtoolsConfig } from "../config/index.ts";
-import { maybeRuntime } from "../runtime.ts";
+import { maybeRuntime, onNativeEvent } from "../runtime.ts";
+import { CdpBridge } from "./lib/cdp.ts";
 import { type InspectorHandle, startInspector } from "./lib/inspector.ts";
-import { installNativeTap, installProcessTaps } from "./lib/taps.ts";
+import { cdpRoutes } from "./lib/routes-cdp.ts";
+import { installNativeTap, installProcessTaps, recordCdpEvent } from "./lib/taps.ts";
 import { devtoolsOptions, resolveDevtoolsOptions, setDevtoolsOptions } from "./options.ts";
 import {
+  DEV_CDP_PORT_ENV,
   DEV_SESSION_ENV,
   type SessionPaths,
   sessionPaths,
@@ -38,7 +41,14 @@ const exposed = new Map<string, () => unknown>();
 
 let paths: SessionPaths | undefined;
 let inspector: InspectorHandle | undefined;
+let bridge: CdpBridge | undefined;
 let teardown: (() => void)[] = [];
+
+/** CEF's remote-debugging port for this run, when one was supplied. */
+function cdpPort(): number | undefined {
+  const value = Number(process.env[DEV_CDP_PORT_ENV] ?? "");
+  return Number.isSafeInteger(value) && value >= 1024 && value <= 65535 ? value : undefined;
+}
 
 /** A registered getter's current value, or an error marker if it threw. */
 function readExposed(getter: () => unknown): unknown {
@@ -133,7 +143,21 @@ export function startDevtools(override?: DevtoolsConfig): void {
   teardown.push(installNativeTap());
   teardown.push(installProcessTaps());
 
-  inspector = startInspector({ exposed: () => devtools.state() });
+  const port = options.cdp ? cdpPort() : undefined;
+  if (port !== undefined) bridge = startCdpBridge(port);
+
+  inspector = startInspector({
+    exposed: () => devtools.state(),
+    ...(bridge !== undefined
+      ? {
+          extraRoutes: () =>
+            cdpRoutes({
+              bridge: bridge as CdpBridge,
+              ...(paths !== undefined ? { screenshotDir: paths.screenshots } : {}),
+            }),
+        }
+      : {}),
+  });
   if (inspector !== undefined) {
     publishInspectorEndpoint({
       version: 1,
@@ -141,6 +165,7 @@ export function startDevtools(override?: DevtoolsConfig): void {
       token: inspector.token,
       pid: process.pid,
       startedAt: Date.now(),
+      ...(port !== undefined ? { cdpPort: port } : {}),
     });
   }
 
@@ -152,10 +177,37 @@ export function startDevtools(override?: DevtoolsConfig): void {
     data: {
       file: sink.filePath ?? null,
       inspector: inspector !== undefined ? `http://127.0.0.1:${inspector.port}` : null,
-      cdp: options.cdp,
+      cdpPort: port ?? null,
       bufferSize: options.bufferSize,
     },
   });
+}
+
+/**
+ * Create the CDP bridge and start attaching.
+ *
+ * Attachment is asynchronous and deliberately not awaited: CEF binds its debugging
+ * port during browser-process init, which happens after the Worker is already
+ * running, and nothing about app startup should wait on diagnostics. Each new
+ * window triggers a re-scan so its page is attached as soon as it exists.
+ */
+function startCdpBridge(port: number): CdpBridge {
+  const created = new CdpBridge(port, recordCdpEvent);
+  teardown.push(onNativeEvent("window.created", () => void created.refresh(true)));
+
+  void created.attachWhenReady().then((attached) => {
+    record({
+      src: "main",
+      level: attached ? "info" : "warn",
+      type: attached ? "devtools.cdp-attached" : "devtools.cdp-unavailable",
+      msg: attached
+        ? `attached to the DevTools protocol on port ${port}`
+        : `no webview attached on DevTools port ${port} — screenshots and snapshots are unavailable`,
+      data: { port, windows: created.attachedWindows() },
+    });
+  });
+
+  return created;
 }
 
 /** Publish the inspector's endpoint into the session dir. */
@@ -179,5 +231,7 @@ export function stopDevtools(): void {
   teardown = [];
   void inspector?.stop();
   inspector = undefined;
+  bridge?.close();
+  bridge = undefined;
   sink.close();
 }

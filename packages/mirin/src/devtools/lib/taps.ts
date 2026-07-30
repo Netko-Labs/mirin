@@ -12,6 +12,8 @@ import { onAnyNativeEvent } from "../../runtime.ts";
 import { firstError, formatArgs, formatStack } from "../../shared/format.ts";
 import { record } from "../sink.ts";
 import type { DevEventLevel } from "../types.ts";
+import type { CdpEvent } from "./cdp.ts";
+import { asArray, asNumber, asRecord, asString } from "./parse.ts";
 
 /**
  * Native event types that fire continuously while the user drags or resizes a
@@ -105,6 +107,145 @@ export function installNativeTap(): () => void {
     }
     recordNative(event);
   });
+}
+
+// ---- renderer taps over CDP ----
+//
+// The core's display handler already reports console output, so `consoleAPICalled`
+// is deliberately not forwarded here — it would double every line. What CDP adds
+// is everything the console cannot express: exceptions with real stack traces,
+// failed network requests, and navigation.
+
+/** CDP's `Log.entryAdded` levels, mapped onto the devtools levels. */
+const LOG_LEVELS: Record<string, DevEventLevel> = {
+  verbose: "debug",
+  info: "info",
+  warning: "warn",
+  error: "error",
+};
+
+/** Frames from a CDP stack trace, flattened to `fn (url:line:col)` strings. */
+function stackFrames(trace: unknown): string[] {
+  return (asArray(asRecord(trace)?.callFrames) ?? []).slice(0, 12).flatMap((entry) => {
+    const frame = asRecord(entry);
+    if (frame === undefined) return [];
+    const fn = asString(frame.functionName);
+    const url = asString(frame.url) ?? "";
+    const line = asNumber(frame.lineNumber) ?? 0;
+    const column = asNumber(frame.columnNumber) ?? 0;
+    return [`${fn !== undefined && fn.length > 0 ? fn : "<anonymous>"} (${url}:${line}:${column})`];
+  });
+}
+
+function recordException(event: CdpEvent): void {
+  const details = asRecord(event.params.exceptionDetails);
+  const thrown = asRecord(details?.exception);
+  const message =
+    asString(thrown?.description) ?? asString(details?.text) ?? "uncaught exception in webview";
+  record({
+    src: "renderer",
+    level: "error",
+    type: "exception",
+    msg: message,
+    ...(event.window !== undefined ? { window: event.window } : {}),
+    data: {
+      stack: stackFrames(details?.stackTrace),
+      ...(asString(details?.url) !== undefined ? { url: asString(details?.url) } : {}),
+      line: asNumber(details?.lineNumber) ?? 0,
+    },
+  });
+}
+
+function recordLogEntry(event: CdpEvent): void {
+  const entry = asRecord(event.params.entry);
+  if (entry === undefined) return;
+  const source = asString(entry.source) ?? "";
+  // Console output is already covered by the core's display handler; only take the
+  // browser-internal sources CDP alone reports (network, security, rendering, …).
+  if (source === "console-api") return;
+  record({
+    src: "renderer",
+    level: LOG_LEVELS[asString(entry.level) ?? ""] ?? "info",
+    type: "log.entry",
+    msg: asString(entry.text) ?? "",
+    ...(event.window !== undefined ? { window: event.window } : {}),
+    data: {
+      source,
+      ...(asString(entry.url) !== undefined ? { url: asString(entry.url) } : {}),
+      ...(asNumber(entry.lineNumber) !== undefined ? { line: asNumber(entry.lineNumber) } : {}),
+    },
+  });
+}
+
+function recordLoadingFailed(event: CdpEvent): void {
+  const canceled = event.params.canceled === true;
+  record({
+    src: "renderer",
+    // A cancelled request is usually the app's own doing (an aborted fetch).
+    level: canceled ? "debug" : "warn",
+    type: "network.failed",
+    msg: `${asString(event.params.errorText) ?? "request failed"} (${asString(event.params.type) ?? "resource"})`,
+    ...(event.window !== undefined ? { window: event.window } : {}),
+    data: {
+      requestId: asString(event.params.requestId) ?? "",
+      canceled,
+      ...(asString(event.params.blockedReason) !== undefined
+        ? { blockedReason: asString(event.params.blockedReason) }
+        : {}),
+    },
+  });
+}
+
+function recordResponse(event: CdpEvent): void {
+  const response = asRecord(event.params.response);
+  const status = asNumber(response?.status) ?? 0;
+  // Successful responses are noise; failures are exactly what a reader is after.
+  if (status < 400) return;
+  record({
+    src: "renderer",
+    level: status >= 500 ? "error" : "warn",
+    type: "network.error",
+    msg: `${status} ${asString(response?.statusText) ?? ""} ${asString(response?.url) ?? ""}`.trim(),
+    ...(event.window !== undefined ? { window: event.window } : {}),
+    data: { status, url: asString(response?.url) ?? "" },
+  });
+}
+
+function recordNavigation(event: CdpEvent): void {
+  const frame = asRecord(event.params.frame);
+  // Sub-frame navigations (iframes, about:blank shims) are not what a reader means
+  // by "the window navigated".
+  if (asString(frame?.parentId) !== undefined) return;
+  record({
+    src: "renderer",
+    level: "info",
+    type: "navigation",
+    msg: asString(frame?.url) ?? "",
+    ...(event.window !== undefined ? { window: event.window } : {}),
+  });
+}
+
+/** Route one CDP event into the stream. Unhandled methods are ignored. */
+export function recordCdpEvent(event: CdpEvent): void {
+  switch (event.method) {
+    case "Runtime.exceptionThrown":
+      recordException(event);
+      break;
+    case "Log.entryAdded":
+      recordLogEntry(event);
+      break;
+    case "Network.loadingFailed":
+      recordLoadingFailed(event);
+      break;
+    case "Network.responseReceived":
+      recordResponse(event);
+      break;
+    case "Page.frameNavigated":
+      recordNavigation(event);
+      break;
+    default:
+      break;
+  }
 }
 
 /**
