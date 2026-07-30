@@ -120,6 +120,16 @@ jobs:
 
       - name: Test native workspace
         run: cargo test --workspace
+        env:
+          # cef-dll-sys copies libcef.so next to the built binaries, but only when
+          # its build script actually runs. On a warm rust-cache the crate is fresh
+          # so the script is skipped, while the copy itself is not part of what the
+          # cache restores — leaving the test binary unable to load libcef.so
+          # (`.cargo/config.toml` bakes an `$ORIGIN` rpath, and cargo adds the
+          # target dir to the search path, but neither helps if the file is gone).
+          # Point the loader at the distribution instead, which is true either way.
+          # Inert on macOS (framework loader) and Windows (exe-dir search).
+          LD_LIBRARY_PATH: ${{ github.workspace }}/vendor/cef
 
   security:
     name: Dependency security
