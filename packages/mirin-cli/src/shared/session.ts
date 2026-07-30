@@ -14,8 +14,10 @@
 import {
   createSessionDir,
   DEV_SESSION_ENV,
+  type InspectorEndpoint,
   newSessionId,
   readEventsFile,
+  readInspectorEndpoint,
   type SessionInfo,
   type SessionPaths,
   type SessionPhase,
@@ -86,6 +88,21 @@ export class DevSession {
   /** Env additions that point the app process at this session. */
   env(): Record<string, string> {
     return { [DEV_SESSION_ENV]: this.paths.dir };
+  }
+
+  /**
+   * Wait for the app's Worker to publish `inspector.json`. The app binds the
+   * inspector after the CLI has already spawned it, so the endpoint only becomes
+   * knowable a moment later; give up quietly rather than delay the dev loop.
+   */
+  async waitForInspector(timeoutMs = 10_000): Promise<InspectorEndpoint | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const endpoint = readInspectorEndpoint(this.paths);
+      if (endpoint !== undefined) return endpoint;
+      await Bun.sleep(100);
+    }
+    return undefined;
   }
 
   /** Record the start of a phase and return its terminal handles. */

@@ -27,18 +27,34 @@ import type {
 export class WindowHandle extends Emitter<WindowEvents> {
   readonly id: number;
   readonly name: string | undefined;
+  #url: string;
+  #title: string | undefined;
 
-  constructor(id: number, name: string | undefined) {
+  constructor(id: number, name: string | undefined, url = "", title?: string) {
     super();
     this.id = id;
     this.name = name;
+    this.#url = url;
+    this.#title = title;
+  }
+
+  /** The URL this window was last asked to load. */
+  get url(): string {
+    return this.#url;
+  }
+
+  /** The title this window was last given, if the app set one. */
+  get title(): string | undefined {
+    return this.#title;
   }
 
   async setTitle(title: string): Promise<void> {
+    this.#title = title;
     runtime().core.windowSetTitle(this.id, title);
   }
 
   async loadUrl(url: string): Promise<void> {
+    this.#url = url;
     runtime().core.windowLoadUrl(this.id, url);
   }
 
@@ -159,14 +175,15 @@ class Windows {
 
   async open(options: WindowOpenOptions | string): Promise<WindowHandle> {
     const opts = typeof options === "string" ? manifestWindow(options) : options;
+    const url = resolveUrl(opts.url);
     const id = runtime().core.windowCreate(
       JSON.stringify({
         ...opts,
-        url: resolveUrl(opts.url),
+        url,
         material: normalizeMaterial(opts.material),
       }),
     );
-    const handle = new WindowHandle(id, opts.name);
+    const handle = new WindowHandle(id, opts.name, url, opts.title);
     this.#register(handle);
     return handle;
   }

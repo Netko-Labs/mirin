@@ -21,6 +21,7 @@
 
 import type { DevtoolsConfig } from "../config/index.ts";
 import { maybeRuntime } from "../runtime.ts";
+import { type InspectorHandle, startInspector } from "./lib/inspector.ts";
 import { installNativeTap, installProcessTaps } from "./lib/taps.ts";
 import { devtoolsOptions, resolveDevtoolsOptions, setDevtoolsOptions } from "./options.ts";
 import {
@@ -36,6 +37,7 @@ import type { AppDevEvent, DevEvent, DevEventQuery, InspectorEndpoint } from "./
 const exposed = new Map<string, () => unknown>();
 
 let paths: SessionPaths | undefined;
+let inspector: InspectorHandle | undefined;
 let teardown: (() => void)[] = [];
 
 /** A registered getter's current value, or an error marker if it threw. */
@@ -56,6 +58,11 @@ export const devtools = {
   /** The active session's paths, or undefined when running without a session. */
   get session(): SessionPaths | undefined {
     return paths;
+  },
+
+  /** The inspector's loopback URL, or undefined when it is not running. */
+  get inspectorUrl(): string | undefined {
+    return inspector !== undefined ? `http://127.0.0.1:${inspector.port}` : undefined;
   },
 
   /**
@@ -126,6 +133,17 @@ export function startDevtools(override?: DevtoolsConfig): void {
   teardown.push(installNativeTap());
   teardown.push(installProcessTaps());
 
+  inspector = startInspector({ exposed: () => devtools.state() });
+  if (inspector !== undefined) {
+    publishInspectorEndpoint({
+      version: 1,
+      port: inspector.port,
+      token: inspector.token,
+      pid: process.pid,
+      startedAt: Date.now(),
+    });
+  }
+
   record({
     src: "main",
     level: "info",
@@ -133,7 +151,7 @@ export function startDevtools(override?: DevtoolsConfig): void {
     msg: "devtools attached",
     data: {
       file: sink.filePath ?? null,
-      inspector: options.inspector,
+      inspector: inspector !== undefined ? `http://127.0.0.1:${inspector.port}` : null,
       cdp: options.cdp,
       bufferSize: options.bufferSize,
     },
@@ -159,5 +177,7 @@ export function publishInspectorEndpoint(endpoint: InspectorEndpoint): void {
 export function stopDevtools(): void {
   for (const off of teardown) off();
   teardown = [];
+  void inspector?.stop();
+  inspector = undefined;
   sink.close();
 }

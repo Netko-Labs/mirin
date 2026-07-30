@@ -230,7 +230,17 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   });
   session?.setPid(appProc.pid);
   launchPhase?.ok();
-  if (session) console.log(`[mirin dev] dev session: ${session.paths.dir}`);
+  if (session) {
+    console.log(`[mirin dev] dev session: ${session.paths.dir}`);
+    // The app publishes its inspector endpoint once the Worker binds it; report it
+    // when it lands, without holding up the dev loop if it never does.
+    void session.waitForInspector().then((endpoint) => {
+      if (endpoint === undefined) return;
+      console.log(
+        `[mirin dev] inspector: http://127.0.0.1:${endpoint.port} — token in inspector.json`,
+      );
+    });
+  }
 
   const cleanup = () => {
     vite.kill();

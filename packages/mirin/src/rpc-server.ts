@@ -7,7 +7,7 @@
 import type { ServerWebSocket } from "bun";
 import { devtoolsOptions } from "./devtools/options.ts";
 import { record } from "./devtools/sink.ts";
-import type { Router, RpcContext } from "./rpc.ts";
+import type { Procedure, Router, RpcContext } from "./rpc.ts";
 import { formatArg } from "./shared/format.ts";
 
 interface SocketData {
@@ -99,6 +99,15 @@ export class RpcServer {
   /** Type-level `any` keeps the caller's concrete router shape. */
   setRouter(router: Router<any>): void {
     this.#router = router;
+  }
+
+  /**
+   * The registered procedures, name and kind. Serves the inspector's `/state`, so
+   * a tool can discover an app's RPC surface without reading its source.
+   */
+  routes(): { name: string; type: string }[] {
+    const routes: Record<string, Procedure> = this.#router?.routes ?? {};
+    return Object.entries(routes).map(([name, proc]) => ({ name, type: proc.type }));
   }
 
   /** Register the handler for internal `mirin:*` control actions (e.g. window drag). */

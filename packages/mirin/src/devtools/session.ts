@@ -24,6 +24,16 @@ import { dirname, join } from "node:path";
 import { asArray, asEnum, asNumber, asRecord, asString, parseJsonRecord } from "./lib/parse.ts";
 import type { DevEvent, DevEventLevel, DevEventSource, InspectorEndpoint } from "./types.ts";
 
+// Re-exported so a consumer of the session protocol (the CLI, an external tool)
+// gets the record types alongside the readers that produce them.
+export type {
+  DevEvent,
+  DevEventLevel,
+  DevEventQuery,
+  DevEventSource,
+  InspectorEndpoint,
+} from "./types.ts";
+
 /** Env var carrying the active session dir into the app process. */
 export const DEV_SESSION_ENV = "MIRIN_DEV_SESSION";
 
