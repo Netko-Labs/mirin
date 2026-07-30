@@ -10,7 +10,14 @@
  *   logger.info("server listening", port);
  *   const db = logger.child("db");
  *   db.debug("query", sql);            // → [mirin:db] debug query …
+ *
+ * Every emitted line is also recorded to the devtools sink, so the same output
+ * an operator reads in the terminal is queryable over the inspector and mirrored
+ * into `events.jsonl` (docs/agent-devtools.md).
  */
+
+import { record } from "./devtools/sink.ts";
+import { firstError, formatArgs, formatStack } from "./shared/format.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
 
@@ -92,8 +99,24 @@ export class Logger {
     const name = this.#scope ? `[mirin:${this.#scope}]` : "[mirin]";
     const prefix = useColor ? `${COLOR.dim}${name}${COLOR.reset}` : name;
     const tag = useColor ? `${COLOR[level]}${level}${COLOR.reset}` : level;
-    const sink = level === "warn" || level === "error" ? console.error : console.log;
-    sink(`${prefix} ${tag}`, ...args);
+    const out = level === "warn" || level === "error" ? console.error : console.log;
+    out(`${prefix} ${tag}`, ...args);
+    this.#record(level, args);
+  }
+
+  /** Mirror the line into the devtools sink. Never throws — see devtools/sink. */
+  #record(level: Exclude<LogLevel, "silent">, args: unknown[]): void {
+    const error = firstError(args);
+    record({
+      src: "main",
+      level,
+      type: "log",
+      msg: formatArgs(args),
+      data: {
+        ...(this.#scope !== undefined ? { scope: this.#scope } : {}),
+        ...(error !== undefined ? { stack: formatStack(error) } : {}),
+      },
+    });
   }
 }
 

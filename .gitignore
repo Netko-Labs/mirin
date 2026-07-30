@@ -18,3 +18,4 @@ examples/*/build/
 
 # Bun compile temp artifacts
 *.bun-build
+.mirin-test/

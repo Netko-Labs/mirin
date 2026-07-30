@@ -6,6 +6,10 @@
  * 3. assemble + ad-hoc-sign the dev .app
  * 4. start the Vite dev server (rolldown-vite) for the UI
  * 5. launch the app pointed at the Vite URL, with RPC injected into the webview
+ *
+ * Each run also opens a dev session under `.mirin/dev/` and records its phase
+ * timeline there, so the app's structured event stream and this startup sequence
+ * can be read from disk without a terminal (docs/agent-devtools.md).
  */
 
 import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -27,6 +31,7 @@ const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
 
 import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { DevSession } from "./shared/session.ts";
 import { sweepBuildTemps } from "./temps.ts";
 
 /** Vite's default port. `mirin dev` probes upward from here for a free one, so a
@@ -51,10 +56,19 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   // bundling; the file is read from the project at window-create time.
   const linuxIconPng = IS_LINUX && iconSrc ? resolveLinuxIconPng(iconSrc) : undefined;
 
+  // --- open the dev session (agent devtools) ---
+  const session = DevSession.create({
+    projectDir,
+    appName,
+    appId: bundleId,
+    version: typeof config.version === "string" ? config.version : undefined,
+  });
+
   // --- native artifacts ---
   const artifacts = await resolveArtifacts({ release: false });
 
   // --- compile the Bun host + bundle the Worker ---
+  const compilePhase = session?.phase("compile");
   console.log("[mirin dev] compiling host + bundling main process…");
   // `bun build --compile` emits an `.exe` on Windows; name it so explicitly.
   const hostExe = join(work, IS_WINDOWS ? "host.exe" : "host");
@@ -65,6 +79,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
     projectDir,
   );
   await $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(projectDir);
+  compilePhase?.ok();
 
   // Extra assets (dev): compile workers into .mirin/workers and symlink sidecar
   // binaries into .mirin/sidecars (no copy/sign in dev — they run unsigned locally).
@@ -80,6 +95,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   }
 
   // --- assemble the dev bundle (Windows/Linux app folder, or macOS .app) ---
+  const bundlePhase = session?.phase("bundle");
   console.log("[mirin dev] assembling dev bundle…");
   const { app, exe } = IS_WINDOWS
     ? await buildWindowsBundle({
@@ -112,6 +128,7 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
           icon: iconSrc,
           urlSchemes: config.urlSchemes,
         });
+  bundlePhase?.ok();
 
   // Linux: install a dev `.desktop` entry so cosmic's dock can resolve the app's
   // icon. cosmic matches a running X11 window's `WM_CLASS` (which the core sets to
@@ -141,6 +158,8 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
   // RPC server). `--host 127.0.0.1` forces Vite's bind.
   const port = await findFreePort(DEV_PORT_BASE);
   const devUrl = `http://127.0.0.1:${port}`;
+  const vitePhase = session?.phase("vite");
+  session?.setDevUrl(devUrl);
   console.log(`[mirin dev] starting Vite dev server on ${devUrl}…`);
   const vite = Bun.spawn(
     [
@@ -159,9 +178,17 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       stdio: ["ignore", "inherit", "inherit"],
     },
   );
-  await waitForUrl(devUrl, 15_000);
+  try {
+    await waitForUrl(devUrl, 15_000);
+    vitePhase?.ok(devUrl);
+  } catch (err) {
+    vitePhase?.fail(err instanceof Error ? err.message : String(err));
+    vite.kill();
+    throw err;
+  }
 
   // --- launch the app ---
+  const launchPhase = session?.phase("launch");
   console.log(`[mirin dev] launching ${appName}…`);
   const appProc = Bun.spawn([exe], {
     cwd: projectDir,
@@ -183,7 +210,11 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
         : {}),
       MIRIN_WORKER: workerJs,
       MIRIN_DEV_URL: devUrl,
-      MIRIN_MANIFEST_JSON: JSON.stringify({ id: bundleId, windows: config.windows }),
+      MIRIN_MANIFEST_JSON: JSON.stringify({
+        id: bundleId,
+        windows: config.windows,
+        devtools: config.devtools,
+      }),
       // dev: true → enables inspect-element AND gives this run its own `-dev`
       // CEF cache dir, so `mirin dev` can run alongside the installed app.
       // `icon_path` (Linux) → the window's `_NET_WM_ICON` (cosmic dock/taskbar).
@@ -193,9 +224,13 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
       }),
       MIRIN_SIDECAR_DIR: sidecarsDir,
       MIRIN_WORKERS_DIR: workersDir,
+      ...(session?.env() ?? {}),
     },
     stdio: ["ignore", "inherit", "inherit"],
   });
+  session?.setPid(appProc.pid);
+  launchPhase?.ok();
+  if (session) console.log(`[mirin dev] dev session: ${session.paths.dir}`);
 
   const cleanup = () => {
     vite.kill();
@@ -206,6 +241,8 @@ export async function dev(projectDir = process.cwd()): Promise<number> {
 
   const code = await appProc.exited;
   vite.kill();
+  // Post-mortem for whoever (or whatever) reads the session afterwards.
+  session?.finish(code, appProc.signalCode ?? undefined);
   return code;
 }
 

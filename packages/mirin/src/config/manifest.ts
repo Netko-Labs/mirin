@@ -176,6 +176,48 @@ export interface MirinConfig {
    * multiple instances (each gets its own CEF cache dir).
    */
   singleInstance?: boolean;
+  /**
+   * Agent-facing developer tooling: the structured event stream and the loopback
+   * inspector (docs/agent-devtools.md). Fully enabled under `mirin dev` and
+   * fully disabled in packaged builds; omit unless you need to change that.
+   */
+  devtools?: DevtoolsConfig;
+}
+
+/**
+ * Developer/agent observability settings.
+ *
+ * Under `mirin dev` every capability defaults to on. In a packaged build every
+ * capability defaults to **off**, and the individual switches below are ignored
+ * unless {@link DevtoolsConfig.production} is `true` — the inspector can evaluate
+ * JavaScript in a webview and synthesize input, so enabling it in a shipped app
+ * gives any local process control of the app. Do that only for a diagnostic
+ * build you control.
+ */
+export interface DevtoolsConfig {
+  /** Master switch for the whole subsystem. Default true where permitted. */
+  enabled?: boolean;
+  /** Bind the loopback inspector HTTP/SSE server. Default true where permitted. */
+  inspector?: boolean;
+  /** Mirror the event stream to `.mirin/dev/<session>/events.jsonl`. Default true. */
+  file?: boolean;
+  /** Events kept in memory for `/logs`. Default 2000. */
+  bufferSize?: number;
+  /**
+   * Include RPC inputs and results in traces. Default false: procedure payloads
+   * carry app data, and the stream is written to disk in plain text.
+   */
+  rpcPayloads?: boolean;
+  /**
+   * Attach to CEF's remote-debugging port, enabling `/screenshot`, `/snapshot`,
+   * `/eval`, and `/act`. Default true where permitted.
+   */
+  cdp?: boolean;
+  /**
+   * Permit devtools in a packaged (non-dev) build. Default false. Read the
+   * warning on this interface before setting it.
+   */
+  production?: boolean;
 }
 
 /** A bundled sidecar binary with optional hardened-runtime entitlements. */
