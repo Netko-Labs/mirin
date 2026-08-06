@@ -73,7 +73,7 @@ for await (const _ of main.events("focus")) { ... }  // or async iteration
 
 // fully dynamic window — same options shape as the manifest
 const scratch = await app.windows.open({
-  name: "scratch",                            // optional; enables get("scratch")
+  name: "scratch",                            // optional; omitted → "window-<id>"
   title: "Scratch", width: 400, height: 300, url: "app://ui/scratch.html",
 });
 await scratch.close();
@@ -83,7 +83,7 @@ Principles:
 - Every imperative API takes the *same options object* as its declarative twin. Nothing is config-only or runtime-only.
 - All mutating calls are `async` (they cross the FFI/main-thread boundary); reads of declared facts (`main.name`) are sync.
 - Events come as `.on(type, fn)` **and** `.events(type)` async iterators, both fully typed.
-- Dynamic windows are handle-first; `name` is an optional registration for later lookup. *(Defaulted decision — veto if you want handle-only.)*
+- Dynamic windows are handle-first; `name` is an optional registration for later lookup. *(Defaulted decision — veto if you want handle-only.)* Passing no name does not leave the window nameless: `handle.name` is always a string, falling back to `window-<id>`, so `windows.get()` and the devtools `/state` can address every window.
 
 ## 2a. Transparent windows & native materials (macOS)
 
@@ -202,7 +202,13 @@ the localhost RPC data plane, and a Windows WebView2 backend option.
 | `mirinjs/rpc` | shared (types + handlers) | `rpc.router/query/mutation/event` |
 | `mirinjs/client` | webview (browser) | `client<Router>()`, `window.mirin` typings, `windowControls` |
 | `mirinjs/devtools/session` | any process (no FFI) | the `.mirin/dev/` session protocol: paths, readers, writers, record types |
+| `mirinjs/check` | dev machine (CLI process) | `defineCheck` + the `CheckDriver` contract a `mirin check --scenario` file is written against |
 | `@mirinjs/cli` (`mirin`) | dev machine | `init`, `dev`, `check`, `doctor`, `build`, `release` |
+
+`mirinjs/check` is types plus one identity function: the scenario runs inside the
+CLI, which owns the inspector connection, but the contract ships with the runtime so
+an app can write a scenario without importing CLI internals. Same split as
+`mirinjs/devtools/session`. See docs/agent-devtools.md for the driver surface.
 
 ## 6. Resolved & open items
 

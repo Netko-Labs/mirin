@@ -1,7 +1,9 @@
 # Handoff: agent devtools
 
-Status: **code complete, native path unverified.** Everything TypeScript is verified;
-nothing was ever compiled as Rust or run as a real app.
+Status: **verified on macOS arm64 (2026-07-31).** Steps 1 and 2 have both been run
+against a real app on a machine with vendored CEF. Four findings came out of that
+pass and five gaps out of a subsequent dogfooding pass; all are fixed on this branch
+(see *Findings* and *Gaps closed*). Windows and Linux are still unverified.
 
 Read `docs/agent-devtools.md` first — it is the source of truth for the surface.
 This file is only the handoff: what to verify, in what order, and what to do when a
@@ -24,34 +26,106 @@ is about seeing and driving a window, and none of it has been pointed at a real 
 
 ## Branch
 
-`claude/mirin-ai-observability-0s84bh`, 5 commits ahead of `main`:
+`claude/mirin-ai-observability-0s84bh`. The five feature commits, oldest first
+(`git log main..HEAD` for the current list, which now also carries CI and
+verification fixes):
 
 ```
-11b4adb  fix: keep the devtools stream readable and non-blocking
-d19c9c4  feat: mirin check and doctor, --json output, and agent devtools docs
-4112890  feat: DevTools-protocol bridge for screenshots, snapshots, and input
-75575fb  feat: loopback inspector for the devtools stream
 d8c6a5e  feat: structured devtools event stream for agents
+75575fb  feat: loopback inspector for the devtools stream
+4112890  feat: DevTools-protocol bridge for screenshots, snapshots, and input
+d19c9c4  feat: mirin check and doctor, --json output, and agent devtools docs
+11b4adb  fix: keep the devtools stream readable and non-blocking
 ```
 
 ## What is and is not verified
 
 | Check | State |
 | --- | --- |
-| `bun run test` (131 tests) | ✅ pass |
+| `bun run test` (161 tests) | ✅ pass |
 | `bun run typecheck` | ✅ pass |
 | `bun run fmt-lint` | ✅ pass (57 warnings, all pre-existing) |
 | `cargo fmt --all --check` | ✅ pass |
-| `mirin doctor`, both outcomes | ✅ ran for real |
-| `cargo clippy` / `cargo build` | ✅ **by CI** — see Step 1 |
-| `cargo test --workspace` | ✅ by CI |
-| `mirin dev` (any platform) | ❌ never ran |
-| `mirin check` | ❌ never ran |
-| Screenshot / snapshot / eval / act | ❌ never ran |
-| Packaged build has devtools off | ❌ never ran |
+| `cargo clippy` / `cargo build` / `cargo test` | ✅ **by CI**, and re-run locally with vendored CEF |
+| `mirin dev` + `mirin doctor` | ✅ ran for real (macOS arm64) |
+| `mirin check`, both outcomes | ✅ ran for real — exit 0 healthy, exit 1 on a deliberate throw |
+| Screenshot / snapshot / eval / act | ✅ ran for real, including a transparent/OSR window |
+| `mirin check --scenario` | ✅ ran for real on two examples — passes green, fails at the right step |
+| Per-window targeting (`?window=`) | ✅ verified — a marker injected into window 2 appears only there |
+| Packaged build has devtools off | ✅ verified — no session, no inspector, CEF port closed |
+| `mirin dev` / `check` on Windows, Linux | ❌ never ran |
 
 Mutation-tested (deliberately broke the code, confirmed the tests fail): selector
 injection, click event pairing, the JSON-serializability guard.
+
+## Findings
+
+From the macOS verification pass. Reproduction detail is in the git history of the
+fixes; this is the state.
+
+1. ✅ **fixed** — `mirin check` exited 1 on *every* healthy app. A missing
+   `favicon.ico` 404 was recorded twice with contradictory severities (`network.error`
+   at warn, `log.entry` at error) and `check` gates on any error-level event. No
+   example nor the scaffold template ships a favicon, so a freshly scaffolded app
+   failed `check` out of the box. `taps.ts` now drops `Log.entryAdded` entries whose
+   source is `network`, the same way it already dropped `console-api`.
+2. ✅ **fixed** — `check --json` emitted prose on stdout (7 of 17 lines did not parse),
+   breaking the one property `--json` exists for. The leaks were `bun build`, Vite,
+   the app process, and two `console.log`s in `artifacts.ts`. The reporter now owns
+   child output: `Reporter.childStdio` and `Reporter.build()` send it to stderr in
+   JSON mode rather than dropping it.
+3. ✅ **fixed** — screenshots of transparent/OSR windows came back with alpha 0
+   across the background, so any viewer composited them to near-blank white. A page
+   with no background of its own is now captured over an opaque backdrop, with
+   `composited: true` in the response so a caller knows the image is not pixel-truth.
+   Two findings from doing it: the backdrop has to be chosen from the page's *text*
+   colour rather than `prefers-color-scheme` (a glass window renders light text
+   whatever the OS says, and white-on-white is the blank page again), and
+   `Emulation.setDefaultBackgroundColorOverride` is a **no-op on CEF's windowless
+   path** — it reports success and changes nothing, measured as byte-identical
+   captures for `none`, red and black. Styling the document is the only lever that
+   reaches the compositor.
+4. ✅ **fixed** — `doctor` reported "vendor/cef is missing" when it was present: it
+   resolved `vendor/cef` from the caller's cwd (normally an example app) while
+   `artifacts.ts` resolved it from the repo root. Both now go through
+   `vendoredCef()`, which also checks for the framework rather than just the
+   directory.
+
+Minor, not fixed: under `devtools.production` the inspector binds but publishes no
+`inspector.json`, and its 401 names a `.mirin/dev/<session>/` path that does not
+exist for a packaged app — so the token is undiscoverable. Decide whether that
+configuration should publish a token at all.
+
+## Gaps closed after the verification pass (2026-07-31)
+
+A dogfooding pass over the whole surface — driving two real apps through the
+inspector rather than reading the code — turned up five gaps. All five are closed.
+
+1. **`mirin check` only covered startup.** It booted, settled, captured and exited,
+   so it could never answer "does this flow still work?". `--scenario ./check.ts`
+   now drives the app through a typed `CheckDriver` and fails the check when an
+   assertion does. `examples/hello-react/check.ts` and
+   `examples/kitchen-sink/check.ts` are the worked examples.
+2. **`devtools.expose` had zero adoption** — no example, not the scaffold — so every
+   app reported `exposed: {}` and the highest-leverage feature in the doc was
+   invisible. kitchen-sink now publishes its app shell; the `create-mirin` template
+   ships a small slice.
+3. **Runtime-created windows had no name**, so a tool could only address them by a
+   numeric id. `handle.name` is now always set, falling back to `window-<id>`.
+4. **An uncaught error was recorded twice** (`console` without a stack, `exception`
+   with one). The stackless copy is dropped where CDP covers the window.
+5. **Transparent screenshots were blank** — see finding 3 above.
+
+Two API lessons came out of writing the first real scenarios, and both are in the
+docs because they are easy to get wrong and produce *passing* checks that verify
+nothing:
+
+- `expectText` matches anywhere in the tree, including the input the text was just
+  typed into. The first version of the hello-react scenario passed against a
+  deliberately broken mutation for exactly this reason. Assert on the thing that
+  changed.
+- An action returns before the RPC round trip it triggered lands, so `assert` after
+  an interaction races. That is what `waitUntil` is for.
 
 ---
 
@@ -265,7 +339,7 @@ back empty.
 | Console events have `window: null` | `window_id_for_ident` / `try_lock` (§2a) |
 | `/logs` 500s | a non-serializable `data` object slipped past `encode()` in `devtools/sink.ts` — that guard exists precisely to prevent this |
 | `mirin check` hangs | the launch hook never settled; `dev.ts` should always `cleanup()` in its `finally` |
-| `mirin dev` prose in `--json` output | a `console.log` that should be `reporter.info` |
+| `mirin dev` prose in `--json` output | a `console.log` that should be `reporter.info`, or a spawned child inheriting stdout instead of using `Reporter.childStdio` / `Reporter.build()` |
 
 ## Guardrails
 
@@ -277,22 +351,26 @@ Do not "fix" these — they are load-bearing:
   selector must never become script.
 - `devtools.production` defaulting to false, and individual switches being unable to
   override it (`devtools/options.ts`).
-- Not forwarding `Runtime.consoleAPICalled`. The display handler already covers
-  console output; forwarding both duplicates every line.
+- Not forwarding `Runtime.consoleAPICalled`, and not forwarding `Log.entryAdded`
+  entries sourced from `network`. The display handler already covers console output
+  and the Network taps already cover failed requests; forwarding either one twice
+  duplicates it, and in the network case at a severity that fails `mirin check`.
 - RPC payloads staying out of the stream by default.
+- Restoring the page's own background after a composited screenshot, and gating the
+  console/exception dedupe on the CDP bridge actually being attached. Both are
+  "temporarily change the app to observe it" paths; the restore and the gate are
+  what keep them honest.
 
 ## Follow-ups (not in this branch)
 
-1. **MCP server** — deliberately out of scope. It is a thin adapter over the
-   inspector's HTTP surface: one tool per route, discovering `inspector.json`. This
-   is the piece that makes the surface native to editors and coding agents.
-2. **`--json` on `mirin release`** — only `dev`, `build`, `check`, `doctor` are wired.
-3. **Console stack traces** — an uncaught error currently appears twice: as
-   `console` (no stack, from CEF) and as `exception` (with stack, from CDP).
-   Deduplicating them needs a correlation key.
-4. **Early first-window console** — CDP attaches after CEF binds its port, so a
+1. **`--json` on `mirin release`** — only `dev`, `build`, `check`, `doctor` are wired.
+2. **Early first-window console** — CDP attaches after CEF binds its port, so a
    `console.log` in the very first inline script can be missed by CDP. The
    display-handler tap catches it regardless, so this only affects stack traces.
-5. Platform docs (`docs/macos-mvp.md`, `windows-port.md`, `linux-port.md`) have not
+3. **Native window capture** — a composited screenshot shows the page over a flat
+   backdrop, not the native material actually behind a transparent window. Only an
+   OS-level capture (`CGWindowListCreateImage` and friends) would show what the user
+   sees. Per-platform work; the composited image is good enough to verify the UI.
+4. Platform docs (`docs/macos-mvp.md`, `windows-port.md`, `linux-port.md`) have not
    been updated with devtools findings — do that once the surface is verified on
    each platform.
