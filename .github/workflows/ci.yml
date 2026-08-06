@@ -1,14 +1,13 @@
 name: CI
 
-# Runner policy: **only the build runs on Blacksmith.** `native` fetches CEF and
-# compiles the Rust workspace, which is minutes of CPU and the only place a faster
-# runner pays for itself. Everything else — lint, typecheck, tests, dependency
-# audits — finishes in well under a minute on a GitHub-hosted runner, so paying
-# for one buys nothing.
+# Runner policy: **nothing here runs on Blacksmith — it bills, and CI does not.**
+# This repository is public, so GitHub-hosted standard runners are free and cover
+# every target this matrix needs. Blacksmith is reserved for the release builds in
+# `release.yml`, which run only on a version tag; see the note there.
 #
-# Blacksmith needs its GitHub app on the Netko-Labs org (app.blacksmith.sh); the
-# GitHub-hosted jobs keep working without it, which also means a Blacksmith outage
-# cannot block a lint-only PR.
+# The trade is deliberate: CI is slower than it was on paid hardware, and CI runs
+# on every push. Paying per PR to shorten a job that already gates nothing urgent
+# is the wrong side of that trade.
 #
 # Building on macOS 15 is fine even though Liquid Glass needs macOS 26 at runtime:
 # NSGlassEffectView is resolved dynamically, not linked.
@@ -35,7 +34,6 @@ jobs:
   static:
     name: Static checks
     if: github.event_name != 'schedule'
-    # No compilation here — GitHub-hosted is plenty.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -73,21 +71,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # This is the build, so it is the job that stays on Blacksmith. The two
-        # arm64 targets have no Blacksmith equivalent and use GitHub's own arm
-        # runners — unchanged, and the reason this matrix is already mixed.
         include:
           - name: macOS arm64
-            os: blacksmith-6vcpu-macos-15
+            os: macos-15
             install-build-tools: brew install ninja
           - name: Linux x64
-            os: blacksmith-4vcpu-ubuntu-2404
+            os: ubuntu-24.04
             install-build-tools: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev
           - name: Linux arm64
             os: ubuntu-24.04-arm
             install-build-tools: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev
           - name: Windows x64
-            os: blacksmith-4vcpu-windows-2025
+            os: windows-2025
             install-build-tools: choco install ninja -y
           - name: Windows arm64
             os: windows-11-arm
@@ -145,7 +140,6 @@ jobs:
 
   security:
     name: Dependency security
-    # Two audits and no build.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5

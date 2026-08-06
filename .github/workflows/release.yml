@@ -5,9 +5,12 @@ name: Release
 # registry tarballs. Publication and release visibility happen after all targets
 # succeed.
 #
-# Runner policy matches CI: only the three `build-*` jobs run on Blacksmith, because
-# only they compile. Validation and publication are I/O-bound and run on
-# GitHub-hosted runners.
+# Runner policy: **Blacksmith is used here and nowhere else.** It bills per minute,
+# so it is spent only where the work is both slow and rare — the three `build-*`
+# jobs compile the Rust workspace against CEF for every shipped target, and they
+# run only on a version tag. `prepare-release` and `publish-release` do no
+# compilation, and CI (`ci.yml`) uses GitHub-hosted runners throughout, which are
+# free on this public repository.
 on:
   push:
     tags: ["v*"]
