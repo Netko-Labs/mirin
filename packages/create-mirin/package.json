@@ -22,11 +22,13 @@
     "create-mirinjs": "./src/index.ts"
   },
   "exports": {
-    ".": "./src/scaffold.ts"
+    ".": "./src/scaffold.ts",
+    "./skill": "./src/skill.ts"
   },
   "files": [
     "src",
-    "template"
+    "template",
+    "skill"
   ],
   "engines": {
     "bun": ">=1.2.0"

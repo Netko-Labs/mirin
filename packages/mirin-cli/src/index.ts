@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * mirin CLI — `dev`, `check`, `doctor`, `build`, `release`, `init`.
+ * mirin CLI — `dev`, `check`, `doctor`, `build`, `release`, `init`, `skill`.
  */
 
 import { resolve } from "node:path";
@@ -11,6 +11,7 @@ import { dev } from "./dev.ts";
 import { doctor } from "./doctor.ts";
 import { parseLinuxFormats } from "./package/linux/index.ts";
 import { release } from "./release.ts";
+import { skill } from "./skill.ts";
 
 /** Minimal flag parser: `--k=v`, `--k v`, and boolean `--k`; the rest are positionals. */
 function parseArgs(argv: string[]): {
@@ -56,6 +57,7 @@ Usage:
   mirin build        package a standalone app (output: ./build)
   mirin release      build + emit update artifacts (output: ./build/release)
   mirin init [dir]   scaffold a new app
+  mirin skill        install the agent skill into this project (.claude/skills/mirin)
 
 Options (build):
   --version <v>              override the app version (else package.json)
@@ -66,6 +68,8 @@ Options (build):
 Options (check):
   --timeout <ms>             how long to wait for a window (default 45000)
   --settle <ms>              quiet time before capturing (default 1000)
+  --scenario <file>          drive the app with a scenario before capturing;
+                             the file default-exports defineCheck(async app => …)
 
 Options (check, doctor, dev, build):
   --json                     machine-readable output on stdout
@@ -92,12 +96,17 @@ switch (command) {
         json: asJson,
         ...(intOpt("timeout") !== undefined ? { timeoutMs: intOpt("timeout") } : {}),
         ...(intOpt("settle") !== undefined ? { settleMs: intOpt("settle") } : {}),
+        ...(typeof opts.scenario === "string" ? { scenario: opts.scenario } : {}),
       }),
     );
     break;
   }
   case "doctor": {
     process.exit(await doctor(process.cwd(), { json: asJson }));
+    break;
+  }
+  case "skill": {
+    process.exit(await skill(process.cwd(), { json: asJson }));
     break;
   }
   case "build": {
@@ -132,6 +141,7 @@ switch (command) {
     try {
       const name = scaffold(targetDir);
       console.log(`\n✓ Created ${name} in ${arg ?? "my-mirin-app"}`);
+      console.log("  .claude/skills/mirin/ — agent skill for verifying changes");
       console.log("  bun install && bun run dev");
       process.exit(0);
     } catch (err) {

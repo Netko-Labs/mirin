@@ -5,6 +5,10 @@ of them). This app is built with [mirin](https://github.com/Netko-Labs/mirin), w
 ships a development observability surface so you can see what the app is doing
 instead of guessing.
 
+If your tool supports skills, the detail below is also installed as one at
+`.claude/skills/mirin/`, loaded on demand rather than kept in context. Refresh it
+after upgrading the CLI with `bunx mirin skill`.
+
 ## Commands
 
 ```bash
