@@ -499,6 +499,28 @@ Defaults are asymmetric on purpose: everything on under `mirin dev`, everything 
 in a packaged build. In a packaged build the individual switches are ignored unless
 `production` is `true` — the gate is `production`, not each switch.
 
+## Load-bearing behaviour
+
+These look like cleanup targets and are not. Each exists because removing it
+reintroduces a bug this surface already had:
+
+- The `Host`-header check in `devtools/lib/http.ts`. Binding loopback is not a
+  boundary on its own — any browser on the machine can reach 127.0.0.1.
+- `JSON.stringify` around selectors and CDP params in `actions.ts`, and around the
+  colour in `capture.ts`. A quote from a request must never become script.
+- `devtools.production` defaulting to false, with the individual switches unable to
+  override it. The gate is `production`, not each switch.
+- Not forwarding `Runtime.consoleAPICalled`, and not forwarding `Log.entryAdded`
+  entries sourced from `network`. Each is already reported by a producer that grades
+  it correctly; forwarding twice duplicated them, and in the network case at a
+  severity that failed `mirin check` on every healthy app.
+- Restoring the page's own background after a composited screenshot, and gating the
+  console/exception dedupe on the CDP bridge actually being attached. Both are
+  "temporarily change the app in order to observe it" paths, and the restore and the
+  gate are what keep them honest.
+- Redacting **every** URL that reaches the stream, not just the network ones. A
+  credential can arrive by navigation, by deep link, or in a stack frame.
+
 ## Known gaps
 
 - **Console output has no stack traces.** It comes from CEF's display handler,
@@ -511,3 +533,11 @@ in a packaged build. In a packaged build the individual switches are ignored unl
   CDP. The display-handler tap catches console output regardless.
 - **`--json` on `release`** is not wired; only `dev`, `build`, `check`, and
   `doctor`.
+- **No native window capture.** A composited screenshot shows the page over a flat
+  backdrop, not the native material actually behind a transparent window. Only an
+  OS-level capture (`CGWindowListCreateImage` and equivalents) would show what a
+  person sees. Per-platform work; the composited image is good enough to verify the
+  UI, which is what `check` needs it for.
+- **Platform docs are not updated.** `docs/macos-mvp.md`, `windows-port.md` and
+  `linux-port.md` carry no devtools findings yet — add them as the surface is
+  verified on each platform. Only macOS arm64 has been verified against a real app.
