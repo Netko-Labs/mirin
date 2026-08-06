@@ -1,7 +1,15 @@
 name: CI
 
-# Runs on Blacksmith Linux, Windows, and Apple Silicon macOS runners. Requires
-# the Blacksmith GitHub app installed on the Netko-Labs org (app.blacksmith.sh).
+# Runner policy: **only the build runs on Blacksmith.** `native` fetches CEF and
+# compiles the Rust workspace, which is minutes of CPU and the only place a faster
+# runner pays for itself. Everything else — lint, typecheck, tests, dependency
+# audits — finishes in well under a minute on a GitHub-hosted runner, so paying
+# for one buys nothing.
+#
+# Blacksmith needs its GitHub app on the Netko-Labs org (app.blacksmith.sh); the
+# GitHub-hosted jobs keep working without it, which also means a Blacksmith outage
+# cannot block a lint-only PR.
+#
 # Building on macOS 15 is fine even though Liquid Glass needs macOS 26 at runtime:
 # NSGlassEffectView is resolved dynamically, not linked.
 
@@ -27,7 +35,8 @@ jobs:
   static:
     name: Static checks
     if: github.event_name != 'schedule'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # No compilation here — GitHub-hosted is plenty.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -64,6 +73,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # This is the build, so it is the job that stays on Blacksmith. The two
+        # arm64 targets have no Blacksmith equivalent and use GitHub's own arm
+        # runners — unchanged, and the reason this matrix is already mixed.
         include:
           - name: macOS arm64
             os: blacksmith-6vcpu-macos-15
@@ -133,7 +145,8 @@ jobs:
 
   security:
     name: Dependency security
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # Two audits and no build.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
