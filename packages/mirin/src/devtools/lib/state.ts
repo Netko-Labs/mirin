@@ -14,7 +14,8 @@ import { sink } from "../sink.ts";
 
 export interface WindowSnapshot {
   id: number;
-  name?: string;
+  /** Always present — an unnamed window is named from its id (`window-2`). */
+  name: string;
   /** The URL the window was last asked to load. */
   url?: string;
   title?: string;
@@ -50,7 +51,7 @@ function windowSnapshots(): WindowSnapshot[] {
   try {
     return app.windows.all().map((handle) => ({
       id: handle.id,
-      ...(handle.name !== undefined ? { name: handle.name } : {}),
+      name: handle.name,
       ...(handle.url.length > 0 ? { url: handle.url } : {}),
       ...(handle.title !== undefined ? { title: handle.title } : {}),
       frame: handle.getFrame(),

@@ -209,6 +209,16 @@ export interface DevtoolsConfig {
    */
   rpcPayloads?: boolean;
   /**
+   * Record HTTP requests and responses in the stream: method, URL, status, type,
+   * time to headers, plus headers with credential-bearing values redacted. Bodies
+   * are never captured — fetch one on demand with `Network.getResponseBody`
+   * through `POST /cdp`. Default true where permitted.
+   *
+   * Setting this to false silences successful traffic only; failed requests and
+   * 4xx/5xx responses are always recorded, so `mirin check` keeps its teeth.
+   */
+  network?: boolean;
+  /**
    * Attach to CEF's remote-debugging port, enabling `/screenshot`, `/snapshot`,
    * `/eval`, and `/act`. Default true where permitted.
    */

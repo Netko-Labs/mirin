@@ -23,8 +23,9 @@ import type { DevtoolsConfig } from "../config/index.ts";
 import { maybeRuntime, onNativeEvent } from "../runtime.ts";
 import { CdpBridge } from "./lib/cdp.ts";
 import { type InspectorHandle, startInspector } from "./lib/inspector.ts";
+import { recordCdpEvent } from "./lib/renderer-taps.ts";
 import { cdpRoutes } from "./lib/routes-cdp.ts";
-import { installNativeTap, installProcessTaps, recordCdpEvent } from "./lib/taps.ts";
+import { installNativeTap, installProcessTaps } from "./lib/taps.ts";
 import { devtoolsOptions, resolveDevtoolsOptions, setDevtoolsOptions } from "./options.ts";
 import {
   DEV_CDP_PORT_ENV,
@@ -140,14 +141,23 @@ export function startDevtools(override?: DevtoolsConfig): void {
     if (options.file) sink.openFile(paths.events);
   }
 
-  teardown.push(installNativeTap());
-  teardown.push(installProcessTaps());
-
   const port = options.cdp ? cdpPort() : undefined;
   // Bound to a local so the route closure captures a definite bridge rather than
   // the reassignable module-level slot.
   const attached = port !== undefined ? startCdpBridge(port) : undefined;
   bridge = attached;
+
+  // Installed after the bridge so the console tap can ask whether CDP already
+  // covers a window; the answer is read per event, not captured now, because
+  // attachment completes later. Nothing has been emitted in between — no native
+  // event can be dispatched inside this synchronous block.
+  teardown.push(
+    installNativeTap({
+      cdpCovers: (window) =>
+        window !== undefined && (attached?.attachedWindows().includes(window) ?? false),
+    }),
+  );
+  teardown.push(installProcessTaps());
   const screenshotDir = paths?.screenshots;
 
   inspector = startInspector({

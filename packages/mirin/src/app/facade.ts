@@ -26,11 +26,12 @@ import type {
 /** A live, typed handle to an open window. */
 export class WindowHandle extends Emitter<WindowEvents> {
   readonly id: number;
-  readonly name: string | undefined;
+  /** Always set: a window opened without a name is given one from its id. */
+  readonly name: string;
   #url: string;
   #title: string | undefined;
 
-  constructor(id: number, name: string | undefined, url = "", title?: string) {
+  constructor(id: number, name: string, url = "", title?: string) {
     super();
     this.id = id;
     this.name = name;
@@ -183,14 +184,19 @@ class Windows {
         material: normalizeMaterial(opts.material),
       }),
     );
-    const handle = new WindowHandle(id, opts.name, url, opts.title);
+    // Fall back to an id-derived name so every window is addressable by name, not
+    // just the ones declared in the manifest. A window opened at runtime without
+    // one would otherwise be reachable only by a numeric id the caller has to have
+    // captured — and `/state` would report it nameless to anything reading from
+    // outside the process.
+    const handle = new WindowHandle(id, opts.name ?? `window-${id}`, url, opts.title);
     this.#register(handle);
     return handle;
   }
 
   #register(handle: WindowHandle): void {
     this.#byId.set(handle.id, handle);
-    if (handle.name) this.#byName.set(handle.name, handle);
+    this.#byName.set(handle.name, handle);
   }
 
   /** @internal */
@@ -202,7 +208,8 @@ class Windows {
     const handle = this.#byId.get(id);
     if (handle) {
       this.#byId.delete(id);
-      if (handle.name) this.#byName.delete(handle.name);
+      // Only if it is still the binding: a later window may have taken the name.
+      if (this.#byName.get(handle.name) === handle) this.#byName.delete(handle.name);
     }
   }
 }

@@ -25,6 +25,11 @@ export interface DevtoolsOptions {
   bufferSize: number;
   /** Include RPC inputs/outputs in traces. Off by default: they carry app data. */
   rpcPayloads: boolean;
+  /**
+   * Record *all* HTTP traffic (metadata + redacted headers, never bodies). When
+   * false, only failed requests and 4xx/5xx responses are recorded.
+   */
+  network: boolean;
   /** Attach to CEF's remote-debugging port for screenshots, snapshots, and eval. */
   cdp: boolean;
 }
@@ -35,6 +40,7 @@ const DEV_DEFAULTS: DevtoolsOptions = {
   file: true,
   bufferSize: 2000,
   rpcPayloads: false,
+  network: true,
   cdp: true,
 };
 
@@ -44,6 +50,7 @@ const PRODUCTION_DEFAULTS: DevtoolsOptions = {
   file: false,
   bufferSize: 2000,
   rpcPayloads: false,
+  network: false,
   cdp: false,
 };
 
@@ -69,6 +76,7 @@ export function parseDevtoolsConfig(value: unknown): DevtoolsConfig | undefined 
     ...(flag("inspector") !== undefined ? { inspector: flag("inspector") } : {}),
     ...(flag("file") !== undefined ? { file: flag("file") } : {}),
     ...(flag("rpcPayloads") !== undefined ? { rpcPayloads: flag("rpcPayloads") } : {}),
+    ...(flag("network") !== undefined ? { network: flag("network") } : {}),
     ...(flag("cdp") !== undefined ? { cdp: flag("cdp") } : {}),
     ...(flag("production") !== undefined ? { production: flag("production") } : {}),
     ...(bufferSize !== undefined && Number.isSafeInteger(bufferSize) && bufferSize > 0
@@ -102,6 +110,7 @@ export function resolveDevtoolsOptions(
         ? bufferSize
         : DEV_DEFAULTS.bufferSize,
     rpcPayloads: config?.rpcPayloads ?? base.rpcPayloads,
+    network: config?.network ?? (isDev ? base.network : true),
     cdp: config?.cdp ?? (isDev ? base.cdp : true),
   };
 }

@@ -5,6 +5,8 @@
  * a single chokepoint: `logger` mirrors each emitted line, and `rpc-server`
  * traces every request. This module covers the rest — native events from the
  * core, and failures in the Worker itself.
+ *
+ * Renderer events sourced from the DevTools protocol live in `renderer-taps.ts`.
  */
 
 import type { NativeEvent } from "../../runtime.ts";
@@ -12,8 +14,7 @@ import { onAnyNativeEvent } from "../../runtime.ts";
 import { firstError, formatArgs, formatStack } from "../../shared/format.ts";
 import { record } from "../sink.ts";
 import type { DevEventLevel } from "../types.ts";
-import type { CdpEvent } from "./cdp.ts";
-import { asArray, asNumber, asRecord, asString } from "./parse.ts";
+import { redactUrl } from "./network.ts";
 
 /**
  * Native event types that fire continuously while the user drags or resizes a
@@ -43,20 +44,33 @@ function detail(event: NativeEvent): Record<string, unknown> {
   return rest;
 }
 
+/** How CEF's display handler prefixes the console line for an uncaught error. */
+const UNCAUGHT = /^Uncaught\b/;
+
 /**
  * Renderer console output arrives as a native `webview.console` event (the core's
  * display handler forwards it), so it is re-sourced to `renderer` here rather
  * than reported as a native event.
  */
-function recordConsole(event: NativeEvent): void {
+function recordConsole(event: NativeEvent, cdpCovers: CdpCoverage): void {
   const source = typeof event.source === "string" ? event.source : "";
   const line = typeof event.line === "number" ? event.line : 0;
   const window = asWindowId(event.id);
+  const level = asLevel(event.level) ?? "info";
+  const message = typeof event.message === "string" ? event.message : "";
+
+  // An uncaught error otherwise reaches the stream twice: here without a stack,
+  // and again as a CDP `exception` with one. Drop this copy only when CDP is
+  // actually attached to the window — the bridge attaches after CEF binds its
+  // port, so an error thrown by the first window's opening script can beat it,
+  // and the display handler is the only reporter that sees those.
+  if (level === "error" && UNCAUGHT.test(message) && cdpCovers(window)) return;
+
   record({
     src: "renderer",
-    level: asLevel(event.level) ?? "info",
+    level,
     type: "console",
-    msg: typeof event.message === "string" ? event.message : "",
+    msg: message,
     ...(window !== undefined ? { window } : {}),
     data: {
       ...(source.length > 0 ? { source } : {}),
@@ -68,6 +82,10 @@ function recordConsole(event: NativeEvent): void {
 function recordNative(event: NativeEvent): void {
   const window = asWindowId(event.id);
   const data = detail(event);
+  // A desktop OAuth redirect is *delivered* as a deep link (`app.open-url`), so a
+  // credential can reach the stream through the native tap with every renderer
+  // sink clean.
+  if (typeof data.url === "string") data.url = redactUrl(data.url);
   record({
     src: "native",
     // Geometry and paint chatter is debug; lifecycle is worth seeing by default.
@@ -95,11 +113,26 @@ function recordCoalesced(event: NativeEvent): void {
   settling.set(key, timer);
 }
 
-/** Subscribe to every native event. Safe to call before the runtime boots. */
-export function installNativeTap(): () => void {
-  return onAnyNativeEvent((event) => {
+/**
+ * Whether the CDP bridge is attached to a window, and therefore already reporting
+ * its uncaught errors as `exception` events with stack traces.
+ */
+export type CdpCoverage = (window: number | undefined) => boolean;
+
+export interface NativeTapOptions {
+  /** Defaults to "never attached", which keeps every console line. */
+  cdpCovers?: CdpCoverage;
+}
+
+/**
+ * Route one native event into the stream. Exported separately from
+ * `installNativeTap` so the routing can be exercised without a live core.
+ */
+export function nativeTapHandler(options: NativeTapOptions = {}): (event: NativeEvent) => void {
+  const cdpCovers = options.cdpCovers ?? (() => false);
+  return (event) => {
     if (event.type === "webview.console") {
-      recordConsole(event);
+      recordConsole(event, cdpCovers);
       return;
     }
     if (COALESCED.has(event.type)) {
@@ -107,146 +140,12 @@ export function installNativeTap(): () => void {
       return;
     }
     recordNative(event);
-  });
+  };
 }
 
-// ---- renderer taps over CDP ----
-//
-// The core's display handler already reports console output, so `consoleAPICalled`
-// is deliberately not forwarded here — it would double every line. What CDP adds
-// is everything the console cannot express: exceptions with real stack traces,
-// failed network requests, and navigation.
-
-/** CDP's `Log.entryAdded` levels, mapped onto the devtools levels. */
-const LOG_LEVELS: Record<string, DevEventLevel> = {
-  verbose: "debug",
-  info: "info",
-  warning: "warn",
-  error: "error",
-};
-
-/** Frames from a CDP stack trace, flattened to `fn (url:line:col)` strings. */
-function stackFrames(trace: unknown): string[] {
-  return (asArray(asRecord(trace)?.callFrames) ?? []).slice(0, 12).flatMap((entry) => {
-    const frame = asRecord(entry);
-    if (frame === undefined) return [];
-    const fn = asString(frame.functionName);
-    const url = asString(frame.url) ?? "";
-    const line = asNumber(frame.lineNumber) ?? 0;
-    const column = asNumber(frame.columnNumber) ?? 0;
-    return [`${fn !== undefined && fn.length > 0 ? fn : "<anonymous>"} (${url}:${line}:${column})`];
-  });
-}
-
-function recordException(event: CdpEvent): void {
-  const details = asRecord(event.params.exceptionDetails);
-  const thrown = asRecord(details?.exception);
-  const message =
-    asString(thrown?.description) ?? asString(details?.text) ?? "uncaught exception in webview";
-  record({
-    src: "renderer",
-    level: "error",
-    type: "exception",
-    msg: message,
-    ...(event.window !== undefined ? { window: event.window } : {}),
-    data: {
-      stack: stackFrames(details?.stackTrace),
-      ...(asString(details?.url) !== undefined ? { url: asString(details?.url) } : {}),
-      line: asNumber(details?.lineNumber) ?? 0,
-    },
-  });
-}
-
-function recordLogEntry(event: CdpEvent): void {
-  const entry = asRecord(event.params.entry);
-  if (entry === undefined) return;
-  const source = asString(entry.source) ?? "";
-  // Console output is already covered by the core's display handler; only take the
-  // browser-internal sources CDP alone reports (network, security, rendering, …).
-  if (source === "console-api") return;
-  record({
-    src: "renderer",
-    level: LOG_LEVELS[asString(entry.level) ?? ""] ?? "info",
-    type: "log.entry",
-    msg: asString(entry.text) ?? "",
-    ...(event.window !== undefined ? { window: event.window } : {}),
-    data: {
-      source,
-      ...(asString(entry.url) !== undefined ? { url: asString(entry.url) } : {}),
-      ...(asNumber(entry.lineNumber) !== undefined ? { line: asNumber(entry.lineNumber) } : {}),
-    },
-  });
-}
-
-function recordLoadingFailed(event: CdpEvent): void {
-  const canceled = event.params.canceled === true;
-  record({
-    src: "renderer",
-    // A cancelled request is usually the app's own doing (an aborted fetch).
-    level: canceled ? "debug" : "warn",
-    type: "network.failed",
-    msg: `${asString(event.params.errorText) ?? "request failed"} (${asString(event.params.type) ?? "resource"})`,
-    ...(event.window !== undefined ? { window: event.window } : {}),
-    data: {
-      requestId: asString(event.params.requestId) ?? "",
-      canceled,
-      ...(asString(event.params.blockedReason) !== undefined
-        ? { blockedReason: asString(event.params.blockedReason) }
-        : {}),
-    },
-  });
-}
-
-function recordResponse(event: CdpEvent): void {
-  const response = asRecord(event.params.response);
-  const status = asNumber(response?.status) ?? 0;
-  // Successful responses are noise; failures are exactly what a reader is after.
-  if (status < 400) return;
-  record({
-    src: "renderer",
-    level: status >= 500 ? "error" : "warn",
-    type: "network.error",
-    msg: `${status} ${asString(response?.statusText) ?? ""} ${asString(response?.url) ?? ""}`.trim(),
-    ...(event.window !== undefined ? { window: event.window } : {}),
-    data: { status, url: asString(response?.url) ?? "" },
-  });
-}
-
-function recordNavigation(event: CdpEvent): void {
-  const frame = asRecord(event.params.frame);
-  // Sub-frame navigations (iframes, about:blank shims) are not what a reader means
-  // by "the window navigated".
-  if (asString(frame?.parentId) !== undefined) return;
-  record({
-    src: "renderer",
-    level: "info",
-    type: "navigation",
-    msg: asString(frame?.url) ?? "",
-    ...(event.window !== undefined ? { window: event.window } : {}),
-  });
-}
-
-/** Route one CDP event into the stream. Unhandled methods are ignored. */
-export function recordCdpEvent(event: CdpEvent): void {
-  switch (event.method) {
-    case "Runtime.exceptionThrown":
-      recordException(event);
-      break;
-    case "Log.entryAdded":
-      recordLogEntry(event);
-      break;
-    case "Network.loadingFailed":
-      recordLoadingFailed(event);
-      break;
-    case "Network.responseReceived":
-      recordResponse(event);
-      break;
-    case "Page.frameNavigated":
-      recordNavigation(event);
-      break;
-    default:
-      break;
-  }
+/** Subscribe to every native event. Safe to call before the runtime boots. */
+export function installNativeTap(options: NativeTapOptions = {}): () => void {
+  return onAnyNativeEvent(nativeTapHandler(options));
 }
 
 /**

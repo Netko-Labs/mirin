@@ -9,6 +9,7 @@ describe("devtools option resolution", () => {
       file: true,
       bufferSize: 2000,
       rpcPayloads: false,
+      network: true,
       cdp: true,
     });
   });
@@ -48,6 +49,14 @@ describe("devtools option resolution", () => {
   test("rpc payloads stay off unless asked for", () => {
     expect(resolveDevtoolsOptions(undefined, true).rpcPayloads).toBe(false);
     expect(resolveDevtoolsOptions({ rpcPayloads: true }, true).rpcPayloads).toBe(true);
+  });
+
+  // The inverse of rpcPayloads: HTTP metadata is redacted, so it is on by default
+  // and opting out only silences successful traffic (see the taps).
+  test("http traffic is recorded unless opted out", () => {
+    expect(resolveDevtoolsOptions(undefined, true).network).toBe(true);
+    expect(resolveDevtoolsOptions({ network: false }, true).network).toBe(false);
+    expect(resolveDevtoolsOptions(undefined, false).network).toBe(false);
   });
 
   test("an unusable bufferSize falls back to the default", () => {
