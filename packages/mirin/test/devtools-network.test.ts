@@ -86,8 +86,10 @@ describe("header redaction", () => {
 describe("url redaction", () => {
   // A token in a query string is just as durable as one in a header.
   test("hides credential-bearing query parameters", () => {
+    // The query and the fragment use the same marker: both go through one lexical
+    // pass, so a reader sees `[redacted]` wherever a credential was hidden.
     expect(redactUrl("https://api.example.com/v1/me?api_key=secret123&page=2")).toBe(
-      "https://api.example.com/v1/me?api_key=%5Bredacted%5D&page=2",
+      "https://api.example.com/v1/me?api_key=[redacted]&page=2",
     );
     expect(redactUrl("https://x.test/cb?access_token=abc")).toContain("redacted");
     expect(redactUrl("https://x.test/cb?access_token=abc")).not.toContain("abc");
@@ -143,6 +145,42 @@ describe("url redaction", () => {
     expect(out).toContain("token=[redacted]");
     expect(out).not.toContain("abc");
     expect(out).toContain("page=1");
+  });
+
+  // The three ways a pair could hide from the splitter itself. These are not limits
+  // of the name heuristic — the names here are exactly what it is built to catch; it
+  // simply never got to see them.
+  test("sees through a percent-encoded separator", () => {
+    // `#access_token%3Dya29.LIVE` is one opaque token until it is decoded.
+    expect(redactUrl("https://app.test/cb#access_token%3Dya29.LIVE")).not.toContain("ya29.LIVE");
+    expect(redactUrl("https://api.test/x?api_key%3Dsecret123")).not.toContain("secret123");
+    // The name keeps its original spelling so the reader still knows what was hidden.
+    expect(redactUrl("https://app.test/cb#access_token%3Dya29.LIVE")).toContain("access_token");
+  });
+
+  // Regression: `searchParams` decoded `api_key%3Dsecret` into a single *name*, matched
+  // it, then appended `=[redacted]` — leaving the secret in the name and producing
+  // output that read as redacted while carrying the credential.
+  test("does not append a marker while leaving the secret in the name", () => {
+    const out = redactUrl("https://api.test/x?api_key%3Dsecret123");
+    expect(out).not.toContain("secret123");
+    expect(out).not.toMatch(/secret123.*redacted/);
+  });
+
+  test("splits on a legacy semicolon separator as well as an ampersand", () => {
+    expect(redactUrl("https://api.test/x?page=2;api_key=semisecret")).not.toContain("semisecret");
+    expect(redactUrl("https://app.test/cb#state=a;access_token=fragsecret")).not.toContain(
+      "fragsecret",
+    );
+    // Mixed separators, and each is preserved where it was.
+    expect(redactUrl("https://api.test/x?a=1&token=mixed;b=2")).toBe(
+      "https://api.test/x?a=1&token=[redacted];b=2",
+    );
+  });
+
+  test("leaves a semicolon in an ordinary value alone", () => {
+    const url = "https://api.test/x?filter=a;b";
+    expect(redactUrl(url)).toBe(url);
   });
 
   test("caps a data: URL rather than storing the payload", () => {

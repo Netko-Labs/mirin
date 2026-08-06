@@ -104,10 +104,18 @@ export function redactUrl(url: string): string {
       parsed.password = "";
       changed = true;
     }
-    for (const name of [...parsed.searchParams.keys()]) {
-      if (!isSensitiveName(name)) continue;
-      parsed.searchParams.set(name, REDACTED);
-      changed = true;
+    // The query goes through the same lexical pass as the fragment rather than
+    // `searchParams`. `searchParams` splits only on `&` and decodes names, so
+    // `?api_key%3Dsecret` arrived as a single *name* that matched the heuristic —
+    // and `set()` then appended `=[redacted]` while leaving the secret in the name,
+    // producing output that looked redacted and was not.
+    const query = parsed.search.slice(1);
+    if (query.length > 0) {
+      const redacted = redactQueryString(query);
+      if (redacted !== query) {
+        parsed.search = redacted;
+        changed = true;
+      }
     }
     // A fragment is not structured, but in practice it carries the same
     // `a=b&c=d` shape the query does, so the same parser applies.
@@ -149,15 +157,41 @@ function splitOnce(value: string, separator: string): [string, string | undefine
   return index < 0 ? [value, undefined] : [value.slice(0, index), value.slice(index + 1)];
 }
 
+/**
+ * Pair separators inside a query or fragment. `;` is legacy — WHATWG dropped it and
+ * `URLSearchParams` does not split on it — but servers still emit it, and a pair the
+ * splitter cannot see is a pair the heuristic never gets to judge.
+ */
+const PAIR_SEPARATOR = /([&;])/;
+
+/**
+ * An `=` that arrived percent-encoded, which makes a name/value pair look like one
+ * opaque token. `#access_token%3Dya29.LIVE` is the shape that matters: the name is
+ * exactly what the heuristic exists to catch, and it was invisible to it.
+ */
+const ENCODED_EQUALS = /%3d/i;
+
+/** Redact sensitive pairs, preserving separators so an untouched string is unchanged. */
 function redactQueryString(query: string): string {
   return query
-    .split("&")
-    .map((pair) => {
-      const [name, value] = splitOnce(pair, "=");
-      if (value === undefined) return pair;
-      return isSensitiveName(decodeURIComponentSafe(name)) ? `${name}=${REDACTED}` : pair;
-    })
-    .join("&");
+    .split(PAIR_SEPARATOR)
+    .map((part) => (part === "&" || part === ";" ? part : redactPair(part)))
+    .join("");
+}
+
+function redactPair(pair: string): string {
+  const [name, value] = splitOnce(pair, "=");
+  if (value !== undefined) {
+    return isSensitiveName(decodeURIComponentSafe(name)) ? `${name}=${REDACTED}` : pair;
+  }
+  // No literal `=`, but the pair may still be one once decoded. Redact from the
+  // encoded separator so the name keeps its original spelling.
+  const encoded = ENCODED_EQUALS.exec(pair);
+  if (encoded === null) return pair;
+  const encodedName = pair.slice(0, encoded.index);
+  return isSensitiveName(decodeURIComponentSafe(encodedName))
+    ? `${encodedName}${encoded[0]}${REDACTED}`
+    : pair;
 }
 
 function decodeURIComponentSafe(value: string): string {

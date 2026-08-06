@@ -168,9 +168,21 @@ curl -s -X POST "http://127.0.0.1:$PORT/cdp?token=$TOKEN" \
 
 Headers and URLs *are* recorded, with credential-bearing values replaced by
 `[redacted]` — `Authorization`, `Cookie`, `Set-Cookie` and anything whose name looks
-like a token, key, secret, password or session, in a header **or** a query
-parameter. Names survive; values do not. Knowing an `Authorization` header was sent
-is the diagnostic value, and its content is none of it.
+like a token, key, secret, password or session. Names survive; values do not.
+Knowing an `Authorization` header was sent is the diagnostic value, and its content
+is none of it.
+
+A URL is redacted in all three places a credential can sit: `user:password@` in the
+authority, the query, and the **fragment**. The fragment matters more than it looks:
+OAuth's implicit flow returns `#access_token=…`, which is the shape a desktop app
+hits most, and a fragment is never sent to a server — so it appears in no network
+event at all, and `navigation` is the only sink that ever sees it. Pairs are split on
+`;` as well as `&`, and a percent-encoded `=` is decoded before the name is judged,
+so neither hides a pair from the matcher.
+
+What remains is the heuristic itself: a credential in a parameter whose name looks
+ordinary (`?q=…`) is not recognized, because nothing about it says secret. Bodies
+sidestep the question entirely by never being recorded.
 
 `devtools.network: false` silences successful traffic. Failures are still recorded
 whatever the setting — an opt-out for noise must not quietly weaken the thing that
