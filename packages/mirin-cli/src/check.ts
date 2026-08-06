@@ -13,11 +13,14 @@
  *   mirin check --timeout 60000 allow a slow first build
  */
 
+import type { CheckScenario } from "mirinjs/check";
 import type { DevEvent } from "mirinjs/devtools/session";
 import { readEventsFile, sessionPaths } from "mirinjs/devtools/session";
 import { dev } from "./dev.ts";
+import type { ScenarioOutcome } from "./shared/driver.ts";
 import { InspectorClient } from "./shared/inspector.ts";
 import { createReporter, type Reporter } from "./shared/report.ts";
+import { loadScenario, runScenario } from "./shared/scenario.ts";
 
 /** How long to wait for the app to show a window before giving up. */
 const DEFAULT_TIMEOUT_MS = 45_000;
@@ -30,6 +33,8 @@ export interface CheckOptions {
   timeoutMs?: number;
   settleMs?: number;
   json?: boolean;
+  /** Path to a scenario module (`mirin check --scenario ./check.ts`). */
+  scenario?: string;
 }
 
 export interface CheckReport {
@@ -43,10 +48,17 @@ export interface CheckReport {
   screenshot: string | null;
   /** The accessibility snapshot of the first window, when one was taken. */
   snapshot: string | null;
+  /**
+   * Slices the app published with `devtools.expose`, read at the end of the run.
+   * State the DOM cannot show is often the fastest explanation for a failed check.
+   */
+  exposed: Record<string, unknown>;
   /** Error-level events from the run — the actionable part. */
   errors: DevEvent[];
   eventCount: number;
   durationMs: number;
+  /** Present when `--scenario` ran: what it did, and where it stopped. */
+  scenario?: { file: string } & ScenarioOutcome;
 }
 
 // ---- narrowing of inspector responses ----
@@ -106,6 +118,11 @@ async function capture(client: InspectorClient, report: CheckReport): Promise<vo
   } catch (err) {
     report.errors.push(syntheticError(`snapshot failed: ${message(err)}`));
   }
+  try {
+    report.exposed = record(record(await client.get("/state")).exposed);
+  } catch {
+    // The app publishing nothing is the common case; not worth an error.
+  }
 }
 
 function message(err: unknown): string {
@@ -130,6 +147,20 @@ function renderReport(report: CheckReport): void {
         `    #${win.id}${label.length > 0 ? ` ${label}` : ""} ${win.url ?? ""}`.trimEnd(),
       );
     }
+  }
+  if (report.scenario !== undefined) {
+    const { file, steps, screenshots, failure } = report.scenario;
+    console.log(`  scenario: ${file}`);
+    for (const step of steps) {
+      const mark = step.ok ? "✓" : "✗";
+      console.log(`    ${mark} ${step.name}${step.ms >= 0 ? ` (${step.ms}ms)` : ""}`);
+    }
+    if (failure !== undefined) console.log(`    → ${failure.message}`);
+    for (const shot of screenshots) console.log(`    shot: ${shot}`);
+  }
+  const exposedKeys = Object.keys(report.exposed);
+  if (exposedKeys.length > 0) {
+    console.log(`  app state: ${JSON.stringify(report.exposed).slice(0, 400)}`);
   }
   if (report.screenshot !== null) console.log(`  screenshot: ${report.screenshot}`);
   if (report.session !== null) console.log(`  session: ${report.session}`);
@@ -167,12 +198,27 @@ export async function check(
     windows: [],
     screenshot: null,
     snapshot: null,
+    exposed: {},
     errors: [],
     eventCount: 0,
     durationMs: 0,
   };
 
   reporter.event("start", { projectDir, timeoutMs });
+
+  // Load the scenario before anything is built: a typo in the path should cost a
+  // second, not a cold compile.
+  let scenario: CheckScenario | undefined;
+  if (options.scenario !== undefined) {
+    try {
+      scenario = await loadScenario(projectDir, options.scenario);
+    } catch (err) {
+      report.reason = message(err);
+      report.durationMs = Date.now() - startedAt;
+      reporter.finish({ ...report }, () => renderReport(report));
+      return 1;
+    }
+  }
 
   await dev(projectDir, {
     // Inherit the output mode: in JSON mode `mirin dev`'s prose would otherwise
@@ -203,10 +249,23 @@ export async function check(
         return;
       }
 
-      // Let the first paint land before capturing, or the screenshot shows an
-      // empty frame and the snapshot an empty tree.
+      // Let the first paint land before driving or capturing, or the screenshot
+      // shows an empty frame and the snapshot an empty tree.
       await Bun.sleep(settleMs);
 
+      if (scenario !== undefined && options.scenario !== undefined) {
+        reporter.event("scenario", { file: options.scenario });
+        const outcome = await runScenario(client, scenario, (name) =>
+          reporter.event("step", { name }),
+        );
+        report.scenario = { file: options.scenario, ...outcome };
+        if (outcome.failure !== undefined) {
+          report.reason = `scenario failed at "${outcome.failure.step}": ${outcome.failure.message}`;
+        }
+      }
+
+      // Captured after the scenario, so the artifact shows the state the run
+      // ended in — including the state it failed in.
       reporter.event("capture", { windows: report.windows.length });
       await capture(client, report);
     },
