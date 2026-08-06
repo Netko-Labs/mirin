@@ -8,6 +8,7 @@
 import { mkdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { $ } from "bun";
+import { createReporter, type Reporter } from "./shared/report.ts";
 
 /** Config shapes (mirrors packages/mirin/src/config/index.ts; CLI can't import the runtime). */
 export type SidecarConfig = Record<string, string | { bin: string; entitlements?: string[] }>;
@@ -77,6 +78,8 @@ export async function compileWorkers(
   workers: WorkersConfig | undefined,
   outDir: string,
   minify: boolean,
+  /** Where `bun build`'s output goes. Defaults to human mode, which prints it. */
+  reporter: Reporter = createReporter(false),
 ): Promise<Record<string, string>> {
   mkdirSync(outDir, { recursive: true });
   const out: Record<string, string> = {};
@@ -84,11 +87,10 @@ export async function compileWorkers(
     const safeName = safeExtraAssetName(name, "worker name");
     const js = join(outDir, `${safeName}.js`);
     const src = projectRelativePath(projectDir, entry, `worker "${safeName}" entry`);
-    if (minify) {
-      await $`bun build ${src} --target=bun --minify --outfile ${js}`.cwd(projectDir);
-    } else {
-      await $`bun build ${src} --target=bun --outfile ${js}`.cwd(projectDir);
-    }
+    const minifyFlag = minify ? ["--minify"] : [];
+    await reporter.build(
+      $`bun build ${src} --target=bun ${minifyFlag} --outfile ${js}`.cwd(projectDir),
+    );
     return { name: safeName, js };
   });
   for (const worker of await Promise.all(compiled)) {

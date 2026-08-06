@@ -22,7 +22,7 @@ import {
   readSessionInfo,
   sessionPaths,
 } from "mirinjs/devtools/session";
-import { isInRepo } from "./artifacts.ts";
+import { isInRepo, vendoredCef } from "./artifacts.ts";
 import { createReporter } from "./shared/report.ts";
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -154,10 +154,12 @@ function checkUi(projectDir: string): DoctorCheck[] {
 
 function checkCef(): DoctorCheck {
   if (isInRepo()) {
-    const vendored = join(process.cwd(), "vendor", "cef");
-    return existsSync(vendored)
+    // Resolved from the CLI, not the cwd: `doctor` is normally run from an example
+    // app, where `<example>/vendor/cef` never exists and the repo's does.
+    const vendored = vendoredCef();
+    return vendored.present
       ? ok("cef", "vendor/cef is present")
-      : warn("cef", "vendor/cef is missing", "run `bun scripts/fetch-cef.ts`");
+      : warn("cef", `${vendored.path} is missing or incomplete`, "run `bun scripts/fetch-cef.ts`");
   }
   const cache = join(homedir(), ".mirinjs", "cef");
   return existsSync(cache)

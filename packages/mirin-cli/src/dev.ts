@@ -92,7 +92,7 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
   });
 
   // --- native artifacts ---
-  const artifacts = await resolveArtifacts({ release: false });
+  const artifacts = await resolveArtifacts({ release: false, reporter });
 
   // --- compile the Bun host + bundle the Worker ---
   const compilePhase = session?.phase("compile");
@@ -103,16 +103,20 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
   const workerJs = join(work, "worker.js");
   const hostTarget =
     process.platform === "win32" && process.arch === "arm64" ? ["--target=bun-windows-x64"] : [];
-  await $`bun build --compile ${hostTarget} ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
-    projectDir,
+  await reporter.build(
+    $`bun build --compile ${hostTarget} ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
+      projectDir,
+    ),
   );
-  await $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(projectDir);
+  await reporter.build(
+    $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(projectDir),
+  );
   compilePhase?.ok();
 
   // Extra assets (dev): compile workers into .mirin/workers and symlink sidecar
   // binaries into .mirin/sidecars (no copy/sign in dev — they run unsigned locally).
   const workersDir = join(work, "workers");
-  await compileWorkers(projectDir, config.workers, workersDir, false);
+  await compileWorkers(projectDir, config.workers, workersDir, false, reporter);
   const sidecarsDir = join(work, "sidecars");
   mkdirSync(sidecarsDir, { recursive: true });
   for (const sc of normalizeSidecars(projectDir, config.sidecars)) {
@@ -206,7 +210,7 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
     ],
     {
       cwd: projectDir,
-      stdio: ["ignore", "inherit", "inherit"],
+      stdio: reporter.childStdio,
     },
   );
   try {
@@ -261,7 +265,7 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
       MIRIN_CDP_PORT: String(cdpPort),
       ...(session?.env() ?? {}),
     },
-    stdio: ["ignore", "inherit", "inherit"],
+    stdio: reporter.childStdio,
   });
   session?.setPid(appProc.pid);
   launchPhase?.ok();

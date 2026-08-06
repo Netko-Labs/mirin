@@ -59,6 +59,56 @@ describe("cli reporter", () => {
     expect(parsed[1]).toMatchObject({ phase: "result", ok: true });
     expect(lines.join("\n")).not.toContain("should not print");
   });
+
+  test("points a spawned child's stdout away from the report in json mode", () => {
+    expect(createReporter(false).childStdio).toEqual(["ignore", "inherit", "inherit"]);
+    // fd 2: `mirin check` runs Vite and the app itself, and their prose would
+    // otherwise interleave with the JSON on stdout.
+    expect(createReporter(true).childStdio).toEqual(["ignore", 2, "inherit"]);
+  });
+});
+
+// `bun build` writes its bundle summary to stdout, and a subprocess writes to the
+// real file descriptor — which monkey-patching console.log cannot intercept. These
+// run the reporter in a child bun so the actual fds can be observed.
+describe("cli reporter subprocess output", () => {
+  async function runReporterScript(json: boolean): Promise<{ stdout: string; stderr: string }> {
+    const source = `
+      import { $ } from "bun";
+      import { createReporter } from "./src/shared/report.ts";
+      const reporter = createReporter(${json});
+      await reporter.build($\`echo CHILD_CHATTER\`);
+      reporter.finish({ ok: true }, () => console.log("human report"));
+    `;
+    const proc = Bun.spawn(["bun", "-e", source], {
+      cwd: join(import.meta.dir, ".."),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    await proc.exited;
+    return { stdout, stderr };
+  }
+
+  test("json mode keeps build output off stdout but still shows it", async () => {
+    const { stdout, stderr } = await runReporterScript(true);
+    expect(stdout).not.toContain("CHILD_CHATTER");
+    // Every stdout line must parse, which is the whole point of --json.
+    const lines = stdout.split("\n").filter((line) => line.length > 0);
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ phase: "result", ok: true }),
+    ]);
+    // Captured, not discarded: a failed build must stay readable.
+    expect(stderr).toContain("CHILD_CHATTER");
+  });
+
+  test("human mode streams build output as before", async () => {
+    const { stdout } = await runReporterScript(false);
+    expect(stdout).toContain("CHILD_CHATTER");
+    expect(stdout).toContain("human report");
+  });
 });
 
 describe("dev session bookkeeping", () => {
