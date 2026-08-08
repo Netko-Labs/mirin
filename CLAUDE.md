@@ -109,7 +109,7 @@ the same change.
 ## Git Rules
 
 - Branch off the default branch before committing.
-- Commit, push, or open a PR only when asked.
+- Commit freely at logical checkpoints. Push or open a PR only when asked.
 - Never force-push, amend, rebase, squash, reset, or discard shared/user changes
   unless explicitly requested.
 - The working tree may be dirty. Preserve unrelated changes and work with them.

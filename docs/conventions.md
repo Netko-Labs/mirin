@@ -474,6 +474,8 @@ If a check cannot be run, state why and name the residual risk.
 - Use `tasks/lessons.md` for failure modes and prevention rules after repeated
   corrections.
 - Do not create task files for one-line fixes.
-- When asked to commit, use a clear conventional subject. Suggested types:
+- Commit freely at logical checkpoints, using a clear conventional subject.
+  Push or open a PR only when asked; never commit directly to main in
+  multi-branch repos — branch first. Suggested types:
   `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`,
   `ci`, `security`.
