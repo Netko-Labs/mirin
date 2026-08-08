@@ -1,14 +1,34 @@
-import { app, globalShortcut, menu, Tray } from "mirinjs";
+import { app, devtools, globalShortcut, menu, Tray } from "mirinjs";
 import { router } from "./rpc.ts";
 
 const mirin = app.serve(router);
 
+/** The global hotkey, named once so the devtools slice below cannot drift from it. */
+const HOTKEY = "Cmd+Shift+K";
+
+const deepLinks: string[] = [];
+
 // Deep links: `mirin-sink://…` (declared in mirin.config.ts urlSchemes) launches
 // or focuses the app; forward each URL to the UI's event log. Try, in a terminal:
 //   open "mirin-sink://hello?from=terminal"
-app.on("open-url", (url) => mirin.rpc.deepLink.broadcast({ url }));
+app.on("open-url", (url) => {
+  deepLinks.push(url);
+  mirin.rpc.deepLink.broadcast({ url });
+  // Deep links are invisible in the page, so surface them on the stream. The stream
+  // is plaintext on disk — a sensitive URL (OAuth redirect) should log only its path.
+  devtools.event({ type: "deep-link", msg: url });
+});
 
 let tray: Tray | undefined;
+
+// The app shell is invisible to the DOM; `expose` lifts it into the inspector's
+// `/state` (docs/agent-devtools.md).
+devtools.expose("shell", () => ({
+  tray: tray !== undefined,
+  hotkey: HOTKEY,
+  deepLinks,
+  windows: app.windows.all().map((window) => ({ id: window.id, name: window.name })),
+}));
 
 app.on("ready", () => {
   // Application menu, with click handlers routed to the UI.
@@ -67,9 +87,7 @@ app.on("ready", () => {
   });
 
   // Global hotkey (works even when the app is in the background).
-  globalShortcut.register("Cmd+Shift+K", () =>
-    mirin.rpc.shortcutFired.broadcast({ name: "Cmd+Shift+K" }),
-  );
+  globalShortcut.register(HOTKEY, () => mirin.rpc.shortcutFired.broadcast({ name: HOTKEY }));
 });
 
 app.on("window-all-closed", () => {

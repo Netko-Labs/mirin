@@ -27,6 +27,25 @@ pub struct CoreConfig {
     /// Single-instance app. Default true; set false to allow multiple instances.
     #[serde(default = "default_true")]
     pub single_instance: bool,
+    /// CEF remote-debugging (DevTools protocol) port, or 0 for disabled.
+    /// Loopback-only, but anything reaching the port can run code in the app's
+    /// pages — so off unless explicitly supplied (docs/agent-devtools.md).
+    #[serde(default)]
+    pub remote_debugging_port: u16,
+}
+
+/// Chromium rejects privileged ports (< 1024); 0 disables.
+const MIN_DEBUG_PORT: u16 = 1024;
+
+impl CoreConfig {
+    /// The remote-debugging port to hand CEF, or 0 when disabled/out of range.
+    pub(crate) fn debug_port(&self) -> i32 {
+        if self.remote_debugging_port >= MIN_DEBUG_PORT {
+            i32::from(self.remote_debugging_port)
+        } else {
+            0
+        }
+    }
 }
 
 /// Per-window creation options (from the Bun Worker via `mirin_window_create`).

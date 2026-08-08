@@ -5,6 +5,8 @@
   "scripts": {
     "build:sidecar": "bun build --compile sidecar/tool.ts --outfile vendor/tool",
     "dev": "bun run build:sidecar && mirin dev",
+    "check": "mirin check",
+    "doctor": "mirin doctor",
     "build": "bun run build:sidecar && mirin build"
   },
   "dependencies": {

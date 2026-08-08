@@ -183,6 +183,14 @@ impl MirinHandler {
         self.is_closing
     }
 
+    /// `try_lock`: close callbacks hold this mutex on the same UI thread;
+    /// best-effort attribution is not worth a freeze.
+    pub fn window_id_for_ident(ident: i32) -> Option<u32> {
+        let this = Self::instance()?;
+        let handler = this.try_lock().ok()?;
+        handler.window_ids.get(&ident).copied()
+    }
+
     #[cfg(target_os = "windows")]
     pub fn close_browser_for_window(this: &Arc<Mutex<Self>>, window_id: u32) {
         let browser = {

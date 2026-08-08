@@ -41,15 +41,29 @@ my-app/
    └─ App.tsx
 ```
 
-## The two commands
+## The commands
 
 | Command | What it does |
 |---|---|
 | `bun run dev` (`mirin dev`) | Builds the dev bundle, starts Vite, opens the window at the dev server (HMR). |
+| `bun run check` (`mirin check`) | Boots the app once, waits for a window, captures a screenshot + a UI snapshot, prints the errors, exits non-zero if anything went wrong. Non-interactive — use it in scripts, CI, or from an AI coding tool. |
+| `bun run doctor` (`mirin doctor`) | Checks the project and environment without building: config validity, entry files, CEF availability, port contention, and how the last run ended. |
 | `bun run build` (`mirin build`) | `vite build` → standalone app in `./build` (`.app` on macOS, flat app folder on Windows/Linux), serving the UI from `app://`. |
 
 Set `MIRIN_SIGN_IDENTITY="Developer ID Application: …"` before `build` to
 produce a distributable, notarizable app.
+
+`dev`, `check`, `doctor`, and `build` all accept `--json` for machine-readable
+output.
+
+## Seeing what a running app is doing
+
+Every `mirin dev` run writes a structured event stream — main-process logs, renderer
+console output, exceptions with stack traces, failed requests, every RPC call, native
+window events — to `.mirin/dev/<session>/events.jsonl`, and exposes the same stream
+(plus screenshots, an accessibility snapshot of the UI, and synthetic input) over a
+token-authenticated loopback inspector. `docs/agent-devtools.md` documents the whole
+surface. It is a development surface: disabled in packaged builds.
 
 ## Release and updates
 

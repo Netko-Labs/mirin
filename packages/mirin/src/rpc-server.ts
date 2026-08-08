@@ -5,7 +5,10 @@
  */
 
 import type { ServerWebSocket } from "bun";
-import type { Router, RpcContext } from "./rpc.ts";
+import { devtoolsOptions } from "./devtools/options.ts";
+import { record } from "./devtools/sink.ts";
+import type { Procedure, Router, RpcContext } from "./rpc.ts";
+import { formatArg } from "./shared/format.ts";
 
 interface SocketData {
   webview: number;
@@ -98,6 +101,13 @@ export class RpcServer {
     this.#router = router;
   }
 
+  /** The registered procedures, for the inspector's `/state`: a tool can discover
+   *  the RPC surface without reading source. */
+  routes(): { name: string; type: string }[] {
+    const routes: Record<string, Procedure> = this.#router?.routes ?? {};
+    return Object.entries(routes).map(([name, proc]) => ({ name, type: proc.type }));
+  }
+
   /** Register the handler for internal `mirin:*` control actions (e.g. window drag). */
   setControlHandler(handler: ControlHandler): void {
     this.#control = handler;
@@ -126,6 +136,7 @@ export class RpcServer {
     }
     // Internal control side channel (window drag, …) from the preload bootstrap.
     if (frame.kind === "control") {
+      traceControl(frame, ws.data.webview);
       this.#control?.(frame, ws.data.webview);
       return;
     }
@@ -134,18 +145,120 @@ export class RpcServer {
     const reply = (ok: boolean, body: { result?: unknown; error?: string }) =>
       ws.send(JSON.stringify({ kind: "response", id: frame.id, ok, ...body }));
 
+    const webview = ws.data.webview;
+    traceRequest(frame, webview);
+
     const proc = this.#router?.routes[frame.method];
     if (!proc || (proc.type !== "query" && proc.type !== "mutation")) {
-      reply(false, { error: `no such procedure: ${frame.method}` });
+      const error = `no such procedure: ${frame.method}`;
+      traceFailure(frame, webview, 0, error, "unknown-procedure");
+      reply(false, { error });
       return;
     }
 
-    const ctx: RpcContext = { webview: ws.data.webview };
+    const ctx: RpcContext = { webview };
+    const startedAt = performance.now();
     try {
       const result = await proc.handler(frame.input, ctx);
+      traceSuccess(frame, webview, performance.now() - startedAt, proc.type, result);
       reply(true, { result });
     } catch (err) {
-      reply(false, { error: err instanceof Error ? err.message : String(err) });
+      const error = err instanceof Error ? err.message : String(err);
+      traceFailure(frame, webview, performance.now() - startedAt, error, proc.type, err);
+      reply(false, { error });
     }
   }
+}
+
+/** Round to a tenth of a millisecond — enough to spot a slow handler. */
+function millis(elapsed: number): number {
+  return Math.round(elapsed * 10) / 10;
+}
+
+// Payloads stay out of the trace unless `devtools.rpcPayloads` is set: they carry
+// app data and the stream is written to disk in plain text.
+function payload(value: unknown): Record<string, unknown> {
+  return devtoolsOptions().rpcPayloads ? { payload: formatArg(value) } : {};
+}
+
+function traceRequest(frame: RequestFrame, webview: number): void {
+  record({
+    src: "rpc",
+    level: "debug",
+    type: "rpc.request",
+    msg: `→ ${frame.method}`,
+    window: webview,
+    data: { id: frame.id, method: frame.method, ...payload(frame.input) },
+  });
+}
+
+function traceSuccess(
+  frame: RequestFrame,
+  webview: number,
+  elapsed: number,
+  kind: string,
+  result: unknown,
+): void {
+  record({
+    src: "rpc",
+    level: "debug",
+    type: "rpc.response",
+    msg: `← ${frame.method} ok in ${millis(elapsed)}ms`,
+    window: webview,
+    data: {
+      id: frame.id,
+      method: frame.method,
+      kind,
+      ok: true,
+      ms: millis(elapsed),
+      ...payload(result),
+    },
+  });
+}
+
+function traceFailure(
+  frame: RequestFrame,
+  webview: number,
+  elapsed: number,
+  error: string,
+  kind: string,
+  thrown?: unknown,
+): void {
+  record({
+    src: "rpc",
+    level: "error",
+    type: "rpc.error",
+    msg: `← ${frame.method} failed: ${error}`,
+    window: webview,
+    data: {
+      id: frame.id,
+      method: frame.method,
+      kind,
+      ok: false,
+      ms: millis(elapsed),
+      error,
+      ...(thrown instanceof Error && thrown.stack !== undefined
+        ? {
+            stack: thrown.stack
+              .split("\n")
+              .slice(0, 12)
+              .map((line) => line.trim()),
+          }
+        : {}),
+    },
+  });
+}
+
+/** Pointer plumbing (`window.maybeStartDrag` fires on every mousedown) carries no
+ *  diagnostic value and would evict useful events, so only real intent is traced. */
+function traceControl(frame: ControlFrame, webview: number): void {
+  if (frame.action === "window.maybeStartDrag") return;
+  record({
+    src: "rpc",
+    level: "debug",
+    type: "rpc.control",
+    msg: `⇢ ${frame.action}${frame.verb !== undefined ? ` ${frame.verb}` : ""}`,
+    window: webview,
+    data: { action: frame.action, ...(frame.verb !== undefined ? { verb: frame.verb } : {}) },
+  });
 }

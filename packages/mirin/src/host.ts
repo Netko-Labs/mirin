@@ -62,6 +62,13 @@ if (process.platform === "linux" && !coreConfig.icon_path) {
   const iconPng = join(resourcesDir, "icon.png");
   if (existsSync(iconPng)) coreConfig.icon_path = iconPng;
 }
+// CEF's remote-debugging port (docs/agent-devtools.md). `mirin dev` sets it; a
+// packaged build only gets one explicitly — anything reaching the port can run
+// code in the app.
+const cdpPort = Number(process.env.MIRIN_CDP_PORT ?? "");
+if (Number.isSafeInteger(cdpPort) && cdpPort >= 1024 && cdpPort <= 65535) {
+  coreConfig.remote_debugging_port = cdpPort;
+}
 
 // Load the native core on the main thread FIRST. The Worker also dlopens the
 // same dylib in its boot; doing the main-thread dlopen before spawning the

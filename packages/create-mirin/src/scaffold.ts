@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { installSkill } from "./skill.ts";
 
 const TEMPLATE_DIR = join(import.meta.dir, "..", "template");
 
@@ -43,6 +44,9 @@ export function scaffold(targetDir: string, options: ScaffoldOptions = {}): stri
     ["__MIRIN_VERSION__", version],
   ] as const;
   for (const file of walk(targetDir)) applyReplacements(file, replacements);
+
+  // After the replacement pass: the skill has no placeholders and must not be walked.
+  installSkill(targetDir);
 
   return appName;
 }

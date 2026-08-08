@@ -14,12 +14,12 @@
     "examples/hello-react": {
       "name": "hello-react",
       "dependencies": {
-        "mirinjs": "workspace:*",
+        "mirinjs": "^0.1.0-alpha.18",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
-        "@mirinjs/cli": "workspace:*",
+        "@mirinjs/cli": "^0.1.0-alpha.18",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
@@ -29,12 +29,12 @@
     "examples/kitchen-sink": {
       "name": "kitchen-sink",
       "dependencies": {
-        "mirinjs": "workspace:*",
+        "mirinjs": "^0.1.0-alpha.18",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
-        "@mirinjs/cli": "workspace:*",
+        "@mirinjs/cli": "^0.1.0-alpha.18",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
@@ -44,12 +44,12 @@
     "examples/liquid-glass": {
       "name": "liquid-glass",
       "dependencies": {
-        "mirinjs": "workspace:*",
+        "mirinjs": "^0.1.0-alpha.18",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
-        "@mirinjs/cli": "workspace:*",
+        "@mirinjs/cli": "^0.1.0-alpha.18",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
@@ -59,12 +59,12 @@
     "examples/spotlight": {
       "name": "spotlight",
       "dependencies": {
-        "mirinjs": "workspace:*",
+        "mirinjs": "^0.1.0-alpha.18",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
-        "@mirinjs/cli": "workspace:*",
+        "@mirinjs/cli": "^0.1.0-alpha.18",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
@@ -75,12 +75,12 @@
       "name": "updater-example",
       "version": "1.0.0",
       "dependencies": {
-        "mirinjs": "workspace:*",
+        "mirinjs": "^0.1.0-alpha.18",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
-        "@mirinjs/cli": "workspace:*",
+        "@mirinjs/cli": "^0.1.0-alpha.18",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
@@ -136,6 +136,10 @@
       "name": "@mirinjs/win32-x64",
       "version": "0.1.0-alpha.18",
     },
+  },
+  "overrides": {
+    "nanoid": "^3.3.17",
+    "postcss": "^8.5.25",
   },
   "packages": {
     "@biomejs/biome": ["@biomejs/biome@2.2.4", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.2.4", "@biomejs/cli-darwin-x64": "2.2.4", "@biomejs/cli-linux-arm64": "2.2.4", "@biomejs/cli-linux-arm64-musl": "2.2.4", "@biomejs/cli-linux-x64": "2.2.4", "@biomejs/cli-linux-x64-musl": "2.2.4", "@biomejs/cli-win32-arm64": "2.2.4", "@biomejs/cli-win32-x64": "2.2.4" }, "bin": { "biome": "bin/biome" } }, "sha512-TBHU5bUy/Ok6m8c0y3pZiuO/BZoY/OcGxoLlrfQof5s8ISVwbVBdFINPQZyFfKwil8XibYWb7JMwnT8wT4WVPg=="],
@@ -264,13 +268,13 @@
 
     "mirinjs": ["mirinjs@workspace:packages/mirin"],
 
-    "nanoid": ["nanoid@3.3.12", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ=="],
+    "nanoid": ["nanoid@3.3.18", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w=="],
 
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 
     "picomatch": ["picomatch@4.0.4", "", {}, "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A=="],
 
-    "postcss": ["postcss@8.5.15", "", { "dependencies": { "nanoid": "^3.3.12", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A=="],
+    "postcss": ["postcss@8.5.25", "", { "dependencies": { "nanoid": "^3.3.16", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-DTPx3RWSSnWyzLxQnlH0rJP+EW5ekl16ZU4/psbIhA0e53kJfdgaN5vKM+xP7yJtXVu+nfdVFmlgFDEKAe4Pyw=="],
 
     "react": ["react@19.2.7", "", {}, "sha512-HNe9WslTbXmFK8o8cmwgAeJFSBvt1bPdHCVKtaaV+WlAN36mpT4hcRpwbf3fY56ar2oIXzsBpOAiIRHAdY0OlQ=="],
 

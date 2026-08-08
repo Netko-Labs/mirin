@@ -24,6 +24,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./config": "./src/config/index.ts",
+    "./check": "./src/check/index.ts",
+    "./devtools/session": "./src/devtools/session.ts",
     "./rpc": "./src/rpc.ts",
     "./client": "./src/client.ts",
     "./codec": "./src/codec.ts",

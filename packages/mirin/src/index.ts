@@ -4,10 +4,11 @@
  * Importing this module boots the runtime (loads libmirin_core, starts the RPC
  * server, begins draining native events) and exposes the developer-facing API:
  * the `app` singleton plus the `menu`, `Tray`, `dialog`, `clipboard`,
- * `globalShortcut`, and `logger` features (docs/api-design.md).
+ * `globalShortcut`, `devtools`, and `logger` features (docs/api-design.md).
  */
 
 import { app, wireAppEvents } from "./app/index.ts";
+import { startDevtools } from "./devtools/index.ts";
 import { boot } from "./runtime.ts";
 
 // Side-effect imports: each feature subscribes its native-event handlers.
@@ -31,6 +32,7 @@ export { app } from "./app/index.ts";
 export { clipboard } from "./clipboard.ts";
 export type {
   CefConfig,
+  DevtoolsConfig,
   DmgConfig,
   InnoConfig,
   LinuxConfig,
@@ -44,6 +46,14 @@ export type {
   WindowMaterial,
   WindowMaterialOptions,
 } from "./config/index.ts";
+export type {
+  AppDevEvent,
+  DevEvent,
+  DevEventLevel,
+  DevEventQuery,
+  DevEventSource,
+} from "./devtools/index.ts";
+export { devtools } from "./devtools/index.ts";
 export type { MessageDialogOptions, OpenDialogOptions, SaveDialogOptions } from "./dialog.ts";
 export { dialog } from "./dialog.ts";
 export type { LogLevel } from "./logger.ts";
@@ -63,6 +73,9 @@ export { Updater, updater } from "./updater/index.ts";
 
 wireAppEvents();
 boot();
+// After boot: the run mode and session dir are known, and native events are still
+// queued in the core until the Worker's first poll (docs/agent-devtools.md).
+startDevtools();
 
 // Re-export so `import mirin from "mirin"` style also works if desired.
 export default app;

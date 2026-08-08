@@ -251,6 +251,8 @@ export async function build(
       id: bundleId,
       windows: config.windows,
       singleInstance: config.singleInstance,
+      // Lets a diagnostic build opt in via `devtools.production`; otherwise fully off.
+      devtools: config.devtools,
     }),
     versionJson,
     workers: extraWorkers,

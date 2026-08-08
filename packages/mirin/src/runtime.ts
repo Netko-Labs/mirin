@@ -6,7 +6,8 @@
 
 import { join } from "node:path";
 import { workerData } from "node:worker_threads";
-import type { WindowConfig } from "./config/index.ts";
+import type { DevtoolsConfig, WindowConfig } from "./config/index.ts";
+import { parseDevtoolsConfig } from "./devtools/options.ts";
 import { Core } from "./native.ts";
 import { RpcServer } from "./rpc-server.ts";
 
@@ -31,6 +32,8 @@ export interface Runtime {
   sidecarDir?: string;
   /** Dir holding bundled extra-worker JS (for `resolveWorker`). */
   workersDir?: string;
+  /** `devtools` block from the manifest, resolved by the devtools module. */
+  devtools?: DevtoolsConfig;
 }
 
 export class NotAttachedError extends Error {
@@ -45,6 +48,12 @@ let current: Runtime | undefined;
 /** The live runtime; throws if the native host isn't attached. */
 export function runtime(): Runtime {
   if (!current) throw new NotAttachedError("mirin runtime");
+  return current;
+}
+
+/** The live runtime, or undefined when detached. For infrastructure (devtools,
+ *  diagnostics) that must work whether or not the native host came up. */
+export function maybeRuntime(): Runtime | undefined {
   return current;
 }
 
@@ -67,6 +76,7 @@ export interface NativeEvent {
 
 type NativeListener = (event: NativeEvent) => void;
 const listeners = new Map<string, Set<NativeListener>>();
+const anyListeners = new Set<NativeListener>();
 
 /** Subscribe to a native event type (e.g. "menu.click"). Safe before boot. */
 export function onNativeEvent(type: string, listener: NativeListener): () => void {
@@ -81,6 +91,15 @@ export function onNativeEvent(type: string, listener: NativeListener): () => voi
   };
 }
 
+/** Subscribe to *every* native event, so the devtools tap observes new event
+ *  types without registering each one (docs/agent-devtools.md). Safe before boot. */
+export function onAnyNativeEvent(listener: NativeListener): () => void {
+  anyListeners.add(listener);
+  return () => {
+    anyListeners.delete(listener);
+  };
+}
+
 function dispatch(raw: string): void {
   let event: NativeEvent;
   try {
@@ -89,13 +108,21 @@ function dispatch(raw: string): void {
     return;
   }
   for (const fn of listeners.get(event.type) ?? []) fn(event);
+  // Observers run last and must not be able to starve feature handlers.
+  for (const fn of anyListeners) {
+    try {
+      fn(event);
+    } catch {
+      // A broken observer is a diagnostics problem, not an app problem.
+    }
+  }
 }
 
 /** Boot the runtime from the Worker's workerData. No-op when run detached. */
 export function boot(): void {
   const data = (workerData ?? {}) as {
     corePath?: string;
-    manifest?: { windows?: Record<string, WindowConfig> };
+    manifest?: { windows?: Record<string, WindowConfig>; devtools?: unknown };
     id?: string;
     devUrl?: string;
     resourcesDir?: string;
@@ -149,6 +176,7 @@ export function boot(): void {
     corePath,
     sidecarDir: data.sidecarDir,
     workersDir: data.workersDir,
+    devtools: parseDevtoolsConfig(data.manifest?.devtools),
   };
   core.onEvent(dispatch);
 }

@@ -25,6 +25,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { $ } from "bun";
+import { createReporter, type Reporter } from "./shared/report.ts";
 
 const REPO_SLUG = "Netko-Labs/mirin";
 
@@ -49,15 +50,29 @@ export function isInRepo(): boolean {
   return IN_REPO;
 }
 
-export async function resolveArtifacts(opts: { release: boolean }): Promise<Artifacts> {
+/** The in-repo CEF distribution. `present` checks the framework marker, not just
+ *  the directory: an interrupted `fetch-cef.ts` leaves an empty one behind. */
+export function vendoredCef(): { path: string; present: boolean } {
+  const path = join(REPO_ROOT, "vendor", "cef");
+  return { path, present: existsSync(join(path, cefMarker())) };
+}
+
+export async function resolveArtifacts(opts: {
+  release: boolean;
+  /** Where build chatter goes. Defaults to human mode, which prints it. */
+  reporter?: Reporter;
+}): Promise<Artifacts> {
   assertSupportedPlatform();
-  const cefPath = await ensureCef();
+  const reporter = opts.reporter ?? createReporter(false);
+  const cefPath = await ensureCef(reporter);
 
   if (IN_REPO) {
     const profile = opts.release ? "release" : "debug";
-    console.log(`[mirin] building native core + helpers (${profile})…`);
+    reporter.info(`[mirin] building native core + helpers (${profile})…`);
     const flags = opts.release ? ["--release"] : [];
-    await $`cargo build -p mirin-codec -p mirin-core -p mirin-helper ${flags}`.cwd(REPO_ROOT);
+    await reporter.build(
+      $`cargo build -p mirin-codec -p mirin-core -p mirin-helper ${flags}`.cwd(REPO_ROOT),
+    );
     const target = join(REPO_ROOT, "target", profile);
     return {
       coreDylib: join(target, coreFileName()),
@@ -142,14 +157,14 @@ function cefMarker(): string {
   return "Chromium Embedded Framework.framework";
 }
 
-async function ensureCef(): Promise<string> {
+async function ensureCef(reporter: Reporter): Promise<string> {
   if (IN_REPO) {
-    const vendor = join(REPO_ROOT, "vendor", "cef");
-    if (existsSync(join(vendor, cefMarker()))) return vendor;
+    const vendor = vendoredCef();
+    if (vendor.present) return vendor.path;
     console.error(
       "[mirin] vendor/cef missing — run `bun scripts/fetch-cef.ts` in the monorepo first.",
     );
-    return vendor;
+    return vendor.path;
   }
 
   const version = cliVersion();
@@ -160,7 +175,7 @@ async function ensureCef(): Promise<string> {
   mkdirSync(cacheRoot, { recursive: true });
   const asset = `cef-${platformTag()}.tar.gz`;
   const url = `https://github.com/${REPO_SLUG}/releases/download/v${version}/${asset}`;
-  console.log(`[mirin] downloading CEF for ${platformTag()} (one-time, ~hundreds of MB)…`);
+  reporter.info(`[mirin] downloading CEF for ${platformTag()} (one-time, ~hundreds of MB)…`);
 
   // Download with curl, not `Bun.write(file, await fetch(url))`: the latter
   // pins a core at 100% CPU and never completes on large gzip responses

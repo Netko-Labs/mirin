@@ -1,7 +1,8 @@
 name: CI
 
-# Runs on Blacksmith Linux, Windows, and Apple Silicon macOS runners. Requires
-# the Blacksmith GitHub app installed on the Netko-Labs org (app.blacksmith.sh).
+# GitHub-hosted runners only; Blacksmith bills and is reserved for release.yml's
+# tag builds.
+#
 # Building on macOS 15 is fine even though Liquid Glass needs macOS 26 at runtime:
 # NSGlassEffectView is resolved dynamically, not linked.
 
@@ -27,7 +28,7 @@ jobs:
   static:
     name: Static checks
     if: github.event_name != 'schedule'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -66,16 +67,16 @@ jobs:
       matrix:
         include:
           - name: macOS arm64
-            os: blacksmith-6vcpu-macos-15
+            os: macos-15
             install-build-tools: brew install ninja
           - name: Linux x64
-            os: blacksmith-4vcpu-ubuntu-2404
+            os: ubuntu-24.04
             install-build-tools: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev
           - name: Linux arm64
             os: ubuntu-24.04-arm
             install-build-tools: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev
           - name: Windows x64
-            os: blacksmith-4vcpu-windows-2025
+            os: windows-2025
             install-build-tools: choco install ninja -y
           - name: Windows arm64
             os: windows-11-arm
@@ -120,10 +121,15 @@ jobs:
 
       - name: Test native workspace
         run: cargo test --workspace
+        env:
+          # Warm rust-cache skips cef-dll-sys's build script, which is what copies
+          # libcef.so next to the test binaries — point the loader at the
+          # distribution instead. Inert on macOS and Windows.
+          LD_LIBRARY_PATH: ${{ github.workspace }}/vendor/cef
 
   security:
     name: Dependency security
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 

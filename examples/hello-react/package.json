@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "mirin dev",
+    "check": "mirin check",
+    "doctor": "mirin doctor",
     "vite": "vite"
   },
   "dependencies": {

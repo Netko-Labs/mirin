@@ -4,6 +4,9 @@ name: Release
 # concurrently, upload their CEF archives to that draft, and relay only small
 # registry tarballs. Publication and release visibility happen after all targets
 # succeed.
+#
+# Blacksmith (billed) is used only for the `build-*` jobs — slow CEF builds that
+# run only on a version tag. Everything else uses free GitHub-hosted runners.
 on:
   push:
     tags: ["v*"]
@@ -21,7 +24,7 @@ env:
 jobs:
   prepare-release:
     name: Validate and create draft
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     outputs:
@@ -317,7 +320,7 @@ jobs:
   publish-release:
     name: Publish registry packages and release
     needs: [prepare-release, build-macos, build-windows, build-linux]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
