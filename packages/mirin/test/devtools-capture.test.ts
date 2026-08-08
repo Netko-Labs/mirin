@@ -142,9 +142,8 @@ describe("screenshot capture", () => {
     expect((await capturePage(page, { format: "png" })).composited).toBe(false);
   });
 
-  // The inspector serves requests concurrently. Interleaved captures would make the
-  // second stash the first one's backdrop as "the original", leaving the page
-  // permanently composited after both restores ran.
+  // Interleaved captures would stash the first one's backdrop as "the original",
+  // leaving the page permanently composited.
   test("serializes overlapping captures of the same page", async () => {
     const { page, calls } = fakePage({
       appearance: { transparent: true, color: "rgb(17, 17, 17)" },

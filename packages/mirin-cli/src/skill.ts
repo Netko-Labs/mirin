@@ -1,9 +1,6 @@
 /**
- * `mirin skill` — install the agent skill into an existing project.
- *
- * New apps get it from `mirin init`. This is for the projects that already exist,
- * and for refreshing it after a CLI upgrade: the skill is versioned with the tool it
- * documents, so a stale copy describes a surface that may have moved.
+ * `mirin skill` — install or refresh the agent skill in an existing project.
+ * New apps get it from `mirin init`; a stale copy describes a surface that moved.
  */
 
 import { existsSync } from "node:fs";
@@ -21,8 +18,7 @@ export async function skill(
 ): Promise<number> {
   const reporter = createReporter(options.json === true);
 
-  // Not fatal: a monorepo may install the skill at its root rather than beside a
-  // manifest. Worth saying, because the usual cause is being in the wrong directory.
+  // Not fatal: a monorepo may install the skill at its root, away from any manifest.
   const hasManifest = existsSync(join(projectDir, "mirin.config.ts"));
 
   try {

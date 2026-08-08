@@ -3,9 +3,7 @@ use cef::*;
 use super::MirinHandler;
 use crate::engine::events::emit_event;
 
-/// Longest console message forwarded to the Worker. A page can `console.log` a
-/// megabyte; capping here keeps both the event queue and the devtools stream
-/// readable instead of pushing the problem downstream.
+/// Longest console message forwarded to the Worker; a page can log megabytes.
 const MAX_CONSOLE_CHARS: usize = 4000;
 
 /// Truncate on a char boundary, marking that we did.
@@ -17,7 +15,6 @@ fn clamp(text: String) -> String {
     format!("{kept}…(truncated)")
 }
 
-/// Map CEF's severity onto mirin's devtools levels.
 fn level_name(level: LogSeverity) -> &'static str {
     if level == LogSeverity::ERROR || level == LogSeverity::FATAL {
         "error"
@@ -35,11 +32,8 @@ wrap_display_handler! {
     pub struct MirinDisplayHandler {}
 
     impl DisplayHandler {
-        /// Renderer console output. Forwarded to the Worker as a structured
-        /// `webview.console` event so the devtools stream can carry it
-        /// (docs/agent-devtools.md), and still echoed to stderr for the terminal.
-        ///
-        /// Returning 0 keeps CEF's default handling intact.
+        /// Forwards renderer console output to the Worker as `webview.console`
+        /// (docs/agent-devtools.md); returning 0 keeps CEF's default handling.
         fn on_console_message(
             &self,
             browser: Option<&mut Browser>,

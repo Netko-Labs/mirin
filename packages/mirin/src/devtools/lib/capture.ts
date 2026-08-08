@@ -1,23 +1,14 @@
 /**
- * Screenshot capture, including the case that makes a naive capture useless: a
- * transparent window.
- *
- * mirin's transparent/OSR windows have no page background — the native material
- * behind the webview is what a person sees. CDP knows nothing about that material,
- * so `Page.captureScreenshot` returns an image whose background is alpha 0. The
- * bytes are faithful, but every viewer composites them onto white, so a light-on-
- * dark app reads as a blank page. That is precisely the artifact `mirin check`
- * exists to produce, so it cannot be left blank.
- *
- * The fix is to paint an opaque backdrop under the page for the duration of the
- * capture and say so in the response. The image is then readable but no longer
- * pixel-truth, and `composited` is how a caller tells the difference.
+ * Screenshot capture. A transparent (OSR) window has no page background, so
+ * `Page.captureScreenshot` returns alpha 0 and viewers composite it onto white —
+ * a blank page. An opaque backdrop is painted under the page for the capture,
+ * and `composited` tells the caller the image is no longer pixel-truth.
  */
 
 import type { CdpPage } from "./cdp.ts";
 import { asBoolean, asRecord, asString } from "./parse.ts";
 
-/** The slice of a CDP page this module needs — everything here is one command. */
+/** The slice of a CDP page this module needs. */
 export type CapturablePage = Pick<CdpPage, "send">;
 
 /** Backdrops for a transparent page, chosen to match the page's own scheme. */
@@ -27,17 +18,9 @@ const LIGHT_BACKDROP = "#ffffff";
 /** `#rgb` or `#rrggbb`. */
 const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 
-/**
- * What the page paints where it has no background of its own. A page is treated as
- * transparent only when *both* the root element and the body are clear — a body
- * with a real background already covers the window.
- *
- * `color` is the body's text colour, which is what decides the backdrop: the goal
- * is a legible image, so the backdrop has to contrast with the text. The OS colour
- * scheme is only a fallback — a glass window renders light text whatever the system
- * is set to, and picking white there reproduces the blank page this module exists
- * to prevent.
- */
+/** Transparent only when *both* the root element and the body are clear. The
+ *  backdrop must contrast with the body's text colour; the OS scheme is only a
+ *  fallback — a glass window renders light text whatever the system is set to. */
 const APPEARANCE_EXPRESSION = [
   "(() => {",
   '  const clear = (c) => c === "transparent" || c.split(" ").join("") === "rgba(0,0,0,0)";',
@@ -52,10 +35,8 @@ const APPEARANCE_EXPRESSION = [
   "})()",
 ].join("\n");
 
-/**
- * Perceived brightness of an `rgb(…)`/`rgba(…)` string on 0–1, or undefined when it
- * cannot be read. Rec. 601 luma is more than enough to answer "is this text light".
- */
+/** Perceived brightness (Rec. 601 luma) of an `rgb(…)`/`rgba(…)` string on 0–1,
+ *  or undefined when it cannot be read. */
 function brightness(color: string): number | undefined {
   const parts = color.match(/[\d.]+/g);
   if (parts === null || parts.length < 3) return undefined;
@@ -86,12 +67,8 @@ export interface CaptureResult {
   backdrop?: string;
 }
 
-/**
- * Read a caller-supplied `backdrop` parameter.
- *
- * An unparseable value falls back to automatic rather than failing the request:
- * a near-miss should still return a usable screenshot.
- */
+/** Read a caller-supplied `backdrop` parameter. An unparseable value falls back to
+ *  automatic rather than failing the request. */
 export function parseBackdrop(raw: string | null): string | null | undefined {
   if (raw === null) return undefined;
   if (raw === "none") return null;
@@ -106,8 +83,8 @@ async function resolveBackdrop(
   if (requested === null) return undefined;
   if (requested !== undefined) return requested;
 
-  // Automatic: only worth doing for a page that is actually transparent, and the
-  // page is the only thing that knows. A probe failure is not a capture failure.
+  // Automatic: only a transparent page needs one, and only the page knows.
+  // A probe failure is not a capture failure.
   try {
     const result = await page.send("Runtime.evaluate", {
       expression: APPEARANCE_EXPRESSION,
@@ -126,22 +103,14 @@ async function resolveBackdrop(
   }
 }
 
-/**
- * One capture at a time per page.
- *
- * `setBackdrop` stashes the page's own background before overwriting it. Two
- * captures of the same page interleaving would make the second stash the *first
- * one's backdrop* as the original, and the page would be left permanently
- * composited after both restores ran — a diagnostic silently changing how the app
- * renders for the rest of the session. The inspector serves requests concurrently,
- * so nothing else prevents that.
- */
+// One capture at a time per page: interleaved captures would stash the first one's
+// backdrop as "the original", leaving the page permanently composited.
 const captures = new WeakMap<CapturablePage, Promise<unknown>>();
 
 function serialize<T>(page: CapturablePage, run: () => Promise<T>): Promise<T> {
   const previous = captures.get(page) ?? Promise.resolve();
   // Run whether the previous capture resolved or threw: one failure must not
-  // wedge every later capture of that page.
+  // wedge later captures.
   const next = previous.then(run, run);
   captures.set(
     page,
@@ -175,28 +144,17 @@ async function captureOnce(page: CapturablePage, options: CaptureOptions): Promi
       ...(applied && backdrop !== undefined ? { backdrop } : {}),
     };
   } finally {
-    // Always restore, including when the capture threw: the override is page
-    // state, and leaving it set would silently change how the app renders.
+    // Always restore, even on a throw: the override is page state.
     if (applied) await clearBackdrop(page);
   }
 }
 
-/**
- * Paint the backdrop, then wait for it to actually render.
- *
- * This sets a style on the page rather than using
- * `Emulation.setDefaultBackgroundColorOverride`, which CEF accepts and then
- * ignores on the windowless (OSR) path — measured: captures with the override set
- * to `none`, red, and black come back byte-identical. Styling the document is the
- * only lever that reaches the compositor, so the page is briefly modified and then
- * put back.
- *
- * Returns whether the backdrop actually went on.
- */
+/** Paint the backdrop and wait for it to render, by styling the document: CEF
+ *  accepts `Emulation.setDefaultBackgroundColorOverride` and then ignores it on
+ *  the windowless (OSR) path. Returns whether the backdrop actually went on. */
 async function setBackdrop(page: CapturablePage, color: string): Promise<boolean> {
-  // `color` is already constrained to a hex literal by `parseBackdrop`, and is
-  // embedded with JSON.stringify regardless — a value from a request never
-  // becomes script.
+  // `color` is a validated hex literal, embedded with JSON.stringify — a value
+  // from a request never becomes script.
   const expression = [
     "(async () => {",
     "  const root = document.documentElement;",

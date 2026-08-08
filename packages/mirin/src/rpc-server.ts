@@ -101,10 +101,8 @@ export class RpcServer {
     this.#router = router;
   }
 
-  /**
-   * The registered procedures, name and kind. Serves the inspector's `/state`, so
-   * a tool can discover an app's RPC surface without reading its source.
-   */
+  /** The registered procedures, for the inspector's `/state`: a tool can discover
+   *  the RPC surface without reading source. */
   routes(): { name: string; type: string }[] {
     const routes: Record<string, Procedure> = this.#router?.routes ?? {};
     return Object.entries(routes).map(([name, proc]) => ({ name, type: proc.type }));
@@ -172,18 +170,13 @@ export class RpcServer {
   }
 }
 
-// ---- devtools tracing (docs/agent-devtools.md) ----
-//
-// Every UI↔main call passes through here, which makes this the one place an agent
-// can watch the app's actual behavior. Payloads stay out of the trace unless
-// `devtools.rpcPayloads` is set: they carry app data and the stream is written to
-// disk in plain text.
-
 /** Round to a tenth of a millisecond — enough to spot a slow handler. */
 function millis(elapsed: number): number {
   return Math.round(elapsed * 10) / 10;
 }
 
+// Payloads stay out of the trace unless `devtools.rpcPayloads` is set: they carry
+// app data and the stream is written to disk in plain text.
 function payload(value: unknown): Record<string, unknown> {
   return devtoolsOptions().rpcPayloads ? { payload: formatArg(value) } : {};
 }

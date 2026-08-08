@@ -1,16 +1,8 @@
 /**
- * A DevTools-protocol client for the app's own webviews (docs/agent-devtools.md).
- *
- * This is what lets a tool outside the process *see* the app rather than only read
- * about it: screenshots, accessibility snapshots, page evaluation, and synthetic
- * input all ride the protocol Chromium already speaks. CEF exposes it on a
- * loopback port (`remote_debugging_port`), so the whole client lives here in
- * TypeScript and the native core needs nothing beyond that one setting.
- *
- * The bridge keeps one WebSocket per page target and maps each target to the mirin
- * window id that owns it, by asking the page for the `webviewId` the preload
- * bootstrap installed. That mapping is the only reliable one available: in dev
- * every window loads the same Vite URL, so URLs cannot distinguish them.
+ * A DevTools-protocol client for the app's own webviews (docs/agent-devtools.md),
+ * over CEF's loopback `remote_debugging_port`. One WebSocket per page target, each
+ * mapped to a mirin window id via the preload's `webviewId` — the only reliable
+ * mapping, since in dev every window loads the same Vite URL.
  */
 
 import { asArray, asNumber, asRecord, asString, parseJson } from "./parse.ts";
@@ -25,7 +17,7 @@ const TARGET_CACHE_MS = 500;
 const ATTACH_ATTEMPTS = 30;
 const ATTACH_INTERVAL_MS = 500;
 
-/** CDP domains enabled on every page, and why: see the event handler below. */
+/** CDP domains enabled on every page. */
 const DOMAINS = ["Runtime", "Log", "Page", "Network"] as const;
 
 export interface CdpEvent {
@@ -109,12 +101,10 @@ export class CdpPage {
     return this.#closed || this.#socket.readyState > WebSocket.OPEN;
   }
 
-  /** Resolve once the socket is usable. */
   ready(): Promise<void> {
     return this.#ready;
   }
 
-  /** Issue a command and await its result. */
   async send(
     method: string,
     params: Record<string, unknown> = {},
@@ -223,11 +213,8 @@ export class CdpBridge {
     return this.#pages.size > 0;
   }
 
-  /**
-   * Attach to any page not already attached, dropping pages whose socket died.
-   * Cheap to call repeatedly: consecutive calls inside `TARGET_CACHE_MS` share one
-   * probe, and `force` bypasses that when a window has just been created.
-   */
+  /** Attach any unattached page, dropping pages whose socket died. Calls inside
+   *  `TARGET_CACHE_MS` share one probe; `force` bypasses that. */
   async refresh(force = false): Promise<void> {
     if (this.#refreshing !== undefined) return this.#refreshing;
     if (!force && Date.now() - this.#lastRefresh < TARGET_CACHE_MS) return;
@@ -240,10 +227,8 @@ export class CdpBridge {
     return run;
   }
 
-  /**
-   * Keep trying to attach while CEF finishes starting: the Worker is running well
-   * before the browser process binds its debugging port.
-   */
+  /** Keep trying to attach while CEF finishes starting: the Worker runs well
+   *  before the browser process binds its debugging port. */
   async attachWhenReady(): Promise<boolean> {
     for (let attempt = 0; attempt < ATTACH_ATTEMPTS; attempt++) {
       await this.refresh(true);
@@ -253,10 +238,8 @@ export class CdpBridge {
     return false;
   }
 
-  /**
-   * The page owning `windowId`, or the only attached page when no id is given.
-   * Refreshes first, so a window opened a moment ago is found.
-   */
+  /** The page owning `windowId`, or the only attached page when no id is given.
+   *  Refreshes first, so a window opened a moment ago is found. */
   async page(windowId?: number): Promise<CdpPage> {
     await this.refresh();
     const pages = [...this.#pages.values()].filter((page) => !page.closed);

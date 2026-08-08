@@ -62,10 +62,9 @@ if (process.platform === "linux" && !coreConfig.icon_path) {
   const iconPng = join(resourcesDir, "icon.png");
   if (existsSync(iconPng)) coreConfig.icon_path = iconPng;
 }
-// CEF's remote-debugging (DevTools protocol) port, which mirin's devtools use for
-// screenshots, snapshots, and synthetic input (docs/agent-devtools.md). `mirin dev`
-// sets this to a free loopback port; a packaged build only gets one if the operator
-// sets it explicitly, since anything that reaches the port can run code in the app.
+// CEF's remote-debugging port (docs/agent-devtools.md). `mirin dev` sets it; a
+// packaged build only gets one explicitly — anything reaching the port can run
+// code in the app.
 const cdpPort = Number(process.env.MIRIN_CDP_PORT ?? "");
 if (Number.isSafeInteger(cdpPort) && cdpPort >= 1024 && cdpPort <= 65535) {
   coreConfig.remote_debugging_port = cdpPort;

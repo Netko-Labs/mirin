@@ -19,7 +19,6 @@ afterAll(async () => {
   for (const dir of dirs) await Bun.$`rm -rf ${dir}`.quiet();
 });
 
-/** Capture console.log for the duration of `run`. */
 function captureLog(run: () => void): string[] {
   const lines: string[] = [];
   const original = console.log;
@@ -45,7 +44,6 @@ describe("cli reporter", () => {
     expect(lines).toEqual(["building…", "done"]);
   });
 
-  // The property that makes --json pipeable: nothing but JSON on stdout.
   test("json mode emits only parseable lines, ending in a result", () => {
     const reporter = createReporter(true);
     const lines = captureLog(() => {
@@ -62,15 +60,13 @@ describe("cli reporter", () => {
 
   test("points a spawned child's stdout away from the report in json mode", () => {
     expect(createReporter(false).childStdio).toEqual(["ignore", "inherit", "inherit"]);
-    // fd 2: `mirin check` runs Vite and the app itself, and their prose would
-    // otherwise interleave with the JSON on stdout.
+    // fd 2: child prose would otherwise interleave with the JSON on stdout.
     expect(createReporter(true).childStdio).toEqual(["ignore", 2, "inherit"]);
   });
 });
 
-// `bun build` writes its bundle summary to stdout, and a subprocess writes to the
-// real file descriptor — which monkey-patching console.log cannot intercept. These
-// run the reporter in a child bun so the actual fds can be observed.
+// A subprocess writes to the real fd, which patching console.log cannot intercept;
+// run the reporter in a child bun so the actual fds are observed.
 describe("cli reporter subprocess output", () => {
   async function runReporterScript(json: boolean): Promise<{ stdout: string; stderr: string }> {
     const source = `
@@ -95,7 +91,6 @@ describe("cli reporter subprocess output", () => {
   test("json mode keeps build output off stdout but still shows it", async () => {
     const { stdout, stderr } = await runReporterScript(true);
     expect(stdout).not.toContain("CHILD_CHATTER");
-    // Every stdout line must parse, which is the whole point of --json.
     const lines = stdout.split("\n").filter((line) => line.length > 0);
     expect(lines.map((line) => JSON.parse(line))).toEqual([
       expect.objectContaining({ phase: "result", ok: true }),
@@ -132,8 +127,6 @@ describe("dev session bookkeeping", () => {
     expect(info?.app).toEqual({ name: "Anko", id: "dev.netko.anko", version: "1.2.3" });
     expect(info?.devUrl).toBe("http://127.0.0.1:5173");
     expect(info?.pid).toBe(4242);
-    // Each phase records a start and a terminal entry, so a reader can see how far
-    // startup got and how long each step took.
     expect(info?.phases.map((phase) => `${phase.name}:${phase.status}`)).toEqual([
       "compile:start",
       "compile:ok",
@@ -142,8 +135,6 @@ describe("dev session bookkeeping", () => {
     ]);
     expect(info?.phases.at(-1)?.detail).toBe("port taken");
 
-    // The post-mortem has to stand alone: whoever reads it may have no terminal
-    // output and no access to the stream file.
     session.finish(1, "SIGTERM");
     const exit = JSON.parse(await Bun.file(session.paths.exit).text());
     expect(exit).toMatchObject({ version: 1, code: 1, signal: "SIGTERM", errorCount: 0 });

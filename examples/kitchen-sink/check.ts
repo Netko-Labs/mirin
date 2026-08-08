@@ -1,11 +1,6 @@
 /**
- * A `mirin check` scenario for the app-shell features.
- *
- *   bunx mirin check --scenario ./check.ts
- *
- * Most of what this app does happens *outside* the page — a tray, a global hotkey,
- * a second window. None of it is visible in the DOM, so the scenario reads it from
- * the slice `main.ts` publishes with `devtools.expose`.
+ * A `mirin check` scenario for the app-shell features. Tray/hotkey/deep links are
+ * invisible in the DOM, so it reads the slice `main.ts` publishes with `devtools.expose`.
  */
 
 import { defineCheck } from "mirinjs/check";
@@ -32,8 +27,7 @@ export default defineCheck(async (app) => {
   );
 
   const windows = await app.windows();
-  // Every window has a name, including one opened at runtime without being given
-  // one — otherwise a tool could only ever address it by a numeric id.
+  // Even a runtime-opened window gets a name; otherwise a tool could only address it by id.
   app.assert(
     windows.every((window) => window.name.length > 0),
     `every window should be addressable by name: ${JSON.stringify(windows)}`,

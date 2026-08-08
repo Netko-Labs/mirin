@@ -1,13 +1,10 @@
 /**
- * The inspector: a token-authenticated loopback HTTP server that lets a tool
- * outside the app process read what the app is doing (docs/agent-devtools.md).
+ * The inspector: a token-authenticated loopback HTTP server (docs/agent-devtools.md).
+ * Runs in the Bun Worker; port and token are published to
+ * `.mirin/dev/<session>/inspector.json`.
  *
- * It runs in the Bun Worker, alongside the RPC server, and is enabled under
- * `mirin dev` only unless a build explicitly opts in. The bound port and token
- * are published to `.mirin/dev/<session>/inspector.json`.
- *
- *   GET  /                 the route index (so a tool can discover the rest)
- *   GET  /health           liveness, pid, uptime, stream cursor
+ *   GET  /                 route index
+ *   GET  /health           liveness, pid, stream cursor
  *   GET  /state            windows, RPC routes, exposed app state
  *   GET  /logs             the structured event stream, filterable
  *   GET  /logs/stream      the same as Server-Sent Events, with replay
@@ -64,11 +61,8 @@ function logsResponse(url: URL): Response {
   });
 }
 
-/**
- * Stream events as SSE. `?since=<seq>` replays from the buffer before going live,
- * so a tool that connects after the interesting part still sees it; `?replay=0`
- * opts out.
- */
+/** Stream events as SSE. `?since=<seq>` replays from the buffer before going
+ *  live; `?replay=0` opts out. */
 function streamResponse(req: Request, url: URL): Response {
   const query = parseQuery(url.searchParams);
   const wantsReplay = url.searchParams.get("replay") !== "0";
@@ -94,20 +88,17 @@ function streamResponse(req: Request, url: URL): Response {
         }
       };
 
-      // Preamble: an SSE comment sent before anything else, so the client sees
-      // bytes (and therefore a live connection) even when the filter matches
-      // nothing yet and replay is off.
+      // Preamble comment, so the client sees bytes (a live connection) even when
+      // nothing matches yet and replay is off.
       controller.enqueue(encoder.encode(": mirin inspector stream\n\n"));
 
-      // Replay is bounded by the same `limit` the polling route uses (200 unless
-      // the caller says otherwise), so `?since=` on a stream behaves like `/logs`.
+      // Replay is bounded by the same `limit` as `/logs` (default 200).
       if (wantsReplay) {
         for (const event of sink.read(query)) frame(event);
       }
 
-      // Live events pass the same predicate the polling route uses, so `/logs`
-      // and `/logs/stream` never disagree about what a filter means. `since` is
-      // a replay cursor only — it must not suppress anything arriving now.
+      // Live events pass the same predicate as `/logs`. `since` is a replay
+      // cursor only — it must not suppress anything arriving now.
       const live = { ...query, since: undefined, limit: undefined };
       unsubscribe = sink.subscribe((event) => {
         if (matches(event, live)) frame(event);
@@ -152,10 +143,8 @@ async function runRoute(
   }
 }
 
-/**
- * Bind the inspector. Returns undefined when disabled or when the port cannot be
- * bound — a diagnostic surface must never stop an app from starting.
- */
+/** Bind the inspector. Returns undefined when disabled or the port cannot be
+ *  bound — a diagnostic surface must never stop an app from starting. */
 export function startInspector(deps: InspectorDeps): InspectorHandle | undefined {
   if (!devtoolsOptions().inspector) return undefined;
 
@@ -167,10 +156,8 @@ export function startInspector(deps: InspectorDeps): InspectorHandle | undefined
     "GET /logs/stream": (req, url) => streamResponse(req, url),
     ...(deps.extraRoutes?.() ?? {}),
   };
-  // Kept as data, not a prebuilt Response: `Response.clone()` resolves to the
-  // un-augmented fetch type when a consumer's tsconfig omits the DOM lib (the CLI
-  // typechecks these sources), and the index is requested rarely enough that
-  // rebuilding it per request costs nothing.
+  // Data, not a prebuilt Response: `Response.clone()` resolves to the un-augmented
+  // fetch type when a consumer's tsconfig omits the DOM lib.
   const index = {
     service: "mirin-inspector",
     version: 1,

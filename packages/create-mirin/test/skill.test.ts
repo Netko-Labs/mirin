@@ -32,8 +32,7 @@ describe("agent skill install", () => {
     }
   });
 
-  // The frontmatter is what makes a skill discoverable at all — a skill whose
-  // description never matches is a skill that never runs.
+  // The frontmatter is what makes a skill discoverable at all.
   test("SKILL.md carries name and description frontmatter", () => {
     const dir = tempDir();
     const text = readFileSync(join(installSkill(dir).path, "SKILL.md"), "utf8");
@@ -46,8 +45,7 @@ describe("agent skill install", () => {
     expect(frontmatter.length).toBeGreaterThan(120);
   });
 
-  // A stale reference file left from an older version reads as current, which is
-  // worse than not shipping one at all.
+  // A stale reference file left from an older version reads as current.
   test("a reinstall replaces the tree instead of merging into it", () => {
     const dir = tempDir();
     installSkill(dir);

@@ -1,10 +1,6 @@
 /**
- * The `/state` snapshot: what the app *is* right now, as opposed to what has
- * happened to it (which is the event stream's job).
- *
- * Answers the questions a tool has to ask before it can do anything useful:
- * which windows are open, what are they showing, what RPC procedures exist, and
- * what state has the app chosen to publish.
+ * The `/state` snapshot: what the app *is* right now — windows, RPC procedures,
+ * published state — as opposed to the event stream's what-has-happened.
  */
 
 import { app } from "../../app/index.ts";

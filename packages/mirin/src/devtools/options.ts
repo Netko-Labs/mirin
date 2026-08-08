@@ -1,14 +1,8 @@
 /**
- * Resolved devtools settings for the running process.
- *
- * Module level (not `lib/`) because sibling modules read it — `rpc-server` asks
- * whether it may record payloads — and because it must not import the runtime.
- *
- * Defaults are deliberately asymmetric: everything is on under `mirin dev` and
- * off in a packaged build. The inspector can evaluate JavaScript in a webview
- * and drive synthetic input, so shipping it enabled would hand any local process
- * full control of the app. Turning it on in production is an explicit,
- * documented opt-in (`devtools.production`).
+ * Resolved devtools settings. Module level (not `lib/`): sibling modules read it,
+ * and it must not import the runtime. Everything defaults on under `mirin dev`
+ * and off in a packaged build — the inspector can evaluate JavaScript and drive
+ * input, so production is an explicit opt-in (`devtools.production`).
  */
 
 import type { DevtoolsConfig } from "../config/index.ts";
@@ -61,11 +55,8 @@ export function devtoolsOptions(): DevtoolsOptions {
   return current;
 }
 
-/**
- * Narrow the `devtools` block of the manifest, which reaches the Worker as JSON.
- * Non-boolean and out-of-range values are dropped so a typo in `mirin.config.ts`
- * cannot silently enable a capability.
- */
+/** Narrow the manifest's `devtools` block. Non-boolean and out-of-range values are
+ *  dropped so a typo in `mirin.config.ts` cannot silently enable a capability. */
 export function parseDevtoolsConfig(value: unknown): DevtoolsConfig | undefined {
   const record = asRecord(value);
   if (record === undefined) return undefined;
@@ -85,11 +76,8 @@ export function parseDevtoolsConfig(value: unknown): DevtoolsConfig | undefined 
   };
 }
 
-/**
- * Resolve config against the run mode. Pure, so the precedence rules are
- * directly testable: in a packaged build every capability stays off unless
- * `production` is set, and only then do the individual switches apply.
- */
+/** Resolve config against the run mode. In a packaged build every capability stays
+ *  off unless `production` is set; only then do the individual switches apply. */
 export function resolveDevtoolsOptions(
   config: DevtoolsConfig | undefined,
   isDev: boolean,

@@ -1,12 +1,7 @@
 /**
- * HTTP plumbing for the inspector: responses, authentication, and the
- * DNS-rebinding guard.
- *
- * The inspector binds loopback only, but "loopback only" is not by itself a
- * boundary: a page in any browser on the machine can send requests to
- * `127.0.0.1`, and a hostname that resolves to `127.0.0.1` can carry a real
- * origin along with it. So every request must present the session token, and the
- * `Host` header must actually be loopback.
+ * HTTP plumbing for the inspector. Binding loopback is not by itself a boundary —
+ * any local browser page can reach `127.0.0.1` — so every request must present
+ * the session token and a loopback `Host` header.
  */
 
 /** Hostnames a legitimate inspector request can address. */
@@ -49,14 +44,8 @@ export function presentedToken(req: Request, url: URL): string | undefined {
   return url.searchParams.get("token") ?? undefined;
 }
 
-/**
- * Whether a `Host` header names loopback. Rejecting anything else stops a browser
- * page on `evil.example` whose DNS resolves to `127.0.0.1` from reaching the
- * inspector with a same-origin-looking request.
- *
- * Takes the raw header value rather than the Request so the rule stays pure and
- * directly testable.
- */
+/** Whether a `Host` header names loopback. Rejecting anything else stops
+ *  DNS-rebinding: a page on `evil.example` whose DNS resolves to `127.0.0.1`. */
 export function isLoopbackHost(host: string | null): boolean {
   if (host === null || host.length === 0) return false;
   // Strip the port; IPv6 literals keep their brackets.

@@ -1,16 +1,7 @@
 /**
- * Shaping HTTP traffic for the event stream.
- *
- * The stream is written to `events.jsonl` in plain text and served over the
- * inspector, so anything recorded here is durable and readable. Request and
- * response *metadata* is what makes a network bug diagnosable — method, URL,
- * status, type, size, time to headers — and that carries no secrets. Headers
- * frequently do, and so do URLs (`?api_key=…`), so both are redacted before they
- * reach the sink.
- *
- * Bodies are deliberately not recorded at all. When one is genuinely needed, the
- * `requestId` on every event fetches it on demand through `POST /cdp` with
- * `Network.getResponseBody` — an explicit act, not a standing capture.
+ * Shaping HTTP traffic for the event stream. The stream is durable plaintext on
+ * disk, so headers and URLs are redacted before they reach the sink. Bodies are
+ * never recorded — fetch one on demand via `POST /cdp` with `Network.getResponseBody`.
  */
 
 import type { DevEventLevel } from "../types.ts";
@@ -28,11 +19,8 @@ const SECRET_HEADERS = new Set([
   "proxy-authenticate",
 ]);
 
-/**
- * Names that carry a credential often enough to redact on sight. Deliberately
- * broad: a false positive costs one unreadable diagnostic value, a false negative
- * writes a live token to disk.
- */
+/** Deliberately broad: a false positive costs one unreadable diagnostic value, a
+ *  false negative writes a live token to disk. */
 const SECRET_PATTERN = /auth|token|secret|password|passwd|credential|session|api[-_]?key|\bkey\b/i;
 
 /** Caps, so one pathological request cannot crowd out the rest of the buffer. */
@@ -46,11 +34,8 @@ export function isSensitiveName(name: string): boolean {
   return SECRET_HEADERS.has(lower) || SECRET_PATTERN.test(lower);
 }
 
-/**
- * A CDP header bag, reduced to strings with sensitive values replaced. Header
- * names are kept: knowing an `Authorization` header was *sent* is most of the
- * diagnostic value, and its content is none of it.
- */
+/** A CDP header bag with sensitive values replaced. Names are kept: that an
+ *  `Authorization` header was *sent* is the diagnostic value. */
 export function redactHeaders(value: unknown): Record<string, string> {
   const headers = asRecord(value);
   if (headers === undefined) return {};
@@ -78,20 +63,10 @@ export function redactHeaders(value: unknown): Record<string, string> {
 const USERINFO = /^([a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/[^/?#]*@/;
 
 /**
- * A URL with its credentials hidden, wherever they sit: `user:password@` in the
- * authority, and any query **or fragment** parameter whose name looks like a
- * secret. An unparseable URL is truncated rather than dropped — a malformed URL is
- * itself a finding.
- *
- * All three halves matter, and the fragment is the one that is easy to forget:
- *
- * - A URL with no query string still carries basic-auth userinfo, so this must not
- *   short-circuit on the absence of a `?`.
- * - OAuth's implicit flow returns `#access_token=…`, which is the shape a desktop
- *   app hits most, because a custom-scheme redirect cannot hold a client secret.
- *   A fragment is never sent to the server, so it does not appear in any network
- *   event — `Page.frameNavigated` is the only place it surfaces, which makes
- *   `navigation` precisely the sink that must handle it.
+ * A URL with credentials hidden wherever they sit: authority userinfo, query, and
+ * fragment (OAuth's implicit flow returns `#access_token=…`, which only
+ * `Page.frameNavigated` ever sees). An unparseable URL is truncated rather than
+ * dropped — a malformed URL is itself a finding.
  */
 export function redactUrl(url: string): string {
   const capped = url.length > MAX_URL_LENGTH ? `${url.slice(0, MAX_URL_LENGTH)}…` : url;
@@ -104,11 +79,8 @@ export function redactUrl(url: string): string {
       parsed.password = "";
       changed = true;
     }
-    // The query goes through the same lexical pass as the fragment rather than
-    // `searchParams`. `searchParams` splits only on `&` and decodes names, so
-    // `?api_key%3Dsecret` arrived as a single *name* that matched the heuristic —
-    // and `set()` then appended `=[redacted]` while leaving the secret in the name,
-    // producing output that looked redacted and was not.
+    // A lexical pass, not `searchParams`: it decodes names, so `?api_key%3Dsecret`
+    // becomes one *name* whose "redaction" would leave the secret in place.
     const query = parsed.search.slice(1);
     if (query.length > 0) {
       const redacted = redactQueryString(query);
@@ -117,8 +89,7 @@ export function redactUrl(url: string): string {
         changed = true;
       }
     }
-    // A fragment is not structured, but in practice it carries the same
-    // `a=b&c=d` shape the query does, so the same parser applies.
+    // A fragment carries the same `a=b&c=d` shape in practice, so the same parser applies.
     const fragment = parsed.hash.slice(1);
     if (fragment.length > 0) {
       const redacted = redactQueryString(fragment);
@@ -127,8 +98,8 @@ export function redactUrl(url: string): string {
         changed = true;
       }
     }
-    // Only re-serialize when something changed: `toString()` normalizes, and an
-    // untouched URL should be reported exactly as the app requested it.
+    // Re-serialize only on change: `toString()` normalizes, and an untouched URL
+    // should be reported exactly as the app requested it.
     return changed ? parsed.toString() : capped;
   } catch {
     return redactOpaqueUrl(capped);
@@ -141,8 +112,7 @@ function redactOpaqueUrl(url: string): string {
     USERINFO,
     (match) => `${match.slice(0, match.lastIndexOf("//") + 2)}${REDACTED}@`,
   );
-  // Split the fragment off first: everything after `#` is fragment, including a
-  // `?` inside it, so splitting on `?` first would misattribute the two.
+  // Fragment off first: everything after `#` is fragment, including any `?` in it.
   const [beforeFragment, fragment] = splitOnce(withoutUserinfo, "#");
   const [path, query] = splitOnce(beforeFragment, "?");
   return [
@@ -157,18 +127,12 @@ function splitOnce(value: string, separator: string): [string, string | undefine
   return index < 0 ? [value, undefined] : [value.slice(0, index), value.slice(index + 1)];
 }
 
-/**
- * Pair separators inside a query or fragment. `;` is legacy — WHATWG dropped it and
- * `URLSearchParams` does not split on it — but servers still emit it, and a pair the
- * splitter cannot see is a pair the heuristic never gets to judge.
- */
+/** Pair separators. `;` is legacy (WHATWG dropped it) but servers still emit it,
+ *  and a pair the splitter cannot see is one the heuristic never judges. */
 const PAIR_SEPARATOR = /([&;])/;
 
-/**
- * An `=` that arrived percent-encoded, which makes a name/value pair look like one
- * opaque token. `#access_token%3Dya29.LIVE` is the shape that matters: the name is
- * exactly what the heuristic exists to catch, and it was invisible to it.
- */
+/** An `=` that arrived percent-encoded (`#access_token%3D…`), which makes a
+ *  name/value pair look like one opaque token. */
 const ENCODED_EQUALS = /%3d/i;
 
 /** Redact sensitive pairs, preserving separators so an untouched string is unchanged. */
@@ -184,8 +148,7 @@ function redactPair(pair: string): string {
   if (value !== undefined) {
     return isSensitiveName(decodeURIComponentSafe(name)) ? `${name}=${REDACTED}` : pair;
   }
-  // No literal `=`, but the pair may still be one once decoded. Redact from the
-  // encoded separator so the name keeps its original spelling.
+  // Redact from the encoded separator so the name keeps its original spelling.
   const encoded = ENCODED_EQUALS.exec(pair);
   if (encoded === null) return pair;
   const encodedName = pair.slice(0, encoded.index);
@@ -202,11 +165,8 @@ function decodeURIComponentSafe(value: string): string {
   }
 }
 
-/**
- * Severity for a response status. A 4xx is usually the app's own doing (a missing
- * favicon, an expected 404 probe) and must not fail `mirin check`; a 5xx is the
- * server failing and should.
- */
+/** Severity for a response status. A 4xx is usually the app's own doing and must
+ *  not fail `mirin check`; a 5xx is the server failing and should. */
 export function statusLevel(status: number): DevEventLevel {
   if (status >= 500) return "error";
   if (status >= 400) return "warn";

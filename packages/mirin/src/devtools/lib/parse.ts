@@ -1,8 +1,7 @@
 /**
- * Narrowing helpers for the devtools trust boundaries: session files written by
- * another process, CDP frames from the browser, and JSONL lines read back from
- * disk. Every helper is total — it returns `undefined` rather than throwing, so
- * a malformed field degrades one value instead of failing a whole request.
+ * Narrowing helpers for the devtools trust boundaries. Every helper is total —
+ * `undefined` instead of a throw, so a malformed field degrades one value rather
+ * than failing a whole request.
  */
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {

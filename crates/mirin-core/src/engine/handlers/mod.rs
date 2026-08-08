@@ -183,14 +183,8 @@ impl MirinHandler {
         self.is_closing
     }
 
-    /// The mirin window id for a CEF browser identifier, if the browser is still
-    /// tracked. Used by the display handler to attribute console output to a
-    /// window.
-    ///
-    /// `try_lock`, not `lock`: attribution is best-effort diagnostics, and the
-    /// close/destroy callbacks hold this mutex on the same UI thread. Blocking here
-    /// could freeze the app to answer a question whose worst outcome is a console
-    /// line reported without a window id.
+    /// `try_lock`: close callbacks hold this mutex on the same UI thread;
+    /// best-effort attribution is not worth a freeze.
     pub fn window_id_for_ident(ident: i32) -> Option<u32> {
         let this = Self::instance()?;
         let handler = this.try_lock().ok()?;

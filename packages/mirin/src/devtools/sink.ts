@@ -1,21 +1,9 @@
 /**
  * The event sink: a bounded in-memory ring buffer plus an optional append-only
- * JSONL mirror on disk.
- *
- * Two hard rules, because everything else in the runtime feeds this module:
- *
- * 1. It never throws. A broken diagnostic path must not take the app down, so
- *    every filesystem failure degrades to "memory only".
- * 2. It never logs. `logger` taps into the sink, so logging from here would
- *    recurse forever.
- *
- * The buffer accepts events from process start, before anything has decided
- * where (or whether) to persist them. `openFile` later attaches a file and
- * flushes the backlog, so events emitted during boot are not lost.
- *
- * This file sits at module level rather than under `lib/` on purpose: sibling
- * modules (`logger`, `rpc-server`) record through it, and it imports nothing
- * from the runtime, so it can never participate in an import cycle.
+ * JSONL mirror on disk. It never throws (filesystem failures degrade to
+ * memory-only) and never logs (`logger` feeds it; logging here would recurse).
+ * Module level, not `lib/`: sibling modules record through it, and it imports
+ * nothing from the runtime, so it can never join an import cycle.
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";
@@ -34,11 +22,8 @@ const MAX_PENDING_LINES = 256;
 
 export type DevEventListener = (event: DevEvent) => void;
 
-/**
- * Render an event as a JSONL line, replacing `data` in place when it cannot be
- * encoded. Mutating the event is deliberate: the stored record and the written line
- * must agree, so a reader of `/logs` sees exactly what the file holds.
- */
+/** Render an event as a JSONL line, replacing `data` in place when it cannot be
+ *  encoded. Mutation is deliberate: the stored record and the written line must agree. */
 function encode(event: DevEvent): string {
   try {
     return `${JSON.stringify(event)}\n`;
@@ -53,10 +38,8 @@ function encode(event: DevEvent): string {
   }
 }
 
-/**
- * Bounded event store. One instance per process; `sink` below is that instance.
- * Exported as a class so tests can exercise eviction without touching disk.
- */
+/** Bounded event store. Exported as a class so tests can exercise eviction
+ *  without touching disk; `sink` below is the process instance. */
 export class DevEventSink {
   #capacity: number;
   /** Circular buffer; `#count` entries starting at `#start`. */
@@ -119,8 +102,7 @@ export class DevEventSink {
     }
     this.#filePath = path;
     this.#fileBroken = false;
-    // Backfill whatever the buffer already holds so the file is a complete
-    // record of the session, not just of the part after the file was attached.
+    // Backfill the buffer's backlog so the file records the whole session.
     this.#pending = this.snapshot().map(encode);
     this.#startTimer();
     this.flush();
@@ -139,10 +121,8 @@ export class DevEventSink {
       ...(input.data !== undefined ? { data: input.data } : {}),
     };
 
-    // Serialize once, here, so a `data` object that cannot be JSON-encoded (a
-    // circular reference, a BigInt) is caught at the source. Left unchecked, one
-    // such event would make every later `/logs` response throw, taking out the
-    // whole surface over a single bad log line.
+    // Serialize once, here, so an unencodable `data` (circular reference, BigInt)
+    // is caught at the source instead of failing every later `/logs` response.
     const line = encode(event);
 
     this.#push(event);
@@ -156,8 +136,7 @@ export class DevEventSink {
       try {
         listener(event);
       } catch {
-        // A failing subscriber (a closed SSE socket, say) must not stall the
-        // producer or affect other subscribers.
+        // A failing subscriber (a closed SSE socket, say) must not stall the producer.
       }
     }
 
@@ -200,8 +179,7 @@ export class DevEventSink {
     try {
       appendFileSync(path, batch);
     } catch {
-      // Give up on the file for the rest of the session rather than retrying
-      // (and failing) on every subsequent event.
+      // Give up on the file for the session rather than retrying on every event.
       this.#fileBroken = true;
     }
   }
@@ -239,15 +217,11 @@ export class DevEventSink {
 /** The process-wide sink. Taps write here; the inspector reads from it. */
 export const sink = new DevEventSink();
 
-/**
- * Publish an event to the process sink. The single entry point every tap uses;
- * it is deliberately total — callers never need a try/catch.
- */
+/** Publish an event to the process sink. Total — callers never need a try/catch. */
 export function record(input: DevEventInput): void {
   try {
     sink.emit(input);
   } catch {
-    // Unreachable in practice; kept so a tap can never propagate a failure into
-    // the code path it is observing.
+    // A tap must never propagate a failure into the code path it observes.
   }
 }

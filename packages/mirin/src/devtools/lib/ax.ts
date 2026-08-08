@@ -1,15 +1,7 @@
 /**
- * Accessibility-tree formatting: `Accessibility.getFullAXTree` → compact
- * indented text.
- *
- * This is the snapshot format the inspector serves for "what is on screen". The
- * accessibility tree is a much better answer than raw HTML for a reader that has
- * to work in a budget: it already carries the roles and names a person would use
- * to describe the UI ("button 'Save'"), with none of the class-name and wrapper-div
- * noise. A page whose outerHTML runs to 100 KB usually snapshots to a few hundred
- * bytes here.
- *
- * Pure, so the shaping rules are directly testable.
+ * Accessibility-tree formatting: `Accessibility.getFullAXTree` → compact indented
+ * text. Roles and names without markup noise — a 100 KB outerHTML usually
+ * snapshots to a few hundred bytes.
  */
 
 import { asArray, asBoolean, asRecord, asString } from "./parse.ts";
@@ -23,10 +15,7 @@ const MAX_LINES = 600;
 /** Guard against a pathological or cyclic tree. */
 const MAX_DEPTH = 40;
 
-/**
- * Node properties worth showing. Everything else in the AX tree is either derived,
- * always present, or too noisy to earn its place in a snapshot.
- */
+/** Properties worth showing; the rest is derived, always present, or noise. */
 const KEPT_PROPERTIES = new Set([
   "level",
   "checked",
@@ -104,13 +93,9 @@ function formatLine(node: AxNode, depth: number): string {
   return `${INDENT.repeat(depth)}${parts.join(" ")}`;
 }
 
-/**
- * Format the flat node list CDP returns as an indented tree.
- *
- * Ignored and structurally meaningless nodes are elided while their children are
- * kept at the parent's depth, which is what makes the output readable: a button
- * wrapped in four divs prints as one line.
- */
+/** Format the flat node list CDP returns as an indented tree. Meaningless nodes
+ *  are elided with their children kept at the parent's depth, so a button wrapped
+ *  in four divs prints as one line. */
 export function formatAxTree(payload: unknown): string {
   const nodes = (asArray(asRecord(payload)?.nodes) ?? []).flatMap(
     (entry) => parseNode(entry) ?? [],

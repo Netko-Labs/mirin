@@ -1,15 +1,6 @@
 /**
- * `mirin doctor` — check the project and environment before anything is built
- * (docs/agent-devtools.md).
- *
- * Startup failures in a desktop framework are mostly environmental: a missing
- * entry file, a port already taken, an unsupported platform, a config that does not
- * parse. Those all look identical from outside — a window that never appears — and
- * a caller with no terminal cannot tell them apart. `doctor` names them, and
- * `--json` makes the answer parseable.
- *
- * It also reports the previous session's outcome, which turns "the app didn't
- * start" into "the app exited with 1 and 3 errors, here they are".
+ * `mirin doctor` — check the project and environment before anything is built,
+ * including the previous session's outcome (docs/agent-devtools.md).
  */
 
 import { existsSync } from "node:fs";
@@ -31,7 +22,6 @@ export interface DoctorCheck {
   name: string;
   status: CheckStatus;
   detail: string;
-  /** What to do about it, when there is something to do. */
   fix?: string;
 }
 
@@ -154,8 +144,7 @@ function checkUi(projectDir: string): DoctorCheck[] {
 
 function checkCef(): DoctorCheck {
   if (isInRepo()) {
-    // Resolved from the CLI, not the cwd: `doctor` is normally run from an example
-    // app, where `<example>/vendor/cef` never exists and the repo's does.
+    // Resolved from the CLI's location, not the cwd, which is usually an example app.
     const vendored = vendoredCef();
     return vendored.present
       ? ok("cef", "vendor/cef is present")
@@ -179,7 +168,6 @@ async function checkPorts(): Promise<DoctorCheck[]> {
   ];
 }
 
-/** Report how the previous run ended — usually the fastest route to the cause. */
 function checkLastSession(projectDir: string): DoctorCheck {
   const dir = readCurrentSession(projectDir);
   if (dir === undefined) return ok("last session", "none recorded yet");

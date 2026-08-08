@@ -1,13 +1,7 @@
 /**
- * Renderer taps over the DevTools protocol.
- *
- * The core's display handler already reports console output, so `consoleAPICalled`
- * is deliberately not forwarded — it would double every line. What CDP adds is
- * everything the console cannot express: exceptions with real stack traces, HTTP
- * traffic, and navigation.
- *
- * Split from `taps.ts` (which owns native and Worker taps) because these are a
- * distinct concern with a distinct source: every event here is `src: "renderer"`.
+ * Renderer taps over the DevTools protocol: exceptions with stacks, HTTP traffic,
+ * navigation. `consoleAPICalled` is deliberately not forwarded — the core's
+ * display handler already reports console output, and this would double every line.
  */
 
 import { devtoolsOptions } from "../options.ts";
@@ -31,8 +25,7 @@ function stackFrames(trace: unknown): string[] {
     const frame = asRecord(entry);
     if (frame === undefined) return [];
     const fn = asString(frame.functionName);
-    // Redacted like `data.url` on the same event: a script loaded with a
-    // credential in its query would otherwise be clear here and hidden there.
+    // Redacted like `data.url`: a script URL can carry a credential in its query.
     const url = redactUrl(asString(frame.url) ?? "");
     const line = asNumber(frame.lineNumber) ?? 0;
     const column = asNumber(frame.columnNumber) ?? 0;
@@ -65,12 +58,9 @@ function recordLogEntry(event: CdpEvent): void {
   const entry = asRecord(event.params.entry);
   if (entry === undefined) return;
   const source = asString(entry.source) ?? "";
-  // Two sources here are already covered, and reporting them twice is worse than
-  // not reporting them: console output by the core's display handler, and network
-  // failures by the Network-domain taps below. The network duplicate also disagrees
-  // with itself — `Log` grades every failed request `error`, where `recordResponse`
-  // deliberately calls a 4xx a warning, and `mirin check` fails a run on any error.
-  // What's left is what CDP alone reports: security, rendering, deprecation, …
+  // Both sources are covered elsewhere, and `Log` grades every failed request
+  // `error` where `recordResponse` calls a 4xx a warning — `mirin check` fails on
+  // any error, so the duplicate would fail runs.
   if (source === "console-api" || source === "network") return;
   record({
     src: "renderer",
@@ -105,11 +95,8 @@ function recordLoadingFailed(event: CdpEvent): void {
   });
 }
 
-/**
- * Every request the page issues. Recorded at `debug` so ordinary traffic does not
- * crowd a default read of the stream, while still being there when the question is
- * "what did the app actually call?".
- */
+/** Every request the page issues, at `debug` so ordinary traffic does not crowd a
+ *  default read of the stream. */
 function recordRequest(event: CdpEvent): void {
   if (!devtoolsOptions().network) return;
   const request = asRecord(event.params.request);
@@ -122,8 +109,7 @@ function recordRequest(event: CdpEvent): void {
     msg: `→ ${method} ${url}`,
     ...(event.window !== undefined ? { window: event.window } : {}),
     data: {
-      // The handle for `Network.getResponseBody` over `POST /cdp` — bodies are
-      // fetched on demand rather than captured into the stream.
+      // The handle for on-demand `Network.getResponseBody` over `POST /cdp`.
       requestId: asString(event.params.requestId) ?? "",
       method,
       url,
@@ -137,8 +123,7 @@ function recordResponse(event: CdpEvent): void {
   const response = asRecord(event.params.response);
   const status = asNumber(response?.status) ?? 0;
   // Turning `network` off silences ordinary traffic, never failures: `mirin check`
-  // gates on error-level events, and an opt-out for noise must not quietly weaken
-  // the thing that catches a broken app.
+  // gates on error-level events.
   if (!devtoolsOptions().network && status < 400) return;
   const url = redactUrl(asString(response?.url) ?? "");
   const ms = headersMs(response?.timing);
@@ -161,16 +146,14 @@ function recordResponse(event: CdpEvent): void {
 
 function recordNavigation(event: CdpEvent): void {
   const frame = asRecord(event.params.frame);
-  // Sub-frame navigations (iframes, about:blank shims) are not what a reader means
-  // by "the window navigated".
+  // Sub-frame navigations (iframes, about:blank shims) are not "the window navigated".
   if (asString(frame?.parentId) !== undefined) return;
   record({
     src: "renderer",
     level: "info",
     type: "navigation",
-    // Redacted like every other URL in the stream. This is the sink that matters
-    // most: OAuth's implicit flow returns `#access_token=…`, and a fragment never
-    // reaches the network, so `frameNavigated` is the only event that sees it.
+    // The sink that matters most: OAuth's implicit `#access_token=…` never reaches
+    // the network, so `frameNavigated` is the only event that sees it.
     msg: redactUrl(asString(frame?.url) ?? ""),
     ...(event.window !== undefined ? { window: event.window } : {}),
   });

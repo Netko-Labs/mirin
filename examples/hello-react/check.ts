@@ -1,12 +1,6 @@
 /**
- * A `mirin check` scenario: the user flows this app exists to demonstrate, driven
- * end to end and asserted.
- *
- *   bunx mirin check --scenario ./check.ts
- *
- * Startup alone proves the window opened. This proves the app *works* — that a
- * typed query round-trips to the Bun process and back, that a mutation updates the
- * UI, and that push events arrive.
+ * A `mirin check` scenario for this app's user flows.
+ * Run: `bunx mirin check --scenario ./check.ts`
  */
 
 import { defineCheck } from "mirinjs/check";
@@ -22,10 +16,8 @@ export default defineCheck(async (app) => {
   await app.click("text=add a todo");
   await app.type("ship the devtools");
   await app.click("text=Add");
-  // Deliberately *not* `expectText`: the text is still sitting in the input, so a
-  // tree-wide match would pass even when the mutation never round-tripped. Assert
-  // on the list itself — and wait, because the list only fills in once the main
-  // process has answered.
+  // Assert on the list, not the input: a tree-wide text match passes even if the
+  // mutation never round-tripped.
   const listItems = (): Promise<string[]> =>
     app.evaluate<string[]>('[...document.querySelectorAll("li")].map((item) => item.textContent)');
   await app.waitUntil(

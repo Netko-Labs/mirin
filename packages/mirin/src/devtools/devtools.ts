@@ -1,21 +1,9 @@
 /**
  * mirin/devtools — the agent-facing observability facade (docs/agent-devtools.md).
+ * Collects every event source into one queryable stream, mirrors it to
+ * `.mirin/dev/<session>/events.jsonl`, and serves it over loopback.
  *
- * A running mirin app produces plenty of signal, but until now all of it was
- * write-only: renderer console output went to stderr, RPC calls went nowhere, and
- * native events were dropped unless a feature happened to subscribe. This module
- * collects every source into one queryable stream, mirrors it to
- * `.mirin/dev/<session>/events.jsonl`, and (with the inspector) serves it over
- * loopback so a tool outside the process can see what the app is doing.
- *
- * App code uses two things:
- *
- *   import { devtools } from "mirinjs";
- *
- *   // publish a domain event into the stream
  *   devtools.event({ type: "route.change", msg: "/settings" });
- *
- *   // publish live state, readable at the inspector's /state
  *   devtools.expose("store", () => store.getState());
  */
 
@@ -37,7 +25,6 @@ import {
 import { record, sink } from "./sink.ts";
 import type { AppDevEvent, DevEvent, DevEventQuery, InspectorEndpoint } from "./types.ts";
 
-/** State getters registered through `devtools.expose`. */
 const exposed = new Map<string, () => unknown>();
 
 let paths: SessionPaths | undefined;
@@ -61,25 +48,20 @@ function readExposed(getter: () => unknown): unknown {
 }
 
 export const devtools = {
-  /** Whether the devtools subsystem is active in this process. */
   get enabled(): boolean {
     return devtoolsOptions().enabled;
   },
 
-  /** The active session's paths, or undefined when running without a session. */
   get session(): SessionPaths | undefined {
     return paths;
   },
 
-  /** The inspector's loopback URL, or undefined when it is not running. */
   get inspectorUrl(): string | undefined {
     return inspector !== undefined ? `http://127.0.0.1:${inspector.port}` : undefined;
   },
 
-  /**
-   * Publish an app-defined event into the stream. Cheap and always safe to call:
-   * when devtools are disabled the record lands in the in-memory buffer only.
-   */
+  /** Publish an app-defined event into the stream. Always safe: with devtools
+   *  disabled the record lands in the in-memory buffer only. */
   event(event: AppDevEvent): void {
     record({
       src: "app",
@@ -91,22 +73,16 @@ export const devtools = {
     });
   },
 
-  /**
-   * Publish a named slice of app state under the inspector's `/state`. The getter
-   * runs on each read, so an agent always sees current values rather than a
-   * snapshot from startup. Return JSON-serializable data; a getter that throws is
-   * reported as an error against its own key and does not fail the request.
-   */
+  /** Publish a named slice of app state under the inspector's `/state`. The getter
+   *  runs on each read; one that throws is reported against its own key, not the request. */
   expose(name: string, getter: () => unknown): void {
     exposed.set(name, getter);
   },
 
-  /** Remove a getter registered with `expose`. */
   unexpose(name: string): void {
     exposed.delete(name);
   },
 
-  /** Every exposed slice, evaluated now. */
   state(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [name, getter] of exposed) out[name] = readExposed(getter);
@@ -119,14 +95,9 @@ export const devtools = {
   },
 };
 
-/**
- * Boot devtools. Called from the package entry immediately after `boot()`, so the
- * run mode and session dir are known.
- *
- * Taps install here rather than at import time (barrels and modules stay
- * side-effect free). Nothing is missed: native events sit in the core's queue
- * until the Worker's first poll, which is at least one interval away.
- */
+/** Boot devtools; called from the package entry right after `boot()`. Taps install
+ *  here, not at import time; nothing is missed — native events sit in the core's
+ *  queue until the Worker's first poll. */
 export function startDevtools(override?: DevtoolsConfig): void {
   const runtime = maybeRuntime();
   const options = resolveDevtoolsOptions(override ?? runtime?.devtools, runtime?.isDev ?? false);
@@ -142,15 +113,12 @@ export function startDevtools(override?: DevtoolsConfig): void {
   }
 
   const port = options.cdp ? cdpPort() : undefined;
-  // Bound to a local so the route closure captures a definite bridge rather than
-  // the reassignable module-level slot.
+  // Local binding: route closures must capture a definite bridge, not the
+  // reassignable module-level slot.
   const attached = port !== undefined ? startCdpBridge(port) : undefined;
   bridge = attached;
 
-  // Installed after the bridge so the console tap can ask whether CDP already
-  // covers a window; the answer is read per event, not captured now, because
-  // attachment completes later. Nothing has been emitted in between — no native
-  // event can be dispatched inside this synchronous block.
+  // `cdpCovers` is read per event, not captured now: CDP attachment completes later.
   teardown.push(
     installNativeTap({
       cdpCovers: (window) =>
@@ -197,14 +165,9 @@ export function startDevtools(override?: DevtoolsConfig): void {
   });
 }
 
-/**
- * Create the CDP bridge and start attaching.
- *
- * Attachment is asynchronous and deliberately not awaited: CEF binds its debugging
- * port during browser-process init, which happens after the Worker is already
- * running, and nothing about app startup should wait on diagnostics. Each new
- * window triggers a re-scan so its page is attached as soon as it exists.
- */
+/** Create the CDP bridge and start attaching. Attachment is async and not awaited:
+ *  CEF binds its debugging port after the Worker is already running, and app
+ *  startup must not wait on diagnostics. */
 function startCdpBridge(port: number): CdpBridge {
   const created = new CdpBridge(port, recordCdpEvent);
   teardown.push(onNativeEvent("window.created", () => void created.refresh(true)));
@@ -224,7 +187,6 @@ function startCdpBridge(port: number): CdpBridge {
   return created;
 }
 
-/** Publish the inspector's endpoint into the session dir. */
 export function publishInspectorEndpoint(endpoint: InspectorEndpoint): void {
   if (paths === undefined) return;
   try {

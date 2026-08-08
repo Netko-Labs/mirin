@@ -1,10 +1,6 @@
 /**
- * Public devtools types (docs/agent-devtools.md).
- *
- * One envelope carries every diagnostic signal a mirin app produces, whatever
- * its origin: main-process logs, renderer console output, native lifecycle
- * events, RPC traffic, and app-published events. Consumers (the inspector HTTP
- * surface and the `events.jsonl` stream) only ever see this shape.
+ * Public devtools types (docs/agent-devtools.md). One envelope carries every
+ * diagnostic signal; consumers (`/logs`, `events.jsonl`) only ever see this shape.
  */
 
 /** Where an event came from. */
@@ -67,9 +63,7 @@ export interface DevEventQuery {
   since?: number;
   /** Minimum level, by severity order. */
   level?: DevEventLevel;
-  /** Restrict to these sources. */
   src?: DevEventSource[];
-  /** Restrict to these window ids. */
   window?: number[];
   /** Restrict to events whose `type` starts with one of these prefixes. */
   type?: string[];

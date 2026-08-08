@@ -1,14 +1,7 @@
 /**
  * The `CheckDriver` a scenario is handed, implemented over a running app's
- * inspector (docs/agent-devtools.md).
- *
- * Every method is one HTTP call to the app itself, so a scenario exercises the
- * real event path a person's interaction would: `text=` selectors resolve against
- * the same accessibility names the snapshot prints, and input is synthesized
- * through CDP rather than dispatched as a synthetic DOM event.
- *
- * Failures throw. `runScenario` turns the throw into a failed check, so a
- * scenario reads as a straight line with no error handling of its own.
+ * inspector (docs/agent-devtools.md). Failures throw; `runScenario` turns the
+ * throw into a failed check.
  */
 
 import type { CheckDriver, CheckWindow, WindowTarget } from "mirinjs/check";
@@ -35,7 +28,6 @@ export interface ScenarioStep {
 
 export interface ScenarioOutcome {
   steps: ScenarioStep[];
-  /** The screenshots the scenario asked for, in order. */
   screenshots: string[];
   /** Set when the scenario threw; the step it was in is in `steps`. */
   failure?: { step: string; message: string };
@@ -47,7 +39,6 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** `?window=3`, or "" when the app has only one window and the caller said nothing. */
 function windowQuery(options: WindowTarget | undefined): string {
   return options?.window !== undefined ? `?window=${options.window}` : "";
 }
@@ -71,12 +62,8 @@ function windowsOf(state: unknown): CheckWindow[] {
   });
 }
 
-/**
- * Build the driver plus the outcome it accumulates.
- *
- * `onStep` lets the caller mirror steps into the event stream, so the app's own
- * log and the scenario's progress interleave in one timeline.
- */
+/** `onStep` mirrors steps into the event stream, so the app's log and the
+ *  scenario's progress interleave in one timeline. */
 export function createDriver(
   client: InspectorClient,
   onStep?: (name: string) => void,
@@ -177,8 +164,7 @@ export function createDriver(
     async screenshot(label, options) {
       const query = new URLSearchParams();
       if (options?.window !== undefined) query.set("window", String(options.window));
-      // Default to the current step, so a scenario's screenshots are identifiable
-      // in the session dir without every call having to name itself.
+      // Default the label to the current step, so screenshots stay identifiable.
       query.set("label", label ?? steps.at(-1)?.name ?? `shot-${screenshots.length + 1}`);
       const result = record(await client.get(`/screenshot?${query.toString()}`));
       const path = result.path;
@@ -226,8 +212,7 @@ export function createDriver(
       const timeoutMs = options?.timeoutMs ?? EXPECT_TIMEOUT_MS;
       const deadline = Date.now() + timeoutMs;
       for (;;) {
-        // A condition that throws counts as "not yet": it is usually reading state
-        // the app has not produced. The timeout is what turns that into a failure.
+        // A condition that throws counts as "not yet"; the timeout makes it a failure.
         let held: unknown = false;
         try {
           held = await condition();

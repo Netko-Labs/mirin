@@ -1,24 +1,10 @@
 /**
- * Output shaping for CLI commands that both people and tools run.
- *
- * Human mode is what mirin has always printed. `--json` mode replaces it with
- * newline-delimited progress events followed by one result object, so a caller can
- * parse the outcome instead of scraping prose. The two never interleave: in JSON
- * mode nothing but JSON reaches stdout, which is the property that makes it usable
- * in a pipe.
- *
- * That invariant covers the whole process, not just this module's own writes — a
- * command like `mirin check` runs Vite, `bun build`, and the app itself, and each
- * of those prints to stdout by default. `childStdio` and `build()` are how a caller
- * hands that output to the reporter instead of letting it reach fd 1 directly.
+ * Output shaping for CLI commands. Invariant: in `--json` mode nothing but JSON
+ * reaches stdout, process-wide — `childStdio` and `build()` route child output away.
  */
 
 import type { $ } from "bun";
 
-/**
- * `stdio` for a spawned child: stdin closed, stderr inherited, and stdout either
- * inherited or pointed at fd 2 — see `Reporter.childStdio`.
- */
 export type ChildStdio = ["ignore", "inherit" | 2, "inherit"];
 
 export interface Reporter {
@@ -29,18 +15,11 @@ export interface Reporter {
   event(phase: string, data?: Record<string, unknown>): void;
   /** The final outcome. JSON mode prints `payload`; human mode calls `render`. */
   finish(payload: Record<string, unknown>, render: () => void): void;
-  /**
-   * `stdio` for a long-lived child whose output is progress, not this command's
-   * result — Vite, the app itself. Their stdout is prose, so in JSON mode it is
-   * pointed at stderr (fd 2) instead: still visible to anyone watching, but off
-   * the stream a caller parses.
-   */
+  /** `stdio` for a long-lived child (Vite, the app): in JSON mode its stdout is
+   *  pointed at stderr, off the stream a caller parses. */
   readonly childStdio: ChildStdio;
-  /**
-   * Await a build subprocess (`bun build`, `cargo build`) under the same rule.
-   * `bun build` writes its bundle summary to stdout, which would otherwise land
-   * in the middle of the JSON report.
-   */
+  /** Await a build subprocess under the same rule — `bun build` writes its
+   *  bundle summary to stdout. */
   build(shell: $.ShellPromise): Promise<void>;
 }
 
@@ -55,14 +34,12 @@ export function createReporter(json: boolean): Reporter {
       if (json) console.log(JSON.stringify({ ts: Date.now(), phase, ...data }));
     },
     async build(shell) {
-      // Human mode streams the build live: a cold `cargo build` takes minutes, and
-      // buffering it would be indistinguishable from a hang.
+      // Stream live: a cold `cargo build` takes minutes, and buffering looks like a hang.
       if (!json) {
         await shell;
         return;
       }
-      // JSON mode has to capture it. Replay on stderr rather than dropping it, or a
-      // failed build would report only its exit status.
+      // Replay on stderr rather than dropping, or a failed build reports only its exit status.
       try {
         const output = await shell.quiet();
         writeToStderr(output.stdout, output.stderr);

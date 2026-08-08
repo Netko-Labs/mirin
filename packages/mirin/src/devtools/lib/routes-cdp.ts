@@ -7,10 +7,8 @@
  *   POST /act          click / type / key / scroll / wait
  *   POST /cdp          any DevTools-protocol command, for everything else
  *
- * Screenshots are returned as a *path* rather than a base64 blob by default: the
- * readers these serve work with files, and a path costs a few dozen bytes where an
- * inlined PNG costs megabytes. `?inline=1` returns the bytes for anything that
- * would rather stream them.
+ * Screenshots return a *path* by default (`?inline=1` for the bytes): a path
+ * costs a few dozen bytes where an inlined PNG costs megabytes.
  */
 
 import { join } from "node:path";
@@ -52,11 +50,8 @@ async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
   return asRecord(parseJson(await req.text())) ?? {};
 }
 
-/**
- * A caller-supplied screenshot label, reduced to something safe to put in a file
- * name. The label reaches the filesystem, so the allowed set is a whitelist and
- * leading dots are stripped — `..` must never survive this.
- */
+/** A caller-supplied screenshot label, reduced to a safe file-name fragment: a
+ *  character whitelist with leading dots stripped — `..` must never survive this. */
 export function screenshotLabel(raw: string | null): string {
   if (raw === null) return "";
   const safe = raw
@@ -96,9 +91,8 @@ async function screenshotRoute(deps: CdpRouteDeps, url: URL): Promise<Response> 
     bytes: capture.bytes.byteLength,
     format,
     window: page.window ?? null,
-    // A transparent window has no page background, so the capture was painted
-    // over an opaque backdrop to be readable — say so, since it is no longer
-    // exactly what the compositor showed.
+    // True when an opaque backdrop was painted under a transparent page — the
+    // image is readable but no longer exactly what the compositor showed.
     composited: capture.composited,
     ...(capture.backdrop !== undefined
       ? { backdrop: capture.backdrop, note: "transparent page; opaque backdrop added underneath" }
@@ -126,8 +120,8 @@ async function snapshotRoute(deps: CdpRouteDeps, url: URL): Promise<Response> {
     return jsonError(`unknown snapshot format "${format}" — use "ax" or "dom"`, 400);
   }
 
-  // Accessibility must be enabled before the tree can be read; it is not one of
-  // the domains the bridge turns on for every page, because only this route uses it.
+  // Accessibility must be enabled before the tree can be read; the bridge does not
+  // enable it globally because only this route uses it.
   await page.send("Accessibility.enable").catch(() => ({}));
   const tree = await page.send("Accessibility.getFullAXTree");
   return json({
@@ -243,19 +237,9 @@ function guarded(
 /** A CDP command name: `Domain.command`. */
 const CDP_METHOD = /^[A-Z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/;
 
-/**
- * `POST /cdp` — send any DevTools-protocol command to a window's page.
- *
- * The purpose-built routes cover what a caller needs most often; this covers
- * everything else, so a new diagnostic need is not a mirin release. The obvious
- * pairing is with the network taps: they record metadata and a `requestId`, and
- * `Network.getResponseBody` turns that id into the body on demand.
- *
- * This is not a wider trust boundary than the inspector already is — `POST /eval`
- * runs arbitrary JavaScript in the page — but it does reach domains the page
- * cannot, so it stays behind the same token and `Host` guards and remains off in
- * packaged builds.
- */
+/** `POST /cdp` — send any DevTools-protocol command to a window's page, so a new
+ *  diagnostic need is not a mirin release. No wider a trust boundary than
+ *  `POST /eval`; it stays behind the same token and `Host` guards. */
 async function cdpRoute(deps: CdpRouteDeps, req: Request, url: URL): Promise<Response> {
   const body = await readJsonBody(req);
   const method = asString(body.method);
@@ -271,9 +255,8 @@ async function cdpRoute(deps: CdpRouteDeps, req: Request, url: URL): Promise<Res
   try {
     return json({ ok: true, method, window, result: await page.send(method, params) });
   } catch (err) {
-    // A protocol error is the app's answer, not a failure of the inspector — an
-    // unsupported domain or a stale requestId is information. Report it as a
-    // result so a caller reads the message rather than guessing from a status.
+    // A protocol error is the app's answer, not an inspector failure — report the
+    // message so a caller reads it rather than guessing from a status.
     return json(
       { ok: false, method, window, error: err instanceof Error ? err.message : String(err) },
       502,

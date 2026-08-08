@@ -1,22 +1,8 @@
 /**
- * The dev-session protocol: the on-disk contract between `mirin dev`, the Bun
- * Worker, and any external tool (an agent, a script, an editor) that wants to
- * observe a running mirin app. Exported as `mirinjs/devtools/session`.
- *
- * This module is deliberately free of FFI, native, and runtime imports so the
- * CLI — and anything else outside the app process — can read and write session
- * files without loading libmirin_core.
- *
- * Layout, under the project's gitignored `.mirin/dev/`:
- *
- *   current.json                 → { session: "<abs path to the newest dir>" }
- *   <session-id>/session.json    → app metadata + CLI phase timeline  (CLI writes)
- *   <session-id>/inspector.json  → inspector port + token             (Worker writes)
- *   <session-id>/events.jsonl    → the structured event stream        (Worker writes)
- *   <session-id>/exit.json       → post-mortem after the app dies      (CLI writes)
- *   <session-id>/screenshots/    → PNGs captured through the inspector
- *
- * Exactly one process writes each file, so no locking is required.
+ * The dev-session protocol: the on-disk contract under `.mirin/dev/<session>/`
+ * between `mirin dev`, the Worker, and external tools. Free of FFI/runtime
+ * imports so the CLI can use it without loading libmirin_core. Exactly one
+ * process writes each file, so no locking is required.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -24,8 +10,7 @@ import { dirname, join } from "node:path";
 import { asArray, asEnum, asNumber, asRecord, asString, parseJsonRecord } from "./lib/parse.ts";
 import type { DevEvent, DevEventLevel, DevEventSource, InspectorEndpoint } from "./types.ts";
 
-// Re-exported so a consumer of the session protocol (the CLI, an external tool)
-// gets the record types alongside the readers that produce them.
+// Re-exported so protocol consumers get the record types with the readers.
 export type {
   DevEvent,
   DevEventLevel,
@@ -37,11 +22,8 @@ export type {
 /** Env var carrying the active session dir into the app process. */
 export const DEV_SESSION_ENV = "MIRIN_DEV_SESSION";
 
-/**
- * Env var carrying CEF's remote-debugging port. Read twice in the app process: by
- * the host, which passes it to the native core as `remote_debugging_port`, and by
- * the Worker, whose CDP client connects to it.
- */
+/** Env var carrying CEF's remote-debugging port. Read by the host (which passes it
+ *  to the native core) and by the Worker's CDP client. */
 export const DEV_CDP_PORT_ENV = "MIRIN_CDP_PORT";
 
 export const SESSION_FILE = "session.json";
@@ -72,7 +54,6 @@ export interface SessionInfo {
   /** True for `mirin dev` / `mirin check`; false for a packaged build. */
   dev: boolean;
   devUrl?: string;
-  /** The app process id, once it has been spawned. */
   pid?: number;
   phases: SessionPhase[];
 }
@@ -83,7 +64,6 @@ export interface SessionExit {
   exitedAt: number;
   code: number | null;
   signal?: string;
-  /** Count of `error`-level events seen in the session. */
   errorCount: number;
   /** The last few events before exit, so a reader needs only this file. */
   tail: DevEvent[];
@@ -98,12 +78,10 @@ export interface SessionPaths {
   screenshots: string;
 }
 
-/** `<projectDir>/.mirin/dev` — the root holding every session. */
 export function devRoot(projectDir: string): string {
   return join(projectDir, ".mirin", "dev");
 }
 
-/** Every path inside a session dir. */
 export function sessionPaths(dir: string): SessionPaths {
   return {
     dir,
@@ -115,18 +93,13 @@ export function sessionPaths(dir: string): SessionPaths {
   };
 }
 
-/**
- * A sortable, collision-free session id: `20260730-041912-8421`. Sorting by name
- * therefore sorts by start time, which is what a human scanning `.mirin/dev`
- * wants. Pure, so the caller supplies the clock.
- */
+/** A sortable, collision-free session id, e.g. `20260730-041912-8421`: name order
+ *  is start-time order. */
 export function newSessionId(now: number, pid: number): string {
   const iso = new Date(now).toISOString();
   const stamp = iso.slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
   return `${stamp}-${pid}`;
 }
-
-// ---- writing ----
 
 /** Write JSON via a temp file + rename, so a reader never sees a partial file. */
 function writeJsonAtomic(path: string, value: unknown): void {
@@ -136,7 +109,6 @@ function writeJsonAtomic(path: string, value: unknown): void {
   renameSync(tmp, path);
 }
 
-/** Create the session dir (and its screenshots dir) and return its paths. */
 export function createSessionDir(projectDir: string, id: string): SessionPaths {
   const paths = sessionPaths(join(devRoot(projectDir), id));
   mkdirSync(paths.screenshots, { recursive: true });
@@ -159,8 +131,6 @@ export function writeInspectorEndpoint(paths: SessionPaths, endpoint: InspectorE
 export function writeCurrentSession(projectDir: string, dir: string): void {
   writeJsonAtomic(join(devRoot(projectDir), CURRENT_FILE), { session: dir });
 }
-
-// ---- reading ----
 
 function readJsonRecord(path: string): Record<string, unknown> | undefined {
   if (!existsSync(path)) return undefined;
@@ -274,10 +244,8 @@ export function parseDevEvent(value: unknown): DevEvent | undefined {
   };
 }
 
-/**
- * Read `events.jsonl` back into records. A partially written trailing line (the
- * app is still running) is skipped rather than treated as corruption.
- */
+/** Read `events.jsonl` back into records. A partially written trailing line (the
+ *  app is still running) is skipped, not treated as corruption. */
 export function readEventsFile(path: string): DevEvent[] {
   if (!existsSync(path)) return [];
   let text: string;

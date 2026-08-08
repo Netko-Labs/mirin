@@ -1,13 +1,7 @@
 name: CI
 
-# Runner policy: **nothing here runs on Blacksmith — it bills, and CI does not.**
-# This repository is public, so GitHub-hosted standard runners are free and cover
-# every target this matrix needs. Blacksmith is reserved for the release builds in
-# `release.yml`, which run only on a version tag; see the note there.
-#
-# The trade is deliberate: CI is slower than it was on paid hardware, and CI runs
-# on every push. Paying per PR to shorten a job that already gates nothing urgent
-# is the wrong side of that trade.
+# GitHub-hosted runners only; Blacksmith bills and is reserved for release.yml's
+# tag builds.
 #
 # Building on macOS 15 is fine even though Liquid Glass needs macOS 26 at runtime:
 # NSGlassEffectView is resolved dynamically, not linked.
@@ -128,14 +122,9 @@ jobs:
       - name: Test native workspace
         run: cargo test --workspace
         env:
-          # cef-dll-sys copies libcef.so next to the built binaries, but only when
-          # its build script actually runs. On a warm rust-cache the crate is fresh
-          # so the script is skipped, while the copy itself is not part of what the
-          # cache restores — leaving the test binary unable to load libcef.so
-          # (`.cargo/config.toml` bakes an `$ORIGIN` rpath, and cargo adds the
-          # target dir to the search path, but neither helps if the file is gone).
-          # Point the loader at the distribution instead, which is true either way.
-          # Inert on macOS (framework loader) and Windows (exe-dir search).
+          # Warm rust-cache skips cef-dll-sys's build script, which is what copies
+          # libcef.so next to the test binaries — point the loader at the
+          # distribution instead. Inert on macOS and Windows.
           LD_LIBRARY_PATH: ${{ github.workspace }}/vendor/cef
 
   security:

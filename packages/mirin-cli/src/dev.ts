@@ -8,8 +8,7 @@
  * 5. launch the app pointed at the Vite URL, with RPC injected into the webview
  *
  * Each run also opens a dev session under `.mirin/dev/` and records its phase
- * timeline there, so the app's structured event stream and this startup sequence
- * can be read from disk without a terminal (docs/agent-devtools.md).
+ * timeline there (docs/agent-devtools.md).
  */
 
 import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -43,7 +42,6 @@ const DEV_PORT_BASE = 5173;
  *  so concurrent dev sessions of different apps don't fight over either. */
 const CDP_PORT_BASE = 9222;
 
-/** What a launch hook receives once the app process is up. */
 export interface DevLaunchContext {
   session?: DevSession;
   devUrl: string;
@@ -56,11 +54,8 @@ export interface DevLaunchContext {
 export interface DevOptions {
   /** Emit newline-delimited JSON progress instead of prose. */
   json?: boolean;
-  /**
-   * Called once the app is running. `mirin check` uses this to probe the app and
-   * then stop it; plain `mirin dev` passes no hook and runs until the app quits.
-   * The app is always stopped after the hook settles, whether it threw or not.
-   */
+  /** Called once the app is running. The app is always stopped after the hook
+   *  settles, whether it threw or not. */
   onLaunched?(context: DevLaunchContext): Promise<void> | void;
 }
 
@@ -259,9 +254,8 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
       }),
       MIRIN_SIDECAR_DIR: sidecarsDir,
       MIRIN_WORKERS_DIR: workersDir,
-      // CEF's DevTools-protocol port, which the devtools use for screenshots,
-      // accessibility snapshots, page evaluation, and synthetic input. Loopback
-      // only, and only ever set for a dev run (docs/agent-devtools.md).
+      // CEF's DevTools-protocol port (screenshots, snapshots, eval, input).
+      // Loopback only, and only ever set for a dev run (docs/agent-devtools.md).
       MIRIN_CDP_PORT: String(cdpPort),
       ...(session?.env() ?? {}),
     },
@@ -307,15 +301,13 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
     } catch (err) {
       console.error(`[mirin] launch hook failed: ${err instanceof Error ? err.message : err}`);
     } finally {
-      // A hooked run is a one-shot: stop the app whether the hook succeeded or not,
-      // so the command can never hang holding a window open.
+      // A hooked run is a one-shot: stop the app whether the hook succeeded or not.
       cleanup();
     }
   }
 
   const code = await appProc.exited;
   vite.kill();
-  // Post-mortem for whoever (or whatever) reads the session afterwards.
   session?.finish(code, appProc.signalCode ?? undefined);
   return code;
 }

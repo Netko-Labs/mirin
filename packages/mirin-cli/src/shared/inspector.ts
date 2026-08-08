@@ -1,12 +1,6 @@
 /**
- * A small client for a running app's inspector (docs/agent-devtools.md).
- *
- * Used by `mirin check`; also the reference for anything else that wants to drive
- * the inspector, since it shows the two things a caller has to get right — the
- * bearer token and the loopback base URL.
- *
- * Responses come back as `unknown`; callers narrow what they actually need rather
- * than trusting a shape across a process boundary.
+ * Client for a running app's inspector (docs/agent-devtools.md). Responses come
+ * back as `unknown`; callers narrow what they need.
  */
 
 import type { InspectorEndpoint } from "mirinjs/devtools/session";
@@ -37,7 +31,6 @@ export class InspectorClient {
     return this.#request(path, { method: "GET" });
   }
 
-  /** POST a JSON body to a route. */
   async post(path: string, body: unknown): Promise<unknown> {
     return this.#request(path, {
       method: "POST",

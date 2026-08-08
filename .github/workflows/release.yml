@@ -5,12 +5,8 @@ name: Release
 # registry tarballs. Publication and release visibility happen after all targets
 # succeed.
 #
-# Runner policy: **Blacksmith is used here and nowhere else.** It bills per minute,
-# so it is spent only where the work is both slow and rare — the three `build-*`
-# jobs compile the Rust workspace against CEF for every shipped target, and they
-# run only on a version tag. `prepare-release` and `publish-release` do no
-# compilation, and CI (`ci.yml`) uses GitHub-hosted runners throughout, which are
-# free on this public repository.
+# Blacksmith (billed) is used only for the `build-*` jobs — slow CEF builds that
+# run only on a version tag. Everything else uses free GitHub-hosted runners.
 on:
   push:
     tags: ["v*"]
@@ -28,7 +24,6 @@ env:
 jobs:
   prepare-release:
     name: Validate and create draft
-    # Lint, typecheck, test, audit, create a draft — no compilation.
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -325,7 +320,6 @@ jobs:
   publish-release:
     name: Publish registry packages and release
     needs: [prepare-release, build-macos, build-windows, build-linux]
-    # Downloads artifacts and publishes them; nothing is built here.
     runs-on: ubuntu-24.04
     permissions:
       contents: write

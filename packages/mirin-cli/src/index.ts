@@ -116,8 +116,7 @@ switch (command) {
     const packageLinux = opts.linux === true || linuxFormats != null;
     const result = await build(process.cwd(), { version, packageLinux, linuxFormats });
     if (asJson) {
-      // The paths a caller actually needs; the rest of BuildResult is internal
-      // plumbing for `mirin release`.
+      // Only what a caller needs; the rest of BuildResult is plumbing for `mirin release`.
       console.log(
         JSON.stringify({
           phase: "result",

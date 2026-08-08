@@ -50,14 +50,8 @@ export function isInRepo(): boolean {
   return IN_REPO;
 }
 
-/**
- * The in-repo CEF distribution and whether it is actually unpacked there.
- *
- * `doctor` reports on the same directory this module resolves from, so both read
- * it through here: resolving from the CLI's own location rather than the caller's
- * cwd, and treating "the directory exists" as insufficient — an interrupted
- * `fetch-cef.ts` leaves one behind without the framework in it.
- */
+/** The in-repo CEF distribution. `present` checks the framework marker, not just
+ *  the directory: an interrupted `fetch-cef.ts` leaves an empty one behind. */
 export function vendoredCef(): { path: string; present: boolean } {
   const path = join(REPO_ROOT, "vendor", "cef");
   return { path, present: existsSync(join(path, cefMarker())) };

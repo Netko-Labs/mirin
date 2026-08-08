@@ -185,10 +185,7 @@ class Windows {
       }),
     );
     // Fall back to an id-derived name so every window is addressable by name, not
-    // just the ones declared in the manifest. A window opened at runtime without
-    // one would otherwise be reachable only by a numeric id the caller has to have
-    // captured — and `/state` would report it nameless to anything reading from
-    // outside the process.
+    // just the ones declared in the manifest.
     const handle = new WindowHandle(id, opts.name ?? `window-${id}`, url, opts.title);
     this.#register(handle);
     return handle;

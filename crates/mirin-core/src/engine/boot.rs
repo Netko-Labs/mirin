@@ -85,9 +85,8 @@ pub fn run_core(mut config: CoreConfig) -> i32 {
         no_sandbox: !cfg!(feature = "sandbox") as _,
         root_cache_path: CefString::from(cache_path.as_str()),
         windowless_rendering_enabled: 1,
-        // 0 leaves remote debugging off. When set, CEF binds the DevTools
-        // protocol on loopback and mirin's devtools drive it for screenshots,
-        // snapshots, and input (docs/agent-devtools.md).
+        // 0 disables remote debugging; nonzero binds the DevTools protocol on
+        // loopback for mirin's devtools (docs/agent-devtools.md).
         remote_debugging_port: config.debug_port(),
         ..Default::default()
     };

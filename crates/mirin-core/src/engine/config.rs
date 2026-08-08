@@ -28,17 +28,13 @@ pub struct CoreConfig {
     #[serde(default = "default_true")]
     pub single_instance: bool,
     /// CEF remote-debugging (DevTools protocol) port, or 0 for disabled.
-    ///
-    /// Chromium binds this on loopback only. mirin's devtools use it for
-    /// screenshots, accessibility snapshots, page evaluation, and synthetic input
-    /// (docs/agent-devtools.md), which is why it is off unless a port is supplied:
-    /// anything that can reach the port can run code in the app's pages.
+    /// Loopback-only, but anything reaching the port can run code in the app's
+    /// pages — so off unless explicitly supplied (docs/agent-devtools.md).
     #[serde(default)]
     pub remote_debugging_port: u16,
 }
 
-/// Ports CEF accepts for remote debugging. 0 disables it; below 1024 is
-/// privileged and rejected by Chromium.
+/// Chromium rejects privileged ports (< 1024); 0 disables.
 const MIN_DEBUG_PORT: u16 = 1024;
 
 impl CoreConfig {

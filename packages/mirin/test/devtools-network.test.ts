@@ -147,9 +147,7 @@ describe("url redaction", () => {
     expect(out).toContain("page=1");
   });
 
-  // The three ways a pair could hide from the splitter itself. These are not limits
-  // of the name heuristic — the names here are exactly what it is built to catch; it
-  // simply never got to see them.
+  // The three ways a pair could hide from the splitter itself.
   test("sees through a percent-encoded separator", () => {
     // `#access_token%3Dya29.LIVE` is one opaque token until it is decoded.
     expect(redactUrl("https://app.test/cb#access_token%3Dya29.LIVE")).not.toContain("ya29.LIVE");
@@ -158,9 +156,8 @@ describe("url redaction", () => {
     expect(redactUrl("https://app.test/cb#access_token%3Dya29.LIVE")).toContain("access_token");
   });
 
-  // Regression: `searchParams` decoded `api_key%3Dsecret` into a single *name*, matched
-  // it, then appended `=[redacted]` — leaving the secret in the name and producing
-  // output that read as redacted while carrying the credential.
+  // `searchParams` decoded `api_key%3Dsecret` into a single *name* and appended
+  // `=[redacted]`, leaving the secret in place while reading as redacted.
   test("does not append a marker while leaving the secret in the name", () => {
     const out = redactUrl("https://api.test/x?api_key%3Dsecret123");
     expect(out).not.toContain("secret123");

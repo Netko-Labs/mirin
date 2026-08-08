@@ -1,12 +1,7 @@
 /**
- * Rendering arbitrary log arguments into a bounded single-line string.
- *
- * Shared by `logger` (main-process log lines) and the devtools taps (renderer
- * console output), both of which need the same answer to "what does this
- * `unknown[]` look like as one message?".
- *
- * Bounded on purpose: a diagnostic stream that an agent reads is only useful if
- * one accidental `logger.info(hugeArray)` cannot bury everything around it.
+ * Rendering arbitrary log arguments into a bounded single-line string. Shared by
+ * `logger` and the devtools taps. Bounded so one accidental `logger.info(hugeArray)`
+ * cannot bury everything around it.
  */
 
 /** Longest rendered message kept; the remainder becomes an ellipsis marker. */

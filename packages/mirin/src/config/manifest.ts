@@ -185,13 +185,10 @@ export interface MirinConfig {
 }
 
 /**
- * Developer/agent observability settings.
- *
- * Under `mirin dev` every capability defaults to on. In a packaged build every
- * capability defaults to **off**, and the individual switches below are ignored
- * unless {@link DevtoolsConfig.production} is `true` — the inspector can evaluate
- * JavaScript in a webview and synthesize input, so enabling it in a shipped app
- * gives any local process control of the app. Do that only for a diagnostic
+ * Developer/agent observability settings. Under `mirin dev` every capability
+ * defaults to on; in a packaged build everything is **off** and the switches are
+ * ignored unless {@link DevtoolsConfig.production} is `true` — the inspector can
+ * evaluate JavaScript and synthesize input, so enable it only in a diagnostic
  * build you control.
  */
 export interface DevtoolsConfig {
@@ -209,13 +206,10 @@ export interface DevtoolsConfig {
    */
   rpcPayloads?: boolean;
   /**
-   * Record HTTP requests and responses in the stream: method, URL, status, type,
-   * time to headers, plus headers with credential-bearing values redacted. Bodies
-   * are never captured — fetch one on demand with `Network.getResponseBody`
-   * through `POST /cdp`. Default true where permitted.
-   *
-   * Setting this to false silences successful traffic only; failed requests and
-   * 4xx/5xx responses are always recorded, so `mirin check` keeps its teeth.
+   * Record HTTP metadata in the stream (headers redacted; bodies never captured —
+   * fetch one via `Network.getResponseBody` through `POST /cdp`). Default true
+   * where permitted. `false` silences successful traffic only; failures and
+   * 4xx/5xx are always recorded, so `mirin check` keeps its teeth.
    */
   network?: boolean;
   /**

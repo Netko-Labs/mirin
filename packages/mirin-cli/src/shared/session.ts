@@ -1,14 +1,7 @@
 /**
- * Dev-session bookkeeping for the CLI side of the agent devtools
- * (docs/agent-devtools.md).
- *
- * The CLI owns `session.json` (app metadata plus a phase timeline) and
- * `exit.json` (the post-mortem); the app's Bun Worker owns `inspector.json` and
- * `events.jsonl`. One writer per file, so nothing needs locking.
- *
- * The timeline matters more than it looks: when an agent's app never appears, the
- * question is always "how far did startup get?". Phases answer that from a file,
- * without a terminal to read.
+ * Dev-session bookkeeping (docs/agent-devtools.md). The CLI owns `session.json`
+ * and `exit.json`; the app's Worker owns `inspector.json` and `events.jsonl` —
+ * one writer per file, so nothing needs locking.
  */
 
 import {
@@ -52,11 +45,8 @@ export class DevSession {
     this.#info = info;
   }
 
-  /**
-   * Create `.mirin/dev/<id>/` and point `current.json` at it. Failures are not
-   * fatal: a project on a read-only volume should still be able to run `mirin dev`,
-   * just without the session artifacts.
-   */
+  /** Create `.mirin/dev/<id>/` and point `current.json` at it. Failure is not
+   *  fatal: a read-only project still runs `mirin dev`, just without artifacts. */
   static create(init: DevSessionInit): DevSession | undefined {
     const now = Date.now();
     const id = newSessionId(now, process.pid);
@@ -90,11 +80,8 @@ export class DevSession {
     return { [DEV_SESSION_ENV]: this.paths.dir };
   }
 
-  /**
-   * Wait for the app's Worker to publish `inspector.json`. The app binds the
-   * inspector after the CLI has already spawned it, so the endpoint only becomes
-   * knowable a moment later; give up quietly rather than delay the dev loop.
-   */
+  /** Wait for the app's Worker to publish `inspector.json`; gives up quietly
+   *  rather than delay the dev loop. */
   async waitForInspector(timeoutMs = 10_000): Promise<InspectorEndpoint | undefined> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -134,10 +121,7 @@ export class DevSession {
     this.#save();
   }
 
-  /**
-   * Write the post-mortem. The tail is read back from `events.jsonl` so a reader
-   * needs only this one file to know what the app was doing when it stopped.
-   */
+  /** Write the post-mortem. The event tail is included so the file stands alone. */
   finish(code: number | null, signal?: string): void {
     const events = readEventsFile(this.paths.events);
     try {
@@ -150,8 +134,7 @@ export class DevSession {
         tail: events.slice(-EXIT_TAIL),
       });
     } catch {
-      // Best effort: the app has already exited, and the exit code still reaches
-      // the caller through the normal return path.
+      // Best effort: the exit code still reaches the caller through the return path.
     }
   }
 

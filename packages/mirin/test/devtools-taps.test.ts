@@ -28,9 +28,8 @@ function consoleEvent(level: string, message: string): NativeEvent {
 }
 
 describe("native console tap", () => {
-  // An uncaught error is reported by both producers: the CEF display handler (no
-  // stack) and CDP (`exception`, with one). Only the stackless copy is dropped,
-  // and only where CDP is there to report the other.
+  // An uncaught error is reported twice: display handler (no stack) and CDP
+  // (`exception`, with one). Only the stackless copy is dropped, only under CDP.
   test("drops the stackless copy when CDP covers the window", () => {
     const handler = nativeTapHandler({ cdpCovers: () => true });
     const events = captured(() => handler(consoleEvent("error", "Uncaught Error: boom")));
@@ -74,9 +73,8 @@ describe("native console tap", () => {
 });
 
 describe("cdp renderer taps", () => {
-  // The bug this pins: a missing favicon produced *two* records of one 404 —
-  // `network.error` at warn (4xx is not fatal) and `log.entry` at error — and
-  // `mirin check` gates on error-level events, so every app failed its own check.
+  // A missing favicon must not produce a second, error-level record of the 404:
+  // `mirin check` gates on error-level events.
   test("reports a failed request once, at the network tap's severity", () => {
     const events = captured(() => {
       recordCdpEvent({

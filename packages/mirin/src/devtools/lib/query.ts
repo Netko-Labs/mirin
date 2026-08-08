@@ -41,11 +41,8 @@ function positiveInt(raw: string | null): number | undefined {
   return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-/**
- * Parse `/logs` search params into a query. Unknown or malformed values are
- * dropped rather than rejected: a diagnostic endpoint should still answer when
- * an agent guesses a filter name slightly wrong.
- */
+/** Parse `/logs` search params into a query. Unknown or malformed values are
+ *  dropped, not rejected: a slightly-wrong guess should still get an answer. */
 export function parseQuery(params: URLSearchParams): DevEventQuery {
   const query: DevEventQuery = {};
 
@@ -75,7 +72,6 @@ export function parseQuery(params: URLSearchParams): DevEventQuery {
   return query;
 }
 
-/** Whether `event` satisfies every constraint in `query`. */
 export function matches(event: DevEvent, query: DevEventQuery): boolean {
   if (query.since !== undefined && event.seq <= query.since) return false;
   if (query.level !== undefined && LEVEL_ORDER[event.level] < LEVEL_ORDER[query.level])

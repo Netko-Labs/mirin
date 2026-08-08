@@ -1,9 +1,6 @@
 /**
- * Loading and running a `mirin check` scenario (docs/agent-devtools.md).
- *
- * A scenario is an ordinary module that default-exports an async function. It is
- * loaded *before* the app is built, so a missing or malformed file fails in a
- * second rather than after a cold compile.
+ * Loading and running a `mirin check` scenario — an ordinary module that
+ * default-exports an async function (docs/agent-devtools.md).
  */
 
 import { existsSync } from "node:fs";
@@ -39,10 +36,8 @@ export async function loadScenario(projectDir: string, file: string): Promise<Ch
   return scenario as CheckScenario;
 }
 
-/**
- * Run `scenario` against the app. Never throws: a scenario failure is a result,
- * not an exception, so the caller still captures artifacts and writes a report.
- */
+/** Run `scenario` against the app. Never throws: a failure is a result, so the
+ *  caller still captures artifacts and writes a report. */
 export async function runScenario(
   client: InspectorClient,
   scenario: CheckScenario,

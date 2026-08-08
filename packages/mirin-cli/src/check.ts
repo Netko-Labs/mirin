@@ -1,16 +1,6 @@
 /**
- * `mirin check` — boot the app once, look at it, report, exit (docs/agent-devtools.md).
- *
- * The gap this fills: `mirin dev` is a long-lived interactive process. A tool that
- * runs it in the background cannot tell whether the app came up, whether the window
- * rendered, or whether the UI threw — it just has a pid. `mirin check` runs the same
- * startup path, waits for a window, captures a screenshot and an accessibility
- * snapshot, collects the errors, stops the app, and **exits non-zero when something
- * went wrong**. That makes "did my change work?" answerable the same way a test is.
- *
- *   mirin check                 human summary
- *   mirin check --json          one JSON object on stdout
- *   mirin check --timeout 60000 allow a slow first build
+ * `mirin check` — boot the app once, capture a screenshot and accessibility
+ * snapshot, collect errors, exit non-zero on failure (docs/agent-devtools.md).
  */
 
 import type { CheckScenario } from "mirinjs/check";
@@ -39,29 +29,22 @@ export interface CheckOptions {
 
 export interface CheckReport {
   ok: boolean;
-  /** Why the check failed, when it did. */
   reason?: string;
   session: string | null;
   inspector: string | null;
   windows: { id: number; name?: string; url?: string; title?: string }[];
-  /** Path to the captured screenshot, when one was taken. */
+  /** Path to the captured screenshot. */
   screenshot: string | null;
-  /** The accessibility snapshot of the first window, when one was taken. */
+  /** Accessibility snapshot of the first window. */
   snapshot: string | null;
-  /**
-   * Slices the app published with `devtools.expose`, read at the end of the run.
-   * State the DOM cannot show is often the fastest explanation for a failed check.
-   */
+  /** Slices the app published with `devtools.expose`, read at the end of the run. */
   exposed: Record<string, unknown>;
-  /** Error-level events from the run — the actionable part. */
   errors: DevEvent[];
   eventCount: number;
   durationMs: number;
-  /** Present when `--scenario` ran: what it did, and where it stopped. */
+  /** Present when `--scenario` ran. */
   scenario?: { file: string } & ScenarioOutcome;
 }
-
-// ---- narrowing of inspector responses ----
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -249,8 +232,7 @@ export async function check(
         return;
       }
 
-      // Let the first paint land before driving or capturing, or the screenshot
-      // shows an empty frame and the snapshot an empty tree.
+      // Let the first paint land, or the capture shows an empty frame and tree.
       await Bun.sleep(settleMs);
 
       if (scenario !== undefined && options.scenario !== undefined) {
@@ -264,8 +246,7 @@ export async function check(
         }
       }
 
-      // Captured after the scenario, so the artifact shows the state the run
-      // ended in — including the state it failed in.
+      // Capture after the scenario, so artifacts show the state the run ended in.
       reporter.event("capture", { windows: report.windows.length });
       await capture(client, report);
     },

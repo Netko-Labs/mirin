@@ -1,18 +1,9 @@
 /**
- * Synthetic input over CDP: the "drive the app" half of the devtools
- * (docs/agent-devtools.md).
- *
- * Two design points worth knowing:
- *
- * 1. Targets can be named by text, not just CSS. The snapshot a reader works from
- *    is an accessibility tree — roles and names, no class attributes — so
- *    `text=Save` is the selector that matches what the reader actually saw.
- * 2. Input goes through `Input.dispatch*Event`, not `element.click()`. A real event
- *    sequence exercises the same path a person's click would, so a reproduction is
- *    a reproduction rather than an approximation.
- *
- * Selector strings are page-controlled input from the inspector's point of view and
- * are always embedded with `JSON.stringify`, never concatenated into the script.
+ * Synthetic input over CDP (docs/agent-devtools.md). `text=Save` selectors match
+ * labels, since the AX snapshot a reader works from has no class attributes; input
+ * goes through `Input.dispatch*Event`, not `element.click()`, so a real event
+ * sequence is exercised. Selectors are untrusted and are always embedded with
+ * `JSON.stringify`, never concatenated into the script.
  */
 
 import { asBoolean, asNumber, asRecord, asString } from "./parse.ts";
@@ -49,14 +40,9 @@ export interface Located {
   tag: string;
 }
 
-/**
- * Build the page script that resolves a selector to a click point.
- *
- * `text=…` matches an element's accessible-ish label — trimmed text, `value`,
- * `aria-label`, `placeholder`, or `title` — preferring an exact match, then the
- * most deeply nested candidate so a wrapping container never wins over the button
- * inside it. Anything else is treated as CSS (`css=` may be given explicitly).
- */
+/** The page script resolving a selector to a click point. `text=…` matches an
+ *  element's label (text, `value`, `aria-label`, `placeholder`, `title`), exact
+ *  first, then deepest, so a wrapper never wins over the button inside it. */
 export function locateScript(selector: string): string {
   const text = selector.startsWith("text=") ? selector.slice(5) : undefined;
   const css = selector.startsWith("css=") ? selector.slice(4) : selector;
@@ -135,12 +121,8 @@ export async function click(send: Send, selector: string, clickCount = 1): Promi
   return at;
 }
 
-/**
- * Insert text as if typed, into the selector's element when one is given.
- *
- * Focus comes from a real click rather than `el.focus()`, so the field receives the
- * same event sequence a person would produce.
- */
+/** Insert text as if typed, into the selector's element when one is given. Focus
+ *  comes from a real click, not `el.focus()`, so the field sees real events. */
 export async function type(send: Send, text: string, selector?: string): Promise<void> {
   if (selector !== undefined) await click(send, selector);
   // insertText goes through the same IME path as real typing and handles the whole

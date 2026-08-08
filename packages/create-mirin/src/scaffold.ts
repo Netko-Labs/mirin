@@ -45,8 +45,7 @@ export function scaffold(targetDir: string, options: ScaffoldOptions = {}): stri
   ] as const;
   for (const file of walk(targetDir)) applyReplacements(file, replacements);
 
-  // After the replacement pass: the skill describes the tool, not the app, so it
-  // has no placeholders and should not be walked for them.
+  // After the replacement pass: the skill has no placeholders and must not be walked.
   installSkill(targetDir);
 
   return appName;

@@ -6,7 +6,6 @@ const mirin = app.serve(router);
 /** The global hotkey, named once so the devtools slice below cannot drift from it. */
 const HOTKEY = "Cmd+Shift+K";
 
-/** Deep links received this run. */
 const deepLinks: string[] = [];
 
 // Deep links: `mirin-sink://…` (declared in mirin.config.ts urlSchemes) launches
@@ -15,18 +14,15 @@ const deepLinks: string[] = [];
 app.on("open-url", (url) => {
   deepLinks.push(url);
   mirin.rpc.deepLink.broadcast({ url });
-  // Nothing about a deep link is visible in the page, so a tool watching the
-  // stream would otherwise have no way to know one arrived. This scheme carries
-  // nothing sensitive; an app whose deep link is an OAuth redirect should log the
-  // path rather than the whole URL, since the stream is plaintext on disk.
+  // Deep links are invisible in the page, so surface them on the stream. The stream
+  // is plaintext on disk — a sensitive URL (OAuth redirect) should log only its path.
   devtools.event({ type: "deep-link", msg: url });
 });
 
 let tray: Tray | undefined;
 
-// The app shell lives outside the window: a tool can read the DOM, but not whether
-// a tray is installed or which hotkey is registered. `expose` lifts that into the
-// inspector's `/state` alongside windows and logs (docs/agent-devtools.md).
+// The app shell is invisible to the DOM; `expose` lifts it into the inspector's
+// `/state` (docs/agent-devtools.md).
 devtools.expose("shell", () => ({
   tray: tray !== undefined,
   hotkey: HOTKEY,

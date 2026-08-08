@@ -11,9 +11,7 @@
  *   const db = logger.child("db");
  *   db.debug("query", sql);            // → [mirin:db] debug query …
  *
- * Every emitted line is also recorded to the devtools sink, so the same output
- * an operator reads in the terminal is queryable over the inspector and mirrored
- * into `events.jsonl` (docs/agent-devtools.md).
+ * Every emitted line is also recorded to the devtools sink (docs/agent-devtools.md).
  */
 
 import { record } from "./devtools/sink.ts";

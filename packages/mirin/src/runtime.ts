@@ -91,11 +91,8 @@ export function onNativeEvent(type: string, listener: NativeListener): () => voi
   };
 }
 
-/**
- * Subscribe to *every* native event, whatever its type. Used by the devtools tap
- * so new event types are observable without registering each one (docs/agent-devtools.md).
- * Safe before boot.
- */
+/** Subscribe to *every* native event, so the devtools tap observes new event
+ *  types without registering each one (docs/agent-devtools.md). Safe before boot. */
 export function onAnyNativeEvent(listener: NativeListener): () => void {
   anyListeners.add(listener);
   return () => {
