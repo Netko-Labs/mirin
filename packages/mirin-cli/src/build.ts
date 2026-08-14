@@ -195,7 +195,8 @@ export async function build(
   const linux: boolean | import("mirinjs").LinuxConfig = config.linux ?? true;
   const publisher: string = config.publisher ?? appName;
   const cefLocales = normalizeCefLocales(config.cef?.locales);
-  const appIconPath: string | undefined = config.icon ? join(projectDir, config.icon) : undefined;
+  // `.icon` documents are macOS-only, so the platform picks its own source.
+  const appIconPath = resolveIconSource(config.icon, projectDir);
 
   console.log(`[mirin build] ${appName} ${version}`);
 
