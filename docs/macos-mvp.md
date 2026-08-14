@@ -104,6 +104,33 @@ falls back to the plain `.icns` rather than failing.
 Linux and Windows have no appearance variants and cannot read an `.icon` — give
 those targets a `.png`/`.iconset`.
 
+### Specialization encoding
+
+Inside `icon.json` a property that varies by appearance moves into
+`<prop>-specializations` — `fill-specializations`, `image-name-specializations`,
+`hidden-specializations`, and so on. The shape is unobvious and actool accepts a
+malformed one **silently**, emitting a catalog that simply ignores it:
+
+```jsonc
+// the plain `fill` key is GONE; the base value is the un-keyed first entry
+"fill-specializations": [
+  { "value": { "solid": "display-p3:0.99216,0.94510,0.96863,1.00000" } },
+  { "appearance": "dark", "value": { "solid": "display-p3:0.04706,0.02353,0.03922,1.00000" } }
+]
+```
+
+Two rules, both load-bearing: the base value is an entry with **no** `appearance`
+key, and the unspecialized property (`fill`, `image-name`, …) must be **removed**
+— leaving it in place wins over the specializations.
+
+Verify statically, never by rendering: `NSWorkspace.icon(forFile:)` resolves
+against the *system* appearance and ignores `performAsCurrentDrawingAppearance`,
+so a render harness reports light and dark as identical no matter what the
+catalog holds. Instead read `assetutil --info <Assets.car>` and compare the
+`SHA1Digest` of the `IconGroup` / `IconImageStack` entries across
+`NSAppearanceNameAqua`, `NSAppearanceNameDarkAqua`, and `ISAppearanceTintable`;
+differing digests are what prove a variant actually landed.
+
 ## Post-MVP queue (ordered, tentative)
 1. Dialogs interactive test harness; updater runtime swap field testing across signed/notarized installs
 2. Payload encryption on the RPC plane, or a CEF-IPC RPC transport (message router) to avoid loopback-origin policy friction entirely
