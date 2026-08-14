@@ -1,6 +1,6 @@
 {
   "name": "@mirinjs/linux-x64",
-  "version": "0.1.0-alpha.19",
+  "version": "0.1.0-alpha.20",
   "description": "Prebuilt mirin native binaries for Linux x64 (libmirin_core.so + helper).",
   "license": "MIT",
   "homepage": "https://github.com/Netko-Labs/mirin#readme",
