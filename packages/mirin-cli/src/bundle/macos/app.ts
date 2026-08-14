@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
+import { isIconComposerDoc, writeAppearanceCatalog } from "../../icons/macos/index.ts";
 import { pruneMacCefLocales } from "../shared/cef-locales.ts";
 
 const FRAMEWORK = "Chromium Embedded Framework.framework";
@@ -46,7 +47,10 @@ export interface BundleOptions {
   cefLocales?: string[];
   /** App version → Info.plist CFBundleShortVersionString/CFBundleVersion. */
   version?: string;
-  /** App icon source: a .icns, a .iconset dir, or a square .png. Optional. */
+  /**
+   * App icon source: a .icns, a .iconset dir, a square .png, or an Icon Composer
+   * .icon document (the only form carrying appearance variants). Optional.
+   */
   icon?: string;
   /** Codesign identity; "-" (default) is ad-hoc. Set to a Developer ID to ship. */
   signIdentity?: string;
@@ -109,19 +113,8 @@ const ICONSET_RENDITIONS = [
   { name: "icon_512x512@2x.png", px: 1024 },
 ];
 
-/**
- * Render the app icon to `Resources/icon.icns` and return the CFBundleIconFile
- * stem ("icon"), or undefined if there's no usable source. Accepts a `.icns`
- * (copied), a `.iconset` directory (iconutil), or a square `.png` (rendered to
- * a full iconset via sips, then iconutil).
- */
-async function writeIcon(iconSrc: string, resources: string): Promise<string | undefined> {
-  if (!existsSync(iconSrc)) {
-    console.warn(`[mirin] icon not found, skipping: ${iconSrc}`);
-    return undefined;
-  }
-  const icns = join(resources, "icon.icns");
-
+/** Render one icon source to `Resources/icon.icns`. */
+async function writeIcns(iconSrc: string, icns: string, resources: string): Promise<void> {
   if (iconSrc.endsWith(".icns")) {
     cpSync(iconSrc, icns);
   } else if (iconSrc.endsWith(".iconset")) {
@@ -136,7 +129,38 @@ async function writeIcon(iconSrc: string, resources: string): Promise<string | u
     await $`iconutil -c icns ${iconset} -o ${icns}`.quiet();
     rmSync(iconset, { recursive: true, force: true });
   }
-  return "icon";
+}
+
+/** The Info.plist keys an icon contributes, empty when there's no usable source. */
+interface IconKeys {
+  /** CFBundleIconFile — `Resources/icon.icns`, read by macOS 25 and earlier. */
+  iconFile?: string;
+  /** CFBundleIconName — `Resources/Assets.car`, preferred on macOS 26+. */
+  iconName?: string;
+}
+
+/**
+ * Render the app icon into Resources. An `.icon` document compiles to an
+ * `Assets.car` (macOS 26+ light/dark/tinted) and contributes the `.icns` actool
+ * derives from it; every other source takes the plain iconutil path.
+ */
+async function writeIcon(iconSrc: string, resources: string, work: string): Promise<IconKeys> {
+  if (!existsSync(iconSrc)) {
+    console.warn(`[mirin] icon not found, skipping: ${iconSrc}`);
+    return {};
+  }
+
+  const icns = join(resources, "icon.icns");
+  if (isIconComposerDoc(iconSrc)) {
+    // An Icon Composer document can't go through iconutil, so the only .icns
+    // available for it is the one actool derives.
+    const catalog = await writeAppearanceCatalog(iconSrc, resources, work);
+    if (catalog?.icns) cpSync(catalog.icns, icns);
+    return { iconFile: existsSync(icns) ? "icon" : undefined, iconName: catalog?.name };
+  }
+
+  await writeIcns(iconSrc, icns, resources);
+  return { iconFile: "icon" };
 }
 
 type PlistValue = string | boolean | PlistValue[] | { [k: string]: PlistValue };
@@ -188,8 +212,12 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   cpSync(opts.coreDylib, join(macos, "libmirin_core.dylib"));
 
   // Render the icon (if any) into Resources before writing the plist, so we
-  // only set CFBundleIconFile when an icon was actually produced.
-  const iconFile = opts.icon ? await writeIcon(opts.icon, join(contents, "Resources")) : undefined;
+  // only set the icon keys when an icon was actually produced.
+  const iconWork = join(opts.outDir, ".mirin-icon");
+  const { iconFile, iconName } = opts.icon
+    ? await writeIcon(opts.icon, join(contents, "Resources"), iconWork)
+    : ({} as IconKeys);
+  rmSync(iconWork, { recursive: true, force: true });
   const version = opts.version ?? "0.0.1";
 
   const info: Record<string, PlistValue> = {
@@ -209,6 +237,9 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     LSEnvironment: { MallocNanoZone: "0" },
   };
   if (iconFile) info.CFBundleIconFile = iconFile;
+  // macOS 26+ resolves the appearance-aware icon out of Assets.car via this key
+  // and falls back to CFBundleIconFile when the catalog has no match.
+  if (iconName) info.CFBundleIconName = iconName;
   // Deep-link schemes: register this app as the macOS handler for app://-style
   // URLs (e.g. anko://…). Delivered at runtime via app.on("open-url").
   if (opts.urlSchemes?.length) {

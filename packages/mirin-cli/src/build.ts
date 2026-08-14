@@ -66,10 +66,10 @@ function patchPeToGuiSubsystem(exePath: string): void {
 async function brandWindowsExe(
   exe: string,
   opts: {
-    projectDir: string;
     work: string;
     appName: string;
     version: string;
+    /** Absolute path to the icon source. */
     icon?: string;
     publisher: string;
   },
@@ -83,7 +83,7 @@ async function brandWindowsExe(
   }
   const args: string[] = [];
   if (opts.icon) {
-    const ico = makeWindowsIcon(join(opts.projectDir, opts.icon), join(opts.work, "exe-icon.ico"), {
+    const ico = makeWindowsIcon(opts.icon, join(opts.work, "exe-icon.ico"), {
       onlyLargest: true,
     });
     if (ico) args.push("--set-icon", ico);
@@ -194,6 +194,7 @@ export async function build(
   const linux: boolean | import("mirinjs").LinuxConfig = config.linux ?? true;
   const publisher: string = config.publisher ?? appName;
   const cefLocales = normalizeCefLocales(config.cef?.locales);
+  const appIconPath: string | undefined = config.icon ? join(projectDir, config.icon) : undefined;
 
   console.log(`[mirin build] ${appName} ${version}`);
 
@@ -221,11 +222,10 @@ export async function build(
     if (IS_WINDOWS) {
       patchPeToGuiSubsystem(hostExe);
       await brandWindowsExe(hostExe, {
-        projectDir,
         work,
         appName,
         version,
-        icon: config.icon,
+        icon: appIconPath,
         publisher,
       });
     }
@@ -266,7 +266,7 @@ export async function build(
         helperExe: artifacts.helperBin,
         cefPath: artifacts.cefPath,
         cefLocales,
-        icon: config.icon ? join(projectDir, config.icon) : undefined,
+        icon: appIconPath,
         resources: { ...resources, sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })) },
       })
     : IS_LINUX
@@ -278,7 +278,7 @@ export async function build(
           helperExe: artifacts.helperBin,
           cefPath: artifacts.cefPath,
           cefLocales,
-          icon: config.icon ? join(projectDir, config.icon) : undefined,
+          icon: appIconPath,
           resources: {
             ...resources,
             sidecars: sidecars.map((s) => ({ name: s.name, src: s.src })),
@@ -294,7 +294,7 @@ export async function build(
           cefPath: artifacts.cefPath,
           cefLocales,
           version,
-          icon: config.icon ? join(projectDir, config.icon) : undefined,
+          icon: appIconPath,
           signIdentity,
           urlSchemes: config.urlSchemes,
           resources: { ...resources, sidecars },
@@ -316,7 +316,7 @@ export async function build(
       publisher,
       outDir,
       projectDir,
-      icon: config.icon ? join(projectDir, config.icon) : undefined,
+      icon: appIconPath,
       options: typeof linux === "object" ? linux : {},
       formats,
     });
@@ -340,7 +340,7 @@ export async function build(
     inno,
     linux,
     publisher,
-    icon: config.icon ? join(projectDir, config.icon) : undefined,
+    icon: appIconPath,
     signIdentity,
   };
 }

@@ -80,6 +80,30 @@ Native capabilities, restructured into per-concern modules (`mac/{menu,tray,dial
 - Security constraints: runtime update URLs must be HTTPS except loopback HTTP for local testing; manifests must match channel/platform/arch; artifact names are flat files produced by `mirin release`.
 - **Example:** `examples/updater` demonstrates local self-hosting and GitHub Releases.
 
+## App icon
+
+`config.icon` accepts a `.icns`, a `.iconset` directory, a square `.png`, or an
+Icon Composer `.icon` document. The first three go through `iconutil`/`sips` to
+`Resources/icon.icns`, named by `CFBundleIconFile` — one appearance, every macOS
+version.
+
+Light / dark / tinted variants (macOS 26+) exist **only** in a compiled asset
+catalog: `.icns` has no appearance concept, and an `.appiconset` tagged with
+`appearances` is rejected for the `mac` idiom (actool reports the tagged children
+as unassigned). The input that does work is an `.icon` document, which
+`icons/macos/appearance.ts` hands to `actool` to produce `Resources/Assets.car` +
+`CFBundleIconName`, plus the `.icns` actool derives from it. That is the layout
+Apple's own bundled apps ship (an `IconImageStack` per appearance over
+`IconGroup` layers).
+
+Author `.icon` files in Icon Composer (bundled with Xcode). `actool` ships only
+with a full Xcode, so `findActool` tries `xcrun` first and then a non-selected
+`/Applications/Xcode*.app`; with Command Line Tools alone the build warns and
+falls back to the plain `.icns` rather than failing.
+
+Linux and Windows have no appearance variants and cannot read an `.icon` — give
+those targets a `.png`/`.iconset`.
+
 ## Post-MVP queue (ordered, tentative)
 1. Dialogs interactive test harness; updater runtime swap field testing across signed/notarized installs
 2. Payload encryption on the RPC plane, or a CEF-IPC RPC transport (message router) to avoid loopback-origin policy friction entirely

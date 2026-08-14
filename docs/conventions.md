@@ -108,6 +108,9 @@ packages/mirin-cli/src/
       package.ts
       lib/
   icons/            platform icon generation
+    macos/
+      index.ts
+      appearance.ts
     windows/
       index.ts
       icon.ts

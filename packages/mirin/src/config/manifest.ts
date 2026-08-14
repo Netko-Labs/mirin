@@ -91,10 +91,16 @@ export interface MirinConfig {
   main: string;
   /**
    * App icon, relative to the project root. Accepts a `.icns`, a `.iconset`
-   * directory, or a single square `.png` (≥512px). macOS renders it into an
-   * `.icns` embedded in the bundle for the Dock and Finder; Linux resolves a PNG
-   * and sets it as the window's `_NET_WM_ICON` (taskbar/dock); Windows uses the
-   * `.ico` for the exe and window.
+   * directory, a single square `.png` (≥512px), or an Icon Composer `.icon`
+   * document. macOS renders it into an `.icns` embedded in the bundle for the
+   * Dock and Finder; Linux resolves a PNG and sets it as the window's
+   * `_NET_WM_ICON` (taskbar/dock); Windows uses the `.ico` for the exe and window.
+   *
+   * An `.icon` document additionally compiles to an `Assets.car`, which is the
+   * only way macOS 26+ resolves light / dark / tinted appearance variants. That
+   * step needs `actool` from a full Xcode — with Command Line Tools alone the
+   * build warns and falls back to the plain `.icns`, so it never fails a build.
+   * On Linux and Windows an `.icon` is skipped; give those a `.png`/`.ico`.
    */
   icon?: string;
   /** CEF runtime packaging options. Omit to bundle every locale. */
