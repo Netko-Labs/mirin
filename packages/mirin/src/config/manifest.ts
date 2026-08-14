@@ -77,6 +77,19 @@ export interface WindowConfig {
   visible?: boolean;
 }
 
+/**
+ * Per-platform icon sources, for when one file can't serve every target — most
+ * often an Icon Composer `.icon` on macOS (appearance variants, glass) beside a
+ * `.iconset`/`.png` for Linux and Windows, which cannot read `.icon` at all.
+ */
+export interface IconSources {
+  /** Used by any platform without its own entry. */
+  default: string;
+  macos?: string;
+  windows?: string;
+  linux?: string;
+}
+
 export interface MirinConfig {
   /** Reverse-DNS app id, e.g. "dev.peje.hello". */
   id: string;
@@ -100,9 +113,12 @@ export interface MirinConfig {
    * only way macOS 26+ resolves light / dark / tinted appearance variants. That
    * step needs `actool` from a full Xcode — with Command Line Tools alone the
    * build warns and falls back to the plain `.icns`, so it never fails a build.
-   * On Linux and Windows an `.icon` is skipped; give those a `.png`/`.ico`.
+   *
+   * Linux and Windows cannot read an `.icon`. To ship one on macOS while still
+   * icon-ing those targets, pass {@link IconSources}:
+   * `{ default: "icon.iconset", macos: "AppIcon.icon" }`.
    */
-  icon?: string;
+  icon?: string | IconSources;
   /** CEF runtime packaging options. Omit to bundle every locale. */
   cef?: CefConfig;
   /**

@@ -101,8 +101,16 @@ with a full Xcode, so `findActool` tries `xcrun` first and then a non-selected
 `/Applications/Xcode*.app`; with Command Line Tools alone the build warns and
 falls back to the plain `.icns` rather than failing.
 
-Linux and Windows have no appearance variants and cannot read an `.icon` — give
-those targets a `.png`/`.iconset`.
+Linux and Windows have no appearance variants and cannot read an `.icon`, so a
+bare `icon: "AppIcon.icon"` silently leaves those targets with no icon at all.
+Give them their own source:
+
+```ts
+icon: { default: "icon.iconset", macos: "AppIcon.icon" }
+```
+
+`resolveIconSource` picks the entry for the building platform and falls back to
+`default`; a plain string still applies everywhere.
 
 ### Specialization encoding
 

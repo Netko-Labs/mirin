@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { isIconComposerDoc, writeAppearanceCatalog } from "../src/icons/macos/index.ts";
+import { currentIconPlatform, resolveIconSource } from "../src/icons/sources.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -116,4 +117,35 @@ describe("writeAppearanceCatalog", () => {
     },
     60_000,
   );
+});
+
+describe("resolveIconSource", () => {
+  test("returns undefined when no icon is configured", () => {
+    expect(resolveIconSource(undefined, "/project", "macos")).toBeUndefined();
+  });
+
+  test("resolves a plain path against the project root on every platform", () => {
+    for (const platform of ["macos", "windows", "linux"] as const) {
+      expect(resolveIconSource("icon.iconset", "/project", platform)).toBe("/project/icon.iconset");
+    }
+  });
+
+  test("prefers the platform entry over the default", () => {
+    const icon = { default: "icon.iconset", macos: "AppIcon.icon" };
+    expect(resolveIconSource(icon, "/project", "macos")).toBe("/project/AppIcon.icon");
+  });
+
+  test("falls back to default for platforms with no entry", () => {
+    const icon = { default: "icon.iconset", macos: "AppIcon.icon" };
+    // Linux and Windows cannot read an .icon, so they must not inherit it.
+    expect(resolveIconSource(icon, "/project", "linux")).toBe("/project/icon.iconset");
+    expect(resolveIconSource(icon, "/project", "windows")).toBe("/project/icon.iconset");
+  });
+
+  test("maps the host platform onto an icon platform", () => {
+    expect(currentIconPlatform("darwin")).toBe("macos");
+    expect(currentIconPlatform("win32")).toBe("windows");
+    expect(currentIconPlatform("linux")).toBe("linux");
+    expect(currentIconPlatform("freebsd")).toBe("linux");
+  });
 });

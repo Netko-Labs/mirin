@@ -22,6 +22,7 @@ import { buildAppBundle } from "./bundle/macos/index.ts";
 import { normalizeCefLocales } from "./bundle/shared/cef-locales.ts";
 import { buildWindowsBundle } from "./bundle/windows/index.ts";
 import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { resolveIconSource } from "./icons/sources.ts";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
 import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
 import { sweepBuildTemps } from "./temps.ts";

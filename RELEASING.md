@@ -21,10 +21,14 @@ The CLI and native packages publish under the **`@mirinjs` org scope**
 
 ```bash
 bun scripts/version.ts 0.0.1-alpha.1   # bumps all packages + Cargo in sync
-git commit -am "v0.0.1-alpha.1"
-git tag v0.0.1-alpha.1
+git commit -am "🚀 release: v0.0.1-alpha.1"
+git tag -a v0.0.1-alpha.1 -m "v0.0.1-alpha.1"
 git push --follow-tags
 ```
+
+The tag must be **annotated** (`-a`): `--follow-tags` pushes only annotated tags,
+so a lightweight `git tag v…` pushes the commit and silently skips the tag —
+main moves, no release runs. Recover with `git push origin v0.0.1-alpha.1`.
 
 `release.yml` then, on the `v*` tag:
 

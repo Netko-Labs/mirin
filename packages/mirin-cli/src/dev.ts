@@ -30,6 +30,7 @@ const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
 
 import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { resolveIconSource } from "./icons/sources.ts";
 import { createReporter } from "./shared/report.ts";
 import { DevSession } from "./shared/session.ts";
 import { sweepBuildTemps } from "./temps.ts";
@@ -72,7 +73,7 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
   const appName: string = config.name ?? "Mirin App";
   const bundleId: string = config.id ?? "dev.mirin.app";
   const mainEntry = join(projectDir, config.main ?? "main/main.ts");
-  const iconSrc = config.icon ? join(projectDir, config.icon) : undefined;
+  const iconSrc = resolveIconSource(config.icon, projectDir);
   // Linux: resolve the app icon to a concrete PNG the core stamps onto the window
   // as `_NET_WM_ICON` (cosmic dock/taskbar). Passed straight through in dev — no
   // bundling; the file is read from the project at window-create time.
