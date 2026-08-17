@@ -1,6 +1,6 @@
 {
   "name": "mirinjs",
-  "version": "0.1.0-alpha.22",
+  "version": "0.1.0-alpha.23",
   "description": "Build desktop apps with Bun, TypeScript, and Chromium (CEF). The Bun-native Electron alternative.",
   "type": "module",
   "license": "MIT",
