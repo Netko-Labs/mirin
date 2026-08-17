@@ -118,6 +118,21 @@ function dispatch(raw: string): void {
   }
 }
 
+/** Process-global boot marker. Module-level state won't do: a bundle carrying
+ *  two mirinjs copies (workspace version skew) evaluates this module twice, and
+ *  a second event poller on the shared native queue steals events from the
+ *  first — the app's `ready` never fires and no window opens, with no error.
+ *  `Symbol.for` is the one namespace both copies share. */
+const BOOT_SLOT = Symbol.for("mirinjs.runtime.booted");
+
+/** Claim the process-wide boot slot; false when another mirinjs copy holds it. */
+export function claimBootSlot(): boolean {
+  const g = globalThis as Record<symbol, unknown>;
+  if (g[BOOT_SLOT]) return false;
+  g[BOOT_SLOT] = true;
+  return true;
+}
+
 /** Boot the runtime from the Worker's workerData. No-op when run detached. */
 export function boot(): void {
   const data = (workerData ?? {}) as {
@@ -131,6 +146,14 @@ export function boot(): void {
   };
   const corePath = data.corePath ?? process.env.MIRIN_CORE;
   if (!corePath) return; // not under the host; the API stays detached
+  if (!claimBootSlot()) {
+    console.error(
+      "[mirin] refusing to boot a second mirinjs copy in this process — the bundle " +
+        "contains duplicate mirinjs installs (workspace packages pinning different " +
+        "versions?). This copy stays detached; align every mirinjs dependency to one version.",
+    );
+    return;
+  }
 
   const core = new Core(corePath);
   const rpc = new RpcServer();
