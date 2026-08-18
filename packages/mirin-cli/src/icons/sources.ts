@@ -23,3 +23,16 @@ export function resolveIconSource(
   const picked = typeof icon === "string" ? icon : (icon[platform] ?? icon.default);
   return picked ? join(projectDir, picked) : undefined;
 }
+
+/**
+ * The `.icns`-capable fallback behind a macOS `.icon` document: the `default`
+ * entry when per-platform sources are configured. A failed catalog compile
+ * must degrade to a plain icon, never to an iconless bundle.
+ */
+export function resolveIconFallback(
+  icon: string | IconSources | undefined,
+  projectDir: string,
+): string | undefined {
+  if (!icon || typeof icon === "string") return undefined;
+  return icon.default ? join(projectDir, icon.default) : undefined;
+}

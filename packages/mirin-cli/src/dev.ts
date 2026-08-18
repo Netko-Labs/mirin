@@ -30,7 +30,7 @@ const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
 
 import { compileWorkers, normalizeSidecars } from "./extras.ts";
-import { resolveIconSource } from "./icons/sources.ts";
+import { resolveIconFallback, resolveIconSource } from "./icons/sources.ts";
 import { createReporter } from "./shared/report.ts";
 import { DevSession } from "./shared/session.ts";
 import { sweepBuildTemps } from "./temps.ts";
@@ -155,6 +155,7 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
           helperBin: artifacts.helperBin,
           cefPath: artifacts.cefPath,
           icon: iconSrc,
+          iconFallback: resolveIconFallback(config.icon, projectDir),
           urlSchemes: config.urlSchemes,
         });
   bundlePhase?.ok();

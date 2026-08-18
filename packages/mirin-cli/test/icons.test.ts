@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { isIconComposerDoc, writeAppearanceCatalog } from "../src/icons/macos/index.ts";
-import { currentIconPlatform, resolveIconSource } from "../src/icons/sources.ts";
+import {
+  currentIconPlatform,
+  resolveIconFallback,
+  resolveIconSource,
+} from "../src/icons/sources.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -147,5 +151,17 @@ describe("resolveIconSource", () => {
     expect(currentIconPlatform("win32")).toBe("windows");
     expect(currentIconPlatform("linux")).toBe("linux");
     expect(currentIconPlatform("freebsd")).toBe("linux");
+  });
+});
+
+describe("resolveIconFallback", () => {
+  test("is undefined for a plain path — it is its own fallback", () => {
+    expect(resolveIconFallback("AppIcon.icon", "/project")).toBeUndefined();
+    expect(resolveIconFallback(undefined, "/project")).toBeUndefined();
+  });
+
+  test("resolves the default entry behind per-platform sources", () => {
+    const icon = { default: "icon.iconset", macos: "AppIcon.icon" };
+    expect(resolveIconFallback(icon, "/project")).toBe("/project/icon.iconset");
   });
 });

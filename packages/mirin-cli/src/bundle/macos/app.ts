@@ -52,6 +52,8 @@ export interface BundleOptions {
    * .icon document (the only form carrying appearance variants). Optional.
    */
   icon?: string;
+  /** `.icns`-capable source used when an `.icon` document can't be compiled. */
+  iconFallback?: string;
   /** Codesign identity; "-" (default) is ad-hoc. Set to a Developer ID to ship. */
   signIdentity?: string;
   /** Custom URL schemes -> Info.plist CFBundleURLTypes (deep links). */
@@ -144,7 +146,12 @@ interface IconKeys {
  * `Assets.car` (macOS 26+ light/dark/tinted) and contributes the `.icns` actool
  * derives from it; every other source takes the plain iconutil path.
  */
-async function writeIcon(iconSrc: string, resources: string, work: string): Promise<IconKeys> {
+async function writeIcon(
+  iconSrc: string,
+  resources: string,
+  work: string,
+  fallback?: string,
+): Promise<IconKeys> {
   if (!existsSync(iconSrc)) {
     console.warn(`[mirin] icon not found, skipping: ${iconSrc}`);
     return {};
@@ -152,10 +159,16 @@ async function writeIcon(iconSrc: string, resources: string, work: string): Prom
 
   const icns = join(resources, "icon.icns");
   if (isIconComposerDoc(iconSrc)) {
-    // An Icon Composer document can't go through iconutil, so the only .icns
-    // available for it is the one actool derives.
+    // An Icon Composer document can't go through iconutil, so the .icns comes
+    // from actool — or, when no installed Xcode can compile the document, from
+    // the fallback source. A bundle must never ship iconless.
     const catalog = await writeAppearanceCatalog(iconSrc, resources, work);
-    if (catalog?.icns) cpSync(catalog.icns, icns);
+    if (catalog?.icns) {
+      cpSync(catalog.icns, icns);
+    } else if (fallback && existsSync(fallback)) {
+      console.warn(`[mirin] falling back to ${fallback} for the macOS icon.`);
+      await writeIcns(fallback, icns, resources);
+    }
     return { iconFile: existsSync(icns) ? "icon" : undefined, iconName: catalog?.name };
   }
 
@@ -215,7 +228,7 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
   // only set the icon keys when an icon was actually produced.
   const iconWork = join(opts.outDir, ".mirin-icon");
   const { iconFile, iconName } = opts.icon
-    ? await writeIcon(opts.icon, join(contents, "Resources"), iconWork)
+    ? await writeIcon(opts.icon, join(contents, "Resources"), iconWork, opts.iconFallback)
     : ({} as IconKeys);
   rmSync(iconWork, { recursive: true, force: true });
   const version = opts.version ?? "0.0.1";

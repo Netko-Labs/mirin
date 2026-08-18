@@ -21,21 +21,27 @@ export const isIconComposerDoc = (path: string): boolean => path.endsWith(".icon
 const ICON_NAME = "AppIcon";
 
 /**
- * Locate `actool`. `xcrun` honours the selected developer dir, which is often
- * Command Line Tools (no actool), so fall back to a full Xcode if one is
- * installed but not selected.
+ * Every actool on this machine, newest Xcode first. `xcrun` alone is not
+ * enough: it honours the selected developer dir, which is often Command Line
+ * Tools (no actool) or an Xcode too old for Icon Composer documents.
  */
-async function findActool(): Promise<string | undefined> {
+async function findActools(): Promise<string[]> {
+  const found: string[] = [];
+  const push = (path: string) => {
+    if (existsSync(path) && !found.includes(path)) found.push(path);
+  };
+  // CI images install versioned Xcodes (Xcode_26.1.app, …); newest first, since
+  // only recent actools can compile an Icon Composer document.
+  const apps = (await $`ls -d /Applications/Xcode*.app`.nothrow().quiet()).stdout
+    .toString()
+    .split("\n")
+    .filter(Boolean)
+    .sort()
+    .reverse();
+  for (const app of apps) push(join(app.trim(), "Contents/Developer/usr/bin/actool"));
   const xcrun = await $`xcrun --find actool`.nothrow().quiet();
-  if (xcrun.exitCode === 0) {
-    const path = xcrun.stdout.toString().trim();
-    if (path && existsSync(path)) return path;
-  }
-  for (const app of ["/Applications/Xcode.app", "/Applications/Xcode-beta.app"]) {
-    const path = join(app, "Contents/Developer/usr/bin/actool");
-    if (existsSync(path)) return path;
-  }
-  return undefined;
+  if (xcrun.exitCode === 0) push(xcrun.stdout.toString().trim());
+  return found;
 }
 
 export interface AppearanceCatalog {
@@ -59,11 +65,11 @@ export async function writeAppearanceCatalog(
   // what the caller passed and of the subprocess working directory.
   const resources = resolve(resourcesDir);
   const work = resolve(workDir);
-  const actool = await findActool();
-  if (!actool) {
+  const actools = await findActools();
+  if (actools.length === 0) {
     console.warn(
       "[mirin] actool not found — appearance variants need a full Xcode " +
-        "(Command Line Tools alone is not enough); shipping the default icon only.",
+        "(Command Line Tools alone is not enough).",
     );
     return undefined;
   }
@@ -74,23 +80,30 @@ export async function writeAppearanceCatalog(
   const doc = join(work, `${ICON_NAME}.icon`);
   cpSync(iconDoc, doc, { recursive: true });
 
-  const compiled = join(work, "compiled");
-  mkdirSync(compiled, { recursive: true });
-  const res =
-    await $`${actool} --output-format human-readable-text --notices --warnings --app-icon ${ICON_NAME} --output-partial-info-plist ${join(work, "partial.plist")} --enable-on-demand-resources NO --target-device mac --minimum-deployment-target 26.0 --platform macosx --compile ${compiled} ${doc}`
-      .nothrow()
-      .quiet();
-
-  const car = join(compiled, "Assets.car");
-  if (res.exitCode !== 0 || !existsSync(car)) {
-    console.warn(
-      `[mirin] actool failed (exit ${res.exitCode}) — shipping the default icon only.\n` +
-        res.stdout.toString().trim(),
-    );
-    return undefined;
+  // Old actools exit 0 for an .icon document while emitting no catalog (they
+  // warn that the platform can't target macOS 26), so success is judged by the
+  // artifact, not the exit code — and every installed Xcode gets a turn.
+  const car = join(work, "compiled", "Assets.car");
+  let lastOutput = "";
+  for (const actool of actools) {
+    const compiled = join(work, "compiled");
+    rmSync(compiled, { recursive: true, force: true });
+    mkdirSync(compiled, { recursive: true });
+    const res =
+      await $`${actool} --output-format human-readable-text --notices --warnings --app-icon ${ICON_NAME} --output-partial-info-plist ${join(work, "partial.plist")} --enable-on-demand-resources NO --target-device mac --minimum-deployment-target 26.0 --platform macosx --compile ${compiled} ${doc}`
+        .nothrow()
+        .quiet();
+    lastOutput = res.stdout.toString().trim();
+    if (existsSync(car)) {
+      cpSync(car, join(resources, "Assets.car"));
+      const icns = join(compiled, `${ICON_NAME}.icns`);
+      return { name: ICON_NAME, icns: existsSync(icns) ? icns : undefined };
+    }
   }
 
-  cpSync(car, join(resources, "Assets.car"));
-  const icns = join(compiled, `${ICON_NAME}.icns`);
-  return { name: ICON_NAME, icns: existsSync(icns) ? icns : undefined };
+  console.warn(
+    `[mirin] no installed Xcode could compile the .icon document (tried ${actools.length}).\n` +
+      lastOutput,
+  );
+  return undefined;
 }
