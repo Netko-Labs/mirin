@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
+import { stampMacSdk } from "../src/bundle/macos/index.ts";
 import { isIconComposerDoc, writeAppearanceCatalog } from "../src/icons/macos/index.ts";
 import {
   currentIconPlatform,
@@ -164,4 +165,20 @@ describe("resolveIconFallback", () => {
     const icon = { default: "icon.iconset", macos: "AppIcon.icon" };
     expect(resolveIconFallback(icon, "/project")).toBe("/project/icon.iconset");
   });
+});
+
+describe("stampMacSdk", () => {
+  test.skipIf(process.platform !== "darwin" || !Bun.which("vtool"))(
+    "rewrites the host's LC_BUILD_VERSION sdk to 26.0",
+    async () => {
+      const dir = tempDir();
+      const exe = join(dir, "host");
+      await $`cp /usr/bin/true ${exe}`.quiet();
+      await stampMacSdk(exe);
+      const out = (await $`otool -l ${exe}`.quiet()).stdout.toString();
+      const sdk = out.match(/LC_BUILD_VERSION[\s\S]*?sdk (\S+)/)?.[1];
+      expect(sdk).toBe("26.0");
+    },
+    30_000,
+  );
 });

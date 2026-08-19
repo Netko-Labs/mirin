@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { $ } from "bun";
 import { resolveArtifacts } from "./artifacts.ts";
 import { buildLinuxBundle } from "./bundle/linux/index.ts";
-import { buildAppBundle } from "./bundle/macos/index.ts";
+import { buildAppBundle, stampMacSdk } from "./bundle/macos/index.ts";
 import { normalizeCefLocales } from "./bundle/shared/cef-locales.ts";
 import { buildWindowsBundle } from "./bundle/windows/index.ts";
 import { compileWorkers, normalizeSidecars } from "./extras.ts";
@@ -221,6 +221,7 @@ export async function build(
     await $`bun build --compile --minify ${target} ${artifacts.hostEntry} --outfile ${hostExe}`.cwd(
       projectDir,
     );
+    await stampMacSdk(hostExe);
     if (IS_WINDOWS) {
       patchPeToGuiSubsystem(hostExe);
       await brandWindowsExe(hostExe, {

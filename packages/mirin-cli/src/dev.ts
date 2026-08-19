@@ -23,7 +23,7 @@ import {
   resolveLinuxDesktopIconPng,
   resolveLinuxIconPng,
 } from "./bundle/linux/index.ts";
-import { buildAppBundle } from "./bundle/macos/index.ts";
+import { buildAppBundle, stampMacSdk } from "./bundle/macos/index.ts";
 import { buildWindowsBundle } from "./bundle/windows/index.ts";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -104,6 +104,7 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
       projectDir,
     ),
   );
+  await stampMacSdk(hostExe);
   await reporter.build(
     $`bun build ${mainEntry} --target=bun --outfile ${workerJs}`.cwd(projectDir),
   );

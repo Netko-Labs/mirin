@@ -146,3 +146,12 @@ differing digests are what prove a variant actually landed.
 4. Multi-webview windows (BrowserView equivalent); per-window `loadUrl`
 5. Linux port
 6. Windows WebView2 option
+
+## Window design (macOS 26)
+
+AppKit gates the macOS 26 window design on the main executable's linked SDK,
+and `bun build --compile` clones the Bun runtime (SDK 15.x) — so mirin apps got
+the compatibility chrome. `stampMacSdk` rewrites the host's `LC_BUILD_VERSION`
+to SDK 26.0 (vtool, pre-codesign) in both dev and build. Caveat: this opts the
+process into every linked-on-or-after AppKit behavior, not just the look; drops
+out automatically when Bun itself ships built against the 26 SDK.
