@@ -19,3 +19,7 @@ examples/*/build/
 # Bun compile temp artifacts
 *.bun-build
 .mirin-test/
+
+# seeded Claude Design canvases — 2MB generated payloads; the .dc.html sources are tracked
+tasks/design/**/*.html
+!tasks/design/**/*.dc.html
