@@ -1,0 +1,26 @@
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap");
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* mirinjs brand — see tasks/docs-site.md and the brand book */
+
+:root {
+  --mirin-ink: #14100c;
+  --mirin-ink-800: #1c1712;
+  --mirin-rice: #f7f4ec;
+  --mirin-amber: #dd9a3f;
+  --mirin-amber-deep: #8a4b12;
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}

@@ -23,3 +23,10 @@ examples/*/build/
 # seeded Claude Design canvases — 2MB generated payloads; the .dc.html sources are tracked
 tasks/design/**/*.html
 !tasks/design/**/*.dc.html
+
+# packages/docs build output
+packages/docs/.output/
+packages/docs/.nitro/
+packages/docs/.tanstack/
+packages/docs/dist/
+packages/docs/.vite/
