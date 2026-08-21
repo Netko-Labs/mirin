@@ -1,0 +1,224 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Directions"
+    },
+    {
+      "id": "page-5",
+      "name": "Kome"
+    },
+    {
+      "id": "page-2",
+      "name": "Mascot \u00b7 rice"
+    },
+    {
+      "id": "page-4",
+      "name": "Mascot \u00b7 round 1"
+    },
+    {
+      "id": "page-3",
+      "name": "Docs"
+    }
+  ],
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 760,
+      "h": 900,
+      "page": "page-1",
+      "title": "Read me first"
+    },
+    {
+      "file": "DirectionA.dc.html",
+      "x": 860,
+      "y": 0,
+      "w": 1100,
+      "h": 760,
+      "page": "page-1",
+      "title": "A \u00b7 Amber Izakaya"
+    },
+    {
+      "file": "DirectionB.dc.html",
+      "x": 2040,
+      "y": 0,
+      "w": 1100,
+      "h": 760,
+      "page": "page-1",
+      "title": "B \u00b7 Native Glass"
+    },
+    {
+      "file": "DirectionC.dc.html",
+      "x": 3220,
+      "y": 0,
+      "w": 1100,
+      "h": 760,
+      "page": "page-1",
+      "title": "C \u00b7 Paper Terminal"
+    },
+    {
+      "file": "KomeAmber.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 760,
+      "h": 880,
+      "page": "page-5",
+      "title": "Kome \u00b7 refined"
+    },
+    {
+      "file": "KomeVariants.dc.html",
+      "x": 840,
+      "y": 0,
+      "w": 760,
+      "h": 880,
+      "page": "page-5",
+      "title": "Kome \u00b7 treatments"
+    },
+    {
+      "file": "KomeMark.dc.html",
+      "x": 1680,
+      "y": 0,
+      "w": 760,
+      "h": 880,
+      "page": "page-5",
+      "title": "Kome \u00b7 mark system"
+    },
+    {
+      "file": "KomeInUse.dc.html",
+      "x": 2520,
+      "y": 0,
+      "w": 760,
+      "h": 880,
+      "page": "page-5",
+      "title": "Kome \u00b7 in use"
+    },
+    {
+      "file": "MascotOnigiri.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 700,
+      "h": 760,
+      "page": "page-2",
+      "title": "Onigiri \u00b7 Musubi"
+    },
+    {
+      "file": "MascotMochi.dc.html",
+      "x": 780,
+      "y": 0,
+      "w": 700,
+      "h": 760,
+      "page": "page-2",
+      "title": "Mochi"
+    },
+    {
+      "file": "MascotGrain.dc.html",
+      "x": 1560,
+      "y": 0,
+      "w": 700,
+      "h": 760,
+      "page": "page-2",
+      "title": "Grain \u00b7 Kome"
+    },
+    {
+      "file": "MascotCooker.dc.html",
+      "x": 2340,
+      "y": 0,
+      "w": 700,
+      "h": 760,
+      "page": "page-2",
+      "title": "Cooker \u00b7 Suihanki"
+    },
+    {
+      "file": "MascotBottle.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 700,
+      "h": 720,
+      "page": "page-4",
+      "title": "Bottle"
+    },
+    {
+      "file": "MascotNeko.dc.html",
+      "x": 780,
+      "y": 0,
+      "w": 700,
+      "h": 720,
+      "page": "page-4",
+      "title": "Neko"
+    },
+    {
+      "file": "MascotPane.dc.html",
+      "x": 1560,
+      "y": 0,
+      "w": 700,
+      "h": 720,
+      "page": "page-4",
+      "title": "Pane"
+    },
+    {
+      "file": "DocsShell.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 820,
+      "page": "page-3",
+      "title": "Docs shell \u2014 structure"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "pick-a-letter",
+      "x": 860,
+      "y": -130,
+      "w": 460,
+      "text": "Three landing directions, above the same hero copy.\nThey differ on axis, not shade: warm-editorial vs native-glass vs light-brutalist.\nPick a letter \u2014 next round is that one at full fidelity.",
+      "page": "page-1"
+    },
+    {
+      "id": "indigo-note",
+      "x": 2040,
+      "y": -130,
+      "w": 420,
+      "text": "B is not invented: #6d6df0 and the translucent white cards are already in examples/spotlight and liquid-glass today.",
+      "page": "page-1"
+    },
+    {
+      "id": "docs-neutral",
+      "x": 0,
+      "y": -110,
+      "w": 460,
+      "text": "Greyscale on purpose. This board is about the three-column shell and mirin's real IA \u2014 it recolors once a direction is picked.",
+      "page": "page-3"
+    },
+    {
+      "id": "rice-note",
+      "x": 0,
+      "y": -150,
+      "w": 520,
+      "page": "page-2",
+      "text": "Round 2 \u2014 rice, since that is what mirin is actually brewed from (mochigome + koji + shochu).\nOrdered left to right by how strong the silhouette is at 16px.\nRound 1's bottle / cat / pane are still on the next page, not deleted."
+    },
+    {
+      "id": "round1-note",
+      "x": 0,
+      "y": -110,
+      "w": 460,
+      "page": "page-4",
+      "text": "Superseded by the rice page. Kept so nothing is lost \u2014 Bottle is the closest of these to the rice idea."
+    },
+    {
+      "id": "kome-note",
+      "x": 0,
+      "y": -170,
+      "w": 560,
+      "page": "page-5",
+      "text": "Kome, with the wine put back in.\nThe grain fills with amber from the bottom and the k\u014dji bloom sits on its shoulder \u2014 rice, fermentation, and sweet wine in one silhouette.\nLeft to right: the character, the four treatments to choose between, the mark system, and where it has to survive."
+    }
+  ],
+  "launch": {
+    "view": "canvas",
+    "page": "page-5"
+  }
+}

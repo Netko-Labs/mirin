@@ -1,0 +1,120 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Foundations"
+    },
+    {
+      "id": "page-2",
+      "name": "Voice"
+    },
+    {
+      "id": "page-3",
+      "name": "Applications"
+    }
+  ],
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 820,
+      "h": 1020,
+      "page": "page-1",
+      "title": "Brand at a glance"
+    },
+    {
+      "file": "Logo.dc.html",
+      "x": 900,
+      "y": 0,
+      "w": 820,
+      "h": 1100,
+      "page": "page-1",
+      "title": "The logo \u2014 Kome"
+    },
+    {
+      "file": "Color.dc.html",
+      "x": 1800,
+      "y": 0,
+      "w": 820,
+      "h": 1020,
+      "page": "page-1",
+      "title": "Colour"
+    },
+    {
+      "file": "Type.dc.html",
+      "x": 2700,
+      "y": 0,
+      "w": 820,
+      "h": 1020,
+      "page": "page-1",
+      "title": "Type"
+    },
+    {
+      "file": "Voice.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 820,
+      "h": 1080,
+      "page": "page-2",
+      "title": "Voice"
+    },
+    {
+      "file": "Lexicon.dc.html",
+      "x": 900,
+      "y": 0,
+      "w": 820,
+      "h": 1080,
+      "page": "page-2",
+      "title": "Lexicon"
+    },
+    {
+      "file": "Components.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 820,
+      "h": 1020,
+      "page": "page-3",
+      "title": "Components"
+    },
+    {
+      "file": "Assets.dc.html",
+      "x": 900,
+      "y": 0,
+      "w": 820,
+      "h": 1020,
+      "page": "page-3",
+      "title": "Assets"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "decisions",
+      "x": 0,
+      "y": -190,
+      "w": 580,
+      "page": "page-1",
+      "text": "Three decisions locked, everything here follows from them:\n1. The library is mirinjs \u2014 that is the wordmark. The binary stays `mirin`.\n2. The logo IS Kome, face and all. No separate abstract mark.\n3. Amber is the only accent; indigo #6d6df0 is retired."
+    },
+    {
+      "id": "voice-note",
+      "x": 0,
+      "y": -130,
+      "w": 520,
+      "page": "page-2",
+      "text": "This is the page a contributor reads before writing docs, and the page an agent gets handed with the repo.\nThe hard line: brewing language never touches a command, a config key, a type, or an error."
+    },
+    {
+      "id": "apps-note",
+      "x": 0,
+      "y": -110,
+      "w": 480,
+      "page": "page-3",
+      "text": "Specs, not shipped files. The SVG exports, favicon set and OG image still have to be produced from these."
+    }
+  ],
+  "launch": {
+    "view": "canvas",
+    "page": "page-1"
+  }
+}

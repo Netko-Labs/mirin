@@ -1,0 +1,32 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 3050,
+      "title": "Landing \u2014 desktop 1440"
+    },
+    {
+      "file": "Mobile.dc.html",
+      "x": 1560,
+      "y": 0,
+      "w": 390,
+      "h": 2450,
+      "title": "Landing \u2014 mobile 390"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "concise-note",
+      "x": 0,
+      "y": -190,
+      "w": 640,
+      "text": "Back on the brand book: warm ink, amber, Instrument Serif, Kome.\nFive sections, down from nine. Liquid Glass is gone entirely \u2014 the two selling points are typed RPC and the agent tooling, and they get a section each, side by side with the code that proves them.\nApps: Anko and Washi only. Both need real one-liners from you \u2014 the copy is bracketed, not invented."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 820px; min-height: 1020px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 44px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Applications &mdash; 01</div>
+    <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em;">Components</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.65; color: rgba(247,244,236,0.65); max-width: 62ch;">The primitives the site and docs are built from. Radii 8 / 10 / 14. Borders are one hairline of rice at 12% opacity. No shadows on dark, one soft shadow on light.</p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Buttons &mdash; one primary per screen</div>
+    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+      <div style="padding: 11px 20px; border-radius: 8px; background: #dd9a3f; color: #14100c; font-weight: 700; font-size: 14.5px;">Get started</div>
+      <div style="padding: 11px 20px; border-radius: 8px; border: 1px solid rgba(247,244,236,0.2); font-size: 14.5px;">GitHub</div>
+      <div style="padding: 11px 20px; border-radius: 8px; font-size: 14.5px; color: rgba(247,244,236,0.65);">Learn more</div>
+      <div style="padding: 11px 20px; border-radius: 8px; background: rgba(221,154,63,0.35); color: rgba(20,16,12,0.55); font-weight: 700; font-size: 14.5px;">Disabled</div>
+      <div style="padding: 11px 20px; border-radius: 8px; background: #dd9a3f; color: #14100c; font-weight: 700; font-size: 14.5px; box-shadow: 0 0 0 3px rgba(221,154,63,0.35);">Focused</div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 12px;">
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 12px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Badges</div>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; border: 1px solid rgba(221,154,63,0.4); font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #dd9a3f;"></span>pre-alpha</span>
+        <span style="padding: 5px 11px; border-radius: 999px; background: rgba(79,138,91,0.16); font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7cb98c;">stable</span>
+        <span style="padding: 5px 11px; border-radius: 999px; background: rgba(194,72,44,0.16); font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #e0785c;">breaking</span>
+        <span style="padding: 5px 11px; border-radius: 999px; background: rgba(247,244,236,0.08); font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.65);">macOS only</span>
+      </div>
+    </div>
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 12px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Inline code &amp; links</div>
+      <div style="font-size: 14px; line-height: 1.75; color: rgba(247,244,236,0.75);">Open a window with <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 2px 6px; border-radius: 5px; background: rgba(247,244,236,0.08);">defineConfig</span>, then read the <span style="color: #dd9a3f; border-bottom: 1px solid rgba(221,154,63,0.4);">windows guide</span>.</div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Callouts &mdash; amber is note, never warning</div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; gap: 12px; padding: 14px 16px; border-radius: 10px; background: rgba(221,154,63,0.08); border: 1px solid rgba(221,154,63,0.28);">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="9" stroke="#dd9a3f" stroke-width="2"/><path d="M12 11v5M12 7.6v.6" stroke="#dd9a3f" stroke-width="2" stroke-linecap="round"/></svg>
+        <div style="font-size: 13.5px; line-height: 1.6; color: rgba(247,244,236,0.8);">The first run downloads the pinned CEF runtime once into <span style="font-family: 'JetBrains Mono', monospace; font-size: 12.5px;">~/.mirinjs/cef/</span>.</div>
+      </div>
+      <div style="display: flex; gap: 12px; padding: 14px 16px; border-radius: 10px; background: rgba(194,72,44,0.08); border: 1px solid rgba(194,72,44,0.3);">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style="flex-shrink: 0; margin-top: 2px;"><path d="M12 4l9 16H3z" stroke="#c2482c" stroke-width="2" stroke-linejoin="round"/><path d="M12 11v3.5M12 17.4v.6" stroke="#c2482c" stroke-width="2" stroke-linecap="round"/></svg>
+        <div style="font-size: 13.5px; line-height: 1.6; color: rgba(247,244,236,0.8);">Transparent windows use OSR on macOS. Input forwarding differs &mdash; test drag regions before shipping.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Code block &mdash; amber is the keyword colour</div>
+    <div style="border-radius: 10px; border: 1px solid rgba(247,244,236,0.12); overflow: hidden;">
+      <div style="display: flex; gap: 4px; padding: 9px 12px; background: rgba(247,244,236,0.05); border-bottom: 1px solid rgba(247,244,236,0.1);">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 3px 9px; border-radius: 5px; background: rgba(221,154,63,0.16); color: #dd9a3f;">main.ts</span>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 3px 9px; border-radius: 5px; color: rgba(247,244,236,0.5);">ui/App.tsx</span>
+      </div>
+      <div style="padding: 16px; background: #0f0c09; font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.75;">
+        <div><span style="color: #dd9a3f;">import</span> { defineConfig } <span style="color: #dd9a3f;">from</span> <span style="color: #a8c98f;">'mirinjs'</span></div>
+        <div style="height: 8px;"></div>
+        <div><span style="color: #dd9a3f;">export default</span> defineConfig({</div>
+        <div>  windows: [{ width: <span style="color: #ecbe7a;">960</span>, material: <span style="color: #a8c98f;">'liquid-glass'</span> }],</div>
+        <div>})</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px; margin-top: auto;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Light counterpart &mdash; same components, amber-700 for text</div>
+    <div style="padding: 20px; border-radius: 12px; background: #f7f4ec; display: flex; align-items: center; gap: 12px;">
+      <div style="padding: 10px 18px; border-radius: 8px; background: #dd9a3f; color: #14100c; font-weight: 700; font-size: 14px;">Get started</div>
+      <div style="padding: 10px 18px; border-radius: 8px; border: 1px solid rgba(20,16,12,0.15); font-size: 14px; color: #14100c;">GitHub</div>
+      <div style="font-size: 14px; color: #5a5147;">Read the <span style="color: #8a4b12; border-bottom: 1px solid rgba(138,75,18,0.4);">windows guide</span></div>
+      <span style="margin-left: auto; padding: 5px 11px; border-radius: 999px; border: 1px solid rgba(138,75,18,0.35); font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8a4b12;">pre-alpha</span>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

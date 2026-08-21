@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #f0b45c; }
+  </style>
+</helmet>
+<div style="width: 760px; min-height: 880px; background: #16171c; color: #f2f2f5; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 36px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Kome &mdash; treatments</div>
+    <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em;">How much wine in the rice</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.65; color: rgba(242,242,245,0.62); max-width: 60ch;">Same grain, four points along the brew. Left is raw rice, right is finished mirin in the cup. Pick where on that line the mark should sit.</p>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+
+    <div style="padding: 20px; border-radius: 14px; border: 1px solid rgba(242,242,245,0.09); background: rgba(242,242,245,0.03); display: flex; flex-direction: column; align-items: center; gap: 14px;">
+      <svg width="120" height="120" viewBox="0 0 200 200" fill="none">
+        <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+        <path d="M100 40c7 12 12 26 12 42" stroke="rgba(20,18,15,0.14)" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="127" cy="60" r="6" fill="rgba(221,154,63,0.55)"/>
+        <circle cx="138" cy="74" r="4" fill="rgba(221,154,63,0.4)"/>
+        <circle cx="118" cy="46" r="3.4" fill="rgba(221,154,63,0.32)"/>
+        <circle cx="70" cy="70" r="4" fill="rgba(221,154,63,0.3)"/>
+        <ellipse cx="86" cy="106" rx="6.5" ry="8.5" fill="#232830"/><ellipse cx="114" cy="106" rx="6.5" ry="8.5" fill="#232830"/>
+        <path d="M93 123q7 7 14 0" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <div style="display: flex; flex-direction: column; gap: 5px; align-items: center; text-align: center;">
+        <div style="font-size: 16px; font-weight: 700;">1 &middot; Kōji</div>
+        <div style="font-size: 12.5px; line-height: 1.55; color: rgba(242,242,245,0.6);">Raw grain, spores blooming. Cleanest silhouette, warmest read, but the wine is only implied.</div>
+      </div>
+    </div>
+
+    <div style="padding: 20px; border-radius: 14px; border: 1px solid rgba(221,154,63,0.4); background: rgba(221,154,63,0.08); display: flex; flex-direction: column; align-items: center; gap: 14px;">
+      <svg width="120" height="120" viewBox="0 0 200 200" fill="none">
+        <defs><clipPath id="v2"><path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/></clipPath></defs>
+        <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+        <g clip-path="url(#v2)"><path d="M52 118h96v82H52z" fill="#dd9a3f"/><path d="M52 118q12-7 24 0t24 0 24 0 24 0v8H52z" fill="#e8ac54"/></g>
+        <path d="M100 40c7 12 12 26 12 42" stroke="rgba(20,18,15,0.14)" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="127" cy="60" r="5" fill="rgba(221,154,63,0.5)"/>
+        <circle cx="136" cy="72" r="3.4" fill="rgba(221,154,63,0.38)"/>
+        <ellipse cx="86" cy="102" rx="6.5" ry="8.5" fill="#232830"/><ellipse cx="114" cy="102" rx="6.5" ry="8.5" fill="#232830"/>
+        <path d="M93 119q7 7 14 0" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <div style="display: flex; flex-direction: column; gap: 5px; align-items: center; text-align: center;">
+        <div style="font-size: 16px; font-weight: 700;">2 &middot; Half-brewed <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 2px 7px; border-radius: 5px; background: rgba(221,154,63,0.22); color: #dd9a3f; vertical-align: middle;">pick</span></div>
+        <div style="font-size: 12.5px; line-height: 1.55; color: rgba(242,242,245,0.6);">Rice above, wine below. Both halves of the name in one shape, and the level is a live value.</div>
+      </div>
+    </div>
+
+    <div style="padding: 20px; border-radius: 14px; border: 1px solid rgba(242,242,245,0.09); background: rgba(242,242,245,0.03); display: flex; flex-direction: column; align-items: center; gap: 14px;">
+      <svg width="120" height="120" viewBox="0 0 200 200" fill="none">
+        <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#dd9a3f"/>
+        <path d="M100 40c7 12 12 26 12 42" stroke="rgba(247,244,236,0.5)" stroke-width="3.4" stroke-linecap="round"/>
+        <path d="M78 56c-6 12-10 22-11 32" stroke="rgba(255,255,255,0.5)" stroke-width="6" stroke-linecap="round"/>
+        <ellipse cx="86" cy="108" rx="6.5" ry="8.5" fill="#7a3f10"/><ellipse cx="114" cy="108" rx="6.5" ry="8.5" fill="#7a3f10"/>
+        <path d="M93 125q7 7 14 0" stroke="#7a3f10" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <div style="display: flex; flex-direction: column; gap: 5px; align-items: center; text-align: center;">
+        <div style="font-size: 16px; font-weight: 700;">3 &middot; Poured</div>
+        <div style="font-size: 12.5px; line-height: 1.55; color: rgba(242,242,245,0.6);">Fully mirin. Boldest at any size and the best favicon, but with the crease gone it is a drop, not a grain.</div>
+      </div>
+    </div>
+
+    <div style="padding: 20px; border-radius: 14px; border: 1px solid rgba(242,242,245,0.09); background: rgba(242,242,245,0.03); display: flex; flex-direction: column; align-items: center; gap: 14px;">
+      <svg width="120" height="120" viewBox="0 0 200 200" fill="none">
+        <path d="M100 14c7 11 17 25 23 39 5 11 7 21 7 31 0 26-13 42-30 42s-30-16-30-42c0-10 2-20 7-31 6-14 16-28 23-39z" fill="#f7f4ec"/>
+        <path d="M100 30c5 9 9 20 9 32" stroke="rgba(20,18,15,0.14)" stroke-width="2.6" stroke-linecap="round"/>
+        <ellipse cx="89" cy="82" rx="5" ry="6.5" fill="#232830"/><ellipse cx="111" cy="82" rx="5" ry="6.5" fill="#232830"/>
+        <path d="M95 96q5 6 10 0" stroke="#232830" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M46 128h108l-10 40a16 16 0 01-16 12H72a16 16 0 01-16-12z" fill="rgba(242,242,245,0.16)" stroke="rgba(242,242,245,0.45)" stroke-width="3"/>
+        <path d="M52 146h96l-4 16H56z" fill="rgba(221,154,63,0.75)"/>
+        <ellipse cx="100" cy="128" rx="54" ry="7" fill="rgba(242,242,245,0.28)"/>
+      </svg>
+      <div style="display: flex; flex-direction: column; gap: 5px; align-items: center; text-align: center;">
+        <div style="font-size: 16px; font-weight: 700;">4 &middot; Ochoko</div>
+        <div style="font-size: 12.5px; line-height: 1.55; color: rgba(242,242,245,0.6);">The grain in a cup of its own mirin. Most story, most charm, worst at small sizes &mdash; an illustration, not a mark.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px; margin-top: auto;">
+    <div style="padding: 14px 16px; border-radius: 10px; background: rgba(221,154,63,0.09); border: 1px solid rgba(221,154,63,0.25); font-size: 13px; line-height: 1.6; color: rgba(242,242,245,0.82);"><strong style="color: #dd9a3f;">My pick: 2 for the mark, 4 for the illustration.</strong> Half-brewed carries rice and wine at once and turns the logo into a status indicator. Ochoko is the character you use on the 404 page and in release posts, where it has room to breathe.</div>
+    <div style="padding: 14px 16px; border-radius: 10px; background: rgba(242,242,245,0.04); border: 1px solid rgba(242,242,245,0.09); font-size: 13px; line-height: 1.6; color: rgba(242,242,245,0.62);">1 and 3 are the same mark at opposite ends of the brew &mdash; if you want one flat colour forever, 3 is the honest choice and 2 is overreach.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

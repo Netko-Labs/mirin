@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #52525b; } a:hover { color: #18181b; }
+  </style>
+</helmet>
+<div style="width: 1200px; min-height: 820px; background: #f4f4f5; color: #18181b; font-family: 'Space Grotesk', system-ui, sans-serif; box-sizing: border-box; display: flex; flex-direction: column;">
+
+  <div style="padding: 10px 24px; background: #e4e4e7; border-bottom: 1px solid #d4d4d8; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #71717a;">Structure only &mdash; greyscale so it does not pre-decide the palette</div>
+
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 28px; border-bottom: 1px solid #d4d4d8; background: #fafafa;">
+    <div style="display: flex; align-items: center; gap: 28px;">
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 20px; height: 20px; border-radius: 6px; background: #a1a1aa;"></div>
+        <span style="font-size: 16px; font-weight: 700; letter-spacing: -0.02em;">mirin</span>
+      </div>
+      <div style="display: flex; gap: 20px; font-size: 14px; color: #52525b;"><span style="color: #18181b; font-weight: 500;">Docs</span><span>Examples</span><span>Blog</span></div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid #d4d4d8; border-radius: 8px; background: #fff; font-size: 13px; color: #a1a1aa; width: 230px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="#a1a1aa" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round"/></svg>
+        <span style="flex-grow: 1;">Search docs</span>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 1px 5px; border: 1px solid #e4e4e7; border-radius: 4px;">&#8984;K</span>
+      </div>
+      <div style="width: 30px; height: 30px; border-radius: 8px; border: 1px solid #d4d4d8; background: #fff;"></div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-grow: 1;">
+
+    <div style="width: 244px; border-right: 1px solid #d4d4d8; padding: 22px 18px; display: flex; flex-direction: column; gap: 20px; background: #fafafa;">
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #a1a1aa;">Start</div>
+        <div style="font-size: 13.5px; color: #52525b;">Introduction</div>
+        <div style="font-size: 13.5px; color: #52525b;">Install</div>
+        <div style="font-size: 13.5px; padding: 5px 9px; margin-left: -9px; border-radius: 6px; background: #e4e4e7; color: #18181b; font-weight: 500;">Create an app</div>
+        <div style="font-size: 13.5px; color: #52525b;">Project layout</div>
+        <div style="font-size: 13.5px; color: #52525b;">Your first window</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #a1a1aa;">Guides</div>
+        <div style="font-size: 13.5px; color: #52525b;">Windows &amp; materials</div>
+        <div style="font-size: 13.5px; color: #52525b;">Typed RPC</div>
+        <div style="font-size: 13.5px; color: #52525b;">Menus, tray, dialogs</div>
+        <div style="font-size: 13.5px; color: #52525b;">Global shortcuts</div>
+        <div style="font-size: 13.5px; color: #52525b;">Sidecars</div>
+        <div style="font-size: 13.5px; color: #52525b;">Updater</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #a1a1aa;">Reference</div>
+        <div style="font-size: 13.5px; color: #52525b;">CLI</div>
+        <div style="font-size: 13.5px; color: #52525b;">Config</div>
+        <div style="font-size: 13.5px; color: #52525b;">App &amp; windows</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #a1a1aa;">Platforms &amp; agents</div>
+        <div style="font-size: 13.5px; color: #52525b;">Support matrix</div>
+        <div style="font-size: 13.5px; color: #52525b;">Agent devtools</div>
+      </div>
+    </div>
+
+    <div style="flex-grow: 1; padding: 28px 40px; display: flex; flex-direction: column; gap: 18px;">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div style="font-size: 12.5px; color: #a1a1aa;">Docs / Start / Create an app</div>
+        <div style="display: flex; align-items: center; gap: 7px; padding: 6px 11px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fff; font-size: 12px; color: #52525b;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="11" height="11" rx="2" stroke="#71717a" stroke-width="2"/><path d="M5 15V5a2 2 0 012-2h8" stroke="#71717a" stroke-width="2"/></svg>
+          Copy page as Markdown
+        </div>
+      </div>
+
+      <h1 style="margin: 0; font-size: 36px; font-weight: 700; letter-spacing: -0.035em;">Create an app</h1>
+      <p style="margin: 0; font-size: 15.5px; line-height: 1.65; color: #52525b; max-width: 62ch; text-wrap: pretty;">Scaffold a new mirin project, install its dependencies, and get a native window rendering React with typed RPC in both directions.</p>
+
+      <div style="border-radius: 10px; border: 1px solid #d4d4d8; background: #18181b; overflow: hidden;">
+        <div style="display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid #3f3f46;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 3px 9px; border-radius: 5px; background: #27272a; color: #fafafa;">bun</span>
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 3px 9px; border-radius: 5px; color: #a1a1aa;">bunx</span>
+        </div>
+        <div style="padding: 14px 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #fafafa; line-height: 1.7;">bun create mirinjs my-app<br><span style="color: #a1a1aa;">cd my-app &amp;&amp; bun install</span><br><span style="color: #a1a1aa;">bun run dev</span></div>
+      </div>
+
+      <div style="display: flex; gap: 12px; padding: 14px 16px; border-radius: 10px; border: 1px solid #d4d4d8; border-left: 3px solid #71717a; background: #fafafa;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style="flex-shrink: 0; margin-top: 1px;"><circle cx="12" cy="12" r="9" stroke="#71717a" stroke-width="2"/><path d="M12 11v5M12 7.6v.6" stroke="#71717a" stroke-width="2" stroke-linecap="round"/></svg>
+        <div style="font-size: 13.5px; line-height: 1.6; color: #3f3f46;">The first run downloads the pinned CEF runtime once (several hundred MB) into <span style="font-family: 'JetBrains Mono', monospace; font-size: 12.5px;">~/.mirinjs/cef/</span>. No Rust toolchain is needed &mdash; the native core ships prebuilt.</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 9px;">
+        <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em;">What you get</div>
+        <div style="font-size: 15px; line-height: 1.7; color: #52525b; max-width: 62ch;">A mirin-owned native window rendering React, a typed <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; padding: 1px 5px; border-radius: 4px; background: #e4e4e7;">greet</span> query round-tripping to the Bun process, and live <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; padding: 1px 5px; border-radius: 4px; background: #e4e4e7;">tick</span> events pushed back to the UI.</div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: auto; padding-top: 20px;">
+        <div style="padding: 13px 15px; border: 1px solid #d4d4d8; border-radius: 9px; background: #fafafa; display: flex; flex-direction: column; gap: 3px;">
+          <div style="font-size: 11.5px; color: #a1a1aa;">Previous</div>
+          <div style="font-size: 14px; font-weight: 500;">Install</div>
+        </div>
+        <div style="padding: 13px 15px; border: 1px solid #d4d4d8; border-radius: 9px; background: #fafafa; display: flex; flex-direction: column; gap: 3px; text-align: right;">
+          <div style="font-size: 11.5px; color: #a1a1aa;">Next</div>
+          <div style="font-size: 14px; font-weight: 500;">Project layout</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="width: 210px; border-left: 1px solid #d4d4d8; padding: 28px 20px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #a1a1aa;">On this page</div>
+      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
+        <div style="color: #18181b; border-left: 2px solid #18181b; padding-left: 10px; margin-left: -2px;">Scaffold</div>
+        <div style="color: #71717a; padding-left: 10px;">What you get</div>
+        <div style="color: #71717a; padding-left: 20px;">Project layout</div>
+        <div style="color: #71717a; padding-left: 20px;">The dev loop</div>
+        <div style="color: #71717a; padding-left: 10px;">Next steps</div>
+      </div>
+      <div style="height: 1px; background: #e4e4e7; margin: 6px 0;"></div>
+      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; color: #71717a;">
+        <div>Edit this page</div>
+        <div>View as plain Markdown</div>
+        <div>llms.txt</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

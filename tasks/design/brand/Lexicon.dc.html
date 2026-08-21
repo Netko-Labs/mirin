@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 820px; min-height: 1080px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 44px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Voice &mdash; 02</div>
+    <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em;">Lexicon</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.65; color: rgba(247,244,236,0.65); max-width: 64ch;">The words mirin owns, the words it refuses, and the exact line the brewing metaphor is not allowed to cross.</p>
+  </div>
+
+  <div style="padding: 18px 20px; border-radius: 12px; background: rgba(194,72,44,0.09); border: 1px solid rgba(194,72,44,0.35); display: flex; flex-direction: column; gap: 9px;">
+    <div style="font-size: 16px; font-weight: 700; color: #f7f4ec;">The metaphor stops at the API</div>
+    <div style="font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.75);">Brewing language lives in marketing copy, CLI flavour text, release posts and the mascot. It never touches a command name, a config key, a type, a file path or an error message. A build command must be greppable and boring &mdash; that is why it is <span style="font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: #4f8a5b;">mirin build</span> and never <span style="font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: #c2482c;">mirin brew</span>. Cute APIs cost people hours; cute marketing costs nothing.</div>
+  </div>
+
+  <div style="display: flex; gap: 12px;">
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 10px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #4f8a5b;">Words we use</div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(247,244,236,0.04); font-size: 13px; line-height: 1.5;"><strong>brewed / brewing</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; building, in flavour contexts only</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(247,244,236,0.04); font-size: 13px; line-height: 1.5;"><strong>main process</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; the Bun side. Not &ldquo;backend&rdquo;.</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(247,244,236,0.04); font-size: 13px; line-height: 1.5;"><strong>renderer</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; the web side. Not &ldquo;frontend&rdquo;, not &ldquo;webview&rdquo;.</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(247,244,236,0.04); font-size: 13px; line-height: 1.5;"><strong>native core</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; the Rust library. Not &ldquo;the binding&rdquo;.</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(247,244,236,0.04); font-size: 13px; line-height: 1.5;"><strong>typed RPC</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; always both words. It is the differentiator.</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(247,244,236,0.04); font-size: 13px; line-height: 1.5;"><strong>window</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; a real OS window. Never &ldquo;screen&rdquo; or &ldquo;view&rdquo;.</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(247,244,236,0.04); font-size: 13px; line-height: 1.5;"><strong>pre-alpha</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; the status, stated plainly, every time.</span></div>
+      </div>
+    </div>
+
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 10px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #c2482c;">Words we never use</div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(194,72,44,0.07); font-size: 13px; line-height: 1.5;"><strong>blazing fast</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; show a number or say nothing</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(194,72,44,0.07); font-size: 13px; line-height: 1.5;"><strong>simply / just</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; tells the stuck reader they are stupid</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(194,72,44,0.07); font-size: 13px; line-height: 1.5;"><strong>seamless / effortless</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; describes nothing</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(194,72,44,0.07); font-size: 13px; line-height: 1.5;"><strong>production-ready</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; not until it is. Then say the version.</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(194,72,44,0.07); font-size: 13px; line-height: 1.5;"><strong>Electron killer</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; loses the argument for us</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(194,72,44,0.07); font-size: 13px; line-height: 1.5;"><strong>Bun-compatible</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; Bun IS the runtime; never hedge it</span></div>
+        <div style="padding: 10px 13px; border-radius: 8px; background: rgba(194,72,44,0.07); font-size: 13px; line-height: 1.5;"><strong>leverage / empower</strong> <span style="color: rgba(247,244,236,0.55);">&mdash; use &ldquo;use&rdquo;</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 12px;">
+    <div style="flex-grow: 1; padding: 18px 20px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 10px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Naming</div>
+      <div style="display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; line-height: 1.55; color: rgba(247,244,236,0.7);">
+        <div><strong style="color: #f7f4ec;">mirinjs</strong> is the name of the library, in the wordmark and in prose. Lowercase everywhere, including at the start of a sentence.</div><div>The binary stays <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">mirin</span> &mdash; short to type, and already shipped. Write it as a command, never as the product name.</div><div>Scope is <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">@mirinjs/*</span>. The repo is currently <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">mirin</span> &mdash; README and docs still say &ldquo;mirin&rdquo; and need a pass.</div>
+        <div><strong style="color: #f7f4ec;">Kome</strong> is capitalised &mdash; it is a name.</div>
+        <div>CLI verbs are plain and predictable: <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">dev build release init check doctor skill</span>.</div>
+        <div>Headings are sentence case. Never Title Case, never ALL CAPS outside the mono eyebrow label.</div>
+      </div>
+    </div>
+
+    <div style="flex-grow: 1; padding: 18px 20px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 10px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Kome in copy</div>
+      <div style="display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; line-height: 1.55; color: rgba(247,244,236,0.7);">
+        <div>Kome <strong style="color: #4f8a5b;">is the logo</strong> &mdash; neutral face, in every logo slot. It also appears in empty states, 404s, CLI status, release posts and stickers, where its expression changes.</div>
+        <div>Kome <strong style="color: #c2482c;">never</strong>: speaks in first person, gives instructions, or wears a non-neutral expression in a logo slot.</div>
+        <div>Kome is never anthropomorphised in prose &mdash; no &ldquo;Kome says&rdquo;, no mascot narration. It reacts; it does not talk.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">The house sentences &mdash; reuse these verbatim</div>
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <div style="padding: 12px 15px; border-radius: 8px; background: rgba(221,154,63,0.08); border-left: 2px solid #dd9a3f; font-size: 13.5px; line-height: 1.55;">Desktop apps, brewed in Bun.</div>
+      <div style="padding: 12px 15px; border-radius: 8px; background: rgba(221,154,63,0.08); border-left: 2px solid #dd9a3f; font-size: 13.5px; line-height: 1.55;">Your main process is Bun. Your UI is real Chromium. The native layer is Rust you never install.</div>
+      <div style="padding: 12px 15px; border-radius: 8px; background: rgba(221,154,63,0.08); border-left: 2px solid #dd9a3f; font-size: 13.5px; line-height: 1.55;">One engine on every platform &mdash; identical rendering, identical devtools.</div>
+      <div style="padding: 12px 15px; border-radius: 8px; background: rgba(221,154,63,0.08); border-left: 2px solid #dd9a3f; font-size: 13.5px; line-height: 1.55;">Pre-alpha, and the version number means it.</div>
+    </div>
+  </div>
+
+  <div style="margin-top: auto; padding: 16px 18px; border-radius: 12px; background: rgba(247,244,236,0.04); border: 1px solid rgba(247,244,236,0.1); font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.65);">This page is the one a contributor reads before writing docs, and the one an agent gets handed with the repo. Keep it short enough that both actually do.</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

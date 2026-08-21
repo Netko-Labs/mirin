@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Karla:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #f0b45c; }
+  </style>
+</helmet>
+<div style="width: 1100px; min-height: 760px; background: #14100c; color: #f4ece0; font-family: Karla, system-ui, sans-serif; box-sizing: border-box; position: relative; overflow: hidden;">
+
+  <div style="position: absolute; top: -180px; right: -120px; width: 620px; height: 620px; border-radius: 50%; background: radial-gradient(circle, rgba(221,154,63,0.16), rgba(221,154,63,0) 65%);"></div>
+
+  <div style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 22px 48px; border-bottom: 1px solid rgba(244,236,224,0.08);">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M9 2h6v4l3 5v11H6V11l3-5V2z" stroke="#dd9a3f" stroke-width="1.6" stroke-linejoin="round"/><path d="M6 14h12" stroke="#dd9a3f" stroke-width="1.6"/></svg>
+      <span style="font-family: 'Instrument Serif', serif; font-size: 22px; letter-spacing: 0.01em;">mirin</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 26px; font-size: 14px; color: rgba(244,236,224,0.65);">
+      <span>Docs</span><span>Examples</span><span>Blog</span><span>GitHub</span>
+    </div>
+  </div>
+
+  <div style="position: relative; display: flex; gap: 48px; padding: 56px 48px 40px; align-items: center;">
+    <div style="display: flex; flex-direction: column; gap: 22px; width: 520px;">
+      <div style="display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; padding: 5px 11px; border: 1px solid rgba(221,154,63,0.4); border-radius: 999px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;">
+        <span style="width: 5px; height: 5px; border-radius: 50%; background: #dd9a3f;"></span>pre-alpha &middot; v0.1.0-alpha.25
+      </div>
+      <h1 style="margin: 0; font-family: 'Instrument Serif', serif; font-size: 62px; font-weight: 400; line-height: 1.02; letter-spacing: -0.01em; text-wrap: pretty;">Desktop apps,<br>brewed in <em style="font-style: italic; color: #dd9a3f;">Bun</em>.</h1>
+      <p style="margin: 0; font-size: 17px; line-height: 1.65; color: rgba(244,236,224,0.72); max-width: 46ch; text-wrap: pretty;">Your main process is Bun &mdash; full <span style="font-family: 'JetBrains Mono', monospace; font-size: 15px;">Bun.*</span>, <span style="font-family: 'JetBrains Mono', monospace; font-size: 15px;">bun:ffi</span>, Workers. Your UI is real Chromium on every platform. The native layer is Rust, and you never touch it.</p>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid rgba(244,236,224,0.14); border-radius: 10px; background: rgba(244,236,224,0.03); font-family: 'JetBrains Mono', monospace; font-size: 14px;">
+        <span style="color: #dd9a3f;">$</span>
+        <span style="flex-grow: 1;">bun create mirinjs my-app</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="11" height="11" rx="2" stroke="rgba(244,236,224,0.5)" stroke-width="1.7"/><path d="M5 15V5a2 2 0 012-2h8" stroke="rgba(244,236,224,0.5)" stroke-width="1.7"/></svg>
+      </div>
+      <div style="display: flex; gap: 12px;">
+        <div style="padding: 12px 22px; border-radius: 8px; background: #dd9a3f; color: #14100c; font-weight: 700; font-size: 15px;">Get started</div>
+        <div style="padding: 12px 22px; border-radius: 8px; border: 1px solid rgba(244,236,224,0.18); font-size: 15px;">GitHub</div>
+      </div>
+    </div>
+
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 8px;">
+      <div style="height: 300px; border-radius: 14px; border: 1px solid rgba(244,236,224,0.14); background: linear-gradient(150deg, rgba(221,154,63,0.1), rgba(244,236,224,0.03)); display: flex; flex-direction: column; overflow: hidden;">
+        <div style="display: flex; gap: 6px; padding: 12px 14px;">
+          <span style="width: 10px; height: 10px; border-radius: 50%; background: #ff5f57;"></span>
+          <span style="width: 10px; height: 10px; border-radius: 50%; background: #febc2e;"></span>
+          <span style="width: 10px; height: 10px; border-radius: 50%; background: #28c840;"></span>
+        </div>
+        <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: rgba(244,236,224,0.45); text-align: center; padding: 0 30px; line-height: 1.7;">[REAL CAPTURE: examples/liquid-glass<br>running on a real desktop]</div>
+      </div>
+      <div style="font-size: 12px; color: rgba(244,236,224,0.4); text-align: center;">Native macOS vibrancy behind a transparent window.</div>
+    </div>
+  </div>
+
+  <div style="position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: rgba(244,236,224,0.08); border-top: 1px solid rgba(244,236,224,0.08);">
+    <div style="background: #14100c; padding: 24px 20px; display: flex; flex-direction: column; gap: 6px;">
+      <div style="font-family: 'Instrument Serif', serif; font-size: 19px;">Bun-native</div>
+      <div style="font-size: 13px; line-height: 1.5; color: rgba(244,236,224,0.55);">The runtime, not a shim.</div>
+    </div>
+    <div style="background: #14100c; padding: 24px 20px; display: flex; flex-direction: column; gap: 6px;">
+      <div style="font-family: 'Instrument Serif', serif; font-size: 19px;">One engine</div>
+      <div style="font-size: 13px; line-height: 1.5; color: rgba(244,236,224,0.55);">CEF on all three platforms.</div>
+    </div>
+    <div style="background: #14100c; padding: 24px 20px; display: flex; flex-direction: column; gap: 6px;">
+      <div style="font-family: 'Instrument Serif', serif; font-size: 19px;">Declarative</div>
+      <div style="font-size: 13px; line-height: 1.5; color: rgba(244,236,224,0.55);">An app is a typed config.</div>
+    </div>
+    <div style="background: #14100c; padding: 24px 20px; display: flex; flex-direction: column; gap: 6px;">
+      <div style="font-family: 'Instrument Serif', serif; font-size: 19px;">Typed RPC</div>
+      <div style="font-size: 13px; line-height: 1.5; color: rgba(244,236,224,0.55);">One router, both sides.</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

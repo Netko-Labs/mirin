@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 820px; min-height: 1020px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 44px; box-sizing: border-box; display: flex; flex-direction: column; gap: 30px;">
+
+  <div style="display: flex; align-items: flex-start; justify-content: space-between;">
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 13px;">
+        <svg width="42" height="42" viewBox="0 0 200 200" fill="none">
+          <defs><clipPath id="bm"><path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/></clipPath></defs>
+          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+          <g clip-path="url(#bm)"><path d="M52 118h96v82H52z" fill="#dd9a3f"/></g><ellipse cx="86" cy="100" rx="6.5" ry="8.5" fill="#232830"/><ellipse cx="114" cy="100" rx="6.5" ry="8.5" fill="#232830"/><circle cx="87.8" cy="97" r="2.3" fill="#f7f4ec"/><circle cx="115.8" cy="97" r="2.3" fill="#f7f4ec"/><path d="M93 117q7 7 14 0" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <span style="font-size: 40px; font-weight: 700; letter-spacing: -0.045em;">mirinjs</span>
+      </div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: #dd9a3f;">Brand book &mdash; v1, pre-alpha</div>
+    </div>
+    <div style="text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.9; color: rgba(247,244,236,0.45);">
+      <div>mirinjs.netko.dev</div>
+      <div>Netko Labs</div>
+    </div>
+  </div>
+
+  <div style="height: 1px; background: rgba(247,244,236,0.12);"></div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(247,244,236,0.4);">What mirin is</div>
+    <h1 style="margin: 0; font-family: 'Instrument Serif', serif; font-size: 46px; font-weight: 400; line-height: 1.08; letter-spacing: -0.015em; max-width: 18ch;">Desktop apps, brewed in Bun.</h1>
+    <p style="margin: 0; font-size: 16px; line-height: 1.65; color: rgba(247,244,236,0.72); max-width: 62ch; text-wrap: pretty;">mirinjs is a desktop application framework where the main process is Bun, the UI is real Chromium on every platform, and the native layer is Rust you never have to install. Not an Electron wrapper. Not a Node port.</p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Four principles &mdash; every decision answers to these</div>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+      <div style="padding: 18px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 7px;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;">01</div>
+        <div style="font-size: 17px; font-weight: 700;">Say the status out loud</div>
+        <div style="font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.62);">Pre-alpha means the badge says pre-alpha, on the hero, above the fold. A framework that oversells its maturity is one nobody trusts twice.</div>
+      </div>
+      <div style="padding: 18px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 7px;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;">02</div>
+        <div style="font-size: 17px; font-weight: 700;">Show the window</div>
+        <div style="font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.62);">A real capture of a real app beats any diagram, benchmark, or adjective. If a claim can be screenshotted, screenshot it instead of writing it.</div>
+      </div>
+      <div style="padding: 18px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 7px;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;">03</div>
+        <div style="font-size: 17px; font-weight: 700;">Bun, without hedging</div>
+        <div style="font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.62);">Never soften it into &ldquo;Bun-compatible&rdquo; or &ldquo;also works with Node&rdquo;. The runtime is the position. Hedging it throws away the only thing that makes mirin different.</div>
+      </div>
+      <div style="padding: 18px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 7px;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;">04</div>
+        <div style="font-size: 17px; font-weight: 700;">Write to a peer</div>
+        <div style="font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.62);">The reader has shipped software. Never explain what a main process is, never apologise for complexity, never pad with a 101 section they will skip.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(247,244,236,0.4);">The system at a glance</div>
+    <div style="display: flex; gap: 12px;">
+      <div style="flex-grow: 1; padding: 16px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); display: flex; flex-direction: column; gap: 10px;">
+        <div style="font-size: 13px; font-weight: 700;">Colour</div>
+        <div style="display: flex; gap: 5px;">
+          <div style="flex-grow: 1; height: 26px; border-radius: 5px; background: #dd9a3f;"></div>
+          <div style="flex-grow: 1; height: 26px; border-radius: 5px; background: #8a4b12;"></div>
+          <div style="flex-grow: 1; height: 26px; border-radius: 5px; background: #f7f4ec;"></div>
+          <div style="flex-grow: 1; height: 26px; border-radius: 5px; background: #14100c; border: 1px solid rgba(247,244,236,0.2);"></div>
+        </div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; line-height: 1.6; color: rgba(247,244,236,0.5);">amber &middot; deep &middot; rice &middot; ink<br>one accent, no second one</div>
+      </div>
+      <div style="flex-grow: 1; padding: 16px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 13px; font-weight: 700;">Type</div>
+        <div style="font-family: 'Instrument Serif', serif; font-size: 24px; line-height: 1;">Instrument Serif</div>
+        <div style="font-size: 15px; font-weight: 500;">Space Grotesk</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 12.5px;">JetBrains Mono</div>
+      </div>
+      <div style="width: 160px; padding: 16px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); display: flex; flex-direction: column; gap: 8px; align-items: center;">
+        <div style="font-size: 13px; font-weight: 700; align-self: flex-start;">Mascot</div>
+        <svg width="56" height="56" viewBox="0 0 200 200" fill="none">
+          <defs><clipPath id="bk"><path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/></clipPath></defs>
+          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+          <g clip-path="url(#bk)"><path d="M52 118h96v82H52z" fill="#dd9a3f"/></g>
+          <circle cx="127" cy="60" r="5" fill="rgba(221,154,63,0.5)"/>
+          <ellipse cx="86" cy="102" rx="6.5" ry="8.5" fill="#232830"/><ellipse cx="114" cy="102" rx="6.5" ry="8.5" fill="#232830"/>
+          <path d="M93 119q7 7 14 0" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,244,236,0.5);">Kome &mdash; is the logo</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: auto; padding: 18px; border-radius: 12px; background: rgba(221,154,63,0.1); border: 1px solid rgba(221,154,63,0.3);">
+    <div style="font-size: 13.5px; line-height: 1.65; color: rgba(247,244,236,0.85);"><strong style="color: #dd9a3f;">The one rule under all of it:</strong> mirinjs is a tool for people who already know the problem. Warmth comes from the mascot, the colour and the writing having a point of view &mdash; never from talking down, hyping up, or padding out.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
