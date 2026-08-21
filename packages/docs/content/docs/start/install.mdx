@@ -1,0 +1,48 @@
+---
+title: Install
+description: Requirements, the one-time CEF download, and what you do not need to install.
+---
+
+## Requirements
+
+- **Bun 1.2 or newer.** [Install Bun](https://bun.sh) if you have not already.
+- **A supported desktop:** macOS on Apple Silicon, Windows 10 or 11 on x64 or
+  arm64, or a Linux x64/arm64 desktop with the CEF and GTK runtime libraries.
+- **macOS only:** the Xcode command-line tools, for code signing.
+
+```bash
+xcode-select --install
+```
+
+## No Rust toolchain
+
+The native core is Rust, but it ships prebuilt as a platform package for every
+supported target. You need a Rust toolchain only to work on mirinjs itself.
+
+## The CEF runtime
+
+The first `mirin dev` or `mirin build` downloads the pinned Chromium Embedded
+Framework — several hundred megabytes — into `~/.mirinjs/cef/<version-platform>/`.
+It is downloaded once per mirinjs version and shared across every project on the
+machine.
+
+<Callout type="info">
+In ephemeral CI, cache `~/.mirinjs/cef` keyed by mirinjs version and runner
+platform. Without it, every job re-downloads and re-unpacks the same runtime.
+</Callout>
+
+## Check the environment
+
+`mirin doctor` inspects the project and the machine without building anything:
+config validity, entry files, CEF availability, port contention, and how the last
+run ended.
+
+```bash
+bunx mirin doctor
+```
+
+Add `--json` for a parseable report.
+
+## Next
+
+[Create an app](/docs/start/create-an-app).

@@ -1,0 +1,54 @@
+---
+title: Distributing
+description: DMG, Inno, NSIS, AppImage, deb and rpm, produced by mirin release.
+---
+
+```bash
+bunx mirin release
+```
+
+Builds the app and writes installers plus updater artifacts to `build/release/`.
+
+## What each platform produces
+
+**macOS** — a DMG, plus `{channel}-darwin-{arch}-update.json`, a full
+`.tar.zst`, and an optional delta patch.
+
+**Windows** — an Inno Setup installer when `iscc` is on PATH, else NSIS when
+`makensis` is, else a portable `.zip`. Updater artifacts either way.
+
+**Linux** — AppImage, `.deb` and `.rpm`, plus updater artifacts. Restrict the
+set if you do not want all three:
+
+```bash
+bunx mirin build --linux-target deb,rpm
+```
+
+## Configuring the packagers
+
+```ts title="mirin.config.ts"
+dmg: { volumeName: "My App" },
+nsis: true,
+inno: true,
+linux: true,
+publisher: "Netko Labs",
+```
+
+Each accepts `true` for defaults or an object to configure it.
+
+## Notarization
+
+macOS builds are signed with the hardened runtime, sidecars included, so the
+output is notarizable. Set `MIRIN_SIGN_IDENTITY` before releasing; an unsigned
+release will be rejected by Gatekeeper on every machine but yours.
+
+## Speed
+
+Compression uses multiple cores, Linux package formats build in parallel, and
+updater generation overlaps installer creation. In CI, cache `~/.mirinjs/cef`
+keyed by mirinjs version and runner platform — without it every job
+re-downloads the same runtime.
+
+## Next
+
+[Updating](/docs/guides/updating).

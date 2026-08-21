@@ -1,0 +1,79 @@
+---
+title: app
+description: The app singleton, the windows facade, and lifecycle events.
+---
+
+```ts
+import { app } from "mirinjs";
+```
+
+## Properties
+
+| Member | Type | Notes |
+| --- | --- | --- |
+| `app.id` | `string \| undefined` | The configured app id. |
+| `app.isDev` | `boolean` | True under `mirin dev`. |
+| `app.windows` | `Windows` | The windows facade, below. |
+| `app.rpc` | `RpcEmitters` | Event emitters for your router. |
+
+## Methods
+
+```ts
+const mirin = app.serve(router);        // serve an RPC router
+const proc = app.sidecar("ripgrep", { args: [...] });
+app.quit();
+```
+
+`serve` returns a handle whose `rpc` property emits your declared events.
+
+## app.windows
+
+```ts
+app.windows.get("main");        // WindowHandle — throws if unknown
+app.windows.byId(3);            // WindowHandle | undefined
+app.windows.all();              // WindowHandle[]
+await app.windows.open("settings");
+```
+
+## WindowHandle
+
+```ts
+win.id; win.name; win.url; win.title;
+
+await win.setTitle("New");
+await win.loadUrl("app://ui/other.html");
+await win.show();  await win.hide();
+await win.focus(); await win.center();
+await win.minimize(); await win.maximize(); await win.restore();
+await win.toggleFullscreen();
+await win.setAlwaysOnTop(true);
+await win.setMaterial({ type: "liquidGlass" });   // null clears it
+await win.close();
+
+win.setPosition(120, 80);
+win.getFrame();      // { x, y, width, height }
+win.isMaximized();   // boolean
+win.rpc;             // emitters scoped to this window
+```
+
+Async methods are round trips to the UI thread, not slow operations.
+
+## Events
+
+```ts
+app.on("ready", () => {});
+app.on("window-all-closed", () => app.quit());
+app.on("open-url", (url: string) => {});
+
+win.on("focus", () => {});
+win.on("blur", () => {});
+win.on("moved", ({ x, y }) => {});
+win.on("resized", ({ width, height }) => {});
+win.on("closed", () => {});
+```
+
+`window-all-closed` does not quit for you.
+
+## See also
+
+[Windows](/docs/guides/windows)

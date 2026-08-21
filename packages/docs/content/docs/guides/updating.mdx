@@ -1,0 +1,78 @@
+---
+title: Updating
+description: Release manifests, hash-verified downloads, and wiring the updater into your UI.
+---
+
+`mirin release` emits update artifacts alongside the installers. Point your app
+at where you host them and it can update itself.
+
+## Configure
+
+```ts title="mirin.config.ts"
+release: {
+  baseUrl: "https://github.com/you/my-app/releases/latest/download",
+  notes: "## 0.2.0\n\n- Faster queries\n- Fixed a crash on close",
+},
+```
+
+`baseUrl` is a flat HTTPS directory containing the artifacts — GitHub Releases'
+download URL works directly. `notes` is markdown embedded in the manifest, for
+your own update UI to render.
+
+## Wire it up
+
+```ts title="main/main.ts"
+import { app, updater } from "mirinjs";
+
+const info = await updater.check();
+if (info) {
+  updater.on("progress", ({ percent }) => {
+    app.windows.get("main").rpc.updateProgress.broadcast({ percent });
+  });
+
+  await updater.download(info);
+  await updater.apply();   // relaunches into the new version
+}
+```
+
+`check()` resolves to `null` when there is nothing newer. Never check on a timer
+without telling the user — an app that restarts itself unannounced loses work.
+
+## What is verified before anything is applied
+
+The updater treats everything it fetches as hostile, in this order:
+
+1. The URL must be HTTPS. Loopback HTTP is allowed for local testing, nothing else.
+2. The manifest must parse and its target must match this platform and architecture.
+3. Artifact names must be flat — a single path segment, no traversal.
+4. Versions and sizes are bounded before becoming filesystem paths or downloads.
+5. The download's SHA-256 must match the manifest.
+6. The archive layout is checked before extraction.
+
+If you host artifacts yourself, keep names flat and serve them over HTTPS.
+
+## Testing locally
+
+Serve `build/release/` over loopback and point `baseUrl` at it:
+
+```bash
+cd build/release && bunx serve -p 8787
+```
+
+```ts
+release: { baseUrl: "http://localhost:8787" },
+```
+
+Loopback HTTP is the one exception to the HTTPS rule, and it exists for exactly
+this. Do not ship it.
+
+## Platform notes
+
+- **macOS** — full `.tar.zst` plus an optional delta patch.
+- **Windows** — the in-place swap is implemented but not yet verified end to
+  end. Test it against your own release before relying on it.
+- **Linux** — artifacts are emitted for AppImage, deb and rpm.
+
+## Next
+
+[Concepts: process model](/docs/concepts/process-model).

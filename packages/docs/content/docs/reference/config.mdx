@@ -1,0 +1,138 @@
+---
+title: mirin.config.ts
+description: Every key in MirinConfig, what it does, and when you need it.
+---
+
+The manifest is pure data. No logic, no imports from your app code — it is read
+before your app exists.
+
+```ts title="mirin.config.ts"
+import { defineConfig } from "mirinjs/config";
+
+export default defineConfig({
+  id: "dev.you.my-app",
+  name: "My App",
+  main: "main/main.ts",
+  windows: {
+    main: { url: "app://ui/index.html", width: 1100, height: 800, show: "ready" },
+  },
+});
+```
+
+`defineConfig` is a typed identity function. It exists so your editor knows the
+shape.
+
+## Identity
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `id` | `string` | **Required.** Reverse-DNS, e.g. `dev.you.my-app`. Used for the bundle id, the Linux `res_class` and the app's support folder. Changing it later orphans user data. |
+| `name` | `string` | **Required.** Display name. |
+| `publisher` | `string` | Company name. Shown in the Windows installer, the exe's file properties and Add/Remove Programs. Defaults to `name`. |
+| `main` | `string` | **Required.** Main-process entry, relative to the project root. Runs in the Bun Worker. |
+
+## Windows
+
+`windows` is a record of name to `WindowConfig`. **Required** — an app with no
+windows has nothing to show.
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `url` | `string` | **Required.** `app://…` for a built app; dev overrides it with the Vite server. |
+| `title` | `string` | Window title. |
+| `width` / `height` | `number` | Initial size. |
+| `minWidth` / `minHeight` | `number` | Resize floor. Set these. |
+| `x` / `y` | `number` | Initial position. Omit to let the platform place it. |
+| `show` | `"ready" \| "immediately"` | `"ready"` waits for first paint. Prefer it. |
+| `open` | `"auto" \| "manual"` | `"manual"` declares a window without opening it at startup. |
+| `titleBarStyle` | `"hidden" \| "hiddenInset"` | Custom title bars. |
+| `trafficLightPosition` | `{ x, y }` | Inset the macOS traffic lights. |
+| `transparent` | `boolean` | Clear window, off-screen rendered. |
+| `material` | `WindowMaterial \| WindowMaterialOptions` | Native material. Implies `transparent`. |
+| `alwaysOnTop` | `boolean` | Floating panels. |
+| `movableByBackground` | `boolean` | Drag the window by its background. |
+| `visible` | `boolean` | Start hidden. |
+
+See [Windows](/docs/guides/windows) and
+[Transparency and native materials](/docs/guides/materials).
+
+## Icons
+
+```ts
+icon: "assets/icon.png",
+
+icon: {
+  default: "assets/icon.iconset",
+  macos: "AppIcon.icon",
+  windows: "assets/icon.ico",
+  linux: "assets/icon.png",
+},
+```
+
+Accepts an `.icns`, an `.iconset` directory, a square `.png` of at least 512px,
+or an Icon Composer `.icon` document.
+
+<Callout type="info">
+An `.icon` document compiles to an `Assets.car`, which is the only way macOS 26+
+resolves light, dark and tinted appearance variants. That step needs `actool`
+from a full Xcode — with Command Line Tools alone the build warns and falls back
+to the plain `.icns` rather than failing. Linux and Windows cannot read `.icon`
+at all, so use the per-platform form if you ship one.
+</Callout>
+
+## Processes
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `sidecars` | `Record<string, string \| SidecarSpec>` | External binaries bundled and signed with the app. |
+| `workers` | `Record<string, string>` | Extra Bun workers. No window or native APIs. |
+| `urlSchemes` | `string[]` | Deep-link schemes, e.g. `["my-app"]`. |
+| `singleInstance` | `boolean` | A second launch focuses the running app. |
+
+## Runtime
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `cef` | `CefConfig` | CEF packaging. `{ locales: ["en-US"] }` trims the bundle; omit to keep every locale. |
+| `devtools` | `DevtoolsConfig` | The development observability surface — see below. |
+
+### devtools
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `enabled` | `true` in dev | The whole surface. |
+| `inspector` | `true` | The loopback inspector. |
+| `file` | `true` | Write `events.jsonl` to disk. |
+| `bufferSize` | — | In-memory event ring size. |
+| `rpcPayloads` | `false` | Include RPC payloads in events. |
+| `network` | — | Renderer network events. |
+| `cdp` | — | The DevTools-protocol bridge. |
+| `production` | `false` | Force the surface on in a packaged build. |
+
+<Callout type="error">
+`production: true` exposes your app's internals on a local port in a shipped
+build. It exists for diagnosing a release you cannot reproduce locally. Turn it
+off again.
+</Callout>
+
+## Packaging
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `dmg` | `boolean \| DmgConfig` | macOS DMG. Codesigned and, with notary credentials, notarized and stapled. |
+| `inno` | `boolean \| InnoConfig` | Windows Inno Setup installer. Preferred over NSIS when both are available. Needs `iscc`. |
+| `nsis` | `boolean \| NsisConfig` | Windows NSIS installer. Needs `makensis`. `false` ships only the portable `.zip`. |
+| `linux` | `boolean \| LinuxConfig` | AppImage, `.deb`, `.rpm`. Needs `fpm` and `appimagetool`. |
+| `release` | `ReleaseConfig` | Update configuration. Omit to disable updates entirely. |
+
+### release
+
+| Key | Notes |
+| --- | --- |
+| `baseUrl` | A flat directory of release artifacts. HTTPS, except loopback for local testing. |
+| `channel` | Default `"stable"`. Baked into artifact filenames and the app's support folder, so channels coexist at one `baseUrl`. |
+| `notes` | Markdown embedded in the update manifest, for your update UI. |
+
+## See also
+
+[Distributing](/docs/guides/distributing) · [Updating](/docs/guides/updating)

@@ -1,0 +1,54 @@
+---
+title: Linux
+description: x64 and arm64 support, X11 windowing, packaging, and the gaps that are still open.
+---
+
+Linux x64 and arm64. The core loop — window, dev, build, release — is complete.
+Several app-shell features are not ported yet, and this page lists them plainly
+rather than burying them.
+
+## Windowing
+
+Linux uses CEF Views with Xlib window management against the CEF window ID.
+mirinjs does not own a native toplevel window on this platform, which is a
+deliberate difference from the Windows port.
+
+App identity comes from your config `id`: the last segment, lowercased, becomes
+the X11 `res_name`, and the full id the `res_class`. That is what desktop
+environments match against for taskbar grouping, so it must agree with the
+`.desktop` entry — which mirinjs generates for you.
+
+## Packaging
+
+`mirin build --linux` and `mirin release` emit:
+
+- **AppImage** via `appimagetool`
+- **`.deb`** and **`.rpm`** via `fpm`
+
+Each package stages a `.desktop` entry with a matching `StartupWMClass`, a
+hicolor icon, and a wrapper that executes the real host binary inside the
+payload. Package metadata is validated before anything is written: app ids must
+be single path segments, desktop fields reject line injection, and the package
+format is restricted to `appimage`, `deb` and `rpm`.
+
+## Known gaps
+
+These fall back to no-ops, so your code runs — it just does nothing on Linux.
+Check for the platform before you build UI that depends on them.
+
+| Capability | State |
+| --- | --- |
+| Application menu bar | No-op, as on Windows. Put menus in your UI. |
+| Popup and context menus | Not implemented — needs Views `MenuModel`. |
+| Tray | Not implemented — needs StatusNotifierItem. |
+| Dialogs | Not implemented — needs `xdg-desktop-portal` FileChooser. |
+| Clipboard | Not implemented. |
+| Global shortcuts | Not implemented. |
+| Deep links (`urlSchemes`) | Not implemented — needs `.desktop` MIME registration. |
+| Transparent windows and materials | Not implemented. |
+
+<Callout type="error">
+Transparency is not a small gap on Linux. A windowed X11 CEF browser is always
+opaque; real transparency would require the off-screen rendering path, which the
+Linux port does not have. Do not design a Linux UI around a transparent window.
+</Callout>

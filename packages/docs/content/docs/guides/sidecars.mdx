@@ -1,0 +1,77 @@
+---
+title: Sidecars and workers
+description: Shipping extra binaries with your app, and offloading work to extra Bun workers.
+---
+
+Two different tools that get confused with each other: **sidecars** are external
+binaries bundled into your app, **workers** are extra Bun threads.
+
+## Sidecars
+
+Declare the binary in config; mirinjs copies it into the bundle, signs it with
+the app, and resolves its path at runtime.
+
+```ts title="mirin.config.ts"
+sidecars: {
+  ripgrep: "vendor/rg",
+  engine: {
+    bin: "vendor/engine",
+    entitlements: ["disable-library-validation"],
+  },
+},
+```
+
+Spawn it from the main process:
+
+```ts title="main/main.ts"
+import { app } from "mirinjs";
+
+const rg = app.sidecar("ripgrep", { args: ["--json", "pattern", "."] });
+
+rg.stdout.on("data", (chunk) => process(chunk));
+rg.on("exit", (code) => console.log("rg exited", code));
+
+// later
+rg.kill();
+```
+
+If you only need the path — to hand to `Bun.spawn` yourself — use
+`resolveSidecar("ripgrep")`.
+
+<Callout type="info">
+Prefer a binary the user already has on PATH unless you need a pinned version
+offline. Every sidecar adds to your download size and to your signing and
+notarization surface.
+</Callout>
+
+### Entitlements
+
+On macOS, sidecars are signed with the hardened runtime alongside the app. A
+binary that loads unsigned libraries needs an explicit exception, declared per
+sidecar as above. Add the narrowest one that works, not a blanket set.
+
+## Extra workers
+
+For CPU or IO work that would block your main process, declare a second Bun
+worker:
+
+```ts title="mirin.config.ts"
+workers: {
+  hash: "main/hash.worker.ts",
+},
+```
+
+```ts title="main/offload.ts"
+import { resolveWorker } from "mirinjs";
+
+const worker = new Worker(resolveWorker("hash"));
+```
+
+<Callout type="error">
+Extra workers have no access to window or native APIs. They are for computation
+and IO only. Native calls belong in the main worker.
+</Callout>
+
+## Next
+
+[Assets and the app:// scheme](/docs/guides/assets-and-protocol).

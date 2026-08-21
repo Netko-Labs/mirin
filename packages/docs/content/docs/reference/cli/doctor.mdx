@@ -1,0 +1,29 @@
+---
+title: mirin doctor
+description: Check the project and environment without building anything.
+---
+
+```bash
+bunx mirin doctor
+bunx mirin doctor --json
+```
+
+Fast, and touches nothing. Run it first when something is wrong — it usually
+finds the problem before a build would.
+
+## What it checks
+
+- **Config validity** — is `mirin.config.ts` parseable and complete.
+- **Entry files** — do `main` and each window's URL resolve to something real.
+- **CEF availability** — is the pinned runtime present in `~/.mirinjs/cef/`.
+- **Port contention** — is something already holding the ports dev needs.
+- **How the last run ended** — read from the previous session's event stream.
+
+## Options
+
+| Flag | Effect |
+| --- | --- |
+| `--json` | Machine-readable report on stdout. |
+
+Use `--json` from scripts and agents. The human output is for humans and its
+shape is not stable.

@@ -1,0 +1,57 @@
+---
+title: Global shortcuts
+description: System-wide hotkeys that fire whether or not your app has focus.
+---
+
+```ts
+import { app, globalShortcut } from "mirinjs";
+
+app.on("ready", () => {
+  const ok = globalShortcut.register("Cmd+Shift+K", () => {
+    const panel = app.windows.get("panel");
+    panel.show();
+    panel.focus();
+  });
+
+  if (!ok) console.warn("shortcut already taken");
+});
+```
+
+`register` returns `false` when another application already owns the
+combination. **Check the return value.** A shortcut that silently did not
+register is a bug report you will receive months later.
+
+## Accelerator syntax
+
+Modifiers joined with `+`: `Cmd`, `Ctrl`, `Alt`, `Option`, `Shift`, `Super`,
+then one key. `CommandOrControl` maps to Cmd on macOS and Ctrl elsewhere, which
+is what you usually want for a cross-platform binding.
+
+```ts
+globalShortcut.register("CommandOrControl+Shift+Space", toggle);
+```
+
+## Cleaning up
+
+```ts
+globalShortcut.unregister("Cmd+Shift+K");
+globalShortcut.unregisterAll();
+```
+
+Global shortcuts are a system-wide resource. Unregister them when the feature
+that owns them is turned off, and call `unregisterAll` before quitting.
+
+## Choosing a combination
+
+Anything you pick is taken from every other application on the machine while
+your app runs. Prefer three-key combinations, avoid single modifiers plus a
+letter, and let users rebind — a global shortcut you cannot change is a reason
+to uninstall an app.
+
+## Platform support
+
+macOS and Windows. Not implemented on Linux yet.
+
+## Next
+
+[Sidecars and workers](/docs/guides/sidecars).

@@ -1,0 +1,40 @@
+---
+title: mirin dev
+description: Run the app against the Vite dev server, with HMR and typed RPC.
+---
+
+```bash
+bunx mirin dev
+```
+
+Builds the main-process bundle, starts Vite, and opens your declared windows
+pointed at the dev server instead of `app://`.
+
+## Options
+
+| Flag | Effect |
+| --- | --- |
+| `--json` | Machine-readable output on stdout. |
+
+## What it starts
+
+- The Vite dev server for your UI, with HMR.
+- Your main process, bundled and running in a Bun Worker.
+- Every window with `open: "auto"`.
+- A structured event stream at `.mirin/dev/<session>/events.jsonl`.
+- A token-authenticated loopback inspector over the same stream.
+
+## Reload behaviour
+
+Editing `ui/**` hot-reloads in place. Editing `main/**` rebuilds and restarts
+the main process. Editing `mirin.config.ts` restarts fully, because window
+definitions are read at boot.
+
+## First run
+
+The first `dev` on a machine downloads the CEF runtime into `~/.mirinjs/cef/`.
+Subsequent runs reuse it.
+
+## See also
+
+[The dev loop](/docs/start/dev-loop) · [The event stream](/docs/agents/event-stream)

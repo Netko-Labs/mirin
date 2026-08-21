@@ -1,0 +1,64 @@
+---
+title: macOS
+description: arm64 support, native materials, signing, and the current gaps.
+---
+
+macOS on Apple Silicon is the platform mirinjs is developed on and the one every
+feature lands on first.
+
+## Requirements
+
+- Apple Silicon (arm64). Intel is not supported.
+- Xcode command-line tools, for code signing: `xcode-select --install`.
+
+## What is implemented
+
+Everything in the app shell: windows and window controls, custom title bars with
+inset traffic lights, application and popup menus with system roles, tray icons,
+file and message dialogs, clipboard, global shortcuts, deep links, sidecars, and
+transparent windows with native materials.
+
+## Native materials
+
+Transparent windows render windowless (off-screen rendering) so the material
+behind them is drawn by the OS rather than faked in CSS.
+
+```ts title="mirin.config.ts"
+windows: {
+  panel: {
+    url: "app://ui/index.html",
+    titleBarStyle: "hiddenInset",
+    material: { type: "liquidGlass", cornerRadius: 20 },
+    movableByBackground: true,
+  },
+},
+```
+
+<Callout type="info">
+Liquid Glass (`NSGlassEffectView`) needs macOS 26 or newer. On older systems the
+window falls back to a frosted vibrancy material rather than failing.
+</Callout>
+
+Setting `material` implies a transparent window. See
+[Transparency and native materials](/docs/guides/materials).
+
+## Signing and notarization
+
+```bash
+MIRIN_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" bun run build
+```
+
+`mirin release` produces a DMG plus the updater artifacts. Sidecars are signed
+with the hardened runtime and notarized alongside the app; a sidecar that needs
+an exception declares it in config:
+
+```ts
+sidecars: {
+  engine: { bin: "vendor/engine", entitlements: ["disable-library-validation"] },
+},
+```
+
+## Known gaps
+
+- Intel (x86_64) is not built.
+- App Store packaging is not implemented.

@@ -1,0 +1,75 @@
+---
+title: Building
+description: Producing a standalone app with mirin build.
+---
+
+```bash
+bun run build   # mirin build
+```
+
+Runs `vite build`, then assembles a standalone application in `./build` — a
+`.app` bundle on macOS, a flat app folder on Windows and Linux — with your UI
+served from `app://`.
+
+## Signing on macOS
+
+```bash
+MIRIN_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" bun run build
+```
+
+Without an identity you get a working local build that other machines will
+refuse to open. Set it whenever the build is going anywhere but your own
+computer.
+
+## Icons
+
+```ts title="mirin.config.ts"
+icon: "assets/icon.png",
+
+// or per platform
+icon: {
+  default: "assets/icon.png",
+  macos: "assets/icon.icns",
+  windows: "assets/icon.ico",
+},
+```
+
+macOS icons are compiled from an iconset; Windows icons are packed into a
+multi-size `.ico` and set on the window, taskbar and Alt-Tab entries.
+
+<Callout type="info">
+The `.exe` file icon shown in Explorer is not set — Bun's `--compile` has no
+icon flag. Your window and taskbar icons are correct.
+</Callout>
+
+## Single instance
+
+```ts title="mirin.config.ts"
+singleInstance: true,
+```
+
+A second launch focuses the running app instead of starting another copy. Turn
+this on for anything holding a database or a port.
+
+## Trimming CEF locales
+
+```ts title="mirin.config.ts"
+cef: { locales: ["en-US"] },
+```
+
+If your app ships one language, this removes several hundred locale files from
+the bundle. Omit the key to keep every locale.
+
+## Verifying the build
+
+```bash
+bunx mirin check
+```
+
+Boots the built app the same way it boots in dev, captures a screenshot and a UI
+snapshot, and exits non-zero on renderer errors. Run it in CI so a broken build
+fails the pipeline instead of a user's first launch.
+
+## Next
+
+[Distributing](/docs/guides/distributing).

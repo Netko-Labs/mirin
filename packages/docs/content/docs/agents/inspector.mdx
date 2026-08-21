@@ -1,0 +1,71 @@
+---
+title: Inspector and CDP bridge
+description: A token-authenticated loopback API for querying, screenshotting and driving a running app.
+---
+
+While an app runs, the same stream is available over loopback HTTP, together
+with screenshots, an accessibility snapshot and synthetic input.
+
+## Connecting
+
+Port and token are in the session directory:
+
+```bash
+SESSION=$(bun -e 'console.log(JSON.parse(await Bun.file(".mirin/dev/current.json").text()).session)')
+PORT=$(bun -e 'console.log(JSON.parse(await Bun.file(process.argv[2]).text()).port)' "$SESSION/inspector.json")
+TOKEN=$(bun -e 'console.log(JSON.parse(await Bun.file(process.argv[2]).text()).token)' "$SESSION/inspector.json")
+
+curl -s "http://127.0.0.1:$PORT/state?token=$TOKEN"
+```
+
+## Endpoints
+
+| Route | Returns |
+| --- | --- |
+| `GET /` | Route index, so the surface is discoverable. |
+| `GET /health` | Liveness, pid, stream cursor, log file path. |
+| `GET /state` | Windows, RPC routes, app-published state, platform. |
+| `GET /logs` | The stream, filterable. |
+| `GET /logs/stream` | The same as SSE, with replay. |
+| `GET /screenshot` | PNG of a window. |
+| `GET /snapshot` | Accessibility tree, or DOM HTML. |
+| `POST /eval` | Evaluate an expression in a window. |
+| `POST /act` | click, type, key, scroll, wait. |
+| `POST /cdp` | Any DevTools-protocol command. |
+| `GET /cdp/targets` | Which windows the CDP bridge is attached to. |
+
+```bash
+curl -s "http://127.0.0.1:$PORT/logs?type=network&token=$TOKEN"
+curl -s "http://127.0.0.1:$PORT/logs?since=1421&token=$TOKEN"
+```
+
+`seq` is the cursor. Poll with `since=` or hold `/logs/stream` open.
+
+## Snapshots over screenshots
+
+`/snapshot` returns the accessibility tree by default. For an agent deciding
+what to click, a tree of roles and names beats a PNG — it is smaller, it is
+diffable, and it does not change when someone adjusts a margin.
+
+## The CDP bridge
+
+`POST /cdp` forwards any Chrome DevTools Protocol command to the attached
+renderer, which is how the renderer-side events get collected in the first
+place. If you already have tooling that speaks CDP, it works here.
+
+## Security
+
+- Loopback only, and token-authenticated. The token is per session.
+- Off in packaged builds unless `devtools.production` is explicitly set.
+
+<Callout type="error">
+`/eval` and `/act` execute in your app. The token is the only thing between the
+inspector and anything else on the machine — do not forward the port, and do not
+paste the token anywhere.
+</Callout>
+
+## Configuration
+
+```ts title="mirin.config.ts"
+devtools: { inspector: true, cdp: true, network: true },
+```

@@ -1,0 +1,87 @@
+---
+title: The event stream
+description: One envelope for every signal, written to disk on every run.
+---
+
+Every `mirin dev` and `mirin check` run writes a structured stream to
+`.mirin/dev/<session>/events.jsonl` — one JSON object per line.
+
+## The envelope
+
+```jsonc
+{
+  "seq": 1421,               // monotonic within a session; the cursor for since=
+  "ts": 1785000000000,       // epoch ms
+  "src": "renderer",         // main | renderer | native | rpc | app
+  "level": "error",          // debug | info | warn | error
+  "type": "exception",       // dotted discriminator
+  "msg": "TypeError: …",
+  "window": 3,               // when the event belongs to a window
+  "data": { "stack": ["…"] } // type-specific detail
+}
+```
+
+One shape for everything, so a consumer filters instead of parsing five formats.
+
+## Sources
+
+| `src` | Produced by | Types |
+| --- | --- | --- |
+| `main` | `logger`, Worker failures | `log`, `uncaughtException`, `unhandledRejection`, `devtools.*` |
+| `renderer` | the CEF display handler and CDP | `console`, `exception`, `log.entry`, `network.request`, `network.response`, `network.failed`, `navigation` |
+| `native` | the core's event queue | `window.created`, `window.closed`, `menu.click`, `dialog.result`, `shortcut.trigger`, … |
+| `rpc` | the RPC server | `rpc.request`, `rpc.response`, `rpc.error`, `rpc.control` |
+| `app` | your own `devtools.event(...)` calls | whatever you choose |
+
+That last row matters: your app can publish its own domain events into the same
+stream, and they arrive alongside the renderer exception that followed them.
+
+```ts
+import { devtools } from "mirinjs";
+
+devtools.event({ type: "sync.finished", data: { rows: 412 } });
+```
+
+## Session layout
+
+```txt
+.mirin/dev/
+  current.json                 → { "session": "<abs path to the newest session>" }
+  <session-id>/
+    session.json               app metadata + phase timeline
+    inspector.json             inspector port + token
+    events.jsonl               the stream, one JSON per line
+    exit.json                  post-mortem once the app ends
+    screenshots/               PNGs captured through the inspector
+```
+
+Session ids are `YYYYMMDD-HHMMSS-<pid>`, so sorting by name sorts by start time.
+Exactly one process writes each file, so nothing needs locking.
+
+## Reading it with nothing but a filesystem
+
+```bash
+tail -n 50 "$(bun -e 'console.log(JSON.parse(await Bun.file(".mirin/dev/current.json").text()).session)')/events.jsonl"
+```
+
+Or typed, from `mirinjs/devtools/session`.
+
+## Configuration
+
+```ts title="mirin.config.ts"
+devtools: {
+  enabled: true,
+  file: true,
+  rpcPayloads: false,
+  bufferSize: 5000,
+},
+```
+
+`rpcPayloads` is off by default — turning it on writes your RPC arguments and
+return values to disk, which is exactly what you want while debugging and
+exactly what you do not want by default.
+
+<Callout type="info">
+`.mirin/` is gitignored by the scaffold. Keep it that way — sessions contain
+your app's runtime data.
+</Callout>

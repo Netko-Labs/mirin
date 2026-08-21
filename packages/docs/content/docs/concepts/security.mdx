@@ -1,0 +1,64 @@
+---
+title: Security model
+description: What mirinjs treats as untrusted, and what remains yours to check.
+---
+
+## The renderer is not privileged
+
+Your UI runs in an ordinary Chromium renderer with no native access. Everything
+native crosses through RPC into the main process. That boundary is the security
+model: it is the one place where a compromised page has to ask permission, and
+your handlers are that permission.
+
+## The RPC socket
+
+Local, and token-gated. The token is generated per run and passed to the
+renderer through the preload. No token, no connection.
+
+## What mirinjs treats as untrusted
+
+Everything from outside the process: config paths and names, update manifests,
+downloaded archives, URLs and redirects, environment overrides, generated shell
+scripts, native events, RPC frames, and anything read from the filesystem, the
+network or a sidecar's stdout.
+
+Concretely, mirinjs validates before joining paths, copying files, writing
+launchers or extracting archives; rejects archive traversal before extraction;
+keeps updater artifact names flat and verifies hashes before use; requires HTTPS
+for update URLs except loopback; and prefers structured command arguments over
+assembled shell strings.
+
+## What is still yours
+
+**Arguments arriving over RPC.** They come from your renderer, which runs web
+content. A handler that takes a path and opens it will open any path it is
+given.
+
+```ts
+readNote: rpc.query(async (path: string) => {
+  const full = resolve(NOTES_DIR, path);
+  if (!full.startsWith(NOTES_DIR)) throw new Error("outside notes directory");
+  return await Bun.file(full).text();
+}),
+```
+
+**What you load into the window.** Remote content in your app's window shares
+your app's origin and your RPC bridge. Ship your UI in the bundle and open the
+web in the user's browser.
+
+**Secrets.** They belong in the main process, never in the renderer bundle and
+never in a log line.
+
+**Sidecar output.** Untrusted input. Parse it, do not `eval` it.
+
+## Development surfaces are off in builds
+
+The event stream, the loopback inspector and the DevTools-protocol bridge are
+development features and are disabled in packaged builds. There is a config flag
+to force them on in production; it exists for diagnosing a shipped build and it
+carries an explicit warning, because turning it on exposes the app's internals
+on a local port.
+
+## Next
+
+[Reference: mirin.config.ts](/docs/reference/config).

@@ -1,0 +1,62 @@
+---
+title: mirinjs/client
+description: The renderer's typed bridge to the main process.
+---
+
+```ts title="ui/api.ts"
+import { client } from "mirinjs/client";
+import type { Router } from "../main/rpc.ts";
+
+export const api = client<Router>();
+```
+
+`client<Router>()` returns a proxy whose shape is your router's. There is no
+code generation and no schema file — the `import type` carries everything, and
+it is erased at build time, so nothing from your main process reaches the
+renderer bundle.
+
+## Calling procedures
+
+```ts
+const greeting = await api.greet("world");    // string
+const todo = await api.addTodo("write docs"); // { id: string; text: string }
+```
+
+Argument and return types come from the handler. Rename a procedure and every
+call site fails to typecheck.
+
+## Subscribing to events
+
+```ts
+const off = api.tick.on(({ count }) => setTicks(count));
+off();
+```
+
+`on` returns its own unsubscribe function, which is the shape a React effect
+wants:
+
+```tsx
+useEffect(() => api.tick.on(({ count }) => setTicks(count)), []);
+```
+
+## Transport
+
+A token-gated local socket. The token is generated per run and delivered through
+the preload; a connection without it is refused. You do not configure any of
+this.
+
+## Errors
+
+A rejected call rejects your promise, with the handler's message as a string.
+
+```ts
+try {
+  await api.getUser(id);
+} catch (error) {
+  showError(String(error));
+}
+```
+
+## See also
+
+[Typed RPC](/docs/guides/typed-rpc) · [`mirinjs/rpc`](/docs/reference/api/rpc)

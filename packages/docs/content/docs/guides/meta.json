@@ -1,0 +1,16 @@
+{
+  "title": "Guides",
+  "pages": [
+    "windows",
+    "materials",
+    "typed-rpc",
+    "menus-and-tray",
+    "dialogs-and-clipboard",
+    "global-shortcuts",
+    "sidecars",
+    "assets-and-protocol",
+    "building",
+    "distributing",
+    "updating"
+  ]
+}

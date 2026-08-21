@@ -1,0 +1,87 @@
+---
+title: Assets and the app:// scheme
+description: How your UI is served in dev and in a build, and where files should live.
+---
+
+Your UI is served two different ways depending on how the app is running, and
+mirinjs switches between them for you.
+
+| | Serving |
+| --- | --- |
+| `mirin dev` | The Vite dev server, with HMR. |
+| `mirin build` | The `app://` scheme, reading from inside the bundle. |
+
+Your config always names the built form:
+
+```ts title="mirin.config.ts"
+windows: {
+  main: { url: "app://ui/index.html" },
+},
+```
+
+In dev, mirinjs points the window at Vite instead. You never branch on this
+yourself.
+
+## Why a custom scheme
+
+`app://` is registered as a standard, secure scheme in every process that needs
+it, which means normal web-platform rules apply — a single origin, working
+relative URLs, and no `file://` restrictions on modules or fetch.
+
+<Callout type="info">
+The scheme registration must be identical in every process. This is handled for
+you; it matters if you are reading the Rust source and wondering why the
+registration appears more than once.
+</Callout>
+
+## Static assets
+
+Put them where Vite expects and reference them relatively. Vite hashes and
+rewrites them into the build, and `app://` serves them from the bundle:
+
+```tsx
+import icon from "./assets/icon.svg";
+```
+
+Files that must keep their name go in `public/` and are referenced from the
+root:
+
+```tsx
+<img src="/logo.png" />
+```
+
+## Reading files at runtime
+
+Anything outside the bundle is main-process work. Read it with `Bun.file` in a
+handler and return the contents over RPC — do not try to reach the filesystem
+from the renderer.
+
+```ts title="main/rpc.ts"
+readNote: rpc.query(async (path: string) => {
+  return await Bun.file(path).text();
+}),
+```
+
+<Callout type="error">
+A path arriving from the renderer is untrusted input. Validate it before you
+open it — a request for `../../.ssh/id_rsa` is a request your handler will
+happily serve if you let it.
+</Callout>
+
+## Deep links
+
+```ts title="mirin.config.ts"
+urlSchemes: ["my-app"],
+```
+
+Registers your app as the handler for `my-app://…` URLs. Handle them:
+
+```ts
+app.on("open-url", (url) => route(url));
+```
+
+macOS and Windows. Not implemented on Linux yet.
+
+## Next
+
+[Building](/docs/guides/building).

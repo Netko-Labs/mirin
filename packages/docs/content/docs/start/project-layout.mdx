@@ -1,0 +1,81 @@
+---
+title: Project layout
+description: What the scaffold generates and which file owns what.
+---
+
+<Files>
+  <Folder name="my-app" defaultOpen>
+    <File name="mirin.config.ts" />
+    <Folder name="main" defaultOpen>
+      <File name="main.ts" />
+      <File name="rpc.ts" />
+    </Folder>
+    <Folder name="ui" defaultOpen>
+      <File name="api.ts" />
+      <File name="App.tsx" />
+    </Folder>
+  </Folder>
+</Files>
+
+## mirin.config.ts
+
+The manifest. Pure data: app identity, windows, icons, sidecars, packaging and
+release settings. No logic, no imports from your app code.
+
+```ts title="mirin.config.ts"
+import { defineConfig } from "mirinjs/config";
+
+export default defineConfig({
+  id: "dev.you.my-app",
+  name: "My App",
+  main: "main/main.ts",
+  windows: {
+    main: {
+      title: "My App",
+      url: "app://ui/index.html",
+      width: 1100,
+      height: 800,
+      show: "ready",
+    },
+  },
+});
+```
+
+`url` points at `app://` because that is what a built app serves. In `mirin dev`
+the window loads the Vite dev server instead — you do not switch this by hand.
+
+## main/
+
+Your main process, running in a Bun Worker. Full `Bun.*`, `bun:ffi`, workers,
+sidecars, filesystem, network. This is where every native capability is invoked
+from.
+
+```ts title="main/main.ts"
+import { app } from "mirinjs";
+import { router } from "./rpc.ts";
+
+const mirin = app.serve(router);
+
+app.on("ready", () => {
+  console.log("all windows ready");
+});
+
+app.on("window-all-closed", () => {
+  app.quit();
+});
+```
+
+## ui/
+
+The renderer. Any web stack that builds to a page — the scaffold uses React and
+Vite. In dev it is served by Vite with HMR; in a build it is served from the
+bundle over the native `app://` scheme.
+
+<Callout type="info">
+The renderer has no privileged access. Anything native goes through RPC to the
+main process, which is the boundary that makes the security model tractable.
+</Callout>
+
+## Next
+
+[Your first window](/docs/start/first-window).

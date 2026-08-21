@@ -1,0 +1,67 @@
+---
+title: mirinjs/rpc
+description: Defining a router, its procedures, and the type it exports.
+---
+
+```ts
+import { rpc } from "mirinjs/rpc";
+```
+
+## rpc.router
+
+```ts
+export const router = rpc.router({
+  greet: rpc.query(async (name: string, ctx) => `Hello, ${name}!`),
+  addTodo: rpc.mutation(async (text: string) => ({ id: 1, text })),
+  tick: rpc.event<{ count: number }>(),
+});
+
+export type Router = typeof router;
+```
+
+Export the type. It is what the renderer imports, and the only thing that
+crosses into the renderer's build.
+
+## Procedures
+
+| Constructor | Shape | For |
+| --- | --- | --- |
+| `rpc.query(handler)` | `(arg, ctx) => Promise<T>` | Reads. |
+| `rpc.mutation(handler)` | `(arg, ctx) => Promise<T>` | Writes. |
+| `rpc.event<T>()` | no handler | Main-process pushes to the renderer. |
+
+Query and mutation are structurally identical. The distinction is intent, and it
+labels the call in the event stream when you are debugging.
+
+## The context argument
+
+```ts
+rpc.query(async (id: string, ctx) => {
+  ctx.webview;   // which webview called
+});
+```
+
+Use it to tell two windows apart when they share a router.
+
+## Emitting events
+
+```ts
+const mirin = app.serve(router);
+
+mirin.rpc.tick.broadcast({ count: 1 });                  // every webview
+app.windows.get("main").rpc.tick.broadcast({ count: 1 }); // one window
+```
+
+## Errors
+
+A handler that throws rejects the caller's promise. The message crosses a
+process boundary as a string — your error class does not survive the trip.
+
+## Serialization
+
+Arguments and return values are serialized. Send data: no functions, no class
+instances, no handles.
+
+## See also
+
+[Typed RPC](/docs/guides/typed-rpc) · [`mirinjs/client`](/docs/reference/api/client)

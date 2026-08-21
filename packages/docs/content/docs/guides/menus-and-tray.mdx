@@ -1,0 +1,92 @@
+---
+title: Menus, tray and notifications
+description: Native application menus, popup menus, tray icons and system notifications.
+---
+
+All three run in the main process. Call them from an RPC handler when the UI is
+what triggers them.
+
+## Application menu
+
+```ts title="main/main.ts"
+import { app, menu } from "mirinjs";
+
+app.on("ready", () => {
+  menu.setApplicationMenu([
+    {
+      label: "File",
+      submenu: [
+        { label: "New Window", accelerator: "Cmd+N", click: () => openWindow() },
+        { type: "separator" },
+        { role: "close" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" }, { role: "redo" }, { type: "separator" },
+        { role: "cut" }, { role: "copy" }, { role: "paste" },
+      ],
+    },
+  ]);
+});
+```
+
+Prefer `role` over a hand-written `click` wherever a role exists — roles get the
+platform's own behaviour, labels and localisation for free.
+
+<Callout type="info">
+The application menu bar is macOS only. On Windows and Linux it is a no-op,
+because frameless apps on those platforms put menus in the UI. Write your menu
+definition once anyway — it does nothing off macOS.
+</Callout>
+
+## Popup menus
+
+```ts
+menu.popup([
+  { label: "Rename", click: () => rename() },
+  { label: "Delete", click: () => remove() },
+]);
+```
+
+Works on macOS and Windows. Not implemented on Linux yet.
+
+## Tray
+
+```ts
+import { Tray } from "mirinjs";
+
+const tray = new Tray({
+  title: "My App",
+  tooltip: "My App is running",
+  menu: [
+    { label: "Open", click: () => app.windows.get("main").show() },
+    { type: "separator" },
+    { label: "Quit", click: () => app.quit() },
+  ],
+  onClick: () => app.windows.get("main").show(),
+});
+
+// later
+tray.destroy();
+```
+
+Hold the reference. A tray that gets garbage collected disappears from the
+system tray. macOS and Windows only.
+
+## Notifications
+
+```ts
+import { notification } from "mirinjs";
+
+notification.show({ title: "Build finished", body: "my-app 0.2.0 is ready" });
+```
+
+Returns `false` when the platform refused to show it — permissions, focus
+assist, or an unsupported platform. Treat notifications as best-effort and never
+as the only way a user learns something.
+
+## Next
+
+[Dialogs and clipboard](/docs/guides/dialogs-and-clipboard).

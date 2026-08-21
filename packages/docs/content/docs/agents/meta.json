@@ -1,0 +1,10 @@
+{
+  "title": "Agents",
+  "pages": [
+    "index",
+    "check",
+    "event-stream",
+    "inspector",
+    "skill"
+  ]
+}

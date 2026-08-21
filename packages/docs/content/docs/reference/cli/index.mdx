@@ -1,0 +1,42 @@
+---
+title: CLI
+description: The mirin binary and its seven commands.
+---
+
+The CLI ships as `@mirinjs/cli` and installs a single binary, `mirin`.
+
+<Callout type="info">
+The library is `mirinjs`. The binary is `mirin` — short to type. Both names are
+correct; they refer to different things.
+</Callout>
+
+```bash
+bunx mirin <command>
+```
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| [`dev`](/docs/reference/cli/dev) | Run the app against the Vite dev server, with HMR and typed RPC. |
+| [`check`](/docs/reference/cli/check) | Boot once, capture a screenshot and UI snapshot, report, exit. |
+| [`doctor`](/docs/reference/cli/doctor) | Check the project and environment without building. |
+| [`build`](/docs/reference/cli/build) | Package a standalone app into `./build`. |
+| [`release`](/docs/reference/cli/release) | Build and emit update artifacts into `./build/release`. |
+| [`init`](/docs/reference/cli/init) | Scaffold a new app. |
+| [`skill`](/docs/reference/cli/skill) | Install the agent skill into this project. |
+
+## Machine-readable output
+
+`dev`, `check`, `doctor` and `build` accept `--json` and write a parseable
+report to stdout. Use it in CI and from tooling rather than scraping the human
+output, which is not a stable interface.
+
+```bash
+bunx mirin doctor --json
+```
+
+## Exit codes
+
+`0` on success, non-zero on failure. `check` in particular exits non-zero when
+the renderer logged an error, which is what makes it usable as a CI gate.

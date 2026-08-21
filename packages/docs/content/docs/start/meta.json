@@ -1,0 +1,10 @@
+{
+  "title": "Get started",
+  "pages": [
+    "install",
+    "create-an-app",
+    "project-layout",
+    "first-window",
+    "dev-loop"
+  ]
+}

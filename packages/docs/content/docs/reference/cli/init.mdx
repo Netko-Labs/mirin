@@ -1,0 +1,32 @@
+---
+title: mirin init
+description: Scaffold a new app, or add mirinjs to a directory.
+---
+
+```bash
+bunx mirin init
+bunx mirin init my-app
+```
+
+Scaffolds a project in the given directory, or the current one when no directory
+is given.
+
+Starting from nothing, prefer the create wrapper — it does the same thing with
+one less step:
+
+```bash
+bun create mirinjs my-app
+```
+
+## What it writes
+
+- `mirin.config.ts` — the manifest
+- `main/main.ts` and `main/rpc.ts` — the main process and its RPC router
+- `ui/` — a React UI wired to the router through `client<Router>()`
+- Vite and TypeScript configuration
+- The agent skill, under `.claude/skills/mirin`
+
+## The agent skill
+
+`init` installs it for you. Add it to an existing project, or refresh it after
+upgrading, with [`mirin skill`](/docs/reference/cli/skill).

@@ -1,0 +1,53 @@
+---
+title: CEF lifecycle
+description: Startup, browser creation, the two-phase close, and shutdown.
+---
+
+Chromium's embedding lifecycle has a few sharp edges. mirinjs handles them, but
+they explain behaviour you will otherwise find surprising.
+
+## Boot
+
+The host initialises CEF on the main thread before anything else: subprocess
+path, cache directory, GPU flags, custom scheme registration. Your Bun Worker
+starts alongside it, and window creation waits until CEF is ready.
+
+This is why `app.on("ready")` exists rather than code running at the top
+of your entry file — the top of your file runs before there is anything to open
+a window on.
+
+## Custom schemes
+
+`app://` must be registered identically in **every** process, including the
+helpers. A mismatch produces a scheme that works in the browser process and
+fails in the renderer, which looks like a random loading failure.
+
+## Browser creation
+
+Each window creates a CEF browser. The browser is not usable the instant the
+call returns; `show: "ready"` exists so the window is revealed after first
+paint rather than as an empty frame.
+
+## Closing is two-phase
+
+A CEF browser close is a negotiation, not a command:
+
+1. The close is requested.
+2. CEF runs `do_close`, which is where the embedder detaches the browser's view
+   from the platform window.
+3. The browser is actually destroyed and the platform window can go.
+
+Collapsing those steps — destroying the window while CEF still holds the view —
+is how embedders get crashes on quit. If you are reading the Rust source, this
+is why the close path looks more careful than it seems it needs to be, and why
+the handler mutex is never held across `close_browser`.
+
+## Shutdown
+
+`app.quit()` closes windows, lets CEF finish its shutdown, then exits. Work
+started in `window-all-closed` may not finish — flush anything important before
+you quit, not after.
+
+## Next
+
+[Security model](/docs/concepts/security).
