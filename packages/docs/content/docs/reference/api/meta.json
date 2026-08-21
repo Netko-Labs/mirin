@@ -1,9 +1,4 @@
 {
   "title": "API",
-  "pages": [
-    "index",
-    "app",
-    "rpc",
-    "client"
-  ]
+  "pages": ["index", "app", "rpc", "client"]
 }

@@ -1,9 +1,4 @@
 {
   "title": "Platforms",
-  "pages": [
-    "index",
-    "macos",
-    "windows",
-    "linux"
-  ]
+  "pages": ["index", "macos", "windows", "linux"]
 }

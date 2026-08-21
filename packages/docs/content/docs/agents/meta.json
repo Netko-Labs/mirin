@@ -1,10 +1,4 @@
 {
   "title": "Agents",
-  "pages": [
-    "index",
-    "check",
-    "event-stream",
-    "inspector",
-    "skill"
-  ]
+  "pages": ["index", "check", "event-stream", "inspector", "skill"]
 }
