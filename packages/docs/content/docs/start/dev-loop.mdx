@@ -1,0 +1,59 @@
+---
+title: The dev loop
+description: mirin dev, what reloads when, and how to see what a running app is doing.
+---
+
+```bash
+bun run dev   # mirin dev
+```
+
+`mirin dev` builds the main-process bundle, starts Vite, and opens your windows
+pointed at the dev server.
+
+## What reloads, and what restarts
+
+| You edited | What happens |
+| --- | --- |
+| `ui/**` | Vite HMR. The window updates in place; main-process state survives. |
+| `main/**` | The main process rebuilds and restarts. Windows reopen. |
+| `mirin.config.ts` | Full restart — window definitions are read at boot. |
+
+Keep expensive setup in the main process behind a check so a restart is cheap.
+
+## Devtools
+
+Chromium devtools are the devtools you already know — same inspector, same
+console, same network tab, on every platform.
+
+## Seeing what the app is doing
+
+Every `mirin dev` run writes a structured event stream to
+`.mirin/dev/<session>/events.jsonl`: main-process logs, renderer console output,
+exceptions with stack traces, failed requests, every RPC call, and native window
+events.
+
+```bash
+tail -f .mirin/dev/*/events.jsonl
+```
+
+The same stream is exposed over a token-authenticated loopback inspector,
+together with screenshots, an accessibility snapshot of the UI, and synthetic
+input. That surface is documented in [Agents and mirinjs](/docs/agents).
+
+<Callout type="info">
+This is a development surface and is disabled in packaged builds.
+</Callout>
+
+## When something is wrong
+
+```bash
+bunx mirin doctor    # config, entry files, CEF, ports, how the last run ended
+bunx mirin check     # boot once, screenshot, exit non-zero on renderer errors
+```
+
+Both accept `--json`.
+
+## Next
+
+The [guides](/docs/guides/windows) cover one capability at a time, or jump
+straight to [typed RPC](/docs/guides/typed-rpc).

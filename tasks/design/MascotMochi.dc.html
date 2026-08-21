@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #6d6df0; } a:hover { color: #9d9dff; }
+  </style>
+</helmet>
+<div style="width: 700px; min-height: 760px; background: #16171c; color: #f2f2f5; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 36px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #9d9dff;">Rice concept 02 &mdash; Mochi</div>
+    <h2 style="margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.03em;">Mochi</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.6; color: rgba(242,242,245,0.62); max-width: 52ch;">Pounded glutinous rice &mdash; <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">mochigome</span>, the exact rice mirin is brewed from. A soft blob that squashes and stretches, which is the most animatable shape on this page.</p>
+  </div>
+
+  <div style="display: flex; align-items: center; justify-content: center; padding: 22px; border-radius: 16px; background: rgba(242,242,245,0.04); border: 1px solid rgba(242,242,245,0.09);">
+    <svg width="224" height="224" viewBox="0 0 200 200" fill="none">
+      <ellipse cx="100" cy="172" rx="58" ry="7" fill="rgba(0,0,0,0.35)"/>
+      <path d="M100 42c40 0 70 24 70 58 0 36-30 62-70 62s-70-26-70-62c0-34 30-58 70-58z" fill="#f7f4ec"/>
+      <path d="M62 62c14-11 30-16 44-15-20 4-34 12-44 15z" fill="#ffffff" opacity="0.9"/>
+      <ellipse cx="46" cy="96" rx="9" ry="7" fill="rgba(109,109,240,0.16)"/>
+      <ellipse cx="154" cy="96" rx="9" ry="7" fill="rgba(109,109,240,0.16)"/>
+      <ellipse cx="80" cy="104" rx="6" ry="7.5" fill="#232830"/>
+      <ellipse cx="120" cy="104" rx="6" ry="7.5" fill="#232830"/>
+      <circle cx="81.5" cy="101" r="2.1" fill="#f7f4ec"/>
+      <circle cx="121.5" cy="101" r="2.1" fill="#f7f4ec"/>
+      <path d="M92 120q8 7 16 0" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+      <ellipse cx="66" cy="118" rx="7" ry="4.5" fill="rgba(224,160,180,0.5)"/>
+      <ellipse cx="134" cy="118" rx="7" ry="4.5" fill="rgba(224,160,180,0.5)"/>
+      <path d="M30 104q-13 5-6 13" stroke="#f7f4ec" stroke-width="7" stroke-linecap="round"/>
+      <path d="M170 104q13 5 6 13" stroke="#f7f4ec" stroke-width="7" stroke-linecap="round"/>
+    </svg>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+    <div style="padding: 14px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 9px;">
+      <svg width="50" height="50" viewBox="0 0 200 200" fill="none">
+        <path d="M100 42c40 0 70 24 70 58 0 36-30 62-70 62s-70-26-70-62c0-34 30-58 70-58z" fill="#f7f4ec"/>
+      </svg>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(242,242,245,0.5);">silhouette @ 16px</div>
+    </div>
+    <div style="padding: 14px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 9px;">
+      <svg width="50" height="50" viewBox="0 0 200 200" fill="none">
+        <rect x="14" y="14" width="172" height="172" rx="40" fill="#6d6df0"/>
+        <path d="M100 56c32 0 56 19 56 46 0 29-24 50-56 50s-56-21-56-50c0-27 24-46 56-46z" fill="#16171c"/>
+      </svg>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(242,242,245,0.5);">app icon lockup</div>
+    </div>
+    <div style="padding: 14px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 9px;">
+      <svg width="50" height="50" viewBox="0 0 200 200" fill="none">
+        <path d="M100 62c44 0 74 18 74 44 0 28-30 46-74 46s-74-18-74-46c0-26 30-44 74-44z" fill="#f7f4ec"/>
+        <path d="M70 94l16 16M86 94l-16 16M114 94l16 16M130 94l-16 16" stroke="#232830" stroke-width="6" stroke-linecap="round"/>
+      </svg>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(242,242,245,0.5);">squashed / loading</div>
+    </div>
+  </div>
+
+  <div style="padding: 14px 16px; border-radius: 10px; background: rgba(242,242,245,0.03); border: 1px solid rgba(242,242,245,0.08); display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(242,242,245,0.4);">The move</div>
+    <div style="font-size: 13px; line-height: 1.6; color: rgba(242,242,245,0.72);">Squash and stretch is free personality: mochi compresses on a button press, wobbles while a build runs, flattens on an error. The blob is the animation system.</div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px; margin-top: auto;">
+    <div style="padding: 14px 16px; border-radius: 10px; background: rgba(109,109,240,0.1); border: 1px solid rgba(109,109,240,0.3); font-size: 13px; line-height: 1.6; color: rgba(242,242,245,0.8);"><strong style="color: #9d9dff;">Why it works:</strong> the most literal rice tie of the four &mdash; mochigome is the actual ingredient. Soft, warm, and unusually expressive for a systems tool.</div>
+    <div style="padding: 14px 16px; border-radius: 10px; background: rgba(242,242,245,0.04); border: 1px solid rgba(242,242,245,0.09); font-size: 13px; line-height: 1.6; color: rgba(242,242,245,0.65);"><strong>Tradeoff:</strong> a rounded blob is close to a generic mascot blob, and it says nothing about desktop. Without the face it is just an oval.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

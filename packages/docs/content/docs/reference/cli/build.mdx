@@ -1,0 +1,47 @@
+---
+title: mirin build
+description: Package a standalone app into ./build.
+---
+
+```bash
+bunx mirin build
+```
+
+Runs `vite build`, then assembles a standalone application: a `.app` bundle on
+macOS, a flat app folder on Windows and Linux, serving the UI from `app://`.
+
+## Options
+
+| Flag | Effect |
+| --- | --- |
+| `--version <v>` | Override the app version. Defaults to `package.json`. |
+| `--linux` | Also emit Linux packages: AppImage, `.deb` and `.rpm`. |
+| `--linux-target <a,b,…>` | Restrict Linux packaging to these formats. Implies `--linux`. |
+| `--json` | Machine-readable output on stdout. |
+
+Valid `--linux-target` values are `appimage`, `deb` and `rpm`.
+
+## Environment
+
+| Variable | Effect |
+| --- | --- |
+| `MIRIN_SIGN_IDENTITY` | macOS signing identity. Without it the build is local-only. |
+| `MIRIN_ANGLE` | Override the Windows ANGLE backend. Auto-selected otherwise. |
+
+## Output
+
+```txt
+build/
+└─ My App.app        (macOS)
+   My App/           (Windows, Linux)
+```
+
+## Verify
+
+```bash
+bunx mirin check
+```
+
+## See also
+
+[Building](/docs/guides/building)

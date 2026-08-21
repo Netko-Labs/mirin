@@ -1,0 +1,66 @@
+---
+title: Dialogs and clipboard
+description: File pickers, message boxes and clipboard access from the main process.
+---
+
+## File dialogs
+
+```ts
+import { dialog } from "mirinjs";
+
+const paths = await dialog.openFile({
+  title: "Choose a database",
+  filters: [{ name: "SQLite", extensions: ["db", "sqlite"] }],
+  multiple: true,
+});
+if (!paths) return;              // the user cancelled
+
+const target = await dialog.saveFile({ defaultPath: "export.csv" });
+if (!target) return;
+```
+
+`openFile` resolves to an array of paths or `null`. `saveFile` resolves to one
+path or `null`. **Cancel is `null`, not an empty array and not a rejection** —
+check for it before you use the result.
+
+## Message dialogs
+
+```ts
+const { button } = await dialog.message({
+  type: "warning",
+  message: "Discard unsaved changes?",
+  detail: "This cannot be undone.",
+  buttons: ["Cancel", "Discard"],
+});
+
+if (button === 1) discard();
+```
+
+`button` is the index in the array you passed. Put the destructive option last
+and the safe option first, so an accidental default is harmless.
+
+## Correlating results
+
+Dialogs are asynchronous and the user may open several. Correlate by the id you
+sent with the request rather than assuming the next result belongs to the last
+request — this is the same rule as everything else crossing a process boundary.
+
+## Clipboard
+
+```ts
+import { clipboard } from "mirinjs";
+
+clipboard.writeText("copied from the main process");
+const text = clipboard.readText();
+```
+
+Text only, and synchronous. Images and rich formats are not implemented.
+
+## Platform support
+
+Dialogs and clipboard work on macOS and Windows. Neither is implemented on Linux
+yet — see [Linux](/docs/platforms/linux).
+
+## Next
+
+[Global shortcuts](/docs/guides/global-shortcuts).

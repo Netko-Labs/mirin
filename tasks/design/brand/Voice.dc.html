@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 820px; min-height: 1080px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 44px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Voice &mdash; 01</div>
+    <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em;">Opinionated and warm</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.65; color: rgba(247,244,236,0.65); max-width: 64ch;">mirin has a point of view about how desktop apps should be built, and the writing says so. Warmth is not softness &mdash; it comes from being direct with someone you respect, not from exclamation marks.</p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Four rules, with the fix</div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+      <div style="padding: 18px 20px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 11px;">
+        <div style="font-size: 16px; font-weight: 700;">1 &middot; Take the position, then back it</div>
+        <div style="display: flex; gap: 10px;">
+          <div style="flex-grow: 1; padding: 12px 14px; border-radius: 8px; background: rgba(194,72,44,0.09); border-left: 2px solid #c2482c; font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.7);">&ldquo;mirin offers an alternative approach to desktop development.&rdquo;</div>
+          <div style="flex-grow: 1; padding: 12px 14px; border-radius: 8px; background: rgba(79,138,91,0.09); border-left: 2px solid #4f8a5b; font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.85);">&ldquo;Electron's main process is Node because 2013 had no other option. Yours doesn't have to be.&rdquo;</div>
+        </div>
+        <div style="font-size: 12.5px; line-height: 1.55; color: rgba(247,244,236,0.5);">An opinion you can't support with a fact is marketing. Every claim gets a code block, a capture, or a link under it.</div>
+      </div>
+
+      <div style="padding: 18px 20px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 11px;">
+        <div style="font-size: 16px; font-weight: 700;">2 &middot; Never punch down, never punch up for free</div>
+        <div style="display: flex; gap: 10px;">
+          <div style="flex-grow: 1; padding: 12px 14px; border-radius: 8px; background: rgba(194,72,44,0.09); border-left: 2px solid #c2482c; font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.7);">&ldquo;The Electron killer.&rdquo; &middot; &ldquo;Tauri makes you learn Rust.&rdquo;</div>
+          <div style="flex-grow: 1; padding: 12px 14px; border-radius: 8px; background: rgba(79,138,91,0.09); border-left: 2px solid #4f8a5b; font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.85);">&ldquo;Tauri ships a smaller binary. mirin ships one engine on every platform. Pick the tradeoff you can live with.&rdquo;</div>
+        </div>
+        <div style="font-size: 12.5px; line-height: 1.55; color: rgba(247,244,236,0.5);">Name competitors only to state a real, checkable difference. A pre-alpha project calling anything a killer is a joke at its own expense.</div>
+      </div>
+
+      <div style="padding: 18px 20px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 11px;">
+        <div style="font-size: 16px; font-weight: 700;">3 &middot; Say what broke, then how to fix it</div>
+        <div style="display: flex; gap: 10px;">
+          <div style="flex-grow: 1; padding: 12px 14px; border-radius: 8px; background: rgba(194,72,44,0.09); border-left: 2px solid #c2482c; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; color: rgba(247,244,236,0.7);">Oops! Something went wrong &#128533;<br>Error: ENOENT</div>
+          <div style="flex-grow: 1; padding: 12px 14px; border-radius: 8px; background: rgba(79,138,91,0.09); border-left: 2px solid #4f8a5b; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; color: rgba(247,244,236,0.85);">CEF runtime missing for darwin-arm64.<br>Run: bun run fetch-cef</div>
+        </div>
+        <div style="font-size: 12.5px; line-height: 1.55; color: rgba(247,244,236,0.5);">No apologies, no emoji, no performed alarm. Cause, then the exact command. Errors are the most-read copy in any framework.</div>
+      </div>
+
+      <div style="padding: 18px 20px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 11px;">
+        <div style="font-size: 16px; font-weight: 700;">4 &middot; Cut the throat-clearing</div>
+        <div style="display: flex; gap: 10px;">
+          <div style="flex-grow: 1; padding: 12px 14px; border-radius: 8px; background: rgba(194,72,44,0.09); border-left: 2px solid #c2482c; font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.7);">&ldquo;In this guide, we'll take a look at how you can simply get started with setting up windows.&rdquo;</div>
+          <div style="flex-grow: 1; padding: 12px 14px; border-radius: 8px; background: rgba(79,138,91,0.09); border-left: 2px solid #4f8a5b; font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.85);">&ldquo;A window is a config object. Here is one with native vibrancy:&rdquo;</div>
+        </div>
+        <div style="font-size: 12.5px; line-height: 1.55; color: rgba(247,244,236,0.5);">First sentence carries information. &ldquo;In this guide&rdquo;, &ldquo;let's&rdquo;, &ldquo;simply&rdquo;, and &ldquo;just&rdquo; are deletions, not edits.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Personality budget by surface</div>
+    <div style="display: flex; flex-direction: column; gap: 5px;">
+      <div style="display: flex; align-items: center; gap: 14px; padding: 11px 14px; border-radius: 8px; background: rgba(247,244,236,0.03);">
+        <span style="font-size: 13.5px; font-weight: 500; width: 130px; flex-shrink: 0;">Landing</span>
+        <div style="width: 110px; height: 6px; border-radius: 3px; background: rgba(247,244,236,0.1); flex-shrink: 0;"><div style="width: 100%; height: 6px; border-radius: 3px; background: #dd9a3f;"></div></div>
+        <span style="font-size: 12.5px; color: rgba(247,244,236,0.6);">Full voice. Serif, metaphor, a joke that lands.</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 14px; padding: 11px 14px; border-radius: 8px; background: rgba(247,244,236,0.03);">
+        <span style="font-size: 13.5px; font-weight: 500; width: 130px; flex-shrink: 0;">Release notes</span>
+        <div style="width: 110px; height: 6px; border-radius: 3px; background: rgba(247,244,236,0.1); flex-shrink: 0;"><div style="width: 75%; height: 6px; border-radius: 3px; background: #dd9a3f;"></div></div>
+        <span style="font-size: 12.5px; color: rgba(247,244,236,0.6);">Opinion allowed. Kome allowed. Breaking changes stay blunt.</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 14px; padding: 11px 14px; border-radius: 8px; background: rgba(247,244,236,0.03);">
+        <span style="font-size: 13.5px; font-weight: 500; width: 130px; flex-shrink: 0;">Docs prose</span>
+        <div style="width: 110px; height: 6px; border-radius: 3px; background: rgba(247,244,236,0.1); flex-shrink: 0;"><div style="width: 40%; height: 6px; border-radius: 3px; background: #dd9a3f;"></div></div>
+        <span style="font-size: 12.5px; color: rgba(247,244,236,0.6);">Direct and warm. One aside per page, maximum.</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 14px; padding: 11px 14px; border-radius: 8px; background: rgba(247,244,236,0.03);">
+        <span style="font-size: 13.5px; font-weight: 500; width: 130px; flex-shrink: 0;">CLI output</span>
+        <div style="width: 110px; height: 6px; border-radius: 3px; background: rgba(247,244,236,0.1); flex-shrink: 0;"><div style="width: 22%; height: 6px; border-radius: 3px; background: #dd9a3f;"></div></div>
+        <span style="font-size: 12.5px; color: rgba(247,244,236,0.6);">Terse. One flavour word total: <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">brewing&hellip;</span></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 14px; padding: 11px 14px; border-radius: 8px; background: rgba(194,72,44,0.08); border: 1px solid rgba(194,72,44,0.25);">
+        <span style="font-size: 13.5px; font-weight: 500; width: 130px; flex-shrink: 0;">Errors &amp; API</span>
+        <div style="width: 110px; height: 6px; border-radius: 3px; background: rgba(247,244,236,0.1); flex-shrink: 0;"></div>
+        <span style="font-size: 12.5px; color: rgba(247,244,236,0.6);">Zero. Someone is stuck. Personality here is cruelty.</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: auto; padding: 16px 18px; border-radius: 12px; background: rgba(221,154,63,0.1); border: 1px solid rgba(221,154,63,0.3); font-size: 13px; line-height: 1.65; color: rgba(247,244,236,0.82);"><strong style="color: #dd9a3f;">The test:</strong> read it aloud. If it sounds like a person who has shipped a desktop app telling a colleague what they learned, it is right. If it sounds like a landing page, cut it.</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

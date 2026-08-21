@@ -1,0 +1,51 @@
+---
+title: IPC and RPC
+description: How the renderer, the Bun Worker and the Rust core actually talk to each other.
+---
+
+Three boundaries, three mechanisms. Your app code only ever sees the first.
+
+## Renderer to Worker
+
+Your typed RPC calls travel over a token-gated local socket between the webview
+and the Bun Worker. The token is generated per run and delivered to the renderer
+through the preload; a connection without it is refused.
+
+This is the boundary you write code against, and it is the only one your app
+code touches.
+
+## Worker to native core
+
+A flat C ABI on `libmirin_core`, called through Bun FFI. Options and events
+cross as JSON envelopes rather than structs, which keeps the ABI small and
+stable while the API is still moving.
+
+Commands are one-way: the Worker calls a function that posts a UI task and
+returns. It does not wait for the platform.
+
+## Native core to Worker
+
+A **polled queue**, not a callback. The Worker asks for the next event; the core
+hands one over. Nothing calls into JavaScript across the FFI boundary.
+
+This is deliberate. A callback from a native thread into a JS runtime is a
+lifetime and re-entrancy problem in every direction — especially during window
+close, where the callback could re-enter Rust while a registry lock is held.
+Polling makes ordering explicit and removes the whole class of bug.
+
+## Envelopes
+
+Everything crossing a boundary is an explicit JSON envelope, parsed on receipt
+rather than trusted. That includes native events, RPC frames, and anything a
+sidecar writes to stdout.
+
+## Correlating async work
+
+Requests and responses correlate by id. Dialog results, RPC calls and updater
+steps can all resolve out of order — if you assume the next result belongs to
+the last request you made, two dialogs open at once will hand your user the
+wrong answer.
+
+## Next
+
+[CEF lifecycle](/docs/concepts/cef-lifecycle).

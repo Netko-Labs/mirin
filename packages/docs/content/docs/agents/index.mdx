@@ -1,0 +1,42 @@
+---
+title: Agents and mirinjs
+description: Why a mirinjs app is legible to a coding agent, and which surface to reach for.
+---
+
+A coding agent writing a desktop app is usually working blind. It edits, you
+run, you describe what happened. Every loop costs a human.
+
+mirinjs closes that loop. A running app publishes what it is doing, and an agent
+can boot it, drive it, look at it and read its errors without you in the middle.
+
+## Three ways in
+
+Layered on purpose, so a consumer uses whichever it can reach:
+
+1. **Files** under `.mirin/dev/` — needs nothing but a filesystem.
+2. **Loopback HTTP and SSE** — the inspector, for live queries and control.
+3. **`--json` on CLI commands** — parseable outcomes without scraping prose.
+
+## What to reach for
+
+| You want to | Use |
+| --- | --- |
+| Know whether a change works | [`mirin check`](/docs/agents/check) |
+| Know why the app did not start | `.mirin/dev/<session>/session.json` |
+| Know how it ended | `.mirin/dev/<session>/exit.json` |
+| Read what happened | [The event stream](/docs/agents/event-stream) |
+| Look at the UI, or drive it | [The inspector](/docs/agents/inspector) |
+| Teach an agent the API | [The agent skill](/docs/agents/skill) |
+
+## The short version
+
+```bash
+bunx mirin check --scenario ./check.ts --json
+```
+
+Boots the app, drives your scenario, screenshots it, and exits non-zero on a
+renderer error. If you only adopt one thing from this section, adopt that.
+
+<Callout type="info">
+This is a development surface and is disabled in packaged builds.
+</Callout>

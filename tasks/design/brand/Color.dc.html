@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 820px; min-height: 1020px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 44px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Foundations &mdash; 02</div>
+    <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em;">Colour</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.65; color: rgba(247,244,236,0.65); max-width: 62ch;">One accent. Amber does every job an accent does &mdash; links, focus, primary action, active nav, the brew line. There is no second accent, and adding one is a change to this document, not a local decision.</p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Amber &mdash; the accent</div>
+    <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px;">
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #fdf3e3;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">amber-50<br>#fdf3e3</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #f8e3c2;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">amber-100<br>#f8e3c2</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #ecbe7a;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">amber-300<br>#ecbe7a</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #dd9a3f; box-shadow: 0 0 0 2px rgba(247,244,236,0.5);"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: #dd9a3f;">amber-500<br>#dd9a3f</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #c07f2b;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">amber-600<br>#c07f2b</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #8a4b12;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">amber-700<br>#8a4b12</div></div>
+    </div>
+    <div style="font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.55);"><strong style="color: #dd9a3f;">amber-500</strong> is the brand colour and the only one that appears in the mark. <strong style="color: #f7f4ec;">amber-700</strong> exists because 500 cannot carry body text on a light background.</div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Neutrals &mdash; warm, never grey</div>
+    <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px;">
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #fcfaf4;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">paper-50<br>#fcfaf4</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #f7f4ec;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">rice-100<br>#f7f4ec</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #d9d2c4;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">rice-300<br>#d9d2c4</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #5a5147;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">ink-500<br>#5a5147</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #1c1712;"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">ink-800<br>#1c1712</div></div>
+      <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 62px; border-radius: 8px; background: #14100c; border: 1px solid rgba(247,244,236,0.18);"></div><div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; line-height: 1.5; color: rgba(247,244,236,0.55);">ink-900<br>#14100c</div></div>
+    </div>
+    <div style="font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.55);">Every neutral carries a little amber in it. A pure <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">#000</span>, <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">#fff</span> or slate grey anywhere in the system is a bug.</div>
+  </div>
+
+  <div style="display: flex; gap: 12px;">
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 10px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Semantic &mdash; used only for state</div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(79,138,91,0.12);"><span style="width: 16px; height: 16px; border-radius: 4px; background: #4f8a5b;"></span><span style="font-size: 13px; flex-grow: 1;">success</span><span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.5);">#4f8a5b</span></div>
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(194,72,44,0.12);"><span style="width: 16px; height: 16px; border-radius: 4px; background: #c2482c;"></span><span style="font-size: 13px; flex-grow: 1;">error</span><span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.5);">#c2482c</span></div>
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(63,127,122,0.12);"><span style="width: 16px; height: 16px; border-radius: 4px; background: #3f7f7a;"></span><span style="font-size: 13px; flex-grow: 1;">info</span><span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.5);">#3f7f7a</span></div>
+      </div>
+      <div style="font-size: 12px; line-height: 1.55; color: rgba(247,244,236,0.5);">There is no warning colour. Amber is the brand, so an amber warning is indistinguishable from a link &mdash; warnings use <span style="font-family: 'JetBrains Mono', monospace; font-size: 11.5px;">error</span> at lower emphasis.</div>
+    </div>
+
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 10px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Proportion &mdash; 70 / 25 / 5</div>
+      <div style="display: flex; height: 42px; border-radius: 8px; overflow: hidden;">
+        <div style="width: 70%; background: #14100c; border: 1px solid rgba(247,244,236,0.15); display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,244,236,0.6);">ink 70</div>
+        <div style="width: 25%; background: #f7f4ec; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #5a5147;">rice 25</div>
+        <div style="width: 5%; background: #dd9a3f;"></div>
+      </div>
+      <div style="font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.55);">Amber is <strong style="color: #f7f4ec;">5%</strong> of any surface. It marks the one thing that matters on a screen. An amber-heavy page reads as a warning, not a brand.</div>
+      <div style="padding: 12px 14px; border-radius: 8px; background: rgba(221,154,63,0.08); border: 1px solid rgba(221,154,63,0.25); font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.72);">Retired: <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">#6d6df0</span> indigo, currently in <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">examples/spotlight</span> and <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">liquid-glass</span>. Those two files need updating to amber in the same change that adopts this book.</div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Contrast pairs &mdash; approximations, verify before shipping tokens</div>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;">
+      <div style="padding: 14px; border-radius: 10px; background: #14100c; border: 1px solid rgba(247,244,236,0.15);"><div style="color: #f7f4ec; font-size: 14px; font-weight: 500;">Body on ink</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #4f8a5b; margin-top: 6px;">pass &mdash; body</div></div>
+      <div style="padding: 14px; border-radius: 10px; background: #14100c; border: 1px solid rgba(247,244,236,0.15);"><div style="color: #dd9a3f; font-size: 14px; font-weight: 500;">Amber on ink</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #4f8a5b; margin-top: 6px;">pass &mdash; body</div></div>
+      <div style="padding: 14px; border-radius: 10px; background: #f7f4ec;"><div style="color: #dd9a3f; font-size: 14px; font-weight: 500;">Amber on rice</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #c2482c; margin-top: 6px;">fail &mdash; large only</div></div>
+      <div style="padding: 14px; border-radius: 10px; background: #f7f4ec;"><div style="color: #8a4b12; font-size: 14px; font-weight: 500;">amber-700 on rice</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #4f8a5b; margin-top: 6px;">pass &mdash; body</div></div>
+    </div>
+  </div>
+
+  <div style="margin-top: auto; padding: 16px 18px; border-radius: 12px; background: rgba(247,244,236,0.04); border: 1px solid rgba(247,244,236,0.1); font-size: 13px; line-height: 1.65; color: rgba(247,244,236,0.7);"><strong style="color: #f7f4ec;">Light and dark are equals.</strong> Dark is the default because desktop tooling is, but every token has a light counterpart and the docs must be finished in both. A light theme that looks like an afterthought is worse than not having one.</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

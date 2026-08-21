@@ -1,0 +1,67 @@
+---
+title: mirin check
+description: Boot the app non-interactively, capture evidence, and exit non-zero on renderer errors.
+---
+
+```bash
+bunx mirin check
+bunx mirin check --scenario ./check.ts
+```
+
+Boots the app once, waits for a window, optionally drives a scenario, captures a
+screenshot and an accessibility snapshot of the UI, prints any errors, and exits
+non-zero if anything went wrong.
+
+This is the command that makes a mirinjs app legible to CI and to a coding
+agent: it answers "did that change actually work" without a human looking at a
+screen.
+
+## Options
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--timeout <ms>` | `45000` | How long to wait for a window. |
+| `--settle <ms>` | `1000` | Quiet time before capturing. |
+| `--scenario <file>` | — | Drive the app before capturing. |
+| `--json` | — | Machine-readable output on stdout. |
+
+## Scenarios
+
+A scenario file default-exports `defineCheck`:
+
+```ts title="check.ts"
+import { defineCheck } from "mirinjs/check";
+
+export default defineCheck(async (app) => {
+  const win = await app.window();
+  await win.click("[data-testid=new-todo]");
+  await win.type("write the docs");
+  await win.press("Enter");
+  await win.expectText("write the docs");
+  await win.screenshot("todo-added");
+});
+```
+
+Named screenshots land beside the automatic one in the session directory, which
+makes a failure diffable rather than merely reported.
+
+## Output
+
+Everything lands in `.mirin/dev/<session>/`:
+
+- `events.jsonl` — the full structured stream for the run
+- `screenshots/` — the automatic capture plus any you named
+- the UI snapshot, printed to stdout as an accessibility tree
+
+## In CI
+
+```yaml
+- run: bunx mirin check --scenario ./check.ts --json
+```
+
+A renderer exception, a failed request or a scenario assertion failure all exit
+non-zero.
+
+## See also
+
+[Verifying with mirin check](/docs/agents/check)

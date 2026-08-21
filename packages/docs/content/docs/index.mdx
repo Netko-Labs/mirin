@@ -1,0 +1,56 @@
+---
+title: mirinjs
+description: A desktop app framework where the main process is Bun and the UI is real Chromium.
+---
+
+mirinjs builds desktop applications whose main process is Bun — not Node, not a
+compatibility layer — and whose UI is real Chromium on macOS, Windows and Linux.
+The native layer between them is Rust, and it ships prebuilt, so using mirinjs
+never means installing a Rust toolchain.
+
+```bash
+bun create mirinjs my-app
+cd my-app && bun install
+bun run dev
+```
+
+## What you get
+
+- **Bun as the main process.** Top-level await, `Bun.*`, `bun:ffi`, Workers,
+  `bun test`. The API is designed around Bun idioms rather than ported from Node.
+- **One engine everywhere.** CEF on all three platforms means identical
+  rendering, identical devtools, and identical web-platform support on every
+  machine your app lands on.
+- **Typed RPC in both directions.** One router definition in the main process;
+  the renderer imports its type and gets full inference with no codegen step.
+- **A CLI an agent can drive.** `mirin check` boots the app, drives a scenario,
+  screenshots it and exits non-zero on renderer errors. Every run leaves a
+  structured event stream on disk.
+
+## When not to use it
+
+Be honest with yourself about these before you start:
+
+- **You need the smallest possible binary.** Chromium ships with your app.
+  Tauri's system webview will always produce a smaller download.
+- **You need one code path for desktop and mobile.** mirinjs is desktop only,
+  with no plans to change that.
+- **You need a stable API today.** See below.
+
+## Status
+
+Pre-alpha, `v0.1.0-alpha.25`. The whole loop works end to end — scaffold, dev
+with HMR, build a standalone app, cut a release with an updater — and the API
+will still move between versions.
+
+| Platform | Architectures | Status |
+| --- | --- | --- |
+| macOS | arm64 | The most exercised path. Liquid Glass materials need macOS 26+. |
+| Windows | x64, arm64 | Implemented and documented, less exercised. |
+| Linux | x64, arm64 | Implemented and documented. Menus, tray, dialogs and shortcuts are still tracked as gaps. |
+
+## Where to go next
+
+- [Install](/docs/start/install) then [create an app](/docs/start/create-an-app) — about ten minutes.
+- [Typed RPC](/docs/guides/typed-rpc) — the part of mirinjs that is genuinely different.
+- [Agents and mirinjs](/docs/agents) — if a coding agent is going to be writing this app with you.

@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #6d6df0; } a:hover { color: #9d9dff; }
+  </style>
+</helmet>
+<div style="width: 700px; min-height: 720px; background: #16171c; color: #f2f2f5; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 36px; box-sizing: border-box; display: flex; flex-direction: column; gap: 26px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #9d9dff;">Mascot concept &mdash; Pane</div>
+    <h2 style="margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.03em;">A window that woke up</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.6; color: rgba(242,242,245,0.62); max-width: 52ch;">The differentiator is the transparent window with native material behind it. So the mascot is that window &mdash; translucent, layered, and it shows what is behind it.</p>
+  </div>
+
+  <div style="display: flex; align-items: center; justify-content: center; padding: 26px; border-radius: 16px; background: linear-gradient(140deg, rgba(109,109,240,0.2), rgba(242,242,245,0.03)); border: 1px solid rgba(242,242,245,0.09);">
+    <svg width="230" height="230" viewBox="0 0 200 200" fill="none">
+      <circle cx="62" cy="60" r="30" fill="rgba(109,109,240,0.5)"/>
+      <circle cx="138" cy="150" r="24" fill="rgba(224,160,180,0.42)"/>
+      <rect x="34" y="38" width="132" height="118" rx="22" fill="rgba(242,242,245,0.16)" stroke="rgba(242,242,245,0.42)" stroke-width="2.5"/>
+      <path d="M34 66h132" stroke="rgba(242,242,245,0.28)" stroke-width="2"/>
+      <circle cx="50" cy="52" r="4.5" fill="#ff5f57"/>
+      <circle cx="65" cy="52" r="4.5" fill="#febc2e"/>
+      <circle cx="80" cy="52" r="4.5" fill="#28c840"/>
+      <path d="M46 44l30 104" stroke="rgba(242,242,245,0.16)" stroke-width="14" stroke-linecap="round"/>
+      <ellipse cx="80" cy="104" rx="7" ry="9" fill="#f2f2f5"/>
+      <ellipse cx="120" cy="104" rx="7" ry="9" fill="#f2f2f5"/>
+      <circle cx="81" cy="106" r="3.5" fill="#16171c"/>
+      <circle cx="121" cy="106" r="3.5" fill="#16171c"/>
+      <path d="M88 126q12 10 24 0" stroke="#f2f2f5" stroke-width="3" stroke-linecap="round"/>
+      <path d="M62 168v12M138 168v12" stroke="rgba(242,242,245,0.42)" stroke-width="7" stroke-linecap="round"/>
+      <path d="M166 88q16 6 0 12" stroke="rgba(242,242,245,0.42)" stroke-width="6" stroke-linecap="round"/>
+      <path d="M34 88q-16 6 0 12" stroke="rgba(242,242,245,0.42)" stroke-width="6" stroke-linecap="round"/>
+    </svg>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+    <div style="padding: 16px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 10px;">
+      <svg width="52" height="52" viewBox="0 0 200 200" fill="none">
+        <rect x="26" y="34" width="148" height="132" rx="26" fill="#f2f2f5"/>
+        <path d="M26 68h148" stroke="#16171c" stroke-width="6"/>
+        <circle cx="46" cy="51" r="6" fill="#16171c"/>
+      </svg>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(242,242,245,0.5);">silhouette @ 16px</div>
+    </div>
+    <div style="padding: 16px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 10px;">
+      <svg width="52" height="52" viewBox="0 0 200 200" fill="none">
+        <rect x="14" y="14" width="172" height="172" rx="40" fill="#6d6df0"/>
+        <rect x="46" y="52" width="108" height="96" rx="20" fill="rgba(255,255,255,0.9)"/>
+        <path d="M46 78h108" stroke="#6d6df0" stroke-width="5"/>
+        <circle cx="62" cy="65" r="5" fill="#6d6df0"/>
+      </svg>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(242,242,245,0.5);">app icon lockup</div>
+    </div>
+    <div style="padding: 16px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 10px;">
+      <svg width="52" height="52" viewBox="0 0 200 200" fill="none">
+        <rect x="26" y="34" width="148" height="132" rx="26" fill="rgba(242,242,245,0.22)" stroke="rgba(242,242,245,0.6)" stroke-width="5"/>
+        <path d="M26 68h148" stroke="rgba(242,242,245,0.5)" stroke-width="5"/>
+        <path d="M66 100l24 24M90 100l-24 24M110 100l24 24M134 100l-24 24" stroke="#f2f2f5" stroke-width="7" stroke-linecap="round"/>
+      </svg>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(242,242,245,0.5);">error / 404 pose</div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px; margin-top: auto;">
+    <div style="padding: 14px 16px; border-radius: 10px; background: rgba(109,109,240,0.1); border: 1px solid rgba(109,109,240,0.3); font-size: 13px; line-height: 1.6; color: rgba(242,242,245,0.8);"><strong style="color: #9d9dff;">Why it works:</strong> the translucency is the product. Whatever sits behind the mascot shows through it, so the logo itself demonstrates the one thing Electron cannot do casually.</div>
+    <div style="padding: 14px 16px; border-radius: 10px; background: rgba(242,242,245,0.04); border: 1px solid rgba(242,242,245,0.09); font-size: 13px; line-height: 1.6; color: rgba(242,242,245,0.65);"><strong>Tradeoff:</strong> translucency dies at favicon size and in single-color contexts &mdash; it needs a solid fallback mark, which is half a second logo. Also the least warm of the three.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

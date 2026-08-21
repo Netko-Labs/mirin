@@ -1,0 +1,14 @@
+{
+  "title": "Docs",
+  "pages": [
+    "index",
+    "---Get started---",
+    "start",
+    "guides",
+    "concepts",
+    "---Reference---",
+    "reference",
+    "platforms",
+    "agents"
+  ]
+}

@@ -1,0 +1,87 @@
+---
+title: Transparency and native materials
+description: Transparent windows, macOS Liquid Glass and vibrancy, and what the platforms actually support.
+---
+
+A transparent window lets the operating system draw a real material behind your
+UI — blur, vibrancy, glass — rather than approximating one in CSS.
+
+```ts title="mirin.config.ts"
+windows: {
+  panel: {
+    url: "app://ui/index.html",
+    width: 760,
+    height: 540,
+    titleBarStyle: "hiddenInset",
+    material: { type: "liquidGlass", cornerRadius: 20 },
+    movableByBackground: true,
+  },
+},
+```
+
+Setting `material` implies `transparent: true`. You can set `transparent` alone
+for a clear window with no material behind it.
+
+## Your page must draw nothing
+
+The single most common mistake. If your page paints a background, there is
+nothing for the material to show through.
+
+```css title="ui/styles.css"
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+```
+
+## Materials
+
+| Type | Notes |
+| --- | --- |
+| `liquidGlass` | `NSGlassEffectView`. macOS 26+, falls back to frosted vibrancy below that. |
+| `hud` | HUD panel vibrancy. |
+| `sidebar` | Sidebar vibrancy. |
+| `popover` | Popover vibrancy. |
+| `menu` | Menu vibrancy. |
+| `underWindow` | Under-window background. |
+| `fullScreenUI` | Full-screen UI vibrancy. |
+
+Tint and corner radius are options rather than separate types:
+
+```ts
+material: { type: "liquidGlass", tint: "#3b82f6", cornerRadius: 20 }
+```
+
+## Swapping at runtime
+
+```ts title="main/rpc.ts"
+setMaterial: rpc.mutation(async (type: string) => {
+  await app.windows.get("panel").setMaterial(type === "none" ? null : { type });
+}),
+```
+
+`null` clears the material and leaves the window clear.
+
+## Off-screen rendering
+
+Transparent windows render windowless — CEF paints into a buffer that mirinjs
+composites, instead of into a native child window. Input is forwarded from the
+platform window into CEF. Two consequences worth knowing:
+
+- Performance characteristics differ from a normal windowed browser. Test with
+  your real content before committing a whole app to it.
+- Drag regions go through the same forwarding path, so test dragging early.
+
+## Platform support
+
+- **macOS** — all materials. Liquid Glass needs macOS 26+.
+- **Windows** — transparent windows composite into a layered window and take a
+  DWM acrylic backdrop.
+- **Linux** — not supported. A windowed X11 CEF browser is always opaque. Do not
+  build a Linux UI that depends on transparency.
+
+## Next
+
+[Typed RPC](/docs/guides/typed-rpc).

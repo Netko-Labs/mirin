@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 820px; min-height: 1020px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 44px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Foundations &mdash; 03</div>
+    <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em;">Type</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.65; color: rgba(247,244,236,0.65); max-width: 62ch;">Three faces, each with one job and a hard boundary. The serif is the warmth; it earns that by never appearing where someone is trying to get work done.</p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="padding: 22px 24px; border-radius: 14px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div style="font-family: 'Instrument Serif', serif; font-size: 46px; line-height: 1;">Instrument Serif</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;">display</div>
+      </div>
+      <div style="font-family: 'Instrument Serif', serif; font-size: 22px; color: rgba(247,244,236,0.6);">Desktop apps, brewed in Bun.</div>
+      <div style="font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.6); max-width: 66ch;"><strong style="color: #f7f4ec;">Only:</strong> landing hero, marketing section openers, blog post titles, social cards. <strong style="color: #c2482c;">Never:</strong> docs bodies, docs headings, app UI, buttons, CLI. Regular weight only &mdash; never bold it.</div>
+    </div>
+
+    <div style="padding: 22px 24px; border-radius: 14px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div style="font-size: 40px; font-weight: 700; letter-spacing: -0.035em;">Space Grotesk</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;">interface &amp; body</div>
+      </div>
+      <div style="font-size: 15px; line-height: 1.6; color: rgba(247,244,236,0.6);">Everything a reader actually reads: docs, nav, buttons, labels, tables, the wordmark.</div>
+      <div style="font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.6);">Weights 400 / 500 / 700 only. Headings tighten to <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">-0.03em</span>; body stays at 0.</div>
+    </div>
+
+    <div style="padding: 22px 24px; border-radius: 14px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03); display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 500;">JetBrains Mono</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #dd9a3f;">code &amp; labels</div>
+      </div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.7; color: rgba(247,244,236,0.6);">bun create mirinjs my-app<br>await rpc.greet.query({ name })</div>
+      <div style="font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.6);">Code, file paths, versions, CLI output, and the small uppercase eyebrow labels used across this book.</div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(247,244,236,0.4);">Scale</div>
+    <div style="display: flex; flex-direction: column; gap: 2px;">
+      <div style="display: flex; align-items: baseline; gap: 18px; padding: 9px 0; border-bottom: 1px solid rgba(247,244,236,0.07);"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,244,236,0.4); width: 96px; flex-shrink: 0;">display / 64</span><span style="font-family: 'Instrument Serif', serif; font-size: 42px; line-height: 1;">Hero headline</span></div>
+      <div style="display: flex; align-items: baseline; gap: 18px; padding: 9px 0; border-bottom: 1px solid rgba(247,244,236,0.07);"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,244,236,0.4); width: 96px; flex-shrink: 0;">h1 / 36</span><span style="font-size: 30px; font-weight: 700; letter-spacing: -0.03em;">Page title</span></div>
+      <div style="display: flex; align-items: baseline; gap: 18px; padding: 9px 0; border-bottom: 1px solid rgba(247,244,236,0.07);"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,244,236,0.4); width: 96px; flex-shrink: 0;">h2 / 24</span><span style="font-size: 22px; font-weight: 700; letter-spacing: -0.025em;">Section heading</span></div>
+      <div style="display: flex; align-items: baseline; gap: 18px; padding: 9px 0; border-bottom: 1px solid rgba(247,244,236,0.07);"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,244,236,0.4); width: 96px; flex-shrink: 0;">body / 16</span><span style="font-size: 16px; line-height: 1.65;">Docs paragraph, 1.65 line-height, 66ch max</span></div>
+      <div style="display: flex; align-items: baseline; gap: 18px; padding: 9px 0; border-bottom: 1px solid rgba(247,244,236,0.07);"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,244,236,0.4); width: 96px; flex-shrink: 0;">small / 13</span><span style="font-size: 13px; color: rgba(247,244,236,0.65);">Captions, table cells, sidebar items</span></div>
+      <div style="display: flex; align-items: baseline; gap: 18px; padding: 9px 0;"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,244,236,0.4); width: 96px; flex-shrink: 0;">eyebrow / 11</span><span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Section label</span></div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 12px; margin-top: auto;">
+    <div style="flex-grow: 1; padding: 16px 18px; border-radius: 12px; background: rgba(79,138,91,0.1); border: 1px solid rgba(79,138,91,0.3); font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.75);"><strong style="color: #4f8a5b;">Do:</strong> one serif moment per page, at the top, then get out of the way. Measure caps at 66ch. Let headlines wrap with <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">text-wrap: pretty</span>.</div>
+    <div style="flex-grow: 1; padding: 16px 18px; border-radius: 12px; background: rgba(194,72,44,0.1); border: 1px solid rgba(194,72,44,0.3); font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.75);"><strong style="color: #c2482c;">Don't:</strong> serif in the docs, italic serif for emphasis inside prose, letter-spaced body text, or a fourth face because a page &ldquo;needed something&rdquo;.</div>
+  </div>
+
+  <div style="padding: 14px 16px; border-radius: 10px; background: rgba(247,244,236,0.04); border: 1px solid rgba(247,244,236,0.1); font-size: 12.5px; line-height: 1.6; color: rgba(247,244,236,0.65);">All three are Google Fonts, which is the one font host the site's CSP allows. Ship fallback stacks with close metrics &mdash; PNG and PDF exports of these boards render the fallback, not the real face.</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

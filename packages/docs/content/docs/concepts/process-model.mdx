@@ -1,0 +1,65 @@
+---
+title: Process model
+description: The host, the Bun Worker, the native core and the CEF subprocesses — and which one runs your code.
+---
+
+An installed mirinjs app is one executable and several processes.
+
+```txt
+your-app
+├─ mirin host (Bun-compiled executable)
+│   ├─ main thread ──→ libmirin_core (Rust): platform UI + CEF browser process
+│   └─ Bun Worker ───→ your main-process code (TypeScript)
+├─ Chromium Embedded Framework
+└─ Helper processes: renderer / GPU / plugin
+```
+
+## Who does what
+
+**The host** is a Bun-compiled executable. It owns the process's main thread,
+which is where every platform UI call and every CEF browser-process call must
+happen.
+
+**The Bun Worker** runs *your* main-process code. It is a real Bun runtime —
+`Bun.*`, `bun:ffi`, workers, sidecars — and it is deliberately not the main
+thread, so your code cannot block the UI.
+
+**`libmirin_core`** is the Rust native core, loaded through Bun FFI. It owns
+AppKit, Win32 and Xlib window management, the CEF browser process, and the event
+queue.
+
+**CEF helper processes** render your UI, exactly as in any Chromium application.
+
+## Why your code is on a Worker
+
+Because the alternative is worse. If your code shared the main thread with the
+UI loop, a slow handler would freeze the window; and platform frameworks require
+their calls on that thread specifically. Splitting them means you can write an
+ordinary blocking loop in a handler without the app going grey.
+
+The cost is that your code cannot call platform APIs directly. It posts tasks
+instead, and mirinjs runs them on the UI thread for you — which is why every
+window method is async.
+
+## Threading rules
+
+- AppKit, Win32 UI, Xlib window operations and CEF UI calls happen on the main
+  or UI thread. Always.
+- Commands from the Worker post a task; they never call a UI API inline.
+- Events flow back to the Worker through a polled queue, not a callback across
+  the FFI boundary.
+
+## What this means for your code
+
+- Window methods are async because they are round trips, not because they are slow.
+- Heavy work in a handler is fine. It blocks your Worker, not the window.
+- For work that must not block even the Worker, declare an
+  [extra worker](/docs/guides/sidecars).
+
+For the full picture including the FFI surface and CEF lifecycle, the
+[architecture document](https://github.com/Netko-Labs/mirin/blob/main/docs/architecture.md)
+in the repository is the source of truth.
+
+## Next
+
+[IPC and RPC](/docs/concepts/ipc-and-rpc).

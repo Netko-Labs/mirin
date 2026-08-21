@@ -1,0 +1,65 @@
+---
+title: Create an app
+description: Scaffold a project with bun create mirinjs and get a native window on screen.
+---
+
+<Steps>
+
+<Step>
+### Scaffold
+
+```bash
+bun create mirinjs my-app
+```
+
+The scaffold writes a complete project: a manifest, a Bun main process, an RPC
+router, and a React UI wired to it.
+</Step>
+
+<Step>
+### Install and run
+
+```bash
+cd my-app
+bun install
+bun run dev
+```
+
+The first run downloads the CEF runtime once. Subsequent runs start in
+under a second.
+</Step>
+
+<Step>
+### Look at what appeared
+
+A native window rendering React through Vite, with HMR. Edit `ui/App.tsx` and
+the window updates without restarting the main process.
+</Step>
+
+</Steps>
+
+## What you just got
+
+- A mirinjs-owned native window, not a browser tab pretending to be one.
+- A typed `greet` query round-tripping from the UI to the Bun process and back.
+- Live `tick` events pushed from Bun into the UI.
+- Both directions running over a token-gated local socket.
+
+The RPC surface is three files: `main/rpc.ts` defines it, `main/main.ts` serves
+it, `ui/api.ts` consumes it with full type inference and no code generation.
+
+## Verify it non-interactively
+
+```bash
+bunx mirin check
+```
+
+This boots the app once, waits for the window, captures a screenshot and an
+accessibility snapshot of the UI, prints any errors, and exits non-zero if
+anything went wrong. Useful in CI, and the fastest way for a coding agent to
+find out whether its last change actually worked.
+
+## Next
+
+[Project layout](/docs/start/project-layout) — what the scaffold wrote and which
+file owns what.

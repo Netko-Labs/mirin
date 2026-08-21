@@ -1,0 +1,75 @@
+---
+title: Verifying with mirin check
+description: Non-interactive boot, scenarios, and asserting on real UI state.
+---
+
+```bash
+bunx mirin check
+```
+
+Boots the app once, waits for a window, waits for it to settle, captures a
+screenshot and an accessibility snapshot, prints any errors, and exits non-zero
+if anything went wrong.
+
+No scenario needed for the most common question — *does it still start* — which
+catches more regressions than it has any right to.
+
+## Writing a scenario
+
+```ts title="check.ts"
+import { defineCheck } from "mirinjs/check";
+
+export default defineCheck(async (app) => {
+  const win = await app.window();
+
+  await win.click("[data-testid=new-todo]");
+  await win.type("write the docs");
+  await win.press("Enter");
+
+  await win.expectText("write the docs");
+  await win.screenshot("todo-added");
+});
+```
+
+```bash
+bunx mirin check --scenario ./check.ts
+```
+
+## Asserting on the accessibility tree
+
+The snapshot is the accessibility tree, not a pixel diff. Assert on roles and
+text and your check survives a restyle; assert on a screenshot and every design
+change is a failure.
+
+Give the elements a scenario drives stable hooks — `data-testid`, or an
+accessible name you control.
+
+## Exit codes in CI
+
+```yaml
+- run: bunx mirin check --scenario ./check.ts --json
+```
+
+Exits non-zero on a renderer exception, a failed request, a scenario assertion
+failure, or a window that never appeared. A build that starts and immediately
+throws is caught here rather than by a user.
+
+## When it fails
+
+Everything is in `.mirin/dev/<session>/`:
+
+- `session.json` — the phase timeline: `compile`, `bundle`, `vite`, `launch`. When
+  the app never appeared, this says how far it got.
+- `events.jsonl` — the full stream.
+- `exit.json` — exit code, signal, error count, and the last 50 events. A
+  post-mortem usually needs only this file.
+- `screenshots/` — the automatic capture plus any you named.
+
+## Options
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--timeout <ms>` | `45000` | How long to wait for a window. |
+| `--settle <ms>` | `1000` | Quiet time before capturing. |
+| `--scenario <file>` | — | Drive the app before capturing. |
+| `--json` | — | Machine-readable output. |

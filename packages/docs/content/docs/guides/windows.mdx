@@ -1,0 +1,111 @@
+---
+title: Windows
+description: Declaring windows, controlling them at runtime, and reacting to what the user does to them.
+---
+
+Windows are declared in `mirin.config.ts` and controlled from the main process
+through `app.windows`.
+
+## Declaring
+
+```ts title="mirin.config.ts"
+windows: {
+  main: {
+    title: "My App",
+    url: "app://ui/index.html",
+    width: 1100,
+    height: 800,
+    minWidth: 720,
+    minHeight: 480,
+    show: "ready",
+  },
+},
+```
+
+Each key names a window. `show: "ready"` waits for first paint before revealing
+the window, which is almost always what you want — `"immediately"` shows an empty
+frame while the page loads.
+
+Set `open: "manual"` on a window that should exist in config but not open at
+startup.
+
+## Getting a handle
+
+```ts title="main/main.ts"
+import { app } from "mirinjs";
+
+const main = app.windows.get("main");
+const all = app.windows.all();
+const settings = await app.windows.open("settings");
+```
+
+`get` throws for an unknown name; `byId` returns `undefined` instead if you are
+resolving a window from an event.
+
+## Controlling
+
+Every method on a `WindowHandle`:
+
+```ts
+await win.show();
+await win.hide();
+await win.focus();
+await win.center();
+await win.minimize();
+await win.maximize();
+await win.restore();
+await win.toggleFullscreen();
+await win.setAlwaysOnTop(true);
+await win.setTitle("New title");
+await win.loadUrl("app://ui/other.html");
+await win.close();
+
+win.setPosition(120, 80);
+win.getFrame();      // { x, y, width, height }
+win.isMaximized();
+```
+
+<Callout type="info">
+These post a task to the UI thread rather than touching native APIs inline, so
+calling them from anywhere in your main process is safe.
+</Callout>
+
+## Events
+
+```ts
+win.on("focus", () => {});
+win.on("blur", () => {});
+win.on("moved", ({ x, y }) => {});
+win.on("resized", ({ width, height }) => {});
+win.on("closed", () => {});
+
+app.on("ready", () => {});
+app.on("window-all-closed", () => app.quit());
+app.on("open-url", (url) => {});
+```
+
+`window-all-closed` does not quit for you. On macOS many apps stay alive with no
+windows; if yours should not, call `app.quit()` yourself.
+
+## Custom title bars
+
+```ts title="mirin.config.ts"
+main: {
+  titleBarStyle: "hiddenInset",
+  trafficLightPosition: { x: 18, y: 22 },
+  movableByBackground: true,
+},
+```
+
+`hidden` removes the title bar entirely; `hiddenInset` keeps the macOS traffic
+lights and insets them. Mark draggable regions in CSS with
+`-webkit-app-region: drag`, and exclude your interactive elements with
+`no-drag` — otherwise buttons inside a drag region stop receiving clicks.
+
+On Windows the same regions drive the native move loop, so aero snap and
+double-click-to-maximize keep working. Windows draws no native caption buttons,
+so you supply your own.
+
+## Next
+
+[Transparency and native materials](/docs/guides/materials).

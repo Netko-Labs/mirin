@@ -1,0 +1,41 @@
+---
+title: Platform support
+description: What works where, stated as it actually is rather than as a row of checkmarks.
+---
+
+mirinjs runs on macOS, Windows and Linux with the same process model and the
+same rendering engine. Feature parity is not equal across the three, and this
+page says where it is not.
+
+| Platform | Architectures | Status |
+| --- | --- | --- |
+| [macOS](/docs/platforms/macos) | arm64 | The most exercised path. Every app-shell feature is implemented. |
+| [Windows](/docs/platforms/windows) | x64, arm64 | Every app-shell feature is implemented. Less exercised than macOS. |
+| [Linux](/docs/platforms/linux) | x64, arm64 | Window, build and release loop complete. Menus, tray, dialogs, deep links and transparency are open gaps. |
+
+## Feature parity
+
+| Capability | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Windows, controls, events | Yes | Yes | Yes |
+| Custom title bar and drag | Yes | Yes | Yes |
+| Typed RPC | Yes | Yes | Yes |
+| Build and standalone app | Yes | Yes | Yes |
+| Installers and updater | DMG | Inno, NSIS, portable zip | AppImage, deb, rpm |
+| Clipboard | Yes | Yes | Not yet |
+| Global shortcuts | Yes | Yes | Not yet |
+| Tray | Yes | Yes | Not yet |
+| Dialogs | Yes | Yes | Not yet |
+| Application menu bar | Yes | No — menus live in the app UI | No |
+| Popup and context menus | Yes | Yes | Not yet |
+| Transparent windows and materials | Yes | Yes — acrylic | Not yet |
+| Deep links (`urlSchemes`) | Yes | Yes | Not yet |
+
+## How to read this
+
+**Yes** means implemented and exercised by a real app, not merely compiled.
+**Not yet** means the engine falls back to a no-op so your code still runs — it
+does nothing rather than throwing. Check the per-platform page before you build a
+feature on top of one of them.
+
+The `mirin build` and `mirin release` loop is complete on all three.

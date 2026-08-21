@@ -1,0 +1,116 @@
+---
+title: Typed RPC
+description: One router definition in the main process, full type inference in the renderer, no codegen.
+---
+
+The renderer cannot touch native APIs. Everything crosses through RPC — and that
+crossing is typed end to end from a single definition.
+
+## Define the router
+
+```ts title="main/rpc.ts"
+import { rpc } from "mirinjs/rpc";
+
+export const router = rpc.router({
+  greet: rpc.query(async (name: string, ctx) => {
+    return `Hello, ${name}! (from webview #${ctx.webview})`;
+  }),
+
+  addTodo: rpc.mutation(async (text: string) => {
+    return { id: crypto.randomUUID(), text };
+  }),
+
+  tick: rpc.event<{ count: number }>(),
+});
+
+export type Router = typeof router;
+```
+
+- **`rpc.query`** — a read. Takes one argument and a context, returns a value.
+- **`rpc.mutation`** — a write. Same shape; the distinction is intent, and it
+  shows up in the event stream when you are debugging.
+- **`rpc.event`** — a push from the main process to the renderer. No handler,
+  just a payload type.
+
+The second parameter, `ctx`, carries the calling webview's id, which is how you
+tell two windows apart.
+
+## Serve it
+
+```ts title="main/main.ts"
+import { app } from "mirinjs";
+import { router } from "./rpc.ts";
+
+const mirin = app.serve(router);
+```
+
+`app.serve` returns a handle whose `rpc` property emits your events.
+
+## Consume it
+
+```ts title="ui/api.ts"
+import { client } from "mirinjs/client";
+import type { Router } from "../main/rpc.ts";
+
+export const api = client<Router>();
+```
+
+That `import type` is the whole mechanism. The renderer imports the router's
+**type**, never its code — so your main-process dependencies never end up in the
+renderer bundle, and there is no code generation step to run or forget.
+
+```tsx title="ui/App.tsx"
+import { api } from "./api.ts";
+
+const greeting = await api.greet("world");   // string
+const todo = await api.addTodo("write docs"); // { id: string; text: string }
+```
+
+Rename a procedure in the router and the call site fails to typecheck
+immediately. That is the point.
+
+## Events
+
+Broadcast to every webview:
+
+```ts title="main/main.ts"
+let count = 0;
+setInterval(() => {
+  mirin.rpc.tick.broadcast({ count: ++count });
+}, 1000);
+```
+
+Subscribe in the renderer. The subscription returns its own unsubscribe
+function, which is exactly the shape a React effect wants:
+
+```tsx
+useEffect(() => api.tick.on(({ count }) => setTicks(count)), []);
+```
+
+## Errors
+
+A handler that throws rejects the caller's promise. Throw errors your UI can act
+on, and remember that the message crosses a process boundary — it is a string on
+the other side, not your error class.
+
+```ts
+getUser: rpc.query(async (id: string) => {
+  const user = await db.find(id);
+  if (!user) throw new Error(`No user ${id}`);
+  return user;
+}),
+```
+
+## What it runs over
+
+A token-gated local socket in dev, and the same transport inside a build. The
+token is generated per run; the renderer receives it through the preload, and
+nothing without it can call your router.
+
+<Callout type="info">
+Payloads are serialized. Send data, not class instances, functions or handles.
+</Callout>
+
+## Next
+
+[Menus, tray and notifications](/docs/guides/menus-and-tray).

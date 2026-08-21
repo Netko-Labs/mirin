@@ -1,0 +1,43 @@
+---
+title: mirin release
+description: Build the app and emit installers plus updater artifacts.
+---
+
+```bash
+bunx mirin release
+```
+
+Everything `mirin build` does, plus installers and update artifacts in
+`build/release/`.
+
+## Artifacts
+
+**macOS** — DMG, `{channel}-darwin-{arch}-update.json`, a full `.tar.zst`, and
+an optional delta patch.
+
+**Windows** — Inno Setup installer when `iscc` is on PATH, else NSIS when
+`makensis` is, else a portable `.zip`. Updater artifacts either way.
+
+**Linux** — AppImage, `.deb`, `.rpm`, and updater artifacts.
+
+## Configuration
+
+Packaging is configured in `mirin.config.ts` rather than by flags — see
+[`dmg`, `nsis`, `inno`, `linux` and `release`](/docs/reference/config).
+
+```ts title="mirin.config.ts"
+release: {
+  baseUrl: "https://github.com/you/my-app/releases/latest/download",
+  notes: "## 0.2.0\n\n- Faster queries",
+},
+```
+
+## Performance
+
+Compression is multi-core, Linux formats build in parallel, and updater
+generation overlaps installer creation. Cache `~/.mirinjs/cef` in CI, keyed by
+mirinjs version and runner platform.
+
+## See also
+
+[Distributing](/docs/guides/distributing) · [Updating](/docs/guides/updating)

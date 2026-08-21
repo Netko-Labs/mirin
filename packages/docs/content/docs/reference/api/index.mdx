@@ -1,0 +1,51 @@
+---
+title: API
+description: The mirinjs package exports and what each entry point is for.
+---
+
+| Entry point | For |
+| --- | --- |
+| `mirinjs` | The main process: `app`, native APIs, the updater, the logger. |
+| `mirinjs/config` | `defineConfig` and the config types. Imported by `mirin.config.ts`. |
+| `mirinjs/rpc` | Defining a router: `rpc.router`, `rpc.query`, `rpc.mutation`, `rpc.event`. |
+| `mirinjs/client` | The renderer's typed bridge: `client<Router>()`. |
+| `mirinjs/check` | `defineCheck`, for `mirin check` scenarios. |
+| `mirinjs/devtools/session` | Reading `.mirin/dev` session artifacts. |
+
+<Callout type="info">
+`mirinjs/codec` and `mirinjs/host` are runtime wiring, not developer surface.
+They are exported because the runtime needs them, not because you do.
+</Callout>
+
+## From `mirinjs`
+
+```ts
+import {
+  app,              // the app singleton and app.windows
+  menu, Tray,       // native menus and tray
+  dialog, clipboard,
+  notification,
+  globalShortcut,
+  sidecar, resolveSidecar, resolveWorker,
+  updater, Updater,
+  logger, Logger, setLogLevel, getLogLevel,
+  devtools,
+} from "mirinjs";
+```
+
+`app` is also the default export.
+
+## Where the boundary is
+
+`mirinjs` is main-process only. Importing it from renderer code will not work,
+and should not — the renderer's entire surface is `mirinjs/client`.
+
+## Pages
+
+- [`app`](/docs/reference/api/app) — the app singleton, windows, lifecycle events
+- [`mirinjs/rpc`](/docs/reference/api/rpc) — router definition
+- [`mirinjs/client`](/docs/reference/api/client) — the renderer bridge
+
+Native modules — `menu`, `Tray`, `dialog`, `clipboard`, `notification`,
+`globalShortcut`, `sidecar`, `updater`, `logger` — are documented in the guides
+rather than as signature pages, while the API is still moving.

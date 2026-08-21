@@ -1,0 +1,74 @@
+---
+title: Your first window
+description: Declare a window in the manifest, then reach for the imperative API when you need it.
+---
+
+A window is config. You describe the window you want and mirinjs opens it — no
+constructor call, no lifecycle dance.
+
+```ts title="mirin.config.ts"
+windows: {
+  main: {
+    title: "My App",
+    url: "app://ui/index.html",
+    width: 1100,
+    height: 800,
+    show: "ready",
+  },
+},
+```
+
+The key (`main`) is the window's name. You use it later to address the window
+from the main process.
+
+## The options worth knowing early
+
+| Option | Effect |
+| --- | --- |
+| `show` | `"ready"` waits until the page has painted before showing the window. `"immediately"` shows an empty frame first. Prefer `"ready"`. |
+| `open` | `"auto"` opens the window at startup; `"manual"` leaves it declared but closed until you open it. |
+| `titleBarStyle` | `"hidden"` or `"hiddenInset"` for a custom title bar. |
+| `minWidth` / `minHeight` | Resize floor. Set these — a window with no floor can be dragged into an unusable shape. |
+| `alwaysOnTop` | Floating panels and HUDs. |
+| `movableByBackground` | Lets the user drag the window by its background, which a custom title bar needs. |
+
+## More than one window
+
+Declare them all. They open together unless a window sets `open: "manual"`.
+
+```ts title="mirin.config.ts"
+windows: {
+  main: { url: "app://ui/index.html", width: 1100, height: 800 },
+  settings: {
+    url: "app://ui/settings.html",
+    width: 520,
+    height: 420,
+    open: "manual",
+  },
+},
+```
+
+## When to go imperative
+
+Config covers what a window *is*. The imperative API covers what happens to it
+while the app runs — showing, hiding, centring, fullscreen, always-on-top:
+
+```ts title="main/main.ts"
+import { app } from "mirinjs";
+
+app.on("ready", async () => {
+  const settings = await app.windows.open("settings");
+  settings.center();
+  settings.setAlwaysOnTop(true);
+});
+```
+
+<Callout type="info">
+Every window operation runs on the UI thread. Calls from your main process are
+posted as UI tasks rather than executed inline, so they are safe to make from
+anywhere in your code.
+</Callout>
+
+## Next
+
+[The dev loop](/docs/start/dev-loop).

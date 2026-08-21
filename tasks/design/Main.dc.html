@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #6d6df0; } a:hover { color: #9d9dff; }
+  </style>
+</helmet>
+<div style="width: 760px; min-height: 900px; background: #0c0d12; color: #f5f5fa; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 48px 44px; display: flex; flex-direction: column; gap: 32px; box-sizing: border-box;">
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: #6d6df0;">Round 1 · pick a direction</div>
+    <h1 style="margin: 0; font-size: 40px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.05;">mirinjs.netko.dev</h1>
+    <p style="margin: 0; font-size: 15px; line-height: 1.6; color: rgba(245,245,250,0.62); max-width: 56ch;">Three landing directions, three mascot concepts, one docs shell. Nothing here is finished — these exist so you can point at one instead of describing a vibe.</p>
+  </div>
+
+  <div style="height: 1px; background: rgba(245,245,250,0.1);"></div>
+
+  <div style="display: flex; flex-direction: column; gap: 18px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(245,245,250,0.4);">Page 1 — Directions</div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; gap: 14px; align-items: flex-start; padding: 16px; border: 1px solid rgba(245,245,250,0.12); border-radius: 12px; background: rgba(221,154,63,0.06);">
+        <div style="width: 34px; height: 34px; border-radius: 8px; background: #dd9a3f; flex-shrink: 0;"></div>
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <div style="font-size: 16px; font-weight: 700;">A · Amber Izakaya</div>
+          <div style="font-size: 13px; line-height: 1.55; color: rgba(245,245,250,0.6);">Leans on the name. 味醂 is sweet amber rice wine — warm near-black, editorial serif, craft-kitchen warmth. Reads human and memorable in a category that all looks the same.</div>
+          <div style="font-size: 12px; color: rgba(221,154,63,0.85);">Tradeoff: warmth can read &quot;food blog&quot; rather than &quot;systems tool&quot;. Nothing in the code is amber today.</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 14px; align-items: flex-start; padding: 16px; border: 1px solid rgba(109,109,240,0.35); border-radius: 12px; background: rgba(109,109,240,0.08);">
+        <div style="width: 34px; height: 34px; border-radius: 8px; background: #6d6df0; flex-shrink: 0;"></div>
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <div style="font-size: 16px; font-weight: 700;">B · Native Glass</div>
+          <div style="font-size: 13px; line-height: 1.55; color: rgba(245,245,250,0.6);">Extends what already ships. Indigo #6d6df0 and translucent white cards are literally in <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">examples/spotlight</span> and <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">liquid-glass</span> today. The site and the app match because they are the same palette.</div>
+          <div style="font-size: 12px; color: rgba(157,157,255,0.85);">Tradeoff: indigo-on-dark is the default dev-tool look. Differentiation has to come from the real app captures.</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 14px; align-items: flex-start; padding: 16px; border: 1px solid rgba(245,245,250,0.12); border-radius: 12px; background: rgba(255,77,31,0.06);">
+        <div style="width: 34px; height: 34px; border-radius: 8px; background: #ff4d1f; flex-shrink: 0;"></div>
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <div style="font-size: 16px; font-weight: 700;">C · Paper Terminal</div>
+          <div style="font-size: 13px; line-height: 1.55; color: rgba(245,245,250,0.6);">Light paper, black ink, one hot accent, mono everywhere, visible grid rules. The only light direction here. Says &quot;this is a tool, read the docs&quot; and refuses to sell.</div>
+          <div style="font-size: 12px; color: rgba(255,77,31,0.85);">Tradeoff: a dark app capture sitting on light paper needs careful framing or it looks pasted on.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(245,245,250,0.4);">Page 2 — Mascot</div>
+    <p style="margin: 0; font-size: 13px; line-height: 1.6; color: rgba(245,245,250,0.6);">Three concepts, drawn as flat geometry so they survive being 16px in a browser tab. Independent of the direction pick — any mascot recolors into any palette.</p>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+      <div style="padding: 12px; border: 1px solid rgba(245,245,250,0.12); border-radius: 10px; display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 13px; font-weight: 700;">Bottle</div>
+        <div style="font-size: 11px; line-height: 1.5; color: rgba(245,245,250,0.55);">The mirin bottle itself. Owns the name.</div>
+      </div>
+      <div style="padding: 12px; border: 1px solid rgba(245,245,250,0.12); border-radius: 10px; display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 13px; font-weight: 700;">Neko</div>
+        <div style="font-size: 11px; line-height: 1.5; color: rgba(245,245,250,0.55);">A cat, tying mirin to Netko Labs.</div>
+      </div>
+      <div style="padding: 12px; border: 1px solid rgba(245,245,250,0.12); border-radius: 10px; display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 13px; font-weight: 700;">Pane</div>
+        <div style="font-size: 11px; line-height: 1.5; color: rgba(245,245,250,0.55);">A living window. Owns the tech.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(245,245,250,0.4);">Page 3 — Docs</div>
+    <p style="margin: 0; font-size: 13px; line-height: 1.6; color: rgba(245,245,250,0.6);">Structural only — the Fumadocs three-column shell with mirin's real IA in it, drawn in neutral grey so it does not pre-decide the palette. It recolors once you pick A, B or C.</p>
+  </div>
+
+  <div style="margin-top: auto; padding: 16px; border-radius: 12px; background: rgba(245,245,250,0.04); border: 1px solid rgba(245,245,250,0.08);">
+    <div style="font-size: 13px; line-height: 1.6; color: rgba(245,245,250,0.7);">Pick a letter and a mascot. Next round is the full landing page at real fidelity, in one direction, with the real copy.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

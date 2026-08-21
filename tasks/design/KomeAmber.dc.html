@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #f0b45c; }
+  </style>
+</helmet>
+<div style="width: 760px; min-height: 880px; background: #16171c; color: #f2f2f5; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 36px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px;">
+
+  <div style="display: flex; flex-direction: column; gap: 7px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Kome &mdash; refined</div>
+    <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em;">A grain, mid-brew</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 1.65; color: rgba(242,242,245,0.62); max-width: 60ch;">Mirin is not rice. It is rice that has been <em style="color: rgba(242,242,245,0.85);">turned into something</em> &mdash; steamed <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">mochigome</span>, inoculated with kōji, brewed into sweet amber wine. So the grain fills with amber from the bottom, and the kōji bloom sits on its shoulder. The transformation is the logo.</p>
+  </div>
+
+  <div style="display: flex; align-items: center; justify-content: center; gap: 30px; padding: 26px; border-radius: 16px; background: radial-gradient(circle at 50% 40%, rgba(221,154,63,0.14), rgba(242,242,245,0.02)); border: 1px solid rgba(242,242,245,0.09);">
+    <svg width="250" height="250" viewBox="0 0 200 200" fill="none">
+      <defs>
+        <clipPath id="komeClip">
+          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/>
+        </clipPath>
+      </defs>
+      <ellipse cx="100" cy="176" rx="40" ry="6" fill="rgba(0,0,0,0.35)"/>
+      <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+      <g clip-path="url(#komeClip)">
+        <path d="M52 118h96v70H52z" fill="#dd9a3f"/>
+        <path d="M52 118q12-7 24 0t24 0 24 0 24 0v8H52z" fill="#e8ac54"/>
+      </g>
+      <path d="M100 34c7 12 12 26 12 42" stroke="rgba(20,18,15,0.14)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="127" cy="60" r="5" fill="rgba(221,154,63,0.5)"/>
+      <circle cx="136" cy="72" r="3.4" fill="rgba(221,154,63,0.38)"/>
+      <circle cx="120" cy="48" r="3" fill="rgba(221,154,63,0.3)"/>
+      <ellipse cx="86" cy="102" rx="6.5" ry="8.5" fill="#232830"/>
+      <ellipse cx="114" cy="102" rx="6.5" ry="8.5" fill="#232830"/>
+      <circle cx="87.8" cy="99" r="2.3" fill="#f7f4ec"/>
+      <circle cx="115.8" cy="99" r="2.3" fill="#f7f4ec"/>
+      <path d="M93 119q7 7 14 0" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+      <ellipse cx="72" cy="116" rx="6.5" ry="4" fill="rgba(221,154,63,0.45)"/>
+      <ellipse cx="128" cy="116" rx="6.5" ry="4" fill="rgba(221,154,63,0.45)"/>
+    </svg>
+
+    <div style="display: flex; flex-direction: column; gap: 12px; width: 210px;">
+      <div style="display: flex; gap: 10px; align-items: flex-start;">
+        <div style="width: 10px; height: 10px; border-radius: 3px; background: #f7f4ec; flex-shrink: 0; margin-top: 3px;"></div>
+        <div style="font-size: 12.5px; line-height: 1.5; color: rgba(242,242,245,0.7);"><strong style="color: #f2f2f5;">Rice body.</strong> Warm off-white, with the crease every grain has.</div>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: flex-start;">
+        <div style="width: 10px; height: 10px; border-radius: 3px; background: #dd9a3f; flex-shrink: 0; margin-top: 3px;"></div>
+        <div style="font-size: 12.5px; line-height: 1.5; color: rgba(242,242,245,0.7);"><strong style="color: #f2f2f5;">Amber level.</strong> The wine. Doubles as a progress fill.</div>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: flex-start;">
+        <div style="width: 10px; height: 10px; border-radius: 50%; background: rgba(221,154,63,0.5); flex-shrink: 0; margin-top: 3px;"></div>
+        <div style="font-size: 12.5px; line-height: 1.5; color: rgba(242,242,245,0.7);"><strong style="color: #f2f2f5;">Kōji bloom.</strong> Three spores. The step that makes it mirin.</div>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: flex-start;">
+        <div style="width: 10px; height: 10px; border-radius: 3px; background: #232830; border: 1px solid rgba(242,242,245,0.25); flex-shrink: 0; margin-top: 3px;"></div>
+        <div style="font-size: 12.5px; line-height: 1.5; color: rgba(242,242,245,0.7);"><strong style="color: #f2f2f5;">Face.</strong> Sits above the amber line, never inside it.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(242,242,245,0.4);">Expressions &mdash; the amber level carries the state</div>
+    <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px;">
+
+      <div style="padding: 14px 8px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 8px;">
+        <svg width="62" height="62" viewBox="0 0 200 200" fill="none">
+          <defs><clipPath id="c1"><path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/></clipPath></defs>
+          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+          <g clip-path="url(#c1)"><path d="M52 140h96v60H52z" fill="#dd9a3f"/></g>
+          <ellipse cx="86" cy="102" rx="6.5" ry="8.5" fill="#232830"/><ellipse cx="114" cy="102" rx="6.5" ry="8.5" fill="#232830"/>
+          <path d="M93 122h14" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: rgba(242,242,245,0.5); text-align: center;">idle</div>
+      </div>
+
+      <div style="padding: 14px 8px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 8px;">
+        <svg width="62" height="62" viewBox="0 0 200 200" fill="none">
+          <defs><clipPath id="c2"><path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/></clipPath></defs>
+          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+          <g clip-path="url(#c2)"><path d="M52 124h96v76H52z" fill="#dd9a3f"/><path d="M52 124q12-6 24 0t24 0 24 0 24 0v6H52z" fill="#e8ac54"/></g>
+          <path d="M78 100q8-7 16 0M106 100q8-7 16 0" stroke="#232830" stroke-width="3.4" stroke-linecap="round"/>
+          <path d="M92 120q8 7 16 0" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: rgba(242,242,245,0.5); text-align: center;">building</div>
+      </div>
+
+      <div style="padding: 14px 8px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 8px;">
+        <svg width="62" height="62" viewBox="0 0 200 200" fill="none">
+          <defs><clipPath id="c3"><path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/></clipPath></defs>
+          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+          <g clip-path="url(#c3)"><path d="M52 92h96v108H52z" fill="#dd9a3f"/><path d="M52 92q12-6 24 0t24 0 24 0 24 0v6H52z" fill="#e8ac54"/></g>
+          <path d="M78 100q8-8 16 0M106 100q8-8 16 0" stroke="#f7f4ec" stroke-width="3.6" stroke-linecap="round"/>
+          <path d="M88 118q12 11 24 0" stroke="#f7f4ec" stroke-width="3.4" stroke-linecap="round"/>
+        </svg>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: rgba(242,242,245,0.5); text-align: center;">shipped</div>
+      </div>
+
+      <div style="padding: 14px 8px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 8px;">
+        <svg width="62" height="62" viewBox="0 0 200 200" fill="none">
+          <defs><clipPath id="c4"><path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/></clipPath></defs>
+          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+          <g clip-path="url(#c4)"><path d="M52 150h96v50H52z" fill="#c2482c"/></g>
+          <path d="M78 96l14 14M92 96l-14 14M108 96l14 14M122 96l-14 14" stroke="#232830" stroke-width="4.6" stroke-linecap="round"/>
+          <path d="M92 126q8-7 16 0" stroke="#232830" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: rgba(242,242,245,0.5); text-align: center;">failed</div>
+      </div>
+
+      <div style="padding: 14px 8px; border-radius: 12px; border: 1px solid rgba(242,242,245,0.09); display: flex; flex-direction: column; align-items: center; gap: 8px;">
+        <svg width="62" height="62" viewBox="0 0 200 200" fill="none">
+          <defs><clipPath id="c5"><path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"/></clipPath></defs>
+          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" fill="#f7f4ec"/>
+          <g clip-path="url(#c5)"><path d="M52 132h96v68H52z" fill="rgba(221,154,63,0.55)"/></g>
+          <path d="M78 102q8 8 16 0M106 102q8 8 16 0" stroke="#232830" stroke-width="3.4" stroke-linecap="round"/>
+          <path d="M140 62q10 0 4 8t4 8" stroke="rgba(242,242,245,0.45)" stroke-width="3.4" stroke-linecap="round"/>
+        </svg>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: rgba(242,242,245,0.5); text-align: center;">sleeping</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="padding: 14px 16px; border-radius: 10px; background: rgba(221,154,63,0.09); border: 1px solid rgba(221,154,63,0.25); font-size: 13px; line-height: 1.6; color: rgba(242,242,245,0.8); margin-top: auto;"><strong style="color: #dd9a3f;">The idea worth keeping:</strong> the amber level is not decoration, it is a value. Empty grain at 0%, full at 100%, red when the build breaks. The mascot and the progress indicator are the same object.</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
