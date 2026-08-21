@@ -123,5 +123,17 @@
       "!electrobun-reference",
       "!cef-rs-reference"
     ]
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/docs/**"],
+      "linter": {
+        "rules": {
+          // TanStack Router splat params (`_splat`) and HTTP verb handlers (`GET`)
+          // are framework-mandated names, not ours to rename.
+          "style": { "useNamingConvention": "off" }
+        }
+      }
+    }
+  ]
 }
