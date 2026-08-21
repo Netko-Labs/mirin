@@ -49,7 +49,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 function Terminal({ lines }: { lines: { prompt?: boolean; text: string; dim?: boolean }[] }) {
   return (
     <div
-      className="overflow-hidden rounded-xl border"
+      className="overflow-hidden rounded-xl border text-left"
       style={{ borderColor: "rgba(247,244,236,0.14)", background: "#0f0c09" }}
     >
       <div

@@ -7,7 +7,8 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   server: {
-    port: 3000,
+    // honour an assigned PORT (preview harnesses, CI); 3000 when run by hand
+    port: Number(process.env.PORT) || 3000,
   },
   plugins: [
     fumadocsMdx(),
