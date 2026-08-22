@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+    @keyframes mirin-line { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+    @keyframes mirin-shot { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+    .mirin-line { animation: mirin-line 200ms ease-out both; }
+    .mirin-shot { animation: mirin-shot 320ms cubic-bezier(0.2, 0, 0.2, 1) both; }
+  </style>
+</helmet>
+<div style="width: 900px; min-height: 580px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 36px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;">
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Agent tooling</div>
+      <h2 style="margin: 0; font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 34px; line-height: 1.06;">Watch a check run.</h2>
+    </div>
+    <button onClick="{{ run }}" style="{{ runStyle }}">{{ runLabel }}</button>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1.25fr 1fr; gap: 18px; align-items: start;">
+
+    <div style="border-radius: 13px; border: 1px solid rgba(247,244,236,0.14); background: #0f0c09; overflow: hidden; min-height: 292px;">
+      <div style="padding: 11px 15px; border-bottom: 1px solid rgba(247,244,236,0.09); font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: rgba(247,244,236,0.5);">terminal</div>
+      <div style="padding: 16px 18px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 2;">
+        <div style="color: rgba(247,244,236,0.9);"><span style="color: #dd9a3f;">$</span> bunx mirin check --scenario ./check.ts</div>
+        <sc-for list="{{ lines }}" as="line" hint-placeholder-count="5">
+          <div class="mirin-line" style="{{ line.style }}">{{ line.text }}</div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 11px;">
+      <div style="border-radius: 13px; border: 1px solid rgba(247,244,236,0.14); background: rgba(247,244,236,0.03); overflow: hidden;">
+        <div style="padding: 11px 15px; border-bottom: 1px solid rgba(247,244,236,0.09); font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: rgba(247,244,236,0.5);">{{ artifactLabel }}</div>
+        <div style="height: 190px; display: flex; align-items: center; justify-content: center; padding: 16px;">
+          <sc-if value="{{ hasShot }}" hint-placeholder-val="{{ true }}">
+            <div class="mirin-shot" style="width: 100%; border-radius: 9px; border: 1px solid rgba(247,244,236,0.16); background: #1c1712; overflow: hidden;">
+              <div style="display: flex; gap: 5px; padding: 8px 10px; border-bottom: 1px solid rgba(247,244,236,0.08);">
+                <span style="width: 7px; height: 7px; border-radius: 50%; background: #ff5f57;"></span>
+                <span style="width: 7px; height: 7px; border-radius: 50%; background: #febc2e;"></span>
+                <span style="width: 7px; height: 7px; border-radius: 50%; background: #28c840;"></span>
+              </div>
+              <div style="padding: 14px; display: flex; flex-direction: column; gap: 7px;">
+                <div style="height: 8px; width: 60%; border-radius: 4px; background: rgba(247,244,236,0.3);"></div>
+                <div style="height: 8px; width: 85%; border-radius: 4px; background: rgba(247,244,236,0.15);"></div>
+                <div style="height: 8px; width: 45%; border-radius: 4px; background: rgba(221,154,63,0.5);"></div>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ noShot }}" hint-placeholder-val="{{ true }}">
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: rgba(247,244,236,0.25);">nothing captured yet</div>
+          </sc-if>
+        </div>
+      </div>
+      <div style="{{ exitStyle }}">{{ exitText }}</div>
+    </div>
+  </div>
+
+  <div style="margin-top: auto; padding: 15px 17px; border-radius: 11px; background: rgba(247,244,236,0.04); border: 1px solid rgba(247,244,236,0.1); font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.72);">Every run leaves the same three things behind: a screenshot, an accessibility snapshot, and <span style="font-family: 'JetBrains Mono', monospace; font-size: 12.5px;">events.jsonl</span>. That is what an agent reads instead of asking you what happened.</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { step: 0, running: false };
+    this.timers = [];
+  }
+
+  componentWillUnmount() {
+    this.timers.forEach(clearTimeout);
+  }
+
+  renderVals() {
+    const SCRIPT = [
+      { text: '● brewing… bundling main process', tone: 'amber' },
+      { text: '✓ window ready — 1 of 1', tone: 'ok' },
+      { text: '✓ scenario — todo added, list length 1', tone: 'ok' },
+      { text: '✓ screenshot — w1.png', tone: 'ok' },
+      { text: '✓ no renderer errors', tone: 'ok' },
+      { text: '  .mirin/dev/20260821-1042/events.jsonl', tone: 'dim' },
+    ];
+
+    const run = () => {
+      this.timers.forEach(clearTimeout);
+      this.timers = [];
+      this.setState({ step: 0, running: true });
+      SCRIPT.forEach((_, i) => {
+        this.timers.push(
+          setTimeout(() => {
+            this.setState({ step: i + 1, running: i + 1 < SCRIPT.length });
+          }, 420 * (i + 1)),
+        );
+      });
+    };
+
+    const step = this.state.step;
+    const tones = {
+      amber: 'color: #dd9a3f;',
+      ok: 'color: rgba(247,244,236,0.75);',
+      dim: 'color: rgba(247,244,236,0.4);',
+    };
+    const lines = SCRIPT.slice(0, step).map((l) => ({ text: l.text, style: tones[l.tone] }));
+
+    const done = step >= SCRIPT.length;
+    const hasShot = step >= 4;
+
+    return {
+      run,
+      lines,
+      hasShot,
+      noShot: !hasShot,
+      runLabel: this.state.running ? 'Running…' : done ? 'Run again' : 'Run check',
+      runStyle:
+        'padding: 11px 20px; border-radius: 9px; border: none; font-family: Space Grotesk, system-ui, sans-serif; font-weight: 700; font-size: 14px; cursor: pointer; transition: opacity 150ms ease; ' +
+        'background: #dd9a3f; color: #14100c;' +
+        (this.state.running ? ' opacity: 0.6;' : ''),
+      artifactLabel: hasShot ? 'screenshots/w1.png' : 'screenshots/',
+      exitStyle:
+        'padding: 12px 15px; border-radius: 10px; font-family: JetBrains Mono, monospace; font-size: 12px; transition: all 200ms ease; ' +
+        (done
+          ? 'background: rgba(79,138,91,0.12); border: 1px solid rgba(79,138,91,0.4); color: #7cb98c;'
+          : 'background: rgba(247,244,236,0.03); border: 1px solid rgba(247,244,236,0.1); color: rgba(247,244,236,0.35);'),
+      exitText: done ? 'exit 0 — nothing broke' : 'exit code pending',
+    };
+  }
+}
+</script>
+</body>
+</html>

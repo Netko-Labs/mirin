@@ -1,0 +1,176 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 900px; min-height: 620px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 36px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px;">
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Platform support</div>
+    <h2 style="margin: 0; font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 34px; line-height: 1.06;">Pick your target. Get the gaps.</h2>
+  </div>
+
+  <div style="display: flex; gap: 8px;">
+    <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="3">
+      <button onClick="{{ tab.pick }}" style="{{ tab.style }}">
+        <span style="font-size: 14px; font-weight: 700;">{{ tab.name }}</span>
+        <span style="{{ tab.badgeStyle }}">{{ tab.badge }}</span>
+      </button>
+    </sc-for>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03);">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: rgba(247,244,236,0.5);">{{ arch }}</div>
+    <div style="font-size: 14.5px; line-height: 1.6; color: rgba(247,244,236,0.78);">{{ summary }}</div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+    <sc-for list="{{ features }}" as="feature" hint-placeholder-count="8">
+      <div style="{{ feature.style }}">
+        <div style="display: flex; align-items: center; gap: 9px;">
+          <span style="{{ feature.dotStyle }}"></span>
+          <span style="font-size: 13.5px; flex-grow: 1;">{{ feature.name }}</span>
+          <span style="{{ feature.tagStyle }}">{{ feature.tag }}</span>
+        </div>
+        <sc-if value="{{ feature.hasNote }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 6px; padding-left: 18px; font-size: 12px; line-height: 1.5; color: rgba(247,244,236,0.5);">{{ feature.note }}</div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="margin-top: auto; padding: 15px 17px; border-radius: 11px; {{ warnStyle }}">{{ warning }}</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { platform: 'macos' };
+  }
+
+  renderVals() {
+    const DATA = {
+      macos: {
+        name: 'macOS', badge: 'most exercised', arch: 'arm64 · Apple Silicon only',
+        summary: 'The platform Mirin is developed on. Every app-shell capability lands here first.',
+        warning: 'Liquid Glass needs macOS 26 or newer; below that a window falls back to frosted vibrancy rather than failing. Intel is not built, and App Store packaging is not implemented.',
+        tone: 'info',
+        features: {
+          'Windows and controls': 'yes', 'Custom title bar': 'yes', 'Typed RPC': 'yes',
+          'Application menu': 'yes', 'Tray': 'yes', 'Dialogs': 'yes', 'Clipboard': 'yes',
+          'Global shortcuts': 'yes', 'Deep links': 'yes', 'Transparency and materials': 'yes',
+          'Installers': 'DMG', 'Updater': 'full + delta',
+        },
+        notes: { 'Transparency and materials': 'Liquid Glass, HUD, sidebar, popover, vibrancy' },
+      },
+      windows: {
+        name: 'Windows', badge: 'implemented', arch: 'x64 · arm64 · Windows 10 and 11',
+        summary: 'Every app-shell capability is implemented, and less exercised than macOS. Expect rough edges and report them.',
+        warning: 'No application menu bar — frameless apps put menus in the UI, so setApplicationMenu is a no-op. The .exe file icon in Explorer is unset, and the updater in-place swap is implemented but not verified end to end.',
+        tone: 'warn',
+        features: {
+          'Windows and controls': 'yes', 'Custom title bar': 'yes', 'Typed RPC': 'yes',
+          'Application menu': 'no', 'Tray': 'yes', 'Dialogs': 'yes', 'Clipboard': 'yes',
+          'Global shortcuts': 'yes', 'Deep links': 'yes', 'Transparency and materials': 'yes',
+          'Installers': 'Inno · NSIS · zip', 'Updater': 'unverified',
+        },
+        notes: {
+          'Custom title bar': 'aero snap and double-click-to-maximize work',
+          'Transparency and materials': 'layered window with a DWM acrylic backdrop',
+          'Application menu': 'popup and context menus do work',
+        },
+      },
+      linux: {
+        name: 'Linux', badge: 'core loop only', arch: 'x64 · arm64 · X11',
+        summary: 'Window, dev, build and release are complete. Several app-shell features are not ported, and they no-op rather than throw.',
+        warning: 'Transparency is not a small gap here: a windowed X11 CEF browser is always opaque, and the off-screen path the other platforms use does not exist on Linux. Do not design a Linux UI around a transparent window.',
+        tone: 'error',
+        features: {
+          'Windows and controls': 'yes', 'Custom title bar': 'yes', 'Typed RPC': 'yes',
+          'Application menu': 'no', 'Tray': 'no', 'Dialogs': 'no', 'Clipboard': 'no',
+          'Global shortcuts': 'no', 'Deep links': 'no', 'Transparency and materials': 'no',
+          'Installers': 'AppImage · deb · rpm', 'Updater': 'yes',
+        },
+        notes: {
+          'Tray': 'needs StatusNotifierItem', 'Dialogs': 'needs xdg-desktop-portal',
+          'Deep links': 'needs .desktop MIME registration',
+        },
+      },
+    };
+
+    const active = this.state.platform;
+    const d = DATA[active];
+
+    const tabs = Object.keys(DATA).map((id) => {
+      const on = id === active;
+      return {
+        name: DATA[id].name,
+        badge: DATA[id].badge,
+        pick: () => this.setState({ platform: id }),
+        style:
+          'display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 13px 18px; border-radius: 11px; cursor: pointer; text-align: left; transition: all 160ms ease; font-family: Space Grotesk, system-ui, sans-serif; ' +
+          (on
+            ? 'background: rgba(221,154,63,0.12); border: 1px solid rgba(221,154,63,0.5); color: #f7f4ec;'
+            : 'background: transparent; border: 1px solid rgba(247,244,236,0.12); color: rgba(247,244,236,0.6);'),
+        badgeStyle:
+          'font-family: JetBrains Mono, monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; ' +
+          (on ? 'color: #dd9a3f;' : 'color: rgba(247,244,236,0.35);'),
+      };
+    });
+
+    const features = Object.keys(d.features).map((name) => {
+      const value = d.features[name];
+      const missing = value === 'no';
+      const plain = value === 'yes';
+      const note = d.notes[name];
+      return {
+        name,
+        tag: plain ? 'yes' : missing ? 'not yet' : value,
+        hasNote: Boolean(note),
+        note: note || '',
+        style:
+          'padding: 12px 14px; border-radius: 10px; border: 1px solid ' +
+          (missing ? 'rgba(194,72,44,0.3)' : 'rgba(247,244,236,0.1)') +
+          '; background: ' +
+          (missing ? 'rgba(194,72,44,0.06)' : 'rgba(247,244,236,0.025)') +
+          ';',
+        dotStyle:
+          'width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: ' +
+          (missing ? '#c2482c' : plain ? '#4f8a5b' : '#dd9a3f') + ';',
+        tagStyle:
+          'font-family: JetBrains Mono, monospace; font-size: 10.5px; ' +
+          (missing ? 'color: #c2482c;' : plain ? 'color: rgba(247,244,236,0.4);' : 'color: #dd9a3f;'),
+      };
+    });
+
+    const warnTones = {
+      info: 'background: rgba(247,244,236,0.04); border: 1px solid rgba(247,244,236,0.1); color: rgba(247,244,236,0.72);',
+      warn: 'background: rgba(221,154,63,0.08); border: 1px solid rgba(221,154,63,0.3); color: rgba(247,244,236,0.8);',
+      error: 'background: rgba(194,72,44,0.09); border: 1px solid rgba(194,72,44,0.35); color: rgba(247,244,236,0.85);',
+    };
+
+    return {
+      tabs,
+      features,
+      arch: d.arch,
+      summary: d.summary,
+      warning: d.warning,
+      warnStyle: 'font-size: 13px; line-height: 1.6; ' + warnTones[d.tone],
+    };
+  }
+}
+</script>
+</body>
+</html>

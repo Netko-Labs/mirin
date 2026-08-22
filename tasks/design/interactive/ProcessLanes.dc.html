@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 900px; min-height: 560px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 36px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;">
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Process model</div>
+      <h2 style="margin: 0; font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 34px; line-height: 1.06;">You write in one lane.</h2>
+    </div>
+    <div style="display: flex; gap: 7px;">
+      <button onClick="{{ showAll }}" style="{{ allBtnStyle }}">All four</button>
+      <button onClick="{{ showYours }}" style="{{ yoursBtnStyle }}">Only yours</button>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <sc-for list="{{ lanes }}" as="lane" hint-placeholder-count="4">
+      <div onClick="{{ lane.pick }}" style="{{ lane.style }}">
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <div style="{{ lane.dotStyle }}"></div>
+          <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 17px; font-weight: 700;">{{ lane.name }}</span>
+              <span style="{{ lane.tagStyle }}">{{ lane.tag }}</span>
+            </div>
+            <div style="font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.6);">{{ lane.what }}</div>
+          </div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.35); white-space: nowrap;">{{ lane.lang }}</div>
+        </div>
+        <sc-if value="{{ lane.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 13px; padding-top: 13px; border-top: 1px solid rgba(247,244,236,0.1); display: flex; flex-direction: column; gap: 7px;">
+            <sc-for list="{{ lane.details }}" as="detail" hint-placeholder-count="3">
+              <div style="display: flex; gap: 10px; align-items: baseline;">
+                <span style="width: 5px; height: 5px; border-radius: 50%; background: rgba(221,154,63,0.7); flex-shrink: 0;"></span>
+                <span style="font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.72);">{{ detail }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="margin-top: auto; padding: 15px 17px; border-radius: 11px; background: rgba(221,154,63,0.08); border: 1px solid rgba(221,154,63,0.25); font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.78);">{{ footnote }}</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { open: 'worker', filter: 'all' };
+  }
+
+  renderVals() {
+    const LANES = [
+      {
+        id: 'worker', name: 'Your main process', tag: 'yours', lang: 'TypeScript',
+        what: 'Your code, in a Bun worker. Everything native is invoked from here.',
+        details: [
+          'Full Bun: Bun.*, bun:ffi, workers, sidecars, the filesystem, the network.',
+          'Not the main thread — a slow handler here never freezes the window.',
+          'Window and menu calls post a UI task rather than touching the platform.',
+        ],
+      },
+      {
+        id: 'renderer', name: 'Your UI', tag: 'yours', lang: 'any web stack',
+        what: 'A Chromium renderer with no privileged access. Talks over typed RPC.',
+        details: [
+          'Vite with HMR in dev; served from the bundle over app:// in a build.',
+          'No native access by design — that boundary is the security model.',
+        ],
+      },
+      {
+        id: 'host', name: 'Mirin host', tag: 'ours', lang: 'Bun-compiled',
+        what: 'Owns the process main thread and the UI loop.',
+        details: [
+          'Every AppKit, Win32 and Xlib call happens here, because they must.',
+          'Starts your worker, pumps the event queue back to it.',
+        ],
+      },
+      {
+        id: 'core', name: 'libmirin_core + CEF', tag: 'ours', lang: 'Rust',
+        what: 'Native windowing, the CEF browser process, and the FFI surface.',
+        details: [
+          'Ships prebuilt for every supported target — no Rust toolchain to install.',
+          'Events reach your worker through a polled queue, never a callback across FFI.',
+        ],
+      },
+    ];
+
+    const filter = this.state.filter;
+    const visible = filter === 'yours' ? LANES.filter((l) => l.tag === 'yours') : LANES;
+
+    const lanes = visible.map((lane) => {
+      const open = this.state.open === lane.id;
+      const yours = lane.tag === 'yours';
+      const border = open
+        ? (yours ? 'rgba(221,154,63,0.5)' : 'rgba(247,244,236,0.3)')
+        : (yours ? 'rgba(221,154,63,0.28)' : 'rgba(247,244,236,0.12)');
+      return {
+        ...lane,
+        open,
+        pick: () => this.setState({ open: open ? null : lane.id }),
+        style:
+          'padding: 17px 19px; border-radius: 13px; cursor: pointer; transition: border-color 160ms ease, background 160ms ease; ' +
+          'border: 1px solid ' + border + '; background: ' +
+          (yours ? 'rgba(221,154,63,0.07)' : 'rgba(247,244,236,0.03)') + ';',
+        dotStyle:
+          'width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: ' +
+          (yours ? '#dd9a3f' : 'rgba(247,244,236,0.3)') + ';',
+        tagStyle:
+          'font-family: JetBrains Mono, monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; ' +
+          (yours
+            ? 'background: rgba(221,154,63,0.18); color: #dd9a3f;'
+            : 'background: rgba(247,244,236,0.07); color: rgba(247,244,236,0.45);'),
+      };
+    });
+
+    const btn = (on) =>
+      'padding: 8px 14px; border-radius: 8px; font-family: Space Grotesk, system-ui, sans-serif; font-size: 13px; cursor: pointer; transition: all 160ms ease; ' +
+      (on
+        ? 'background: #dd9a3f; color: #14100c; border: 1px solid #dd9a3f; font-weight: 700;'
+        : 'background: transparent; color: rgba(247,244,236,0.7); border: 1px solid rgba(247,244,236,0.18);');
+
+    return {
+      lanes,
+      showAll: () => this.setState({ filter: 'all' }),
+      showYours: () => this.setState({ filter: 'yours' }),
+      allBtnStyle: btn(filter === 'all'),
+      yoursBtnStyle: btn(filter === 'yours'),
+      footnote:
+        filter === 'yours'
+          ? 'Two of the four are yours, and both are code you already know how to write.'
+          : 'Two lanes are yours, two ship with Mirin. Tap any lane for what runs there.',
+    };
+  }
+}
+</script>
+</body>
+</html>

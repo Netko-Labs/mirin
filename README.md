@@ -1,10 +1,21 @@
-# mirin
+<div align="center">
 
-**Build desktop apps with Bun, TypeScript, and Chromium.**
+<img src="packages/docs/public/kome.svg" alt="Kome, the Mirin mascot — a grain of rice filled with amber" width="88" height="88">
+
+# Mirin
+
+**Desktop apps, brewed in Bun.**
+
+[Docs](https://mirin.netko.dev) · [Examples](#examples) · [llms.txt](https://mirin.netko.dev/llms.txt)
+
+</div>
 
 Mirin is a desktop application framework in the spirit of Electron, built natively around the [Bun](https://bun.sh) runtime. Your app's main process is Bun — full `Bun.*` APIs, `bun:ffi`, Bun's bundler and test runner — and your UI is real Chromium via [CEF](https://github.com/chromiumembedded/cef) on every platform.
 
-## Why mirin
+Three spellings, three different things: **Mirin** is the product, `mirinjs` is the npm package, `mirin` is the binary.
+
+## Why Mirin
+
 
 - **Bun-native, permanently.** Bun is not a compatibility layer or a phase — it is the runtime. The main process API is designed around Bun idioms (top-level await, typed FFI, Workers), not ported from Node.
 - **One engine everywhere.** CEF (Chromium) is the engine on macOS, Windows, and Linux. Identical rendering, identical devtools, identical web platform across every install. A WebView2 option on Windows remains a future size optimization.
@@ -87,6 +98,18 @@ matrix.
 Not yet built (toward Electron/electrobun parity): multi-webview windows,
 user preload scripts, session/cookie controls, payload encryption or a CEF IPC
 replacement for the RPC data plane, and a WebView2 option on Windows.
+
+## Brand
+
+Mirin (味醂) is sweet amber rice wine, and the identity follows the ingredient
+rather than the category. **Kome** — a grain of rice filled with amber to the
+brew line, with a face — is both the logo and the mascot; there is no separate
+abstract mark. Amber `#dd9a3f` is the only accent, every neutral is warm, and
+the display serif belongs to marketing while the docs stay in the interface
+sans.
+
+The full brand book, the docs site and the landing page all live at
+[mirin.netko.dev](https://mirin.netko.dev), built from `packages/docs`.
 
 ## Prior art & credits
 

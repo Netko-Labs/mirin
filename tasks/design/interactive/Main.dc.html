@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #dd9a3f; } a:hover { color: #ecbe7a; }
+  </style>
+</helmet>
+<div style="width: 760px; min-height: 900px; background: #14100c; color: #f7f4ec; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 44px; box-sizing: border-box; display: flex; flex-direction: column; gap: 28px;">
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #dd9a3f;">Five explainers &mdash; all live, all pokeable</div>
+    <h1 style="margin: 0; font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 42px; line-height: 1.06;">Show the mechanism, don't describe it.</h1>
+    <p style="margin: 0; font-size: 15px; line-height: 1.65; color: rgba(247,244,236,0.65); max-width: 58ch;">Mirin's three hard-to-explain ideas are all <em style="color: rgba(247,244,236,0.9);">motion</em> — a call crossing a process boundary, a window being described rather than constructed, a check driving an app you cannot see. Prose loses to a thing you can click.</p>
+  </div>
+
+  <div style="height: 1px; background: rgba(247,244,236,0.1);"></div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: flex; gap: 14px; padding: 16px; border-radius: 12px; border: 1px solid rgba(221,154,63,0.3); background: rgba(221,154,63,0.07);">
+      <div style="width: 30px; height: 30px; border-radius: 8px; background: rgba(221,154,63,0.25); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #dd9a3f;">1</div>
+      <div style="display: flex; flex-direction: column; gap: 5px;">
+        <div style="font-size: 16px; font-weight: 700;">RPC round trip</div>
+        <div style="font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.62);">Click the call site and watch it cross to the Bun process and come back typed. The differentiator, animated.</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(221,154,63,0.8);">landing &middot; guides/typed-rpc</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 14px; padding: 16px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03);">
+      <div style="width: 30px; height: 30px; border-radius: 8px; background: rgba(247,244,236,0.07); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: rgba(247,244,236,0.6);">2</div>
+      <div style="display: flex; flex-direction: column; gap: 5px;">
+        <div style="font-size: 16px; font-weight: 700;">Process lanes</div>
+        <div style="font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.62);">Four processes, one of which is yours. Hover a lane to see what runs there; the point lands without a paragraph.</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.4);">landing &middot; concepts/process-model</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 14px; padding: 16px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03);">
+      <div style="width: 30px; height: 30px; border-radius: 8px; background: rgba(247,244,236,0.07); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: rgba(247,244,236,0.6);">3</div>
+      <div style="display: flex; flex-direction: column; gap: 5px;">
+        <div style="font-size: 16px; font-weight: 700;">Config to window</div>
+        <div style="font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.62);">Flip options in the manifest and the window redraws beside it. Declarative stops being a claim.</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.4);">guides/windows &middot; reference/config</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 14px; padding: 16px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03);">
+      <div style="width: 30px; height: 30px; border-radius: 8px; background: rgba(247,244,236,0.07); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: rgba(247,244,236,0.6);">4</div>
+      <div style="display: flex; flex-direction: column; gap: 5px;">
+        <div style="font-size: 16px; font-weight: 700;">Check run</div>
+        <div style="font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.62);">Press run and the output streams, ending in a screenshot. The agent story is a loop, so show the loop.</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.4);">landing &middot; agents/check</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 14px; padding: 16px; border-radius: 12px; border: 1px solid rgba(247,244,236,0.12); background: rgba(247,244,236,0.03);">
+      <div style="width: 30px; height: 30px; border-radius: 8px; background: rgba(247,244,236,0.07); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: rgba(247,244,236,0.6);">5</div>
+      <div style="display: flex; flex-direction: column; gap: 5px;">
+        <div style="font-size: 16px; font-weight: 700;">Platform picker</div>
+        <div style="font-size: 13px; line-height: 1.55; color: rgba(247,244,236,0.62);">Pick your target, get its real gaps. A 14-row parity table nobody reads becomes one honest answer.</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,244,236,0.4);">platforms/*</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: auto; display: flex; flex-direction: column; gap: 10px;">
+    <div style="padding: 15px 17px; border-radius: 11px; background: rgba(247,244,236,0.04); border: 1px solid rgba(247,244,236,0.1); font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.7);"><strong style="color: #f7f4ec;">Motion budget:</strong> every animation here is triggered by the reader, never on scroll and never on a loop. Nothing moves until someone asks it to &mdash; docs that twitch while you read them are worse than static ones.</div>
+    <div style="padding: 15px 17px; border-radius: 11px; background: rgba(247,244,236,0.04); border: 1px solid rgba(247,244,236,0.1); font-size: 13px; line-height: 1.6; color: rgba(247,244,236,0.7);"><strong style="color: #f7f4ec;">All five degrade:</strong> each is a real component with a static first frame, so a reader with reduced motion or no JS still gets the diagram.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

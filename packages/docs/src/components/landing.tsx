@@ -1,5 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Code } from "@/components/code";
+import { CheckRun } from "@/components/explainers/check-run";
+import { RpcFlow } from "@/components/explainers/rpc-flow";
 import { Kome } from "@/components/kome";
 
 const AMBER = "#dd9a3f";
@@ -18,7 +20,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Terminal({ sample, label = "terminal" }: { sample: "install" | "check"; label?: string }) {
+function Terminal({ sample, label = "terminal" }: { sample: "install"; label?: string }) {
   return (
     <div
       className="overflow-hidden rounded-xl border text-left"
@@ -122,16 +124,7 @@ export function Landing() {
               — no codegen step, no channel strings, no drift between the two halves of your app.
             </p>
           </div>
-          <div className="flex flex-col gap-3">
-            <CodeCard file="main/rpc.ts" sample="router" />
-            <div
-              className="text-center text-[10px] uppercase tracking-[0.1em]"
-              style={{ ...mono, color: "rgba(221,154,63,0.85)" }}
-            >
-              ↓ type only
-            </div>
-            <CodeCard file="ui/api.ts" sample="client" />
-          </div>
+          <RpcFlow />
         </div>
       </section>
 
@@ -140,7 +133,7 @@ export function Landing() {
         style={{ borderColor: "rgba(247,244,236,0.1)", background: "rgba(247,244,236,0.03)" }}
       >
         <div className="mx-auto grid max-w-[1180px] items-center gap-16 md:grid-cols-[1fr_400px]">
-          <Terminal sample="check" />
+          <CheckRun />
           <div className="flex flex-col gap-4">
             <Eyebrow>Agent tooling</Eyebrow>
             <h2 style={serif} className="text-[46px] leading-[1.06]">
@@ -225,23 +218,6 @@ export function Landing() {
         </div>
       </footer>
     </main>
-  );
-}
-
-function CodeCard({ file, sample }: { file: string; sample: "router" | "client" }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl border"
-      style={{ borderColor: "rgba(247,244,236,0.14)", background: "#0f0c09" }}
-    >
-      <div
-        className="border-b px-4 py-3 text-[12px]"
-        style={{ ...mono, borderColor: "rgba(247,244,236,0.09)", color: "rgba(247,244,236,0.6)" }}
-      >
-        {file}
-      </div>
-      <Code sample={sample} />
-    </div>
   );
 }
 

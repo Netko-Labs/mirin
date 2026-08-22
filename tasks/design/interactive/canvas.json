@@ -1,0 +1,55 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 760, "h": 900, "title": "The set" },
+    {
+      "file": "RpcFlow.dc.html",
+      "x": 840,
+      "y": 0,
+      "w": 900,
+      "h": 620,
+      "title": "1 · RPC round trip"
+    },
+    {
+      "file": "ProcessLanes.dc.html",
+      "x": 1820,
+      "y": 0,
+      "w": 900,
+      "h": 560,
+      "title": "2 · Process lanes"
+    },
+    {
+      "file": "WindowPlayground.dc.html",
+      "x": 840,
+      "y": 700,
+      "w": 900,
+      "h": 620,
+      "title": "3 · Config to window"
+    },
+    {
+      "file": "CheckRun.dc.html",
+      "x": 1820,
+      "y": 700,
+      "w": 900,
+      "h": 580,
+      "title": "4 · Check run"
+    },
+    {
+      "file": "PlatformPicker.dc.html",
+      "x": 2800,
+      "y": 0,
+      "w": 900,
+      "h": 620,
+      "title": "5 · Platform picker"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "poke-them",
+      "x": 840,
+      "y": -120,
+      "w": 560,
+      "text": "These are live, not mockups — press the buttons.\nEvery animation is reader-triggered: nothing moves on scroll, nothing loops. Docs that twitch while you read them are worse than static ones."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}
