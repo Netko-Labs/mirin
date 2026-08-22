@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { Code } from "@/components/code";
 import { Kome } from "@/components/kome";
 
 const AMBER = "#dd9a3f";
@@ -17,7 +18,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Terminal({ lines }: { lines: { prompt?: boolean; text: string; dim?: boolean }[] }) {
+function Terminal({ sample, label = "terminal" }: { sample: "install" | "check"; label?: string }) {
   return (
     <div
       className="overflow-hidden rounded-xl border text-left"
@@ -27,16 +28,9 @@ function Terminal({ lines }: { lines: { prompt?: boolean; text: string; dim?: bo
         className="border-b px-4 py-3 text-[12px]"
         style={{ ...mono, borderColor: "rgba(247,244,236,0.09)", color: "rgba(247,244,236,0.5)" }}
       >
-        terminal
+        {label}
       </div>
-      <div className="px-5 py-4 text-[13px] leading-[2]" style={mono}>
-        {lines.map((line) => (
-          <div key={line.text} style={{ color: line.dim ? "rgba(247,244,236,0.55)" : RICE }}>
-            {line.prompt ? <span style={{ color: AMBER }}>$ </span> : "  "}
-            {line.text}
-          </div>
-        ))}
-      </div>
+      <Code sample={sample} />
     </div>
   );
 }
@@ -94,12 +88,7 @@ export function Landing() {
             Typed RPC between them, and a CLI your coding agent can actually drive.
           </p>
           <div className="mt-2 w-full max-w-[420px]">
-            <Terminal
-              lines={[
-                { prompt: true, text: "bun create mirinjs my-app" },
-                { prompt: true, text: "bun run dev" },
-              ]}
-            />
+            <Terminal label="three commands, one window" sample="install" />
           </div>
           <div className="flex gap-3">
             <Link
@@ -134,30 +123,14 @@ export function Landing() {
             </p>
           </div>
           <div className="flex flex-col gap-3">
-            <CodeCard
-              file="main/rpc.ts"
-              lines={[
-                "export const router = rpc.router({",
-                "  greet: rpc.query(async (name: string) =>",
-                "    `Hello, ${name}!`),",
-                "  tick: rpc.event<{ count: number }>(),",
-                "})",
-              ]}
-            />
+            <CodeCard file="main/rpc.ts" sample="router" />
             <div
               className="text-center text-[10px] uppercase tracking-[0.1em]"
               style={{ ...mono, color: "rgba(221,154,63,0.85)" }}
             >
               ↓ type only
             </div>
-            <CodeCard
-              file="ui/api.ts"
-              lines={[
-                "export const api = client<Router>()",
-                "await api.greet('world')   // Promise<string>, inferred",
-                "api.tick.on(({ count }) => setTicks(count))",
-              ]}
-            />
+            <CodeCard file="ui/api.ts" sample="client" />
           </div>
         </div>
       </section>
@@ -167,16 +140,7 @@ export function Landing() {
         style={{ borderColor: "rgba(247,244,236,0.1)", background: "rgba(247,244,236,0.03)" }}
       >
         <div className="mx-auto grid max-w-[1180px] items-center gap-16 md:grid-cols-[1fr_400px]">
-          <Terminal
-            lines={[
-              { prompt: true, text: "bunx mirin check --scenario ./check.ts" },
-              { text: "✓ window ready — 1 of 1", dim: true },
-              { text: "✓ scenario — todo added, list length 1", dim: true },
-              { text: "✓ screenshot — w1.png", dim: true },
-              { text: "✓ no renderer errors", dim: true },
-              { text: ".mirin/dev/20260821-1042/events.jsonl", dim: true },
-            ]}
-          />
+          <Terminal sample="check" />
           <div className="flex flex-col gap-4">
             <Eyebrow>Agent tooling</Eyebrow>
             <h2 style={serif} className="text-[46px] leading-[1.06]">
@@ -264,7 +228,7 @@ export function Landing() {
   );
 }
 
-function CodeCard({ file, lines }: { file: string; lines: string[] }) {
+function CodeCard({ file, sample }: { file: string; sample: "router" | "client" }) {
   return (
     <div
       className="overflow-hidden rounded-xl border"
@@ -276,11 +240,7 @@ function CodeCard({ file, lines }: { file: string; lines: string[] }) {
       >
         {file}
       </div>
-      <div className="overflow-x-auto px-5 py-4 text-[13px] leading-[1.9]" style={mono}>
-        {lines.map((line) => (
-          <div key={line}>{line}</div>
-        ))}
-      </div>
+      <Code sample={sample} />
     </div>
   );
 }

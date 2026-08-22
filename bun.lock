@@ -108,6 +108,7 @@
         "lucide-react": "^1.31.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
+        "shiki": "4.4.3",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.5.8",
