@@ -76,10 +76,10 @@ From the brand book, restated where the writing happens:
 - **Errors and API text get zero personality.** Cause, then the exact fix command.
 - **Vocabulary is fixed**: main process / renderer / native core / typed RPC / window.
   Not backend, frontend, binding, webview, or screen.
-- **The product is `MirinJs`** in prose, titles and the wordmark. Lowercase
-  `mirinjs` is the npm package and import specifier; `mirin` is the binary.
-  Three spellings, three different things — this supersedes the brand book's
-  all-lowercase rule, which the owner overruled.
+- **The product is `Mirin`** in prose, titles and the wordmark — capitalised,
+  no JS suffix. Lowercase `mirinjs` is the npm package and import specifier;
+  `mirin` is the binary. Three spellings, three different things. This
+  supersedes the brand book's all-lowercase rule.
 - **Brewing language never appears in docs prose.** It lives on the landing page, in
   CLI flavour text, and in release posts.
 

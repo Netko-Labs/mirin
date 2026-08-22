@@ -1,4 +1,4 @@
-export const appName = "MirinJs";
+export const appName = "Mirin";
 export const docsRoute = "/docs";
 export const docsImageRoute = "/og/docs";
 

@@ -1,11 +1,11 @@
 ---
-title: MirinJs
+title: Mirin
 description: A desktop app framework where the main process is Bun and the UI is real Chromium.
 ---
 
-MirinJs builds desktop applications whose main process is Bun — not Node, not a
+Mirin builds desktop applications whose main process is Bun — not Node, not a
 compatibility layer — and whose UI is real Chromium on macOS, Windows and Linux.
-The native layer between them is Rust, and it ships prebuilt, so using MirinJs
+The native layer between them is Rust, and it ships prebuilt, so using Mirin
 never means installing a Rust toolchain.
 
 ```bash
@@ -33,7 +33,7 @@ Be honest with yourself about these before you start:
 
 - **You need the smallest possible binary.** Chromium ships with your app.
   Tauri's system webview will always produce a smaller download.
-- **You need one code path for desktop and mobile.** MirinJs is desktop only,
+- **You need one code path for desktop and mobile.** Mirin is desktop only,
   with no plans to change that.
 - **You need a stable API today.** See below.
 
@@ -52,5 +52,5 @@ will still move between versions.
 ## Where to go next
 
 - [Install](/docs/start/install) then [create an app](/docs/start/create-an-app) — about ten minutes.
-- [Typed RPC](/docs/guides/typed-rpc) — the part of MirinJs that is genuinely different.
-- [Agents and MirinJs](/docs/agents) — if a coding agent is going to be writing this app with you.
+- [Typed RPC](/docs/guides/typed-rpc) — the part of Mirin that is genuinely different.
+- [Agents and Mirin](/docs/agents) — if a coding agent is going to be writing this app with you.

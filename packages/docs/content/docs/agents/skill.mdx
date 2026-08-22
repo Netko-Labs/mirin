@@ -7,7 +7,7 @@ description: What mirin skill installs, and why keeping it fresh matters more th
 bunx mirin skill
 ```
 
-Installs the MirinJs agent skill into `.claude/skills/mirin`. New projects get
+Installs the Mirin agent skill into `.claude/skills/mirin`. New projects get
 it from `mirin init` already.
 
 ## Why it exists
@@ -17,7 +17,7 @@ source it happens to read, and fills the gaps with something plausible from a
 framework it knows better. The results compile and are wrong.
 
 The skill states the API, the CLI, the layout and the verification loop
-directly, so the agent works from what MirinJs *is* rather than from what
+directly, so the agent works from what Mirin *is* rather than from what
 Electron was.
 
 ## What it contains
@@ -26,11 +26,11 @@ Electron was.
 - The CLI commands, flags and exit codes.
 - The verification loop — how to run `mirin check`, and where the event stream,
   screenshots and post-mortem land.
-- The conventions a MirinJs project follows.
+- The conventions a Mirin project follows.
 
 ## Keep it current
 
-The skill ships with the CLI, so it moves when MirinJs moves. Re-run
+The skill ships with the CLI, so it moves when Mirin moves. Re-run
 `mirin skill` after upgrading.
 
 <Callout type="error">

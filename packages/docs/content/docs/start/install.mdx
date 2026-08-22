@@ -17,17 +17,17 @@ xcode-select --install
 ## No Rust toolchain
 
 The native core is Rust, but it ships prebuilt as a platform package for every
-supported target. You need a Rust toolchain only to work on MirinJs itself.
+supported target. You need a Rust toolchain only to work on Mirin itself.
 
 ## The CEF runtime
 
 The first `mirin dev` or `mirin build` downloads the pinned Chromium Embedded
 Framework — several hundred megabytes — into `~/.mirinjs/cef/<version-platform>/`.
-It is downloaded once per MirinJs version and shared across every project on the
+It is downloaded once per Mirin version and shared across every project on the
 machine.
 
 <Callout type="info">
-In ephemeral CI, cache `~/.mirinjs/cef` keyed by MirinJs version and runner
+In ephemeral CI, cache `~/.mirinjs/cef` keyed by Mirin version and runner
 platform. Without it, every job re-downloads and re-unpacks the same runtime.
 </Callout>
 

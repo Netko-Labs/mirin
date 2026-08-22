@@ -28,7 +28,7 @@ export const Route = createFileRoute("/docs/$")({
   head: ({ loaderData }) => ({
     meta: loaderData
       ? [
-          { title: `${loaderData.title} — MirinJs` },
+          { title: `${loaderData.title} — Mirin` },
           { name: "description", content: loaderData.description },
         ]
       : [],

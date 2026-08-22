@@ -47,7 +47,7 @@ export function Landing() {
       <header className="mx-auto flex max-w-[1180px] items-center justify-between px-6 py-5">
         <div className="flex items-center gap-3">
           <Kome />
-          <span className="text-[20px] font-bold tracking-[-0.045em]">MirinJs</span>
+          <span className="text-[20px] font-bold tracking-[-0.045em]">Mirin</span>
         </div>
         <nav
           className="flex items-center gap-7 text-[14.5px]"
@@ -184,7 +184,7 @@ export function Landing() {
             </h2>
             <p className="text-[16px] leading-[1.65]" style={{ color: "rgba(247,244,236,0.65)" }}>
               Most desktop frameworks are a black box to a coding agent — it writes, you run, you
-              describe what happened. MirinJs closes that loop.
+              describe what happened. Mirin closes that loop.
             </p>
             <Link
               to="/docs/$"
@@ -200,7 +200,7 @@ export function Landing() {
 
       <section className="mx-auto max-w-[1180px] px-6 py-24">
         <h2 style={serif} className="mb-8 text-[46px] leading-[1.06]">
-          Built with MirinJs
+          Built with Mirin
         </h2>
         <div className="grid gap-4 md:grid-cols-2">
           <AppCard
@@ -249,7 +249,7 @@ export function Landing() {
         >
           <div className="flex items-center gap-2.5">
             <Kome size={18} />
-            <span>MirinJs — Netko Labs, MIT</span>
+            <span>Mirin — Netko Labs, MIT</span>
           </div>
           <div className="flex gap-6">
             <Link to="/docs/$" params={{ _splat: "" }}>

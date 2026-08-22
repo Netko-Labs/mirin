@@ -9,7 +9,7 @@ report them.
 
 ## Windows and title bars
 
-Frameless windows are the native path: MirinJs handles `WM_NCCALCSIZE` and keeps
+Frameless windows are the native path: Mirin handles `WM_NCCALCSIZE` and keeps
 the DWM shadow. Dragging works through your CSS `-webkit-app-region` regions,
 double-click on a drag region toggles maximize, and the OS move loop gives you
 aero snap — drag to the top to maximize, to an edge to half-tile.
@@ -36,14 +36,14 @@ Updater artifacts are emitted either way.
 ## GPU selection
 
 The default D3D11 ANGLE backend fails inside the GPU process on some hybrid-GPU
-laptops. MirinJs detects multi-GPU machines and selects the `gl` backend
+laptops. Mirin detects multi-GPU machines and selects the `gl` backend
 automatically; single-GPU machines keep Chromium's D3D11 default. Override with
 `MIRIN_ANGLE=<backend>` if you need to.
 
 ## Known gaps
 
 - **No application menu bar.** Windows apps with a frameless title bar put menus
-  in the UI, and MirinJs follows that — `menu.setApplicationMenu` is a no-op.
+  in the UI, and Mirin follows that — `menu.setApplicationMenu` is a no-op.
   Popup and context menus work.
 - **The `.exe` file icon in Explorer** is not set. The window, taskbar and
   Alt-Tab icons are. Bun's `--compile` has no icon flag, so this needs `rcedit`.
