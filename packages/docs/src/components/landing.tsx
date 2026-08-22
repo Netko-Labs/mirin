@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { Kome } from "@/components/kome";
 
 const AMBER = "#dd9a3f";
 const INK = "#14100c";
@@ -7,36 +8,6 @@ const RICE = "#f7f4ec";
 const sans = { fontFamily: "'Space Grotesk', system-ui, sans-serif" };
 const serif = { fontFamily: "'Instrument Serif', Georgia, serif" };
 const mono = { fontFamily: "'JetBrains Mono', ui-monospace, monospace" };
-
-function Kome({ size = 28 }: { size?: number }) {
-  const id = `kome-${size}`;
-  return (
-    <svg width={size} height={size} viewBox="0 0 200 200" fill="none" aria-hidden>
-      <title>Kome</title>
-      <defs>
-        <clipPath id={id}>
-          <path d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z" />
-        </clipPath>
-      </defs>
-      <path
-        d="M100 20c9 14 22 32 30 50 6 14 9 27 9 40 0 33-17 54-39 54s-39-21-39-54c0-13 3-26 9-40 8-18 21-36 30-50z"
-        fill={RICE}
-      />
-      <g clipPath={`url(#${id})`}>
-        <path d="M52 118h96v82H52z" fill={AMBER} />
-      </g>
-      <ellipse cx="85" cy="100" rx="7.5" ry="9.5" fill="#232830" />
-      <ellipse cx="115" cy="100" rx="7.5" ry="9.5" fill="#232830" />
-      <path
-        d="M92 118q8 8 16 0"
-        stroke="#232830"
-        strokeWidth="3.6"
-        strokeLinecap="round"
-        fill="none"
-      />
-    </svg>
-  );
-}
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
@@ -76,7 +47,7 @@ export function Landing() {
       <header className="mx-auto flex max-w-[1180px] items-center justify-between px-6 py-5">
         <div className="flex items-center gap-3">
           <Kome />
-          <span className="text-[20px] font-bold tracking-[-0.045em]">mirinjs</span>
+          <span className="text-[20px] font-bold tracking-[-0.045em]">MirinJs</span>
         </div>
         <nav
           className="flex items-center gap-7 text-[14.5px]"
@@ -213,7 +184,7 @@ export function Landing() {
             </h2>
             <p className="text-[16px] leading-[1.65]" style={{ color: "rgba(247,244,236,0.65)" }}>
               Most desktop frameworks are a black box to a coding agent — it writes, you run, you
-              describe what happened. mirinjs closes that loop.
+              describe what happened. MirinJs closes that loop.
             </p>
             <Link
               to="/docs/$"
@@ -229,7 +200,7 @@ export function Landing() {
 
       <section className="mx-auto max-w-[1180px] px-6 py-24">
         <h2 style={serif} className="mb-8 text-[46px] leading-[1.06]">
-          Built with mirinjs
+          Built with MirinJs
         </h2>
         <div className="grid gap-4 md:grid-cols-2">
           <AppCard
@@ -278,7 +249,7 @@ export function Landing() {
         >
           <div className="flex items-center gap-2.5">
             <Kome size={18} />
-            <span>mirinjs — Netko Labs, MIT</span>
+            <span>MirinJs — Netko Labs, MIT</span>
           </div>
           <div className="flex gap-6">
             <Link to="/docs/$" params={{ _splat: "" }}>

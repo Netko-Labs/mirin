@@ -14,7 +14,7 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "mirinjs — desktop apps, brewed in Bun",
+        title: "MirinJs — desktop apps, brewed in Bun",
       },
       {
         name: "description",

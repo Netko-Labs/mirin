@@ -3,7 +3,7 @@ title: Process model
 description: The host, the Bun Worker, the native core and the CEF subprocesses — and which one runs your code.
 ---
 
-An installed mirinjs app is one executable and several processes.
+An installed MirinJs app is one executable and several processes.
 
 ```txt
 your-app
@@ -38,7 +38,7 @@ their calls on that thread specifically. Splitting them means you can write an
 ordinary blocking loop in a handler without the app going grey.
 
 The cost is that your code cannot call platform APIs directly. It posts tasks
-instead, and mirinjs runs them on the UI thread for you — which is why every
+instead, and MirinJs runs them on the UI thread for you — which is why every
 window method is async.
 
 ## Threading rules

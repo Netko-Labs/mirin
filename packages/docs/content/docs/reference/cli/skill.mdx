@@ -7,7 +7,7 @@ description: Install the agent skill into an existing project.
 bunx mirin skill
 ```
 
-Installs the mirinjs agent skill into `.claude/skills/mirin`, so a coding agent
+Installs the MirinJs agent skill into `.claude/skills/mirin`, so a coding agent
 working in your repository knows the API, the CLI and the project layout without
 inferring them from your source.
 
@@ -19,11 +19,11 @@ New projects get this from [`mirin init`](/docs/reference/cli/init) already.
 - The CLI commands, their flags and their exit codes.
 - The verification loop: how to run `mirin check`, and where the event stream
   and screenshots land.
-- The conventions a mirinjs project follows.
+- The conventions a MirinJs project follows.
 
 ## Keeping it current
 
-The skill ships with the CLI, so it moves when mirinjs moves. Re-run
+The skill ships with the CLI, so it moves when MirinJs moves. Re-run
 `mirin skill` after upgrading — an agent working from a stale skill will
 confidently write code against an API that no longer exists.
 

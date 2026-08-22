@@ -1,4 +1,5 @@
 {
   "title": "Get started",
+  "icon": "Rocket",
   "pages": ["install", "create-an-app", "project-layout", "first-window", "dev-loop"]
 }

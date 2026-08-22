@@ -10,13 +10,13 @@ rather than burying them.
 ## Windowing
 
 Linux uses CEF Views with Xlib window management against the CEF window ID.
-mirinjs does not own a native toplevel window on this platform, which is a
+MirinJs does not own a native toplevel window on this platform, which is a
 deliberate difference from the Windows port.
 
 App identity comes from your config `id`: the last segment, lowercased, becomes
 the X11 `res_name`, and the full id the `res_class`. That is what desktop
 environments match against for taskbar grouping, so it must agree with the
-`.desktop` entry — which mirinjs generates for you.
+`.desktop` entry — which MirinJs generates for you.
 
 ## Packaging
 

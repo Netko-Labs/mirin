@@ -1,4 +1,5 @@
 {
   "title": "CLI",
+  "icon": "SquareTerminal",
   "pages": ["index", "dev", "build", "release", "init", "check", "doctor", "skill"]
 }

@@ -1,5 +1,6 @@
 {
   "title": "Guides",
+  "icon": "BookOpen",
   "pages": [
     "windows",
     "materials",

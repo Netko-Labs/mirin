@@ -1,4 +1,5 @@
 {
-  "title": "Reference",
+  "title": "API & CLI",
+  "icon": "Terminal",
   "pages": ["config", "cli", "api"]
 }

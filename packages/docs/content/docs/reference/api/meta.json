@@ -1,4 +1,5 @@
 {
   "title": "API",
+  "icon": "Braces",
   "pages": ["index", "app", "rpc", "client"]
 }

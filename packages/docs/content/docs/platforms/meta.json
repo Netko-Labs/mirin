@@ -1,4 +1,5 @@
 {
   "title": "Platforms",
+  "icon": "MonitorSmartphone",
   "pages": ["index", "macos", "windows", "linux"]
 }
