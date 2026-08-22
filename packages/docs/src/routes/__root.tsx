@@ -22,7 +22,10 @@ export const Route = createRootRoute({
           "A desktop app framework where the main process is Bun and the UI is real Chromium on macOS, Windows and Linux.",
       },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+    ],
   }),
   component: RootComponent,
 });

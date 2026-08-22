@@ -12,15 +12,69 @@ html > body[data-scroll-locked] {
   --removed-body-scroll-bar-size: 0px !important;
 }
 
-/* mirinjs brand — see tasks/docs-site.md and the brand book */
+/* ─── mirinjs brand ───────────────────────────────────────────────────────
+   Palette and type from the brand book. Amber is the only accent; every
+   neutral is warm — a pure grey anywhere in here is a bug. The display serif
+   is deliberately absent: it belongs to marketing, never to the docs.        */
 
-:root {
-  --mirin-ink: #14100c;
-  --mirin-ink-800: #1c1712;
-  --mirin-rice: #f7f4ec;
-  --mirin-amber: #dd9a3f;
-  --mirin-amber-deep: #8a4b12;
-  --font-display: "Instrument Serif", Georgia, serif;
+@theme {
   --font-sans: "Space Grotesk", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-mirin-ink: #14100c;
+  --color-mirin-rice: #f7f4ec;
+  --color-mirin-amber: #dd9a3f;
+  --color-mirin-amber-deep: #8a4b12;
+
+  --color-fd-background: #fcfaf4;
+  --color-fd-foreground: #14100c;
+  --color-fd-muted: #f2ede1;
+  --color-fd-muted-foreground: #5a5147;
+  --color-fd-popover: #fcfaf4;
+  --color-fd-popover-foreground: #14100c;
+  --color-fd-card: #f7f4ec;
+  --color-fd-card-foreground: #14100c;
+  --color-fd-border: rgba(20, 16, 12, 0.12);
+  --color-fd-primary: #8a4b12;
+  --color-fd-primary-foreground: #fcfaf4;
+  --color-fd-secondary: #f2ede1;
+  --color-fd-secondary-foreground: #14100c;
+  --color-fd-accent: rgba(221, 154, 63, 0.18);
+  --color-fd-accent-foreground: #14100c;
+  --color-fd-ring: #dd9a3f;
+}
+
+.dark {
+  --color-fd-background: #14100c;
+  --color-fd-foreground: #f7f4ec;
+  --color-fd-muted: #1c1712;
+  --color-fd-muted-foreground: rgba(247, 244, 236, 0.62);
+  --color-fd-popover: #1c1712;
+  --color-fd-popover-foreground: #f7f4ec;
+  --color-fd-card: #1a1510;
+  --color-fd-card-foreground: #f7f4ec;
+  --color-fd-border: rgba(247, 244, 236, 0.12);
+  --color-fd-primary: #dd9a3f;
+  --color-fd-primary-foreground: #14100c;
+  --color-fd-secondary: #1c1712;
+  --color-fd-secondary-foreground: #f7f4ec;
+  --color-fd-accent: rgba(221, 154, 63, 0.16);
+  --color-fd-accent-foreground: #f7f4ec;
+  --color-fd-ring: #dd9a3f;
+}
+
+/* The brand book has no warning colour: amber is the brand, so an amber
+   warning is indistinguishable from a link. Warnings borrow error, quieter. */
+@theme static {
+  --color-fd-info: #3f7f7a;
+  --color-fd-warning: #c2482c;
+  --color-fd-error: #c2482c;
+  --color-fd-success: #4f8a5b;
+}
+
+/* Headings tighten; body does not. */
+#nd-docs-layout h1,
+#nd-docs-layout h2,
+#nd-docs-layout h3 {
+  letter-spacing: -0.03em;
 }

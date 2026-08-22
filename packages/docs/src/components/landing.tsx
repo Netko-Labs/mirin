@@ -233,10 +233,14 @@ export function Landing() {
         </h2>
         <div className="grid gap-4 md:grid-cols-2">
           <AppCard
+            image="/anko.png"
+            alt="Anko, a SQL client, showing a connections sidebar and query tabs over a result grid"
             name="Anko"
             body="A SQL client for PostgreSQL, MySQL and SQLite, with authenticated MCP access so your coding agent queries the same databases you do."
           />
           <AppCard
+            image="/washi.png"
+            alt="Washi, a knowledge base, showing a note composed of cards beside a page sidebar"
             name="Washi"
             body="An agent-first knowledge base. Notes are JSX rendered by a component registry, so an agent can compose a page as precisely as a person can."
           />
@@ -310,17 +314,34 @@ function CodeCard({ file, lines }: { file: string; lines: string[] }) {
   );
 }
 
-function AppCard({ name, body }: { name: string; body: string }) {
+function AppCard({
+  name,
+  body,
+  image,
+  alt,
+}: {
+  name: string;
+  body: string;
+  image: string;
+  alt: string;
+}) {
   return (
     <div
       className="overflow-hidden rounded-2xl border"
       style={{ borderColor: "rgba(247,244,236,0.12)", background: "rgba(247,244,236,0.03)" }}
     >
       <div
-        className="flex h-[230px] items-center justify-center text-[11.5px]"
-        style={{ ...mono, background: "rgba(247,244,236,0.04)", color: "rgba(247,244,236,0.3)" }}
+        className="h-[240px] overflow-hidden border-b"
+        style={{ borderColor: "rgba(247,244,236,0.1)" }}
       >
-        [capture]
+        <img
+          src={image}
+          alt={alt}
+          loading="lazy"
+          width={1400}
+          height={240}
+          className="h-full w-full object-cover object-top"
+        />
       </div>
       <div className="flex flex-col gap-2 px-6 py-6">
         <div className="text-[22px] font-bold tracking-[-0.025em]">{name}</div>
