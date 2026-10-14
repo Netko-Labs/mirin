@@ -26,7 +26,8 @@
   },
   "overrides": {
     "postcss": "^8.5.25",
-    "nanoid": "^3.3.17"
+    "nanoid": "^3.3.17",
+    "compression": "1.8.2"
   },
   "packageManager": "bun@1.3.14"
 }
