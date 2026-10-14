@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use super::config::{WindowMaterial, WindowOpts};
 use super::handlers::MirinHandler;
+use super::notification::{self, NotificationSpec};
 use super::window::create_window_on_ui;
 #[cfg(target_os = "macos")]
 use super::window::material_opts;
@@ -39,6 +40,11 @@ pub(crate) fn post_quit() {
 
 pub(crate) fn post_set_dock_visible(visible: bool) {
     let mut task = SetDockVisibleTask::new(visible);
+    post_task(ThreadId::UI, Some(&mut task));
+}
+
+pub(crate) fn post_show_notification(spec: NotificationSpec) {
+    let mut task = ShowNotificationTask::new(RefCell::new(Some(spec)));
     post_task(ThreadId::UI, Some(&mut task));
 }
 
@@ -152,6 +158,22 @@ wrap_task! {
             win::close_all_windows();
             #[cfg(target_os = "linux")]
             linux::close_all_windows();
+        }
+    }
+}
+
+wrap_task! {
+    struct ShowNotificationTask {
+        spec: RefCell<Option<NotificationSpec>>,
+    }
+    impl Task {
+        fn execute(&self) {
+            debug_assert_ne!(currently_on(ThreadId::UI), 0);
+            if let Some(spec) = self.spec.borrow_mut().take() {
+                if !notification::deliver(&spec) {
+                    eprintln!("[mirin] the notification service rejected a notification");
+                }
+            }
         }
     }
 }

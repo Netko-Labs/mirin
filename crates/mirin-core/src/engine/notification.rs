@@ -5,12 +5,14 @@
 use notify_rust::Notification;
 use serde::Deserialize;
 
+use super::tasks;
+
 const MAX_TITLE_CHARS: usize = 128;
 const MAX_BODY_CHARS: usize = 512;
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct NotificationSpec {
+pub(crate) struct NotificationSpec {
     title: String,
     #[serde(default)]
     body: Option<String>,
@@ -32,13 +34,19 @@ fn parse_spec(spec_json: &str) -> Option<NotificationSpec> {
     Some(spec)
 }
 
-/// Display a desktop notification. Returns false when the payload is invalid
-/// or the host notification service rejects delivery.
+/// Queue a desktop notification. Returns false when the payload is invalid.
+/// Delivery happens on the UI thread: the macOS notification service must be
+/// driven from the main thread and can block, which would stall the Worker.
 pub fn notification_show(spec_json: String) -> bool {
     let Some(spec) = parse_spec(&spec_json) else {
         return false;
     };
+    tasks::post_show_notification(spec);
+    true
+}
 
+/// Hand the notification to the operating system. UI thread only.
+pub(crate) fn deliver(spec: &NotificationSpec) -> bool {
     let mut notification = Notification::new();
     notification.summary(spec.title.trim());
     if let Some(body) = spec.body.as_deref().filter(|body| !body.is_empty()) {
