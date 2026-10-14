@@ -174,7 +174,10 @@ relative to `Contents/Resources`. The host threads both dirs to the Worker throu
 **Resources** — `resources: { name: "path/to/dir" }`. Each directory is copied verbatim
 to `Contents/Resources/<name>` (`resources/<name>` on Windows/Linux) before signing and
 resolved at runtime with `resolveResource(name)`; `mirin dev` resolves to the source
-directory instead of staging a copy. Names follow the sidecar rule and paths must stay
+directory instead of staging a copy. When a Developer ID signs the bundle, every Mach-O
+file inside a resource directory (native addons, dylibs, helper executables; detected by
+header, not extension) is codesigned with the hardened runtime and a secure timestamp
+before the helpers and the outer app, so the bundle notarizes as a whole. Names follow the sidecar rule and paths must stay
 under the project root. This is how an app ships a bundled server next to a `bun`
 sidecar without compiling it into the Worker.
 
