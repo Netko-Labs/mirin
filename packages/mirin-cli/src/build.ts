@@ -9,6 +9,8 @@
  * from inside the bundle, and webviews load their `app://` URLs served from
  * Contents/Resources by the native scheme handler.
  *
+ * Release channel / feed: MIRIN_RELEASE_CHANNEL and MIRIN_RELEASE_BASE_URL override
+ * config.release so one config can produce stable and nightly builds.
  * Codesign identity: ad-hoc by default; set MIRIN_SIGN_IDENTITY to a Developer
  * ID to produce a distributable, notarizable app.
  */
@@ -186,8 +188,9 @@ export async function build(
   const bundleId: string = config.id ?? "dev.mirin.app";
   const mainEntry = join(projectDir, config.main ?? "main/main.ts");
   const version = opts.version ?? appVersion(projectDir);
-  const channel: string = config.release?.channel ?? "stable";
-  const baseUrl: string | undefined = config.release?.baseUrl;
+  // A release pipeline builds several channels from one config: the env wins.
+  const channel: string = process.env.MIRIN_RELEASE_CHANNEL || config.release?.channel || "stable";
+  const baseUrl: string | undefined = process.env.MIRIN_RELEASE_BASE_URL || config.release?.baseUrl;
   const releaseNotes: string | undefined = config.release?.notes;
   const dmg: boolean | import("mirinjs").DmgConfig = config.dmg ?? true;
   const nsis: boolean | import("mirinjs").NsisConfig = config.nsis ?? true;
