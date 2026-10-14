@@ -187,7 +187,10 @@ off the main-process API:
   `mirin.config.ts`, copied verbatim into the bundle (a packaged server, data
   files). Under `mirin dev` it resolves to the source directory. Mach-O files inside are
   codesigned with the bundle when a Developer ID is set.
-- `app.updater` for packaged apps built with `release.baseUrl`. `checkForUpdate()`
+- `app.updater` for packaged apps built with `release.baseUrl`. A release
+  pipeline overrides `release.channel` / `release.baseUrl` per build with
+  `MIRIN_RELEASE_CHANNEL` / `MIRIN_RELEASE_BASE_URL` (and the version with
+  `MIRIN_APP_VERSION`). `checkForUpdate()`
   reports the channel manifest only when its version is newer than the running
   one (loose semver: numeric segments, prerelease below release); an older or
   equal manifest, as after a rollback, is not offered.
