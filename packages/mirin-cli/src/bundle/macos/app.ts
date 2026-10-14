@@ -68,6 +68,8 @@ export interface BundleOptions {
     sidecars?: SidecarBundle[];
     /** Compiled extra-worker JS (name -> abs path) -> Resources/workers/<name>.js. */
     workers?: Record<string, string>;
+    /** Extra resource directories (name -> abs dir) copied verbatim -> Resources/<name>. */
+    extra?: { name: string; src: string }[];
   };
 }
 
@@ -291,6 +293,9 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
     for (const [name, src] of Object.entries(opts.resources.workers)) {
       cpSync(src, join(workersDir, `${name}.js`));
     }
+  }
+  for (const extra of opts.resources?.extra ?? []) {
+    cpSync(extra.src, join(resources, extra.name), { recursive: true });
   }
   // Sidecar binaries -> Resources/sidecars/<name> (chmod +x; signed below). Paths
   // collected here so the codesign loop can sign them inside-out with the app.

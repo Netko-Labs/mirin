@@ -183,6 +183,9 @@ off the main-process API:
 - `app.sidecar(name, opts)`, `resolveSidecar(name)`, and `resolveWorker(name)` for bundled sidecars and
   extra workers declared in `mirin.config.ts`; config names are safe filename
   segments and source paths are project-relative.
+- `resolveResource(name)` for directories declared under `resources` in
+  `mirin.config.ts`, copied verbatim into the bundle (a packaged server, data
+  files). Under `mirin dev` it resolves to the source directory.
 - `app.updater` for packaged apps built with `release.baseUrl`.
 - `devtools.event({ type, msg?, data? })` to publish a domain event into the
   development event stream, and `devtools.expose(name, () => state)` to publish live
