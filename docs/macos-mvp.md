@@ -26,7 +26,7 @@ Targets macOS 13+ (arm64 first, x64 builds once CI exists).
 - C ABI (lib.rs): `mirin_run`, `mirin_poll_event`, `mirin_set_rpc_endpoint`, `mirin_is_ready`, `mirin_window_create/close/load_url/set_title`, `mirin_app_quit`. Window registry keyed by id; close events route back by mapping browser→window.
 - `packages/mirin`: `app` singleton + `WindowHandle`, manifest-driven window opening on `core.ready`, typed events. Host bootstrap (`host.ts`) `bun build --compile`d into the bundle's `Contents/MacOS/<exe>`.
 - **Exit criteria — met:** manifest window opens from config; `app.on("ready")` fires; `window.closed`/`window-all-closed` deliver; quit tears everything down with **zero orphan helpers** (verified 6→0).
-- *Deferred:* per-window `loadUrl` on a live browser (needs the window→browser map exercised; M2.x).
+- Per-window `loadUrl` on a live browser: `WindowCommand::LoadUrl` resolves the browser through `MirinHandler::browser_for_window` and calls `main_frame().load_url` (landed 2026-10-14; the T3 Code port swaps its splash for the backend-served UI this way).
 
 ### M3 — Typed RPC — ✅ DONE (dev transport)
 - Preload bootstrap injected by `mirin-helper`'s render-process handler at V8-context creation, using rpc port/token/window-id from per-browser `extra_info`. Token-authenticated localhost WebSocket data plane to the Bun Worker (`RpcServer`).
@@ -143,7 +143,7 @@ differing digests are what prove a variant actually landed.
 1. Dialogs interactive test harness; updater runtime swap field testing across signed/notarized installs
 2. Payload encryption on the RPC plane, or a CEF-IPC RPC transport (message router) to avoid loopback-origin policy friction entirely
 3. User preload scripts; session/cookie controls
-4. Multi-webview windows (BrowserView equivalent); per-window `loadUrl`
+4. Multi-webview windows (BrowserView equivalent)
 5. Linux port
 6. Windows WebView2 option
 
