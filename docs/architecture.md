@@ -143,7 +143,9 @@ default):
 
 **Notifications** — `notification.show({ title, body? })` crosses the Bun FFI boundary
 as one validated JSON payload and delegates to the platform notification service via
-`notify-rust`. Delivery is best-effort and has no action/click lifecycle.
+`notify-rust`, on the UI thread once CEF's loop is running (the macOS service can
+block, which would stall the Worker) and on the caller's thread before that.
+Delivery is best-effort and has no action/click lifecycle.
 
 **Sidecars** — `sidecars: { name: "path/to/bin" | { bin, entitlements } }`. Each binary
 is copied to `Contents/Resources/sidecars/<name>`, `chmod +x`, and codesigned in the
