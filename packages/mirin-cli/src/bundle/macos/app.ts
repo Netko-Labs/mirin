@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { $ } from "bun";
 import { isIconComposerDoc, writeAppearanceCatalog } from "../../icons/macos/index.ts";
 import { pruneMacCefLocales } from "../shared/cef-locales.ts";
+import { findMachOFiles } from "./macho.ts";
 
 const FRAMEWORK = "Chromium Embedded Framework.framework";
 
@@ -294,8 +295,14 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
       cpSync(src, join(workersDir, `${name}.js`));
     }
   }
+  // Extra resource dirs -> Resources/<name>. Any Mach-O inside (a bundled server's
+  // native addons, helper executables) is signed below: notarization rejects
+  // unsigned code anywhere in the bundle.
+  const extraDirs: string[] = [];
   for (const extra of opts.resources?.extra ?? []) {
-    cpSync(extra.src, join(resources, extra.name), { recursive: true });
+    const dest = join(resources, extra.name);
+    cpSync(extra.src, dest, { recursive: true });
+    extraDirs.push(dest);
   }
   // Sidecar binaries -> Resources/sidecars/<name> (chmod +x; signed below). Paths
   // collected here so the codesign loop can sign them inside-out with the app.
@@ -389,6 +396,10 @@ export async function buildAppBundle(opts: BundleOptions): Promise<{ app: string
       } else {
         await sign(sc.src);
       }
+    }
+    // 3c. Mach-O files shipped inside resource dirs (.node addons, dylibs, CLIs).
+    for (const dir of extraDirs) {
+      for (const binary of findMachOFiles(dir)) await sign(binary);
     }
     // 4. each helper: the inner executable, then the .app wrapper (entitlements
     //    on both — the renderer/GPU helpers are what actually JIT).
