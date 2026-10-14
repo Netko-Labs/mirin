@@ -14,7 +14,9 @@
  * Every emitted line is also recorded to the devtools sink (docs/agent-devtools.md).
  */
 
+import { format } from "node:util";
 import { record } from "./devtools/sink.ts";
+import { writeLine } from "./shared/console.ts";
 import { firstError, formatArgs, formatStack } from "./shared/format.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
@@ -97,8 +99,7 @@ export class Logger {
     const name = this.#scope ? `[mirin:${this.#scope}]` : "[mirin]";
     const prefix = useColor ? `${COLOR.dim}${name}${COLOR.reset}` : name;
     const tag = useColor ? `${COLOR[level]}${level}${COLOR.reset}` : level;
-    const out = level === "warn" || level === "error" ? console.error : console.log;
-    out(`${prefix} ${tag}`, ...args);
+    writeLine(level === "warn" || level === "error" ? 2 : 1, `${prefix} ${tag} ${format(...args)}`);
     this.#record(level, args);
   }
 

@@ -10,6 +10,7 @@ import type { DevtoolsConfig, WindowConfig } from "./config/index.ts";
 import { parseDevtoolsConfig } from "./devtools/options.ts";
 import { Core } from "./native.ts";
 import { RpcServer } from "./rpc-server.ts";
+import { installWorkerConsole } from "./shared/console.ts";
 
 export interface ManifestWindowConfig extends WindowConfig {
   name: string;
@@ -152,6 +153,7 @@ export function boot(): void {
   };
   const corePath = data.corePath ?? process.env.MIRIN_CORE;
   if (!corePath) return; // not under the host; the API stays detached
+  installWorkerConsole();
   if (!claimBootSlot()) {
     console.error(
       "[mirin] refusing to boot a second mirinjs copy in this process — the bundle " +

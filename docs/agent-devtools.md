@@ -52,7 +52,7 @@ Sources and the types each produces:
 
 | `src` | Produced by | Types |
 | --- | --- | --- |
-| `main` | `logger`, Worker failures | `log`, `uncaughtException`, `unhandledRejection`, `devtools.*` |
+| `main` | `logger`, `console.*`, Worker failures | `log`, `console`, `uncaughtException`, `unhandledRejection`, `devtools.*` |
 | `renderer` | CEF display handler + CDP | `console`, `exception`, `log.entry`, `network.request`, `network.response`, `network.failed`, `navigation` |
 | `native` | the core's event queue | `window.created`, `window.closed`, `menu.click`, `dialog.result`, `shortcut.trigger`, … |
 | `rpc` | `RpcServer` | `rpc.request`, `rpc.response`, `rpc.error`, `rpc.control` |
@@ -522,6 +522,13 @@ reintroduces a bug this surface already had:
   credential can arrive by navigation, by deep link, or in a stack frame.
 
 ## Known gaps
+
+- **Worker `console` is rewired at boot.** Bun hands a Worker's console output to
+  the main thread, which is inside CEF's message loop for the life of the app, so
+  under the host nothing would ever print. `boot()` replaces `console.log/info/
+  debug/warn/error` with direct fd writes (stdout/stderr) that also record a `main`
+  `console` event. Other console methods (`table`, `group`, `time`) are untouched
+  and stay silent.
 
 - **Console output has no stack traces.** It comes from CEF's display handler,
   which reports text only. Uncaught errors also arrive as `exception` events from
