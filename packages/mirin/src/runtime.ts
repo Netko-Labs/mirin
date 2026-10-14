@@ -4,7 +4,7 @@
  * API lives in app/index.ts and the feature modules, which subscribe here.
  */
 
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { workerData } from "node:worker_threads";
 import type { DevtoolsConfig, WindowConfig } from "./config/index.ts";
 import { parseDevtoolsConfig } from "./devtools/options.ts";
@@ -32,6 +32,8 @@ export interface Runtime {
   sidecarDir?: string;
   /** Dir holding bundled extra-worker JS (for `resolveWorker`). */
   workersDir?: string;
+  /** Declared resource directories: source paths in dev, bundle-relative names in prod. */
+  resources: Record<string, string>;
   /** `devtools` block from the manifest, resolved by the devtools module. */
   devtools?: DevtoolsConfig;
 }
@@ -137,7 +139,11 @@ export function claimBootSlot(): boolean {
 export function boot(): void {
   const data = (workerData ?? {}) as {
     corePath?: string;
-    manifest?: { windows?: Record<string, WindowConfig>; devtools?: unknown };
+    manifest?: {
+      windows?: Record<string, WindowConfig>;
+      devtools?: unknown;
+      resources?: Record<string, string>;
+    };
     id?: string;
     devUrl?: string;
     resourcesDir?: string;
@@ -199,6 +205,7 @@ export function boot(): void {
     corePath,
     sidecarDir: data.sidecarDir,
     workersDir: data.workersDir,
+    resources: data.manifest?.resources ?? {},
     devtools: parseDevtoolsConfig(data.manifest?.devtools),
   };
   core.onEvent(dispatch);
@@ -210,6 +217,19 @@ export function boot(): void {
  * Works in `mirin dev` and the built `.app`. Extra workers run off the main
  * thread and must not call window/native APIs.
  */
+/**
+ * Resolve a bundled resource directory (declared in `mirin.config.ts` `resources`)
+ * to an absolute path. Under `mirin dev` this is the source directory; in a built
+ * app it lives under the bundle's resources directory.
+ */
+export function resolveResource(name: string): string {
+  const entry = current?.resources[name];
+  if (!current || entry === undefined) throw new NotAttachedError(`resolveResource("${name}")`);
+  if (isAbsolute(entry)) return entry;
+  if (!current.resourcesDir) throw new NotAttachedError(`resolveResource("${name}")`);
+  return join(current.resourcesDir, entry);
+}
+
 export function resolveWorker(name: string): string {
   const dir = current?.workersDir;
   if (!dir) throw new NotAttachedError("resolveWorker");

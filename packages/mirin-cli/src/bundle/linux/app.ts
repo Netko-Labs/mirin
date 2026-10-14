@@ -61,6 +61,8 @@ export interface LinuxBundleOptions {
     versionJson?: string; // serialized version.json → resources/version.json (updater)
     sidecars?: { name: string; src: string }[]; // → resources/sidecars/<name>
     workers?: Record<string, string>; // name → abs path → resources/workers/<name>.js
+    /** Extra resource directories (name -> abs dir) copied verbatim -> resources/<name>. */
+    extra?: { name: string; src: string }[];
   };
 }
 
@@ -233,6 +235,9 @@ export async function buildLinuxBundle(
       for (const [name, src] of Object.entries(opts.resources.workers)) {
         cpSync(src, join(workersDir, `${name}.js`));
       }
+    }
+    for (const extra of opts.resources?.extra ?? []) {
+      cpSync(extra.src, join(res, extra.name), { recursive: true });
     }
     if (opts.resources.sidecars?.length) {
       const sidecarsDir = join(res, "sidecars");

@@ -29,7 +29,7 @@ import { buildWindowsBundle } from "./bundle/windows/index.ts";
 const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
 
-import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { compileWorkers, normalizeResources, normalizeSidecars } from "./extras.ts";
 import { resolveIconFallback, resolveIconSource } from "./icons/sources.ts";
 import { createReporter } from "./shared/report.ts";
 import { DevSession } from "./shared/session.ts";
@@ -247,6 +247,10 @@ export async function dev(projectDir = process.cwd(), options?: DevOptions): Pro
         id: bundleId,
         windows: config.windows,
         devtools: config.devtools,
+        // Dev: resources resolve straight to their source directories.
+        resources: Object.fromEntries(
+          normalizeResources(projectDir, config.resources).map((r) => [r.name, r.src]),
+        ),
       }),
       // dev: true → enables inspect-element AND gives this run its own `-dev`
       // CEF cache dir, so `mirin dev` can run alongside the installed app.

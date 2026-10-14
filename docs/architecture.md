@@ -171,6 +171,13 @@ them via `MIRIN_SIDECAR_DIR` / `MIRIN_WORKERS_DIR`; prod resolves them in-bundle
 relative to `Contents/Resources`. The host threads both dirs to the Worker through
 `workerData` (see `host.ts`, `runtime.ts`).
 
+**Resources** — `resources: { name: "path/to/dir" }`. Each directory is copied verbatim
+to `Contents/Resources/<name>` (`resources/<name>` on Windows/Linux) before signing and
+resolved at runtime with `resolveResource(name)`; `mirin dev` resolves to the source
+directory instead of staging a copy. Names follow the sidecar rule and paths must stay
+under the project root. This is how an app ships a bundled server next to a `bun`
+sidecar without compiling it into the Worker.
+
 **Deep links** — `urlSchemes: ["anko"]` registers the app as the macOS handler for
 `anko://…` URLs (written to `Info.plist` `CFBundleURLTypes` by
 `bundle/macos/app.ts`). macOS

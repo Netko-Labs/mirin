@@ -5,7 +5,7 @@
  * place so the two CLI paths stay in sync.
  */
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { $ } from "bun";
 import { createReporter, type Reporter } from "./shared/report.ts";
@@ -13,6 +13,13 @@ import { createReporter, type Reporter } from "./shared/report.ts";
 /** Config shapes (mirrors packages/mirin/src/config/index.ts; CLI can't import the runtime). */
 export type SidecarConfig = Record<string, string | { bin: string; entitlements?: string[] }>;
 export type WorkersConfig = Record<string, string>;
+export type ResourcesConfig = Record<string, string>;
+
+/** A resource directory resolved to an absolute source path. */
+export interface NormalizedResource {
+  name: string;
+  src: string;
+}
 
 /** A sidecar resolved to an absolute source path + its requested entitlements. */
 export interface NormalizedSidecar {
@@ -51,6 +58,25 @@ function projectRelativePath(projectDir: string, file: string, label: string): s
     throw new Error(`[mirin] ${label} escapes the project root: ${file}`);
   }
   return full;
+}
+
+/** Resolve `config.resources` to absolute source directories. */
+export function normalizeResources(
+  projectDir: string,
+  resources: ResourcesConfig | undefined,
+): NormalizedResource[] {
+  return Object.entries(resources ?? {}).map(([name, dir]) => {
+    const safeName = safeExtraAssetName(name, "resource name");
+    const src = projectRelativePath(projectDir, dir, `resource "${safeName}" path`);
+    let isDirectory = false;
+    try {
+      isDirectory = statSync(src).isDirectory();
+    } catch {
+      isDirectory = false;
+    }
+    if (!isDirectory) throw new Error(`[mirin] resource "${safeName}" is not a directory: ${dir}`);
+    return { name: safeName, src };
+  });
 }
 
 /** Resolve `config.sidecars` to absolute source paths. */

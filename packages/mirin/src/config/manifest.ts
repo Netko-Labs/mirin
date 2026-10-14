@@ -184,6 +184,14 @@ export interface MirinConfig {
    */
   workers?: Record<string, string>;
   /**
+   * Extra directories bundled verbatim into the app (`Contents/Resources/<name>`
+   * on macOS, `resources/<name>` elsewhere), for assets the main process reads
+   * at runtime: a bundled server, templates, data files. Maps a filename-safe
+   * name to a project-relative directory. Resolve one with `resolveResource(name)`;
+   * under `mirin dev` it points at the source directory.
+   */
+  resources?: Record<string, string>;
+  /**
    * Custom URL schemes this app registers as a handler for (macOS
    * `CFBundleURLTypes`), e.g. `["anko"]` so `anko://…` links launch the app (or
    * focus it if already running). Incoming URLs are delivered to

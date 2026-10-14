@@ -62,7 +62,7 @@ export type { MenuItemTemplate, MenuRole } from "./menu.ts";
 export { menu } from "./menu.ts";
 export type { NotificationOptions } from "./notification.ts";
 export { notification } from "./notification.ts";
-export { NotAttachedError, resolveWorker } from "./runtime.ts";
+export { NotAttachedError, resolveResource, resolveWorker } from "./runtime.ts";
 export { globalShortcut } from "./shortcut.ts";
 export type { SidecarOptions, SidecarProcess } from "./sidecar.ts";
 export { resolveSidecar, sidecar } from "./sidecar.ts";

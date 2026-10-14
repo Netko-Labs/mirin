@@ -21,7 +21,7 @@ import { buildLinuxBundle } from "./bundle/linux/index.ts";
 import { buildAppBundle, stampMacSdk } from "./bundle/macos/index.ts";
 import { normalizeCefLocales } from "./bundle/shared/cef-locales.ts";
 import { buildWindowsBundle } from "./bundle/windows/index.ts";
-import { compileWorkers, normalizeSidecars } from "./extras.ts";
+import { compileWorkers, normalizeResources, normalizeSidecars } from "./extras.ts";
 import { resolveIconFallback, resolveIconSource } from "./icons/sources.ts";
 import { makeWindowsIcon } from "./icons/windows/index.ts";
 import { buildLinuxPackages, resolveLinuxFormats } from "./package/linux/index.ts";
@@ -213,6 +213,7 @@ export async function build(
   const hostExe = join(work, IS_WINDOWS ? "host-release.exe" : "host-release");
   const workerJs = join(work, "worker.release.js");
   const sidecars = normalizeSidecars(projectDir, config.sidecars);
+  const extraResources = normalizeResources(projectDir, config.resources);
   const hostBuild = (async (): Promise<void> => {
     // Bun's Windows arm64 build currently has no bun:ffi/TinyCC runtime. The
     // win32-arm64 Mirin package therefore carries an x64 compatibility payload,
@@ -256,9 +257,12 @@ export async function build(
       singleInstance: config.singleInstance,
       // Lets a diagnostic build opt in via `devtools.production`; otherwise fully off.
       devtools: config.devtools,
+      // Production: names resolve under the bundle resources directory.
+      resources: Object.fromEntries(extraResources.map((r) => [r.name, r.name])),
     }),
     versionJson,
     workers: extraWorkers,
+    extra: extraResources,
   };
   const { app } = IS_WINDOWS
     ? await buildWindowsBundle({
