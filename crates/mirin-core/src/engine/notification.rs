@@ -5,6 +5,7 @@
 use notify_rust::Notification;
 use serde::Deserialize;
 
+use super::state;
 use super::tasks;
 
 const MAX_TITLE_CHARS: usize = 128;
@@ -37,10 +38,15 @@ fn parse_spec(spec_json: &str) -> Option<NotificationSpec> {
 /// Queue a desktop notification. Returns false when the payload is invalid.
 /// Delivery happens on the UI thread: the macOS notification service must be
 /// driven from the main thread and can block, which would stall the Worker.
+/// Before CEF's loop runs there is no UI thread to post to (the release smoke
+/// dlopens the core alone), so the call delivers on the caller's thread.
 pub fn notification_show(spec_json: String) -> bool {
     let Some(spec) = parse_spec(&spec_json) else {
         return false;
     };
+    if !state::is_ready() {
+        return deliver(&spec);
+    }
     tasks::post_show_notification(spec);
     true
 }
