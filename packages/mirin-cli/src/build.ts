@@ -212,7 +212,8 @@ export async function build(
 
   // Host compilation, main Worker bundling, and extra Worker bundling are independent.
   console.log("[mirin build] compiling host + bundling workers…");
-  const signIdentity = process.env.MIRIN_SIGN_IDENTITY;
+  // An empty value (a CI job that exports it unconditionally) means ad-hoc, not an identity named "".
+  const signIdentity = process.env.MIRIN_SIGN_IDENTITY || undefined;
   const hostExe = join(work, IS_WINDOWS ? "host-release.exe" : "host-release");
   const workerJs = join(work, "worker.release.js");
   const sidecars = normalizeSidecars(projectDir, config.sidecars);
