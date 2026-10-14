@@ -25,6 +25,7 @@ import { downloadVerifiedArtifact, verifyFileSha256 } from "./lib/integrity.ts";
 import { parseManifest } from "./lib/manifest.ts";
 import { IS_LINUX, IS_MAC, IS_WINDOWS, platformName } from "./lib/platform.ts";
 import { artifactUrl, assertTrustedUpdateUrl, trustedBaseUrl } from "./lib/urls.ts";
+import { isNewerVersion } from "./lib/version.ts";
 import type {
   Listener,
   Manifest,
@@ -85,7 +86,7 @@ export class Updater {
         platform: platformName(),
         arch: process.arch,
       });
-      if (!m.version || m.version === v.version) {
+      if (!m.version || !isNewerVersion(m.version, v.version)) {
         this.#manifest = null;
         this.#setStatus("idle");
         return null;
