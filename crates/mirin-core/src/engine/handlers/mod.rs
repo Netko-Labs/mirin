@@ -191,24 +191,25 @@ impl MirinHandler {
         handler.window_ids.get(&ident).copied()
     }
 
+    /// The browser hosted by a mirin window, cloned out from under a short lock so
+    /// the caller can drive CEF without holding the handler mutex.
+    pub fn browser_for_window(this: &Arc<Mutex<Self>>, window_id: u32) -> Option<Browser> {
+        let handler = this.lock().expect("failed to lock MirinHandler");
+        let ident = handler
+            .window_ids
+            .iter()
+            .find(|(_, &wid)| wid == window_id)
+            .map(|(&ident, _)| ident)?;
+        handler
+            .browser_list
+            .iter()
+            .find(|b| b.identifier() == ident)
+            .cloned()
+    }
+
     #[cfg(target_os = "windows")]
     pub fn close_browser_for_window(this: &Arc<Mutex<Self>>, window_id: u32) {
-        let browser = {
-            let handler = this.lock().expect("failed to lock MirinHandler");
-            handler
-                .window_ids
-                .iter()
-                .find(|(_, &wid)| wid == window_id)
-                .map(|(&ident, _)| ident)
-                .and_then(|ident| {
-                    handler
-                        .browser_list
-                        .iter()
-                        .find(|b| b.identifier() == ident)
-                        .cloned()
-                })
-        };
-        if let Some(browser) = browser {
+        if let Some(browser) = Self::browser_for_window(this, window_id) {
             if let Some(host) = browser.host() {
                 host.close_browser(0);
             }

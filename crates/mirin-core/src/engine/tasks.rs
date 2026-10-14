@@ -103,8 +103,12 @@ wrap_task! {
                     }
                 }
                 WindowCommand::LoadUrl => {
-                    if let Some(_url) = self.arg.borrow().as_ref() {
-                        // M2: load_url on a specific browser; needs window->browser map.
+                    if let Some(url) = self.arg.borrow().as_ref() {
+                        let browser = MirinHandler::instance()
+                            .and_then(|handler| MirinHandler::browser_for_window(&handler, _id));
+                        if let Some(frame) = browser.and_then(|b| b.main_frame()) {
+                            frame.load_url(Some(&CefString::from(url.as_str())));
+                        }
                     }
                 }
                 WindowCommand::SetTitle => {
