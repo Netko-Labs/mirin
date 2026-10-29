@@ -47,10 +47,12 @@ crates/
   mirin-codec/      updater codec library and release executable
   mirin-core/       Rust native core loaded through Bun FFI
   mirin-helper/     CEF subprocess executable
+  mirin-metal/      Metal renderer: GPUI native UI without CEF (alpha, outside the workspace)
 packages/
   mirin/            public runtime package (`mirinjs`)
   mirin-cli/        CLI package (`@mirinjs/cli`)
   create-mirin/     scaffold package
+  mirin-metal/      `@mirinjs/metal`, the React renderer for Metal
   native-*/         prebuilt core, codec, and CEF helper packages
 examples/
   hello-react/      minimal happy-path app
@@ -59,6 +61,7 @@ docs/
   architecture.md   process/threading/CEF/IPC source of truth
   api-design.md     public API source of truth
   conventions.md    this rulebook
+  metal.md          Metal (CEF-free, GPUI) source of truth
 ```
 
 Target TypeScript package layout:

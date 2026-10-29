@@ -42,6 +42,31 @@ model:
   `libcef.so`, `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`,
   `chrome-sandbox`, …) via `export-cef-dir` (auto-selects the host Linux arch).
 
+### Fedora (primary Linux target)
+
+Verified 2026-10-29 on Nobara 44 (Fedora 44 base, KDE Plasma on Wayland, AMD
+RADV). Fedora is the first Linux distribution mirin targets; Debian/Ubuntu
+follow. Everything below is user-space except the dnf line.
+
+```sh
+sudo dnf install -y cmake ninja-build gcc-c++ libxkbcommon-devel \
+  libxkbcommon-x11-devel wayland-devel vulkan-loader-devel fontconfig-devel \
+  freetype-devel libxcb-devel libX11-devel gtk3-devel
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y -c clippy -c rustfmt
+bun scripts/fetch-cef.ts   # needs cargo on PATH: it installs export-cef-dir
+```
+
+- `rpm-build` ships with Fedora, but `mirin release` builds `.rpm` through
+  **fpm** (Ruby) and AppImage through **appimagetool**; both are missing on a
+  stock install (`gem install fpm`; appimagetool from its GitHub releases).
+- `bun` and `cargo` install under `~/.bun/bin` and `~/.cargo/bin`; non-login
+  shells (editor terminals, agents) may not have them on `PATH`.
+- `scripts/fetch-cef.ts` fails with `command not found: cargo` when rustup is
+  installed but not on the calling shell's `PATH`.
+- The Vulkan/XKB/Wayland dev packages are for the Metal renderer
+  (`docs/metal.md`), not CEF; they are listed here so one `dnf` line covers both
+  flavors.
+
 ## Windowing (`linux/window/mod.rs`)
 
 **CEF Views toplevel.** `MirinWindowDelegate` + `MirinBrowserViewDelegate` (via

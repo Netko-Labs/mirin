@@ -1,0 +1,29 @@
+# Alpha crate, intentionally excluded from the root workspace (see the root
+# Cargo.toml `exclude`): gpui's dependency tree is large and its platform
+# requirements (Vulkan on Linux, Metal on macOS, DirectX on Windows) are not yet
+# part of mirin's CI. Build it standalone: `cargo build` from this directory.
+[package]
+name = "mirin-metal"
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "mirin metal (alpha): GPU-rendered native UI for mirin apps, built on GPUI"
+
+# Keep the lockfile's `libc` at 0.2.186: gpui 0.2.2 pulls `xattr 0.2.3` (via
+# zed-async-tar), which no longer compiles against libc >= 0.2.190 on Linux.
+# After any `cargo update`, re-pin with `cargo update libc --precise 0.2.186`.
+[dependencies]
+gpui = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[example]]
+name = "hello"
+
+[[example]]
+name = "counter"
+
+[[bin]]
+name = "mirin-metal-host"
+path = "src/bin/host.rs"

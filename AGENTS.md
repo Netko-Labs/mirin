@@ -25,6 +25,8 @@ the same change.
   changes.
 - `docs/macos-mvp.md`, `docs/windows-port.md`, and `docs/linux-port.md` -
   milestone status, platform findings, and known gaps.
+- `docs/metal.md` - Metal, the CEF-free flavor: element-tree protocol, process
+  model decisions, platform findings, and milestone status.
 - `docs/agent-devtools.md` - the development observability surface: the structured
   event stream, `.mirin/dev/` session artifacts, the loopback inspector, the
   DevTools-protocol bridge, `mirin check` scenarios, `mirin check` / `mirin doctor`,
@@ -58,10 +60,14 @@ the same change.
 
 - `crates/mirin-core` - Rust native core (`cdylib` plus test/smoke binaries).
 - `crates/mirin-helper` - CEF subprocess executable.
+- `crates/mirin-metal` - Metal renderer: GPUI-rendered native UI, no CEF (alpha;
+  standalone, excluded from the Cargo workspace). See `docs/metal.md`.
 - `packages/mirin` - developer-facing runtime, RPC, client bridge, updater, and
   typed app APIs.
 - `packages/mirin-cli` - dev/build/release/init tooling.
 - `packages/create-mirin` - project scaffold package.
+- `packages/mirin-metal` - `@mirinjs/metal`, the React renderer for Metal (write
+  normal JSX, rendered as GPU UI through `crates/mirin-metal`).
 - `packages/native-*` - prebuilt native packages.
 - `examples/*` - real apps used for behavior checks and feature demos.
 - `docs/*` - architecture, API, platform, getting-started, and convention docs.
