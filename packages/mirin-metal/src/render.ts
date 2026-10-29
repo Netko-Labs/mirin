@@ -10,11 +10,11 @@ import { ConcurrentRoot } from "react-reconciler/constants";
 import { hostConfig } from "./lib/host-config.ts";
 import type { Container } from "./lib/instances.ts";
 import { type Handlers, serializeRoot } from "./lib/serialize.ts";
-import type { NativeRoot, NativeTransport } from "./types.ts";
+import type { NativeEvent, NativeRoot, NativeTransport } from "./types.ts";
 
 const reconciler = ReactReconciler(hostConfig);
 
-function reportError(error: Error): void {
+function reportError(error: unknown): void {
   console.error("[mirin-metal]", error);
 }
 
@@ -60,7 +60,15 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       transport.send(serialized.treeJson);
     },
   };
+  // A throwing handler is reported and the app keeps running, as in React DOM.
   transport.onEvent((event) => {
+    try {
+      dispatch(event);
+    } catch (error) {
+      reportError(error);
+    }
+  });
+  function dispatch(event: NativeEvent): void {
     switch (event.type) {
       case "press":
         handlers.press.get(event.nodeId)?.({ bounds: event.bounds });
@@ -88,7 +96,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       case "layout":
         break;
     }
-  });
+  }
 
   const root = reconciler.createContainer(
     container,

@@ -14,6 +14,12 @@ export interface SyntheticTarget {
   files?: never[];
   /** Window-pixel rect, for code that anchors to the clicked element. */
   getBoundingClientRect: () => DOMRectLike;
+  /** DOM traversal has no Metal equivalent: these find nothing. */
+  closest: (selector: string) => null;
+  querySelector: (selector: string) => null;
+  parentElement: null;
+  focus: () => void;
+  blur: () => void;
 }
 
 export interface DOMRectLike {
@@ -77,6 +83,11 @@ export function syntheticEvent(
     type: init.inputType,
     files: [],
     getBoundingClientRect: () => rect(init.bounds),
+    closest: () => null,
+    querySelector: () => null,
+    parentElement: null,
+    focus: () => {},
+    blur: () => {},
   };
   const event: SyntheticEvent = {
     type,

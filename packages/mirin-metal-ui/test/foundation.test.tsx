@@ -182,3 +182,47 @@ describe("w-fit", () => {
     h.unmount();
   });
 });
+
+describe("event handlers written for the DOM", () => {
+  test("DOM traversal finds nothing, and a throwing handler doesn't stop the app", async () => {
+    let closest: unknown = "unset";
+    let clicks = 0;
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    const h = await mount(
+      <ThemeProvider>
+        <button
+          type="button"
+          data-testid="traverse"
+          onClick={(event: { target: { closest: (selector: string) => unknown } }) => {
+            closest = event.target.closest("button");
+          }}
+        >
+          traverse
+        </button>
+        <button
+          type="button"
+          data-testid="throws"
+          onClick={() => {
+            clicks += 1;
+            throw new Error("handler failed");
+          }}
+        >
+          throws
+        </button>
+      </ThemeProvider>,
+    );
+    try {
+      await h.press("traverse");
+      expect(closest).toBeNull();
+      await h.press("throws");
+      await h.press("throws");
+      expect(clicks).toBe(2);
+      expect(errors.length).toBe(2);
+    } finally {
+      console.error = original;
+      h.unmount();
+    }
+  });
+});
