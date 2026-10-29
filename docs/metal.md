@@ -133,9 +133,11 @@ state and describes UI; the renderer is a pure function of the latest tree.
   through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds
   (only nodes painted in the latest frame), and `{"kind":"scroll","id","dy"}`
   scrolls a scroll view or virtualized list.
-- Virtualized lists: a vertical `scroll` view with 64 or more children, plain
+- Virtualized lists: a vertical `scroll` view with 64 or more rows in a plain
   column layout (stretch alignment, no wrap, no own interaction) renders as a
-  GPUI `list`. Only rows near the viewport are laid out and painted; row
+  GPUI `list`. The rows may sit inside up to four layout-only wrappers (only
+  padding, gap, and flex; e.g. `<ScrollArea><div className="p-4">…`), whose
+  padding is added to the list's. Only rows near the viewport are laid out and painted; row
   heights are cached across frames, and a new tree invalidates only the rows
   that changed. Horizontal padding moves onto each row, vertical padding
   scrolls with the rows.

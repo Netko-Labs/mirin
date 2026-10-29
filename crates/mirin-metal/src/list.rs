@@ -27,26 +27,129 @@ pub(crate) struct VirtualList {
     pub(crate) state: ListState,
     /// The rows, cloned from the tree when it changes (not per frame).
     rows: Rc<Vec<NodeSpec>>,
+    spacing: Spacing,
 }
 
-/// Whether a view renders as a virtualized list. Only plain vertical stacks
-/// qualify, so the list's row layout matches what the view would produce:
-/// full-width rows, top to bottom, no wrapping or cross-axis alignment.
-pub(crate) fn virtualizes(props: &ViewProps, children: &[NodeSpec]) -> bool {
-    props.scroll
-        && !props.scroll_x
-        && props.id.is_some()
-        && props.direction == Direction::Column
+/// Padding around the rows (summed over the container and any wrappers) and
+/// the gap between them.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Spacing {
+    gap: f32,
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+}
+
+impl Spacing {
+    /// Add a view's padding; per side wins over axis, axis over all, as in
+    /// `render.rs`.
+    fn add_padding(&mut self, props: &ViewProps) {
+        self.left += props
+            .padding_left
+            .or(props.padding_x)
+            .unwrap_or(props.padding);
+        self.right += props
+            .padding_right
+            .or(props.padding_x)
+            .unwrap_or(props.padding);
+        self.top += props
+            .padding_top
+            .or(props.padding_y)
+            .unwrap_or(props.padding);
+        self.bottom += props
+            .padding_bottom
+            .or(props.padding_y)
+            .unwrap_or(props.padding);
+    }
+}
+
+/// How deep to look through layout-only wrappers for the rows
+/// (`ScrollArea` viewport → app wrapper → rows).
+const MAX_WRAPPERS: usize = 4;
+
+/// The rows a view would virtualize, if it qualifies. Only vertical scroll
+/// views whose rows are a plain stack (full-width rows, top to bottom, no
+/// wrapping or cross-axis alignment) qualify, so the list lays rows out as
+/// the view would. Rows may sit inside layout-only wrappers, like
+/// `<ScrollArea><div className="p-4">{rows}</div></ScrollArea>`.
+fn find_rows<'a>(props: &ViewProps, children: &'a [NodeSpec]) -> Option<(&'a [NodeSpec], Spacing)> {
+    if !props.scroll
+        || props.scroll_x
+        || props.id.is_none()
+        || props.on_press
+        || props.on_hover
+        || props.on_pointer
+        || props.on_context_menu
+        || props.hover_background.is_some()
+    {
+        return None;
+    }
+    let mut spacing = Spacing::default();
+    spacing.add_padding(props);
+    let mut level = props;
+    let mut rows = children;
+    for _ in 0..=MAX_WRAPPERS {
+        if !stacks_rows(level) {
+            return None;
+        }
+        spacing.gap = level.gap;
+        if rows.len() >= MIN_ROWS {
+            return Some((rows, spacing));
+        }
+        let [NodeSpec::View {
+            props: wrapper,
+            children,
+        }] = rows
+        else {
+            return None;
+        };
+        if !layout_only(wrapper) {
+            return None;
+        }
+        spacing.add_padding(wrapper);
+        level = wrapper;
+        rows = children;
+    }
+    None
+}
+
+/// Whether a view lays its children out as a plain top-to-bottom stack.
+fn stacks_rows(props: &ViewProps) -> bool {
+    props.direction == Direction::Column
         && !props.wrap
         && !props.center
         && props.justify.is_none()
         && matches!(props.align, None | Some(Align::Stretch))
-        && !props.on_press
-        && !props.on_hover
-        && !props.on_pointer
-        && !props.on_context_menu
-        && props.hover_background.is_none()
-        && children.len() >= MIN_ROWS
+}
+
+/// A wrapper that only arranges its children: no appearance, size, or
+/// interaction of its own, so dropping its element changes nothing visible.
+fn layout_only(props: &ViewProps) -> bool {
+    if props.on_layout || !stacks_rows(props) {
+        return false;
+    }
+    let bare = ViewProps {
+        id: None,
+        gap: 0.0,
+        padding: 0.0,
+        padding_x: None,
+        padding_y: None,
+        padding_top: None,
+        padding_bottom: None,
+        padding_left: None,
+        padding_right: None,
+        flex: 0.0,
+        grow: 0.0,
+        shrink: None,
+        ..props.clone()
+    };
+    bare == ViewProps::default()
+}
+
+/// Whether a view renders as a virtualized list.
+pub(crate) fn virtualizes(props: &ViewProps, children: &[NodeSpec]) -> bool {
+    find_rows(props, children).is_some()
 }
 
 /// Bring list state in line with a new tree: create state for new lists,
@@ -55,29 +158,43 @@ pub(crate) fn sync(lists: &mut HashMap<String, VirtualList>, tree: &NodeSpec) {
     let mut found = Vec::new();
     collect(tree, &mut found);
     let mut next = HashMap::with_capacity(found.len());
-    for (id, rows) in found {
+    for (id, rows, spacing) in found {
         let entry = match lists.remove(id) {
             Some(mut entry) => {
-                invalidate_changed(&entry.state, &entry.rows, rows);
+                if entry.spacing == spacing {
+                    invalidate_changed(&entry.state, &entry.rows, rows);
+                } else {
+                    entry.state.reset(rows.len());
+                }
                 entry.rows = Rc::new(rows.to_vec());
+                entry.spacing = spacing;
                 entry
             }
-            None => VirtualList {
-                state: ListState::new(rows.len(), ListAlignment::Top, px(OVERDRAW)),
-                rows: Rc::new(rows.to_vec()),
-            },
+            None => {
+                crate::trace::log(format_args!("virtual list {id}: {} rows", rows.len()));
+                VirtualList {
+                    state: ListState::new(rows.len(), ListAlignment::Top, px(OVERDRAW)),
+                    rows: Rc::new(rows.to_vec()),
+                    spacing,
+                }
+            }
         };
         next.insert(id.to_string(), entry);
     }
     *lists = next;
 }
 
-fn collect<'a>(node: &'a NodeSpec, out: &mut Vec<(&'a str, &'a [NodeSpec])>) {
+fn collect<'a>(node: &'a NodeSpec, out: &mut Vec<(&'a str, &'a [NodeSpec], Spacing)>) {
     if let NodeSpec::View { props, children } = node {
-        if virtualizes(props, children) {
-            if let Some(id) = props.id.as_deref() {
-                out.push((id, children));
+        if let (Some(id), Some((rows, spacing))) = (props.id.as_deref(), find_rows(props, children))
+        {
+            out.push((id, rows, spacing));
+            // Rows render through the list; nested lists inside rows are found
+            // when walking the rows themselves.
+            for row in rows {
+                collect(row, out);
             }
+            return;
         }
         for child in children {
             collect(child, out);
@@ -108,9 +225,9 @@ fn invalidate_changed(state: &ListState, old: &[NodeSpec], new: &[NodeSpec]) {
     state.splice(prefix..old.len() - suffix, new.len() - prefix - suffix);
 }
 
-/// Render a virtualized list inside its already-styled container. The
-/// container's padding moves inside the list so it scrolls with the rows, as
-/// padding inside a CSS scroll container does.
+/// Render a virtualized list inside its already-styled container. Padding
+/// (the container's and its wrappers') moves inside the list so it scrolls
+/// with the rows, as padding inside a CSS scroll container does.
 pub(crate) fn render_list(
     mut container: Div,
     props: &ViewProps,
@@ -124,25 +241,7 @@ pub(crate) fn render_list(
         return container.into_any_element();
     };
     let rows = entry.rows.clone();
-    let gap = props.gap;
-    // GPUI's list applies only vertical padding; horizontal padding goes on
-    // each row. Same precedence as the view: per side, then axis, then all.
-    let left = props
-        .padding_left
-        .or(props.padding_x)
-        .unwrap_or(props.padding);
-    let right = props
-        .padding_right
-        .or(props.padding_x)
-        .unwrap_or(props.padding);
-    let top = props
-        .padding_top
-        .or(props.padding_y)
-        .unwrap_or(props.padding);
-    let bottom = props
-        .padding_bottom
-        .or(props.padding_y)
-        .unwrap_or(props.padding);
+    let spacing = entry.spacing;
     let layout = view.layout.clone();
     let events = view.events.clone();
     let render_row = cx.processor(move |view: &mut RootView, index: usize, window, cx| {
@@ -150,15 +249,17 @@ pub(crate) fn render_list(
             return div().into_any_element();
         };
         let element = render_node(node, view, window, cx);
+        // GPUI's list applies only vertical padding; horizontal padding goes
+        // on each row.
         let mut row = div()
             .w_full()
             .flex()
             .flex_col()
-            .pl(px(left))
-            .pr(px(right))
+            .pl(px(spacing.left))
+            .pr(px(spacing.right))
             .child(element);
-        if index > 0 && gap > 0.0 {
-            row = row.pt(px(gap));
+        if index > 0 && spacing.gap > 0.0 {
+            row = row.pt(px(spacing.gap));
         }
         if let Some(id) = node_id(node) {
             let watch = watches_layout(node);
@@ -174,8 +275,8 @@ pub(crate) fn render_list(
     container.style().padding = Default::default();
     let rows_element = list(entry.state.clone(), render_row)
         .size_full()
-        .pt(px(top))
-        .pb(px(bottom));
+        .pt(px(spacing.top))
+        .pb(px(spacing.bottom));
     container.child(rows_element).into_any_element()
 }
 
@@ -192,6 +293,47 @@ mod tests {
 
     fn rows(values: &[&str]) -> Vec<NodeSpec> {
         values.iter().map(|value| text(value)).collect()
+    }
+
+    fn view(props: ViewProps, children: Vec<NodeSpec>) -> NodeSpec {
+        NodeSpec::View { props, children }
+    }
+
+    fn scroll_view() -> ViewProps {
+        ViewProps {
+            id: Some("list".into()),
+            scroll: true,
+            padding: 4.0,
+            ..ViewProps::default()
+        }
+    }
+
+    #[test]
+    fn finds_rows_through_layout_only_wrappers() {
+        let many: Vec<NodeSpec> = (0..80).map(|i| text(&i.to_string())).collect();
+        let wrapper = ViewProps {
+            padding: 16.0,
+            gap: 2.0,
+            ..ViewProps::default()
+        };
+        let children = vec![view(wrapper, many.clone())];
+        let props = scroll_view();
+        let (rows, spacing) = find_rows(&props, &children).expect("virtualizes");
+        assert_eq!(rows.len(), 80);
+        assert_eq!((spacing.left, spacing.top, spacing.gap), (20.0, 20.0, 2.0));
+    }
+
+    #[test]
+    fn a_styled_wrapper_or_a_short_list_does_not_virtualize() {
+        let many: Vec<NodeSpec> = (0..80).map(|i| text(&i.to_string())).collect();
+        let styled = ViewProps {
+            background: Some("#ffffff".into()),
+            ..ViewProps::default()
+        };
+        let children = vec![view(styled, many)];
+        assert!(find_rows(&scroll_view(), &children).is_none());
+        let few: Vec<NodeSpec> = (0..10).map(|i| text(&i.to_string())).collect();
+        assert!(find_rows(&scroll_view(), &few).is_none());
     }
 
     #[test]
