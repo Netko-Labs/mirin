@@ -247,7 +247,13 @@ pub fn run(
                 }
             };
             cx.activate(true);
-            let _ = window.update(cx, |view, window, _cx| view.apply_pending_focus(window));
+            // GPUI's Wayland backend ignores `TitlebarOptions::title` at creation
+            // (the window opened untitled); set it explicitly.
+            let title = options.title.clone();
+            let _ = window.update(cx, |view, window, _cx| {
+                window.set_window_title(&title);
+                view.apply_pending_focus(window);
+            });
 
             // Driver messages arrive on a std channel from another thread; bridge
             // them into an async channel so the window wakes as soon as one lands
