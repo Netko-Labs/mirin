@@ -200,7 +200,9 @@ porting guide.
 The full runtime design (process and thread model, `libmirin_metal` ABI, UI
 protocol v2, RPC, config, shell surfaces, tooling, budgets, milestones R1–R7,
 and the decisions awaiting owner sign-off) is specified in
-[`docs/metal/spec.html`](metal/spec.html). The summary below predates it.
+[`docs/metal/spec.html`](metal/spec.html). The desktop shell plan built on it
+(compositor strategy, shell processes, capabilities, services, roadmap S0–S5)
+is [`docs/metal/shell.html`](metal/shell.html). The summary below predates both.
 
 GPUI, like CEF, wants the process main thread. The two cannot share it, so
 Metal is a **separate app flavor**, never a mode of a CEF window. The proposed
