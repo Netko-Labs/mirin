@@ -23,5 +23,5 @@ pub mod window;
 pub use window::{
     close_all_windows, close_window, control, maybe_start_drag, register_window,
     set_draggable_regions, set_position, set_window_title, tag_browser_view, window_id_for_browser,
-    MirinBrowserViewDelegate, MirinWindowDelegate, WindowGeometry,
+    MirinBrowserViewDelegate, MirinWindowDelegate, WindowFlags, WindowGeometry,
 };

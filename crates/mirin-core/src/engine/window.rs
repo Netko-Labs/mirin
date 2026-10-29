@@ -174,9 +174,11 @@ pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
         opts.title.clone(),
         geometry,
         RefCell::new(None),
-        opts.visible,
-        opts.always_on_top,
-        frameless,
+        linux::WindowFlags {
+            show: opts.visible,
+            always_on_top: opts.always_on_top,
+            frameless,
+        },
     );
     if let Some(window) = window_create_top_level(Some(&mut win_delegate)) {
         linux::register_window(id, window);

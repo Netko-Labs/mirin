@@ -23,9 +23,11 @@ wrap_browser_view_delegate! {
                 String::new(),
                 WindowGeometry::default(),
                 RefCell::new(None),
-                true,
-                false,
-                false, // popups get standard decorations
+                WindowFlags {
+                    show: true,
+                    always_on_top: false,
+                    frameless: false, // popups get standard decorations
+                },
             );
             window_create_top_level(Some(&mut delegate));
             1
@@ -35,6 +37,16 @@ wrap_browser_view_delegate! {
             RuntimeStyle::ALLOY
         }
     }
+}
+
+/// Behavioural switches for a new top-level window.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WindowFlags {
+    /// Show (and activate) as soon as the window is created.
+    pub show: bool,
+    pub always_on_top: bool,
+    /// No WM caption or resize border; the app draws its own chrome.
+    pub frameless: bool,
 }
 
 /// Requested geometry for a new top-level window. `x`/`y` are screen pixels;
@@ -60,9 +72,7 @@ wrap_window_delegate! {
         geometry: WindowGeometry,
         // Last reported (width, height), to tell a move from a resize.
         last_size: RefCell<Option<(i32, i32)>>,
-        show: bool,
-        always_on_top: bool,
-        frameless: bool,
+        flags: WindowFlags,
     }
 
     impl ViewDelegate {
@@ -79,7 +89,7 @@ wrap_window_delegate! {
 
     impl WindowDelegate {
         fn is_frameless(&self, _window: Option<&mut Window>) -> i32 {
-            self.frameless as i32
+            self.flags.frameless as i32
         }
 
         fn can_resize(&self, _window: Option<&mut Window>) -> i32 {
@@ -153,10 +163,10 @@ wrap_window_delegate! {
                     height: self.geometry.height,
                 }));
             }
-            if self.always_on_top {
+            if self.flags.always_on_top {
                 window.set_always_on_top(1);
             }
-            if self.show {
+            if self.flags.show {
                 window.show();
                 window.activate();
             }
