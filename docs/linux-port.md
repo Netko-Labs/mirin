@@ -229,6 +229,9 @@ Feature status:
   `dialog.result` event keyed by `requestId`. The picker is not parented to the
   CEF toplevel yet (needs an XDG foreign handle); `modal: true` keeps it on top.
   Verified on Fedora/KDE with `examples/kitchen-sink` and synthetic input.
+- **Downloads** — ✅ page downloads (`<a download>`, blob URLs) go through the
+  shared download handler to the portal save dialog; verified with Anko's CSV
+  export (`engine/handlers/download.rs`).
 - **Deep links** (`urlSchemes`) — ⬜ TODO (`.desktop` MIME registration).
 - **Transparent / material** — ⬜ TODO. A windowed X11 CEF browser is always opaque;
   true transparency would need OSR (as `win/` does), which the Linux port currently

@@ -95,6 +95,13 @@ Rationale: this avoids routing the data plane through CEF process messages → b
 
 Preload injection is renderer-side: `mirin-helper` implements CEF's render-process handler and evaluates the (build-time-bundled) preload bootstrap in `on_context_created`. The bootstrap is part of mirin, not user-supplied, for the MVP; user preloads come later.
 
+**Downloads.** Page-initiated downloads (`<a download>`, blob URLs,
+`Content-Disposition: attachment`) reach `engine/handlers/download.rs`. Without a
+handler CEF cancels them silently; mirin accepts them and asks for a destination:
+CEF's own native save panel on macOS/Windows, the portal dialog from
+`linux/dialog.rs` on Linux (run on a thread, the path handed back to CEF on the
+UI thread). Cancelling the picker cancels the download.
+
 **Observability plane (development only).** A third plane exists under `mirin dev`, for tools outside the app process. `docs/agent-devtools.md` is its source of truth; the parts that touch this document:
 
 1. Every diagnostic signal is normalized into one JSON envelope and buffered in the Worker: `logger` lines, `console.*` calls (rewired at boot to write to the file descriptors directly, since the main thread never services a Worker's console while it runs CEF), `RpcServer` request/response traces, all native events (via a wildcard hook on the runtime's dispatcher), Worker failures, and renderer console output — which the core's display handler now forwards as a structured `webview.console` event instead of an `eprintln!`.

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use super::context_menu::MirinContextMenuHandler;
 use super::display::MirinDisplayHandler;
+use super::download::MirinDownloadHandler;
 use super::drag::MirinDragHandler;
 use super::lifespan::MirinLifeSpanHandler;
 use super::MirinHandler;
@@ -19,6 +20,9 @@ wrap_client! {
         }
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(MirinDisplayHandler::new())
+        }
+        fn download_handler(&self) -> Option<DownloadHandler> {
+            Some(MirinDownloadHandler::new())
         }
         fn drag_handler(&self) -> Option<DragHandler> {
             Some(MirinDragHandler::new(self.inner.clone()))
