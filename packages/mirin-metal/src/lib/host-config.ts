@@ -17,6 +17,7 @@ function warnUnknownHost(type: string): void {
   warnedHosts.add(type);
   console.warn(`[mirin-metal] unknown host type "${type}" rendered as a view`);
 }
+
 import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
 import type { Container, HostInstance, HostNode, RawTextInstance } from "./instances.ts";
 import { insertNodeBefore, removeNode } from "./instances.ts";
@@ -69,7 +70,8 @@ export const hostConfig: HostConfig = {
     }
     if (type === SVG_TYPE) return { kind: "svg", id, props: props as SvgProps, children: [] };
     if (type === IMAGE_TYPE) return { kind: "image", id, props: props as ImageProps, children: [] };
-    if (type === TEXT_TYPE_NAME) return { kind: "text", id, props: props as TextProps, children: [] };
+    if (type === TEXT_TYPE_NAME)
+      return { kind: "text", id, props: props as TextProps, children: [] };
     // An unknown host type (e.g. a library rendering "form" with React's own
     // JSX runtime): keep its children visible as a plain view.
     warnUnknownHost(type);

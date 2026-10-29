@@ -52,6 +52,9 @@ pub enum SimCommand {
     ContextMenu { id: String },
     /// Pointer enters (`true`) or leaves (`false`) node `id`.
     Hover { id: String, hovered: bool },
+    /// Window management the user would do with the title bar: `zoom`
+    /// toggles maximized, `minimize` minimizes.
+    Window { action: String },
 }
 
 fn half() -> f32 {
@@ -132,6 +135,8 @@ pub(crate) enum SimAction {
     Drag(String, LayoutNode, [(f32, f32); 2]),
     ContextMenu(String, f32, f32),
     Hover(String, bool),
+    Zoom,
+    Minimize,
 }
 
 /// Resolve a command against the view. Logs and returns `None` when it cannot
@@ -232,6 +237,14 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             ))
         }
         SimCommand::Hover { id, hovered } => Some(SimAction::Hover(id.clone(), *hovered)),
+        SimCommand::Window { action } => match action.as_str() {
+            "zoom" => Some(SimAction::Zoom),
+            "minimize" => Some(SimAction::Minimize),
+            other => {
+                eprintln!("[mirin-metal] sim window: unknown action {other:?}");
+                None
+            }
+        },
     }
 }
 
@@ -253,6 +266,16 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
         }
         SimAction::ContextMenu(id, x, y) => events.context_menu(&id, x, y),
         SimAction::Hover(id, hovered) => events.hover(&id, hovered),
+        SimAction::Zoom => {
+            if crate::window::trace_enabled() {
+                eprintln!(
+                    "[mirin-metal trace] {:>8.1}ms zoom requested",
+                    crate::window::trace_clock()
+                );
+            }
+            window.zoom_window();
+        }
+        SimAction::Minimize => window.minimize_window(),
     }
 }
 

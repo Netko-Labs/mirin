@@ -74,11 +74,36 @@ function parseLayoutNode(value: unknown): LayoutNode[] {
   return [{ id, x: x as number, y: y as number, width: width as number, height: height as number }];
 }
 
-export function spawnNativeHost(binaryPath: string): NativeTransport {
+export interface NativeHostOptions {
+  /** Window title (`MIRIN_METAL_TITLE`). */
+  title?: string;
+  /** Initial window size in px (`MIRIN_METAL_SIZE`). */
+  width?: number;
+  height?: number;
+  /** Extra environment for the host process. */
+  env?: Record<string, string>;
+}
+
+export function spawnNativeHost(
+  binaryPath: string,
+  options: NativeHostOptions = {},
+): NativeTransport {
+  // Bun.spawn's default environment is the one the process started with;
+  // pass the live `process.env` so runtime assignments reach the host.
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  if (options.title !== undefined) env.MIRIN_METAL_TITLE = options.title;
+  if (options.width !== undefined && options.height !== undefined) {
+    env.MIRIN_METAL_SIZE = `${Math.round(options.width)}x${Math.round(options.height)}`;
+  }
+  Object.assign(env, options.env);
   const child = Bun.spawn([binaryPath], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "inherit",
+    env,
   });
   const listeners: Array<(event: NativeEvent) => void> = [];
   const closeListeners: Array<() => void> = [];

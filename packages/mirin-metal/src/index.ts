@@ -1,5 +1,5 @@
 export { Image, ScrollView, Svg, Text, TextInput, View } from "./components.ts";
-export { spawnNativeHost } from "./host.ts";
+export { type NativeHostOptions, spawnNativeHost } from "./host.ts";
 export { createPortal, render } from "./render.ts";
 export type {
   Bounds,

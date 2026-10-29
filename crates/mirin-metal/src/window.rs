@@ -161,10 +161,37 @@ impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The tree is immutable per frame; clone it so input state can be read
         // and listeners attached while walking it.
+        let started = std::time::Instant::now();
         let tree = self.tree.clone();
         let content = render_node(&tree, self, window, cx);
+        if trace_enabled() {
+            let size = window.viewport_size();
+            eprintln!(
+                "[mirin-metal trace] {:>8.1}ms render {:.0}x{:.0} took {:.2}ms",
+                trace_clock(),
+                f32::from(size.width),
+                f32::from(size.height),
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         capture_root(content, cx)
     }
+}
+
+/// `MIRIN_METAL_TRACE=1` logs frame timing to stderr.
+pub(crate) fn trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("MIRIN_METAL_TRACE").is_ok_and(|v| v == "1"))
+}
+
+/// Milliseconds since the first trace call.
+pub(crate) fn trace_clock() -> f64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+        * 1000.0
 }
 
 /// Open the native window rendering `initial_tree` and hand the calling thread
