@@ -3,7 +3,8 @@
   "compilerOptions": {
     "types": ["bun"],
     "lib": ["ESNext", "DOM"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "jsxImportSource": "@mirinjs/metal-ui"
   },
   "include": ["src", "test", "demo"]
 }

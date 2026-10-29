@@ -20,7 +20,10 @@
     "native-ui"
   ],
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./jsx-runtime": "./src/jsx-runtime.ts",
+    "./jsx-dev-runtime": "./src/jsx-dev-runtime.ts",
+    "./icons": "./src/icons/index.ts"
   },
   "files": [
     "src",
@@ -33,7 +36,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@mirinjs/metal": "workspace:*"
+    "@mirinjs/metal": "workspace:*",
+    "lucide": "1.64.0"
   },
   "peerDependencies": {
     "react": "^19.0.0"

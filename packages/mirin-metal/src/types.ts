@@ -4,7 +4,7 @@
  * (crates/mirin-metal `tree.rs`) where GPUI's own flex engine lays them out.
  */
 
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 /** `#RGB`, `#RRGGBB`, or `#RRGGBBAA`. */
 export type Color = string;
@@ -117,6 +117,8 @@ export interface Bounds {
 }
 
 export interface ViewProps {
+  /** Receives the mounted host instance (usable as a `createPortal` target). */
+  ref?: Ref<unknown>;
   style?: ViewStyle;
   /** Click/tap. `bounds` is the view's painted rect, for anchoring popups. */
   onPress?: (event: { bounds?: Bounds }) => void;

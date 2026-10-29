@@ -1,167 +1,142 @@
-import { createContext, type ReactNode, useContext, useState } from "react";
+import type * as React from "react";
+import { XIcon } from "../icons/index.ts";
 import { cn } from "../lib/cn.ts";
-import { Portal, Scrim } from "../lib/overlay.tsx";
-import { Box, Content } from "../lib/styled.tsx";
-import { useTheme, withAlpha } from "../theme.ts";
+import { Dialog as DialogPrimitive } from "../primitives/index.ts";
 
-export interface DialogApi {
-  open: boolean;
-  setOpen: (open: boolean) => void;
+import { Button } from "./button.tsx";
+
+function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
 }
 
-export const DialogContext = createContext<DialogApi>({ open: false, setOpen: () => {} });
-
-export interface DialogProps {
-  open?: boolean;
-  defaultOpen?: boolean;
-  onOpenChange?: (open: boolean) => void;
-  children?: ReactNode;
+function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
+  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
 }
 
-export function Dialog({ open, defaultOpen, onOpenChange, children }: DialogProps) {
-  const [internal, setInternal] = useState(defaultOpen ?? false);
-  const current = open ?? internal;
-  return (
-    <DialogContext.Provider
-      value={{
-        open: current,
-        setOpen: (next) => {
-          if (open === undefined) setInternal(next);
-          onOpenChange?.(next);
-        },
-      }}
-    >
-      {children}
-    </DialogContext.Provider>
-  );
+function DialogPortal({ ...props }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
+  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
 }
 
-export function DialogTrigger({
+function DialogClose({ ...props }: React.ComponentProps<typeof DialogPrimitive.Close>) {
+  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
+}
+
+function DialogOverlay({
   className,
-  children,
-  testID,
-}: {
-  className?: string;
-  children?: ReactNode;
-  testID?: string;
-  asChild?: boolean;
-}) {
-  const api = useContext(DialogContext);
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
   return (
-    <Box className={className} onPress={() => api.setOpen(true)} testID={testID}>
-      {children}
-    </Box>
+    <DialogPrimitive.Overlay
+      data-slot="dialog-overlay"
+      className={cn(
+        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        className,
+      )}
+      {...props}
+    />
   );
 }
 
-export function DialogClose({
-  className,
-  children,
-  testID,
-}: {
-  className?: string;
-  children?: ReactNode;
-  testID?: string;
-  asChild?: boolean;
-}) {
-  const api = useContext(DialogContext);
-  return (
-    <Box className={className} onPress={() => api.setOpen(false)} testID={testID}>
-      {children}
-    </Box>
-  );
-}
-
-export function DialogContent({
+function DialogContent({
   className,
   children,
   showCloseButton = true,
-  testID,
-}: {
-  className?: string;
-  children?: ReactNode;
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
-  testID?: string;
 }) {
-  const api = useContext(DialogContext);
-  const theme = useTheme();
-  if (!api.open) return null;
   return (
-    <Portal>
-      <DialogContext.Provider value={api}>
-        <Scrim
-          onPress={() => api.setOpen(false)}
-          color={withAlpha("#000000", 0.5)}
-          testID="dialog-overlay"
-        />
-        <Box className="flex flex-1 items-center justify-center">
-          <Box
-            className={cn(
-              "flex flex-col gap-4 rounded-lg border bg-background p-6 text-foreground w-[448px] max-w-[512px] relative",
-              className,
-            )}
-            testID={testID ?? "dialog"}
+    <DialogPortal data-slot="dialog-portal">
+      <DialogOverlay />
+      <DialogPrimitive.Content
+        data-slot="dialog-content"
+        className={cn(
+          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close
+            data-slot="dialog-close"
+            className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
-            {children}
-            {showCloseButton ? (
-              <Box
-                className="absolute rounded-sm opacity-70 hover:opacity-100 px-1"
-                style={{ top: 12, right: 12 }}
-                onPress={() => api.setOpen(false)}
-                testID="dialog-close"
-              >
-                <Content className="text-foreground">✕</Content>
-              </Box>
-            ) : null}
-          </Box>
-        </Box>
-      </DialogContext.Provider>
-    </Portal>
+            <XIcon />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Content>
+    </DialogPortal>
   );
 }
 
-export function DialogHeader({
-  className,
-  children,
-}: {
-  className?: string;
-  children?: ReactNode;
-}) {
-  return <Box className={cn("flex flex-col gap-2", className)}>{children}</Box>;
-}
-
-export function DialogFooter({
-  className,
-  children,
-}: {
-  className?: string;
-  children?: ReactNode;
-}) {
-  return <Box className={cn("flex flex-row justify-end gap-2", className)}>{children}</Box>;
-}
-
-export function DialogTitle({ className, children }: { className?: string; children?: ReactNode }) {
+function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
-    <Box className={cn("text-lg font-semibold", className)}>
-      <Content>{children}</Content>
-    </Box>
+    <div
+      data-slot="dialog-header"
+      className={cn("flex flex-col gap-2 text-center sm:text-left", className)}
+      {...props}
+    />
   );
 }
 
-export function DialogDescription({
+function DialogFooter({
   className,
+  showCloseButton = false,
   children,
-}: {
-  className?: string;
-  children?: ReactNode;
+  ...props
+}: React.ComponentProps<"div"> & {
+  showCloseButton?: boolean;
 }) {
   return (
-    <Box className={cn("text-sm text-muted-foreground", className)}>
-      <Content>{children}</Content>
-    </Box>
+    <div
+      data-slot="dialog-footer"
+      className={cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)}
+      {...props}
+    >
+      {children}
+      {showCloseButton && (
+        <DialogPrimitive.Close asChild>
+          <Button variant="outline">Close</Button>
+        </DialogPrimitive.Close>
+      )}
+    </div>
   );
 }
 
-export function useDialog(): DialogApi {
-  return useContext(DialogContext);
+function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
+  return (
+    <DialogPrimitive.Title
+      data-slot="dialog-title"
+      className={cn("text-lg leading-none font-semibold", className)}
+      {...props}
+    />
+  );
 }
+
+function DialogDescription({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Description>) {
+  return (
+    <DialogPrimitive.Description
+      data-slot="dialog-description"
+      className={cn("text-sm text-muted-foreground", className)}
+      {...props}
+    />
+  );
+}
+
+export {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+};

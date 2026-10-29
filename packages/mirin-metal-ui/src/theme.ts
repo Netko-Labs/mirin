@@ -1,11 +1,16 @@
 /**
  * shadcn/ui theme tokens (the `--background`, `--primary`, … CSS variables)
- * as `#RRGGBB` colors the Metal renderer accepts. Both default palettes ship;
- * `ThemeProvider` picks one and components read it through `useTheme()`.
+ * as `#RRGGBB[AA]` colors the Metal renderer accepts. Every registry theme
+ * ships (`themes.generated.ts`); `ThemeProvider` picks one and components
+ * read it through `useTheme()`.
  */
 
 import { createContext, useContext } from "react";
+import { THEMES } from "./themes.generated.ts";
 
+export type ThemeName = keyof typeof THEMES;
+
+/** The CSS variables a shadcn theme defines, camelCased (`muted-foreground` → `mutedForeground`). */
 export interface ThemeTokens {
   background: string;
   foreground: string;
@@ -22,91 +27,73 @@ export interface ThemeTokens {
   accent: string;
   accentForeground: string;
   destructive: string;
-  destructiveForeground: string;
   border: string;
   input: string;
   ring: string;
+  chart1: string;
+  chart2: string;
+  chart3: string;
+  chart4: string;
+  chart5: string;
   sidebar: string;
   sidebarForeground: string;
-  sidebarBorder: string;
-  sidebarAccent: string;
-  sidebarAccentForeground: string;
   sidebarPrimary: string;
   sidebarPrimaryForeground: string;
+  sidebarAccent: string;
+  sidebarAccentForeground: string;
+  sidebarBorder: string;
+  sidebarRing: string;
 }
 
 export interface Theme {
+  name: ThemeName;
   mode: "light" | "dark";
   colors: ThemeTokens;
   /** `--radius`, in px. */
   radius: number;
 }
 
-/** shadcn "zinc" defaults, converted from oklch to hex. */
-export const lightTokens: ThemeTokens = {
-  background: "#ffffff",
-  foreground: "#09090b",
-  card: "#ffffff",
-  cardForeground: "#09090b",
-  popover: "#ffffff",
-  popoverForeground: "#09090b",
-  primary: "#18181b",
-  primaryForeground: "#fafafa",
-  secondary: "#f4f4f5",
-  secondaryForeground: "#18181b",
-  muted: "#f4f4f5",
-  mutedForeground: "#71717a",
-  accent: "#f4f4f5",
-  accentForeground: "#18181b",
-  destructive: "#dc2626",
-  destructiveForeground: "#fafafa",
-  border: "#e4e4e7",
-  input: "#e4e4e7",
-  ring: "#a1a1aa",
-  sidebar: "#fafafa",
-  sidebarForeground: "#09090b",
-  sidebarBorder: "#e4e4e7",
-  sidebarAccent: "#f4f4f5",
-  sidebarAccentForeground: "#18181b",
-  sidebarPrimary: "#18181b",
-  sidebarPrimaryForeground: "#fafafa",
-};
+/** Build a theme from a registry name and mode. Missing tokens fall back to neutral. */
+export function createTheme(name: ThemeName = "neutral", mode: "light" | "dark" = "dark"): Theme {
+  const base = THEMES.neutral[mode] as unknown as ThemeTokens;
+  const chosen = THEMES[name][mode] as unknown as Partial<ThemeTokens>;
+  return {
+    name,
+    mode,
+    colors: { ...base, ...chosen },
+    radius: THEMES[name].radius,
+  };
+}
 
-export const darkTokens: ThemeTokens = {
-  background: "#09090b",
-  foreground: "#fafafa",
-  card: "#18181b",
-  cardForeground: "#fafafa",
-  popover: "#18181b",
-  popoverForeground: "#fafafa",
-  primary: "#e4e4e7",
-  primaryForeground: "#18181b",
-  secondary: "#27272a",
-  secondaryForeground: "#fafafa",
-  muted: "#27272a",
-  mutedForeground: "#a1a1aa",
-  accent: "#27272a",
-  accentForeground: "#fafafa",
-  destructive: "#ef4444",
-  destructiveForeground: "#fafafa",
-  border: "#27272a",
-  input: "#3f3f46",
-  ring: "#71717a",
-  sidebar: "#18181b",
-  sidebarForeground: "#fafafa",
-  sidebarBorder: "#27272a",
-  sidebarAccent: "#27272a",
-  sidebarAccentForeground: "#fafafa",
-  sidebarPrimary: "#3b82f6",
-  sidebarPrimaryForeground: "#fafafa",
-};
+export const darkTheme: Theme = createTheme("neutral", "dark");
+export const lightTheme: Theme = createTheme("neutral", "light");
+export const darkTokens: ThemeTokens = darkTheme.colors;
+export const lightTokens: ThemeTokens = lightTheme.colors;
+export const themeNames = Object.keys(THEMES) as ThemeName[];
 
-export const darkTheme: Theme = { mode: "dark", colors: darkTokens, radius: 8 };
-export const lightTheme: Theme = { mode: "light", colors: lightTokens, radius: 8 };
+export interface ThemeApi extends Theme {
+  /** The chosen setting, `next-themes` style: `"light" | "dark" | "system"`. */
+  theme: "light" | "dark" | "system";
+  /** The mode actually in use (`next-themes`' `resolvedTheme`). */
+  resolvedTheme: "light" | "dark";
+  /** Switch mode (`next-themes`-style `setTheme("light" | "dark" | "system")`). */
+  setTheme: (mode: "light" | "dark" | "system") => void;
+  /** Switch the registry palette (`neutral`, `zinc`, `blue`, …). */
+  setThemeName: (name: ThemeName) => void;
+  /** Window width in px, for responsive variants. */
+  viewportWidth: number;
+}
 
-export const ThemeContext = createContext<Theme>(darkTheme);
+export const ThemeContext = createContext<ThemeApi>({
+  ...darkTheme,
+  theme: "dark",
+  resolvedTheme: "dark",
+  setTheme: () => {},
+  setThemeName: () => {},
+  viewportWidth: 1280,
+});
 
-export function useTheme(): Theme {
+export function useTheme(): ThemeApi {
   return useContext(ThemeContext);
 }
 

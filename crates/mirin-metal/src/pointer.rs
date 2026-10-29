@@ -31,6 +31,7 @@ impl RootView {
 pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> AnyElement {
     div()
         .size_full()
+        .font_family(crate::render::sans_family())
         .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _window, _cx| {
             if let Some(id) = view.dragging.clone() {
                 view.emit_pointer(&id, "move", event.position);

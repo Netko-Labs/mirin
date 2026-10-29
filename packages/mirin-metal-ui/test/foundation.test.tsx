@@ -1,0 +1,148 @@
+import { describe, expect, test } from "bun:test";
+import { useState } from "react";
+import { Button } from "../src/components/button.tsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "../src/components/dialog.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../src/components/dropdown-menu.tsx";
+import { ThemeProvider } from "../src/provider.tsx";
+import { darkTokens } from "../src/theme.ts";
+import { mount, type TreeNode } from "./harness.ts";
+
+function find(
+  node: TreeNode | string,
+  predicate: (node: TreeNode) => boolean,
+): TreeNode | undefined {
+  if (typeof node === "string") return undefined;
+  if (predicate(node)) return node;
+  for (const child of node.children ?? []) {
+    const hit = find(child, predicate);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+describe("html elements through the JSX runtime", () => {
+  test("div, p, strong, and lists render as views and text", async () => {
+    const h = await mount(
+      <ThemeProvider>
+        <div className="flex flex-col gap-4 p-6">
+          <p className="text-sm text-muted-foreground">
+            Hello <strong>bold</strong> world
+          </p>
+          <ul className="ml-6 list-disc">
+            <li>first</li>
+            <li>second</li>
+          </ul>
+        </div>
+      </ThemeProvider>,
+    );
+    expect(h.texts()).toEqual(
+      expect.arrayContaining(["Hello ", "bold", " world", "•", "first", "second"]),
+    );
+    const bold = find(h.tree(), (n) => n.type === "text" && (n.children ?? [])[0] === "bold");
+    expect(bold?.props.weight).toBe("bold");
+    expect(bold?.props.color).toBe(darkTokens.mutedForeground);
+    h.unmount();
+  });
+});
+
+describe("Button", () => {
+  test("default variant paints primary and fires onClick", async () => {
+    let clicks = 0;
+    const h = await mount(
+      <ThemeProvider>
+        <Button data-testid="go" onClick={() => clicks++}>
+          Deploy
+        </Button>
+      </ThemeProvider>,
+    );
+    const button = find(h.tree(), (n) => n.props.background === darkTokens.primary);
+    expect(button).toBeDefined();
+    expect(button?.props.direction).toBe("row");
+    expect(button?.props.height).toBe(36);
+    await h.press("go");
+    expect(clicks).toBe(1);
+    h.unmount();
+  });
+});
+
+describe("Dialog", () => {
+  test("opens from its trigger in the overlay layer and closes from the X", async () => {
+    const h = await mount(
+      <ThemeProvider>
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button data-testid="open">Open</Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit profile</DialogTitle>
+              <DialogDescription>Make changes here.</DialogDescription>
+            </DialogHeader>
+          </DialogContent>
+        </Dialog>
+      </ThemeProvider>,
+    );
+    expect(h.hasText("Edit profile")).toBe(false);
+    await h.press("open");
+    expect(h.hasText("Edit profile")).toBe(true);
+    const content = find(
+      h.tree(),
+      (n) => n.props.occlude === true && n.props.background === darkTokens.background,
+    );
+    expect(content?.props.cornerRadius).toBe(10);
+    await h.press("dialog-close");
+    expect(h.hasText("Edit profile")).toBe(false);
+    h.unmount();
+  });
+});
+
+describe("DropdownMenu", () => {
+  test("opens, toggles a checkbox item, and closes on select", async () => {
+    let chosen = "";
+    function Menu() {
+      const [bar, setBar] = useState(true);
+      return (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button data-testid="menu">Menu</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuCheckboxItem checked={bar} onCheckedChange={setBar}>
+              Status Bar
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuItem onSelect={() => (chosen = "profile")}>Profile</DropdownMenuItem>
+          </DropdownMenuContent>
+          <span>{bar ? "bar on" : "bar off"}</span>
+        </DropdownMenu>
+      );
+    }
+    const h = await mount(
+      <ThemeProvider>
+        <Menu />
+      </ThemeProvider>,
+    );
+    await h.press("menu");
+    expect(h.hasText("Profile")).toBe(true);
+    await h.pressText("Status Bar");
+    expect(h.hasText("bar off")).toBe(true);
+    expect(h.hasText("Profile")).toBe(false);
+    await h.press("menu");
+    await h.pressText("Profile");
+    expect(chosen).toBe("profile");
+    expect(h.hasText("Profile")).toBe(false);
+    h.unmount();
+  });
+});

@@ -315,6 +315,43 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
     element.into_any_element()
 }
 
+/// The system UI sans family (Tailwind's `font-sans` is the system stack),
+/// resolved once through fontconfig; `MIRIN_METAL_FONT` overrides it. GPUI's
+/// own default (IBM Plex Sans) is rarely installed, and its fallback face has
+/// no weights, so `font-semibold`/`font-bold` would not render.
+pub(crate) fn sans_family() -> SharedString {
+    static FAMILY: OnceLock<SharedString> = OnceLock::new();
+    FAMILY
+        .get_or_init(|| {
+            if let Ok(family) = std::env::var("MIRIN_METAL_FONT") {
+                if !family.trim().is_empty() {
+                    return family.trim().to_string().into();
+                }
+            }
+            fontconfig_family("sans-serif").unwrap_or_else(|| ".SystemUIFont".into())
+        })
+        .clone()
+}
+
+fn fontconfig_family(pattern: &str) -> Option<SharedString> {
+    std::process::Command::new("fc-match")
+        .args(["-f", "%{family}", pattern])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|family| {
+            family
+                .split(',')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .filter(|family| !family.is_empty())
+        .map(SharedString::from)
+}
+
 /// The system monospace family, resolved once through fontconfig so `mono`
 /// text matches what terminals on this desktop use. Falls back to a generic
 /// name GPUI can usually resolve.

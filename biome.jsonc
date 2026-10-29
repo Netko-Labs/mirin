@@ -117,6 +117,7 @@
       "!**/.next",
       "!**/.output",
       "!**/generated",
+      "!**/*.generated.ts",
       "!**/routeTree.gen.ts",
       "!bun.lock",
       "!Cargo.lock",
