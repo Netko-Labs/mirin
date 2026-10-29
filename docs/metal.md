@@ -68,7 +68,8 @@ state and describes UI; the renderer is a pure function of the latest tree.
   buffer, caret, and focus (`window::InputState`); a different `value` in a
   later tree resets the buffer (controlled-input semantics). Enter submits a
   single-line input; multiline inserts a newline and Ctrl/Cmd+Enter submits.
-  Ctrl/Cmd+V pastes from the system clipboard.
+  Ctrl/Cmd+V pastes from the system clipboard. Tab / Shift+Tab move focus
+  between inputs in document order (wrapping).
 - Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
 - Events: `{"type":"press","nodeId"}`, `{"type":"change","nodeId","value"}`,
   `{"type":"submit","nodeId","value"}`.
@@ -144,7 +145,11 @@ Renders through DirectX. Not yet verified.
   builds standalone on Fedora, `bun test` / `tsc` / biome / `cargo test` /
   `cargo clippy -D warnings` / `cargo fmt --check` pass, stdio demo renders and
   applies updates on Wayland and X11.
-- **M1 — real app loop.** 🚧 Text input (`<TextInput>`, renderer-owned buffer,
+- **M1 — real app loop.** 🚧 **Anko runs on Metal** (`apps/metal` in the Anko
+  repo, 2026-10-29): React in Bun calls Anko's service/repository packages
+  directly, and the sidebar, SQLite connection form, query editor, and results
+  table render through GPUI; verified on Fedora/KDE by driving the whole flow
+  with the keyboard (Tab, typing, Ctrl+Enter). Text input (`<TextInput>`, renderer-owned buffer,
   caret, focus, paste, change/submit events), scroll views, hover, borders,
   alignment, truncation, and monospace text landed 2026-10-29 and were driven
   with synthetic keyboard input on Fedora/KDE. Still open: press verified only
@@ -164,6 +169,11 @@ Renders through DirectX. Not yet verified.
 cd crates/mirin-metal && cargo build --bin mirin-metal-host
 cd ../../packages/mirin-metal && bun demo/counter.tsx
 ```
+
+The host reads `MIRIN_METAL_TITLE` and `MIRIN_METAL_SIZE=1280x820`. A consumer
+that depends on `@mirinjs/metal` must share one React instance with it: a
+`bun link` keeps the package's own `node_modules` (two Reacts, "Invalid hook
+call"), so until it is published use `"@mirinjs/metal": "file:../path"`.
 
 Or drive the host by hand:
 

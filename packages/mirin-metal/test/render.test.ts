@@ -20,6 +20,7 @@ function fakeTransport(): FakeTransport {
     onEvent(listener) {
       listeners.push(listener);
     },
+    onClose() {},
     emit(event) {
       for (const listener of listeners) {
         listener(event);
@@ -57,7 +58,13 @@ describe("render", () => {
     expect(transport.sent.length).toBeGreaterThan(0);
     const tree = JSON.parse(transport.sent.at(-1) ?? "");
     expect(tree.type).toBe("view");
-    expect(tree.props).toEqual({ id: expect.any(String), flex: 1, center: true, gap: 12 });
+    expect(tree.props).toEqual({
+      id: expect.any(String),
+      flex: 1,
+      center: true,
+      gap: 12,
+      fill: true,
+    });
     expect(tree.children[0]).toEqual({
       type: "text",
       props: { color: "#f4f4f5", size: 28 },

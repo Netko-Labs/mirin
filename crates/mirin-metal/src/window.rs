@@ -106,6 +106,23 @@ impl RootView {
         self.inputs.retain(|id, _| seen.contains(id));
     }
 
+    /// Move focus from `from` to the next (`+1`) or previous (`-1`) input in
+    /// document order, wrapping around. Tab / Shift+Tab.
+    pub(crate) fn focus_neighbor(&mut self, from: &str, step: isize, window: &mut Window) {
+        let mut specs = Vec::new();
+        collect_inputs(&self.tree, &mut specs);
+        let ids: Vec<&str> = specs.iter().map(|spec| spec.id.as_str()).collect();
+        let Some(index) = ids.iter().position(|id| *id == from) else { return };
+        if ids.is_empty() {
+            return;
+        }
+        let len = ids.len() as isize;
+        let next = ((index as isize + step) % len + len) % len;
+        if let Some(state) = self.inputs.get(ids[next as usize]) {
+            window.focus(&state.focus);
+        }
+    }
+
     /// Honour pending `autofocus` requests. Runs outside of rendering.
     fn apply_pending_focus(&mut self, window: &mut Window) {
         for state in self.inputs.values_mut() {

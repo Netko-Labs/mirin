@@ -104,6 +104,8 @@ export type NativeEvent =
 export interface NativeTransport {
   send(treeJson: string): void;
   onEvent(listener: (event: NativeEvent) => void): void;
+  /** The native side went away (window closed, host exited). */
+  onClose(listener: () => void): void;
   close(): void;
 }
 

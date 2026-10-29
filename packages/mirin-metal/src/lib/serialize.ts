@@ -137,6 +137,8 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
   }
   const handlers: Handlers = { press: new Map(), change: new Map(), submit: new Map() };
   const tree = serializeInstance(root, handlers);
+  // The root has no flex parent to grow into; it always fills the window.
+  if (tree.type === "view") tree.props.fill = true;
   return { treeJson: JSON.stringify(tree), handlers };
 }
 

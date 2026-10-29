@@ -296,7 +296,7 @@ fn render_input(
     let multiline = props.multiline;
     let on_change = props.on_change;
     let on_submit = props.on_submit;
-    element = element.on_key_down(cx.listener(move |view, event: &KeyDownEvent, _window, cx| {
+    element = element.on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
         let outcome = {
             let Some(state) = view.inputs.get_mut(&key_id) else {
                 return;
@@ -305,6 +305,8 @@ fn render_input(
         };
         match outcome {
             Edit::None => {}
+            Edit::FocusNext => view.focus_neighbor(&key_id, 1, window),
+            Edit::FocusPrevious => view.focus_neighbor(&key_id, -1, window),
             Edit::Changed => {
                 if on_change {
                     if let Some(state) = view.inputs.get(&key_id) {
@@ -330,6 +332,8 @@ enum Edit {
     None,
     Changed,
     Submitted,
+    FocusNext,
+    FocusPrevious,
 }
 
 /// Apply one keystroke to an input buffer.
@@ -384,9 +388,12 @@ fn edit(
                 Edit::Submitted
             }
         }
-        "tab" if multiline => {
-            insert_str(state, "  ");
-            Edit::Changed
+        "tab" => {
+            if modifiers.shift {
+                Edit::FocusPrevious
+            } else {
+                Edit::FocusNext
+            }
         }
         "v" if command => match cx.read_from_clipboard().and_then(|item| item.text()) {
             Some(text) => {

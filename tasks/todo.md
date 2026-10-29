@@ -15,12 +15,14 @@ names its acceptance check. Checkpoint notes go at the bottom.
       hint mapping.
 - [ ] A3 `scripts/fetch-cef.ts` reports a clear fix when `cargo` is missing
       from `PATH` (point at `~/.cargo/bin`).
-- [ ] A4 L4 app-shell gaps from `docs/linux-port.md`: clipboard, dialogs
-      (`xdg-desktop-portal`), context menus, tray (StatusNotifierItem), global
-      shortcuts (portal), deep links (`.desktop` MIME). One PR each; verify
-      with `examples/kitchen-sink` on Fedora.
-- [ ] A5 `mirin release` on Fedora: rpm through fpm or native `rpmbuild`
-      (decide), AppImage; install the rpm locally and launch from the app menu.
+- [~] A4 L4 app-shell gaps from `docs/linux-port.md`: dialogs ✅ (portal +
+      zenity/kdialog), page downloads ✅, window geometry/frame/focus ✅;
+      still open: clipboard, context menus, tray (StatusNotifierItem), global
+      shortcuts (portal), deep links (`.desktop` MIME). Verify with
+      `examples/kitchen-sink` on Fedora.
+- [x] A5 `mirin build --linux-target rpm,deb` on Fedora through fpm (user gem
+      install lands in `~/bin`); Anko's rpm installs and launches from
+      `/usr/bin/anko` with its desktop entry. AppImage still needs appimagetool.
 - [ ] A6 Wayland-native CEF investigation stays closed unless CEF gains
       client-side decorations (see `docs/linux-port.md` rationale).
 
@@ -30,9 +32,10 @@ names its acceptance check. Checkpoint notes go at the bottom.
       clippy, biome, tsc pass; stdio demo renders on Wayland and X11.
 - [ ] B1 Decide process model + packaging (`docs/metal.md` §3 questions).
       Owner sign-off required.
-- [ ] B2 Press round-trip verified in the real window (synthetic click via
-      GPUI test harness or `ydotool`), then grow the element set: `TextInput`,
-      `ScrollView`, `Image`, borders, opacity, absolute positioning.
+- [~] B2 `TextInput` (buffer, caret, paste, Tab cycling, change/submit),
+      `ScrollView`, hover, borders, opacity, alignment, truncation, mono ✅;
+      Anko's `apps/metal` runs on it. Still open: real-click press check,
+      `Image`, text selection, absolute positioning.
 - [ ] B3 Tree patch protocol (insert/remove/update by node id) replacing
       whole-tree replacement; reconciler emits patches from mutation methods.
 - [ ] B4 `libmirin_metal` C ABI + polled event queue; Bun host boots it like
@@ -43,6 +46,10 @@ names its acceptance check. Checkpoint notes go at the bottom.
       pin.
 
 ## Checkpoints
+
+- 2026-10-29 (night): Anko works on Linux end to end (dev, check scenario,
+  standalone build, rpm installed from /usr/bin) and a first Anko on Metal
+  (`apps/metal`) connects to SQLite and renders query results through GPUI.
 
 - 2026-10-29: Both tracks bootstrapped. `mirin-metal-host` draws piped trees on
   KDE Wayland (RADV) and under XWayland. Lesson: when smoke-testing GUI hosts

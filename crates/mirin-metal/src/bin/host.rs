@@ -48,12 +48,22 @@ fn main() {
     });
 
     let title = std::env::var("MIRIN_METAL_TITLE").unwrap_or_else(|_| "mirin metal".into());
+    // `MIRIN_METAL_SIZE=1280x820` picks the initial window size.
+    let (width, height) = std::env::var("MIRIN_METAL_SIZE")
+        .ok()
+        .and_then(|size| {
+            let (w, h) = size.split_once('x')?;
+            Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+        })
+        .filter(|(w, h)| *w >= 200.0 && *h >= 200.0)
+        .unwrap_or((NativeUiOptions::default().width, NativeUiOptions::default().height));
     let initial = parse_tree(r##"{"type":"view","props":{"fill":true,"background":"#111114"}}"##)
         .expect("static initial tree is valid JSON");
     run(
         NativeUiOptions {
             title: title.into(),
-            ..Default::default()
+            width,
+            height,
         },
         initial,
         update_rx,

@@ -43,6 +43,12 @@ export function spawnNativeHost(binaryPath: string): NativeTransport {
     stderr: "inherit",
   });
   const listeners: Array<(event: NativeEvent) => void> = [];
+  const closeListeners: Array<() => void> = [];
+  void child.exited.then(() => {
+    for (const listener of closeListeners) {
+      listener();
+    }
+  });
 
   void (async () => {
     const decoder = new TextDecoder();
@@ -74,6 +80,9 @@ export function spawnNativeHost(binaryPath: string): NativeTransport {
     },
     onEvent(listener) {
       listeners.push(listener);
+    },
+    onClose(listener) {
+      closeListeners.push(listener);
     },
     close() {
       void child.stdin.end();
