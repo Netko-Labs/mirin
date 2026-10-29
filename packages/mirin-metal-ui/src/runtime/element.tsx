@@ -37,6 +37,39 @@ const NULL_TAGS = new Set([
 
 export type ElementProps = BoxProps & { __tag: string };
 
+type Intrinsic = (props: ElementProps) => ReactNode;
+
+function Nothing(): ReactNode {
+  return null;
+}
+
+function LineBreak(): ReactNode {
+  return <Box tag="br" viewStyle={{ width: "100%", height: 0 }} />;
+}
+
+const SPECIAL: Record<string, Intrinsic> = {
+  input: HtmlInput,
+  textarea: HtmlTextarea,
+  select: HtmlSelect,
+  img: HtmlImage,
+  svg: HtmlSvg,
+  hr: HtmlHr,
+  table: HtmlTable,
+  tr: HtmlRow,
+  th: HtmlCell,
+  td: HtmlCell,
+  br: LineBreak,
+};
+
+/**
+ * The component an intrinsic tag renders as, resolved when the JSX element is
+ * created so each HTML element costs one component, not a router plus Box.
+ */
+export function intrinsicComponent(tag: string): Intrinsic {
+  if (NULL_TAGS.has(tag)) return Nothing;
+  return SPECIAL[tag] ?? (Box as Intrinsic);
+}
+
 export function Element(props: ElementProps): ReactNode {
   const tag = props.__tag;
   if (NULL_TAGS.has(tag)) return null;

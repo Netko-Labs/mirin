@@ -7,12 +7,19 @@
 
 import type { JSX as ReactJSX } from "react";
 import { Fragment, jsx as reactJsx, jsxs as reactJsxs } from "react/jsx-runtime";
-import { Element } from "./runtime/element.tsx";
+import { intrinsicComponent } from "./runtime/element.tsx";
 
 type Props = Record<string, unknown> & { children?: unknown };
 
-function host(type: unknown, props: Props): [unknown, Props] {
-  return typeof type === "string" ? [Element, { ...props, __tag: type }] : [type, props];
+/**
+ * Map a lowercase tag to its Metal component. The props object is tagged in
+ * place: compiled JSX creates a fresh one per call, and copying it for every
+ * element was a measurable share of render time.
+ */
+export function host(type: unknown, props: Props): [unknown, Props] {
+  if (typeof type !== "string") return [type, props];
+  props.__tag = type;
+  return [intrinsicComponent(type), props];
 }
 
 export function jsx(type: unknown, props: Props, key?: string): ReturnType<typeof reactJsx> {

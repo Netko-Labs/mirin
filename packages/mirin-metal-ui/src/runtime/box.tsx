@@ -307,7 +307,7 @@ function withSiblingPositions(nodes: ReactNode[]): ReactNode[] {
 
 export function Box(props: BoxProps): ReactNode {
   const {
-    tag = "div",
+    tag = (props as { __tag?: string }).__tag ?? "div",
     className,
     style,
     viewStyle,

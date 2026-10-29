@@ -1,7 +1,7 @@
 /** Development JSX runtime: same intrinsic mapping as `jsx-runtime.ts`. */
 
 import { Fragment, jsxDEV as reactJsxDEV } from "react/jsx-dev-runtime";
-import { Element } from "./runtime/element.tsx";
+import { host } from "./jsx-runtime.ts";
 
 export { Fragment };
 export type { JSX } from "./jsx-runtime.ts";
@@ -16,8 +16,7 @@ export function jsxDEV(
   source?: unknown,
   self?: unknown,
 ): ReturnType<typeof reactJsxDEV> {
-  const resolved = typeof type === "string" ? Element : type;
-  const resolvedProps = typeof type === "string" ? { ...props, __tag: type } : props;
+  const [resolved, resolvedProps] = host(type, props);
   return reactJsxDEV(
     resolved as never,
     resolvedProps as never,
