@@ -12,11 +12,12 @@
 //! maximize/fullscreen/always-on-top, `WM_CLASS` + `_NET_WM_ICON`) is done via Xlib
 //! against the CEF window's XID — see `window/mod.rs`.
 //!
-//! App-shell features (menu/tray/dialog/clipboard/shortcut) are handled by
-//! the engine's `not(any(macos, windows))` fallback arms for now and grow into
-//! dedicated submodules here as the port reaches the L4 milestone
-//! (`docs/linux-port.md`).
+//! App-shell features grow into dedicated submodules here as the port reaches
+//! the L4 milestone (`docs/linux-port.md`): `dialog` (xdg-desktop-portal file
+//! pickers, zenity/kdialog message boxes) is in; menu/tray/clipboard/shortcut
+//! still use the engine's `not(any(macos, windows))` fallback arms.
 
+pub mod dialog;
 pub mod window;
 
 pub use window::{

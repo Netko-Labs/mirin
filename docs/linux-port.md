@@ -217,7 +217,18 @@ Feature status:
 - **Menus** — app menu bar is a no-op (like Windows; menus live in the app UI);
   context/popup menus ⬜ TODO (Views `MenuModel`).
 - **Tray** — ⬜ TODO (StatusNotifierItem, e.g. `ksni`).
-- **Dialogs** — ⬜ TODO (`xdg-desktop-portal` FileChooser, e.g. `ashpd`/`rfd`).
+- **Dialogs** — ✅ `dialog.openFile` / `dialog.saveFile` go through the
+  **xdg-desktop-portal** `FileChooser` interface on the session bus
+  (`linux/dialog.rs`, zbus blocking API), so KDE/GNOME show their own native
+  picker under Wayland, X11, and Flatpak alike; `multiple`, `directories`, and
+  `defaultName` map to the portal's `multiple` / `directory` / `current_name`.
+  `dialog.message` has no portal and shells out to **zenity** (then **kdialog**);
+  with neither installed it answers button 0 and logs. Because these block until
+  the user answers, the engine runs Linux dialogs on a dedicated `mirin-dialog`
+  thread instead of the CEF UI thread, and the result still arrives as the
+  `dialog.result` event keyed by `requestId`. The picker is not parented to the
+  CEF toplevel yet (needs an XDG foreign handle); `modal: true` keeps it on top.
+  Verified on Fedora/KDE with `examples/kitchen-sink` and synthetic input.
 - **Deep links** (`urlSchemes`) — ⬜ TODO (`.desktop` MIME registration).
 - **Transparent / material** — ⬜ TODO. A windowed X11 CEF browser is always opaque;
   true transparency would need OSR (as `win/` does), which the Linux port currently

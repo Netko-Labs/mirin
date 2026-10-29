@@ -303,6 +303,10 @@ port **owns no native toolkit window**:
   `_NET_WM_ICON`) and reuses `identifier` (bundle id → `WM_CLASS`); both are resolved
   host-side and ignored on macOS/Windows (which take icon + identity from the OS
   bundle).
+- **Dialogs.** File pickers are xdg-desktop-portal `FileChooser` calls over the
+  session bus (`linux/dialog.rs`); message boxes shell out to zenity/kdialog.
+  Linux dialogs run on a dedicated thread, not the UI thread, because they block
+  until answered; the `dialog.result` event contract is unchanged.
 - **Bundle + distribution.** No `.app`/codesign — a flat app folder like Windows:
   `<App>` (bun host) + `libmirin_core.so` + `mirin-helper` + the CEF runtime (libcef.so,
   `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`), all beside the host
