@@ -56,7 +56,10 @@ fn main() {
             Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
         })
         .filter(|(w, h)| *w >= 200.0 && *h >= 200.0)
-        .unwrap_or((NativeUiOptions::default().width, NativeUiOptions::default().height));
+        .unwrap_or((
+            NativeUiOptions::default().width,
+            NativeUiOptions::default().height,
+        ));
     let initial = parse_tree(r##"{"type":"view","props":{"fill":true,"background":"#111114"}}"##)
         .expect("static initial tree is valid JSON");
     run(

@@ -47,6 +47,8 @@ pub(crate) struct InputState {
     pub(crate) synced_value: String,
     /// Set by the tree sync when the node is new and asked for `autofocus`.
     pub(crate) wants_focus: bool,
+    /// Ctrl/Cmd+A: the next insertion or deletion replaces the whole buffer.
+    pub(crate) select_all: bool,
 }
 
 /// The root view: renders whatever tree the driver last sent.
@@ -98,6 +100,7 @@ impl RootView {
                             buffer: spec.value.clone(),
                             synced_value: spec.value.clone(),
                             wants_focus: spec.autofocus,
+                            select_all: false,
                         },
                     );
                 }
@@ -112,7 +115,9 @@ impl RootView {
         let mut specs = Vec::new();
         collect_inputs(&self.tree, &mut specs);
         let ids: Vec<&str> = specs.iter().map(|spec| spec.id.as_str()).collect();
-        let Some(index) = ids.iter().position(|id| *id == from) else { return };
+        let Some(index) = ids.iter().position(|id| *id == from) else {
+            return;
+        };
         if ids.is_empty() {
             return;
         }

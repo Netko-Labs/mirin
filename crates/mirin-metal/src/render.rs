@@ -348,6 +348,32 @@ fn edit(
     let command = modifiers.control || modifiers.platform;
     let len = state.buffer.chars().count();
     state.cursor = state.cursor.min(len);
+    if state.select_all {
+        state.select_all = false;
+        match keystroke.key.as_str() {
+            "backspace" | "delete" => {
+                state.buffer.clear();
+                state.cursor = 0;
+                return Edit::Changed;
+            }
+            "left" | "home" => {
+                state.cursor = 0;
+                return Edit::Changed;
+            }
+            "right" | "end" => {
+                state.cursor = len;
+                return Edit::Changed;
+            }
+            "enter" | "tab" | "escape" | "up" | "down" => {}
+            _ if command => {}
+            _ => {
+                // Typing over a selection replaces it.
+                state.buffer.clear();
+                state.cursor = 0;
+            }
+        }
+    }
+    let len = state.buffer.chars().count();
     match keystroke.key.as_str() {
         "backspace" => {
             if state.cursor == 0 {
@@ -408,9 +434,9 @@ fn edit(
             None => Edit::None,
         },
         "a" if command => {
-            // Select-all is not modelled; jump to the end so typing appends.
+            state.select_all = true;
             state.cursor = len;
-            Edit::None
+            Edit::Changed
         }
         "space" => {
             insert_str(state, " ");
