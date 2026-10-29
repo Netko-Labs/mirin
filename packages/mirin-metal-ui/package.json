@@ -23,7 +23,9 @@
     ".": "./src/index.ts",
     "./jsx-runtime": "./src/jsx-runtime.ts",
     "./jsx-dev-runtime": "./src/jsx-dev-runtime.ts",
-    "./icons": "./src/icons/index.ts"
+    "./icons": "./src/icons/index.ts",
+    "./primitives": "./src/primitives/index.ts",
+    "./charts": "./src/charts/index.ts"
   },
   "files": [
     "src",

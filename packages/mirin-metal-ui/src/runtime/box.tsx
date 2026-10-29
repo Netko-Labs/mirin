@@ -9,6 +9,8 @@
 import { Text, type TextStyle, View, type ViewStyle } from "@mirinjs/metal";
 import {
   Children,
+  cloneElement,
+  Fragment,
   isValidElement,
   type ReactElement,
   type ReactNode,
@@ -25,12 +27,16 @@ import {
   GroupContext,
   type Inherited,
   InheritedContext,
+  SiblingContext,
+  type SiblingPosition,
   transformText,
   useInherited,
 } from "./context.ts";
 import { cssToMetal } from "./css.ts";
 import { syntheticEvent } from "./events.ts";
+import { type FormHandle, FormScope, resolveForm } from "./form.tsx";
 import { openExternal } from "./open.ts";
+import { ownVars, readsVars, substituteVars, VarsContext } from "./vars.ts";
 
 /** Tags that flow inline (text runs) rather than stacking as blocks. */
 export const INLINE_TAGS = new Set([
@@ -82,7 +88,7 @@ const TAG_CLASSES: Record<string, string> = {
   small: "text-xs",
   sup: "text-xs",
   sub: "text-xs",
-  th: "font-medium",
+  th: "flex-1 font-medium",
   table: "flex flex-col",
   thead: "flex flex-col",
   tbody: "flex flex-col",
@@ -150,6 +156,19 @@ function attrsKey(attrs: Attrs): string {
   return Object.entries(attrs)
     .map(([key, value]) => `${key}=${String(value)}`)
     .join("|");
+}
+
+/** `Children.toArray`, with fragments spread in place (`<>{label}</>` is its text). */
+function flattenFragments(children: ReactNode, prefix = ""): ReactNode[] {
+  return Children.toArray(children).flatMap((item) => {
+    if (isValidElement(item) && item.type === Fragment) {
+      const inner = (item.props as { children?: ReactNode }).children;
+      return flattenFragments(inner, `${prefix}${String(item.key)}/`);
+    }
+    if (prefix && isValidElement(item))
+      return [cloneElement(item, { key: `${prefix}${item.key}` })];
+    return [item];
+  });
 }
 
 function isText(node: ReactNode): node is string | number {
@@ -265,6 +284,27 @@ function renderChildren(
   });
 }
 
+const POSITIONS: SiblingPosition[] = [
+  { first: true, last: true },
+  { first: true, last: false },
+  { first: false, last: true },
+  { first: false, last: false },
+];
+
+/** Tell each child element whether it is first/last (`first:`/`last:` variants). */
+function withSiblingPositions(nodes: ReactNode[]): ReactNode[] {
+  const last = nodes.length - 1;
+  return nodes.map((node, index) => {
+    if (!isValidElement(node)) return node;
+    const position = POSITIONS[(index === 0 ? 0 : 2) + (index === last ? 0 : 1)];
+    return (
+      <SiblingContext.Provider key={node.key ?? `s${index}`} value={position ?? null}>
+        {node}
+      </SiblingContext.Provider>
+    );
+  });
+}
+
 export function Box(props: BoxProps): ReactNode {
   const {
     tag = "div",
@@ -290,20 +330,31 @@ export function Box(props: BoxProps): ReactNode {
   const inherited = useInherited();
   const groups = useContext(GroupContext);
   const form = useContext(FormContext);
+  const vars = useContext(VarsContext);
+  const definedVars = ownVars(className, style, vars, theme.colors);
+  const scopeVars = definedVars ? { ...vars, ...definedVars } : vars;
+  const classes = readsVars(className)
+    ? substituteVars(className ?? "", scopeVars, theme.colors)
+    : className;
   const attrs = collectAttrs(props);
+  const sibling = useContext(SiblingContext);
+  if (sibling) {
+    attrs["data-metal-first"] ??= sibling.first;
+    attrs["data-metal-last"] ??= sibling.last;
+  }
   const stateKey = attrsKey(attrs);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: stateKey summarizes attrs
   const tw = useMemo(
     () =>
-      translate(cn(TAG_CLASSES[tag], className), theme.colors, theme.radius, {
+      translate(cn(TAG_CLASSES[tag], classes), theme.colors, theme.radius, {
         attrs,
         groups,
         dark: theme.mode === "dark",
         viewportWidth: theme.viewportWidth,
       }),
     // attrs is summarized by stateKey.
-    [tag, className, theme, stateKey, groups],
+    [tag, classes, theme, stateKey, groups],
   );
   if (tw.hidden || tw.display === "none") return null;
 
@@ -323,7 +374,7 @@ export function Box(props: BoxProps): ReactNode {
     tw.svg.size !== undefined ||
     tw.svg.color !== undefined;
 
-  const items = Children.toArray(children).filter((item) => item !== "" && item !== null);
+  const items = flattenFragments(children).filter((item) => item !== "" && item !== null);
   const isInlineTag = INLINE_TAGS.has(tag);
   const display = tw.display ?? (isInlineTag ? "inline" : "block");
   const textOnly = items.length > 0 && items.every(isText);
@@ -336,6 +387,8 @@ export function Box(props: BoxProps): ReactNode {
   else if (display === "inline" || display === "inline-block") direction = "row";
   else direction = inlineFlow ? "row" : (tw.direction ?? "column");
   view.flexDirection = direction;
+  nextInherited.parentDirection = direction;
+  if (tw.fitWidth && inherited.parentDirection === "column") view.alignSelf ??= "flex-start";
   if (inlineFlow && display !== "flex" && display !== "inline-flex") {
     view.flexWrap = "wrap";
     view.alignItems = view.alignItems ?? "center";
@@ -349,7 +402,14 @@ export function Box(props: BoxProps): ReactNode {
 
   const disabled = attrs.disabled === true || attrs["aria-disabled"] === "true";
   const interactive = !tw.pointerEventsNone && !disabled;
-  const isSubmit = tag === "button" && form !== null && props.type !== "button";
+  // A button submits (or resets) its enclosing form, or the one named by `form="<id>"`.
+  const formAction =
+    tag === "button" && props.type !== "button" && (form !== null || typeof props.form === "string")
+      ? props.type === "reset"
+        ? "reset"
+        : "submit"
+      : undefined;
+  const isSubmit = formAction !== undefined;
   const href = typeof props.href === "string" ? props.href : undefined;
   const pressable = interactive && (onClick || onMouseDown || isSubmit || (tag === "a" && href));
 
@@ -362,14 +422,18 @@ export function Box(props: BoxProps): ReactNode {
       </TextRun>,
     ];
   } else if ((display === "grid" || display === "inline-grid") && (tw.gridCols ?? 1) > 1) {
-    body = gridRows(renderChildren(items, tw, undefined), tw.gridCols ?? 1, view.gap);
+    body = [
+      <SiblingContext.Provider key="grid" value={null}>
+        {gridRows(renderChildren(items, tw, undefined), tw.gridCols ?? 1, view.gap)}
+      </SiblingContext.Provider>,
+    ];
   } else {
-    body = renderChildren(items, tw, listStyle);
+    body = withSiblingPositions(renderChildren(items, tw, listStyle));
   }
 
   const element: ReactElement = (
     <View
-      ref={ref as never}
+      ref={tag === "form" ? undefined : (ref as never)}
       testID={
         testID ??
         (typeof props["data-testid"] === "string" ? props["data-testid"] : undefined) ??
@@ -384,7 +448,11 @@ export function Box(props: BoxProps): ReactNode {
               const event = syntheticEvent("click", { bounds });
               onMouseDown?.(event);
               onClick?.(event);
-              if (!event.defaultPrevented && isSubmit) form?.submit();
+              if (!event.defaultPrevented && formAction) {
+                const target = resolveForm(form, props.form);
+                if (formAction === "reset") target?.reset();
+                else target?.submit();
+              }
               if (!event.defaultPrevented && tag === "a" && href && !onClick) openExternal(href);
             }
           : undefined
@@ -423,9 +491,15 @@ export function Box(props: BoxProps): ReactNode {
 
   let wrapped: ReactNode = element;
   if (tag === "form") {
-    const submit = () => onSubmit?.(syntheticEvent("submit"));
     wrapped = (
-      <FormContext.Provider value={{ submit, reset: () => {} }}>{wrapped}</FormContext.Provider>
+      <FormScope
+        id={typeof props.id === "string" ? props.id : undefined}
+        onSubmit={onSubmit}
+        onReset={props.onReset as typeof onSubmit}
+        formRef={ref as Ref<FormHandle> | undefined}
+      >
+        {wrapped}
+      </FormScope>
     );
   }
   if (tw.group !== undefined) {
@@ -435,10 +509,13 @@ export function Box(props: BoxProps): ReactNode {
       </GroupContext.Provider>
     );
   }
-  if (textChanged) {
+  if (textChanged || direction !== inherited.parentDirection) {
     wrapped = (
       <InheritedContext.Provider value={nextInherited}>{wrapped}</InheritedContext.Provider>
     );
+  }
+  if (definedVars) {
+    wrapped = <VarsContext.Provider value={scopeVars}>{wrapped}</VarsContext.Provider>;
   }
   return wrapped;
 }

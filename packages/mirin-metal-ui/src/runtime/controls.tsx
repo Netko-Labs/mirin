@@ -13,6 +13,7 @@ import { translate } from "../tw/index.ts";
 import { Box, collectAttrs, TextRun } from "./box.tsx";
 import { FormContext, useInherited } from "./context.ts";
 import { syntheticEvent } from "./events.ts";
+import { useFormField } from "./form.tsx";
 
 type Props = Record<string, unknown>;
 type Handler = ((event: ReturnType<typeof syntheticEvent>) => void) | undefined;
@@ -25,7 +26,12 @@ function str(value: unknown): string | undefined {
 function useFieldValue(props: Props): [string, (next: string) => void] {
   const controlled = props.value !== undefined && props.value !== null;
   const [own, setOwn] = useState(str(props.defaultValue) ?? "");
-  return [controlled ? (str(props.value) ?? "") : own, (next) => !controlled && setOwn(next)];
+  const value = controlled ? (str(props.value) ?? "") : own;
+  // Named controls take part in the enclosing form's FormData and reset.
+  useFormField(str(props.name), props.disabled === true ? undefined : value, () =>
+    setOwn(str(props.defaultValue) ?? ""),
+  );
+  return [value, (next) => !controlled && setOwn(next)];
 }
 
 function useInputStyle(props: Props, base: string): TextInputStyle {
@@ -63,7 +69,7 @@ function useInputStyle(props: Props, base: string): TextInputStyle {
 
 export function HtmlInput(props: Props): ReactNode {
   const type = str(props.type) ?? "text";
-  if (type === "hidden") return null;
+  if (type === "hidden") return <HiddenInput {...props} />;
   if (type === "checkbox" || type === "radio") return <NativeCheck {...props} />;
   if (type === "file") return <FileInput {...props} />;
   return <TextField {...props} multiline={false} />;
@@ -88,7 +94,9 @@ function TextField(props: Props & { multiline: boolean }) {
       multiline={props.multiline}
       secureTextEntry={props.type === "password"}
       autoFocus={props.autoFocus === true}
-      testID={str(props.testID) ?? str(props["data-testid"]) ?? str(props.id)}
+      testID={
+        str(props.testID) ?? str(props["data-testid"]) ?? str(props.id) ?? str(props["data-slot"])
+      }
       style={disabled ? { ...style, color: style.placeholderColor } : style}
       onChangeText={(text) => {
         if (disabled) return;
@@ -104,11 +112,22 @@ function TextField(props: Props & { multiline: boolean }) {
   );
 }
 
+/** `<input type="hidden">`: renders nothing, still submits its value. */
+function HiddenInput(props: Props) {
+  useFormField(str(props.name), str(props.value) ?? str(props.defaultValue) ?? "");
+  return null;
+}
+
 function NativeCheck(props: Props) {
   const theme = useTheme();
   const controlled = props.checked !== undefined;
   const [own, setOwn] = useState(props.defaultChecked === true);
   const checked = controlled ? props.checked === true : own;
+  useFormField(
+    str(props.name),
+    checked && props.disabled !== true ? (str(props.value) ?? "on") : undefined,
+    () => setOwn(props.defaultChecked === true),
+  );
   const onChange = props.onChange as Handler;
   const round = props.type === "radio";
   return (

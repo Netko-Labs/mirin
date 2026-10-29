@@ -5,7 +5,7 @@
  * items with indicators, and hover-opened submenus.
  */
 
-import type { Bounds } from "@mirinjs/metal";
+import { type Bounds, View } from "@mirinjs/metal";
 import { createContext, type ReactNode, useContext, useState } from "react";
 import { Slot } from "../lib/slot.tsx";
 import { useControllableState, useStableId } from "../lib/state.ts";
@@ -92,6 +92,32 @@ export function MenuTrigger({ asChild, onClick, disabled, ...props }: Props) {
   return asChild ? <Slot {...shared} /> : <button type="button" {...shared} />;
 }
 
+/**
+ * A dismiss layer with a hole: four occluding rects around `hole`, so the
+ * bar under the hole (menubar, navigation menu) stays hoverable while open.
+ */
+export function DismissAround({ hole, onDismiss }: { hole: Bounds; onDismiss: () => void }) {
+  const rects = [
+    { top: 0, left: 0, right: 0, height: Math.max(0, hole.y) },
+    { top: hole.y + hole.height, left: 0, right: 0, bottom: 0 },
+    { top: hole.y, left: 0, width: Math.max(0, hole.x), height: hole.height },
+    { top: hole.y, left: hole.x + hole.width, right: 0, height: hole.height },
+  ];
+  return (
+    <>
+      {rects.map((rect, index) => (
+        <View
+          key={index}
+          occlude
+          testID={index === 1 ? "menu-dismiss" : undefined}
+          onPress={() => onDismiss()}
+          style={{ position: "absolute", ...rect }}
+        />
+      ))}
+    </>
+  );
+}
+
 export function MenuPortal({ children }: Props) {
   return <>{children}</>;
 }
@@ -120,8 +146,9 @@ export function MenuContent({
   avoidCollisions: _g,
   collisionPadding: _h,
   nested = false,
+  dismissAround,
   ...props
-}: MenuContentProps & { nested?: boolean }) {
+}: MenuContentProps & { nested?: boolean; dismissAround?: Bounds | null }) {
   const menu = useMenu();
   const [active, setActive] = useState<string | null>(null);
   if (!menu.open || !menu.anchor) return null;
@@ -134,7 +161,11 @@ export function MenuContent({
   };
   return (
     <OverlayPortal>
-      {nested ? null : <DismissLayer onDismiss={() => menu.setOpen(false)} />}
+      {nested ? null : dismissAround ? (
+        <DismissAround hole={dismissAround} onDismiss={() => menu.setOpen(false)} />
+      ) : (
+        <DismissLayer testID="menu-dismiss" onDismiss={() => menu.setOpen(false)} />
+      )}
       <Popper
         anchor={menu.anchor}
         side={side}

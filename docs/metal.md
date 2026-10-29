@@ -123,27 +123,29 @@ numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
 
 ## 2b. `@mirinjs/metal-ui`: shadcn/ui on Metal
 
-`packages/mirin-metal-ui` ports shadcn/ui 1:1 so apps built on that design
-system move to Metal by changing imports. Same component names and props
-(`Button`, `Card*`, `Dialog*`, `Select*`, `Tabs*`, `Table*`, `DropdownMenu*`,
-`Sheet*`, `Popover*`, `Tooltip*`, `Command*`, `Checkbox`, `Switch`, `Toggle`,
-`RadioGroup*`, `Badge`, `Alert*`, `Progress`, `Avatar*`, `Skeleton`, `Kbd`,
-`Breadcrumb*`, `Collapsible*`, `Separator`, `ScrollArea`, `Input`, `Textarea`,
-`Label`), `cva`/`cn` with shadcn's shapes, and the theme CSS variables as
-`ThemeTokens` (`darkTheme`/`lightTheme`). `className` strings keep working:
-`tw()` translates the Tailwind subset shadcn uses (layout, spacing, sizing,
-radii, borders, theme colors with `/alpha`, typography, `hover:bg-*`,
-absolute offsets) and ignores web-only utilities. Text styling on a container
-flows down to nested text like CSS.
+`packages/mirin-metal-ui` ports shadcn/ui `main` 1:1 so apps built on that
+design system move to Metal by changing imports. All upstream components and
+all registry examples are ported with markup, props, variants, and `className`
+strings unchanged (`scripts/port-ui.ts` rewrites only imports).
 
-Differences from the web: overlays render into the `ThemeProvider`'s overlay
-layer (the Metal renderer's absolute positioning) instead of portals;
-anchored popups (`Select`, `Popover`, `DropdownMenu`, `Tooltip`) sit under or
-over their trigger rather than using floating-ui; tables are flex rows with
-fixed cell widths; icons are text glyphs; `asChild` is accepted and ignored.
-Not ported yet: `Sidebar`, `Resizable`, `Sonner`, `InputGroup`, `CodeBlock`.
-`demo/gallery.tsx` renders everything and `demo/check.ts` drives it through
-simulated input.
+- A JSX runtime (`jsxImportSource: "@mirinjs/metal-ui"`) renders lowercase
+  tags (`div`, `button`, `input`, `select`, `table`, `form`, `svg`, `img`)
+  through Metal views.
+- A Tailwind engine (`src/tw/`) evaluates class strings, variants against
+  element attributes, breakpoints against the window width, and CSS custom
+  properties through the tree.
+- Primitives (`src/primitives/`) stand in for Radix and the third-party
+  libraries shadcn uses; overlays are React portals into a window-wide layer
+  anchored by painted bounds.
+- `<form>` behaves like the DOM: submit and reset buttons (also through
+  `form="id"`), `FormData` on submit, and named controls registering values.
+
+Differences from the web: no keyboard navigation or Escape handling yet; no
+transforms or animations; one radius per element; `has-[…]`, `peer-*`,
+`even:`/`odd:`, and descendant selectors are ignored; charts are bar-only.
+`demo/browser.tsx` browses every example natively and `bun test` mounts each
+one headlessly plus behavior tests per component group. `PORTING.md` is the
+porting guide.
 
 ## 3. Process model (decision pending)
 

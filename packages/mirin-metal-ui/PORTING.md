@@ -35,6 +35,8 @@ Upstream reference: shadcn `main`, `apps/v4/registry/new-york-v4/{ui,examples,ho
   occluding, press = dismiss), and `Popper` (anchors to a `Bounds`, measures
   itself, flips/shifts to stay in the window). Get the trigger rect with
   `boundsOf(event)` from an `onClick` (DOM-shaped event).
+  `registerOverlayChild(Component)` mounts a component in every overlay host
+  (sonner's fallback `<Toaster />`, so `toast()` works with no Toaster mounted).
 - **Third-party packages** are remapped by `scripts/port-ui.ts` (`MODULES`):
   `sonner` → `components/sonner.tsx`, `recharts` → `charts/index.ts`,
   `cmdk`/`vaul`/`input-otp`/`react-resizable-panels`/`embla-carousel-*`/

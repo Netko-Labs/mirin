@@ -17,7 +17,9 @@ if (!registry || (kind !== "ui" && kind !== "examples") || !name) {
   throw new Error("usage: bun scripts/port-ui.ts <registry> <ui|examples> <name> [--force]");
 }
 
-const source = await Bun.file(join(registry, kind, `${name}.tsx`)).text();
+// Plain `.ts` sources (server actions, schemas) port the same way and keep their extension.
+const ext = existsSync(join(registry, kind, `${name}.tsx`)) ? ".tsx" : ".ts";
+const source = await Bun.file(join(registry, kind, `${name}${ext}`)).text();
 const fromComponents = kind === "ui";
 const ui = (component: string) =>
   fromComponents ? `./${component}.tsx` : `../../src/components/${component}.tsx`;
@@ -44,7 +46,7 @@ const MODULES: Record<string, string> = {
   "next-themes": "compat/next-themes.ts",
   "@tabler/icons-react": "compat/tabler-icons.ts",
   "react-day-picker": "compat/react-day-picker.tsx",
-  "react-day-picker/persian": "compat/react-day-picker.tsx",
+  "react-day-picker/persian": "compat/react-day-picker-persian.tsx",
   "input-otp": "primitives/input-otp.tsx",
   vaul: "primitives/vaul.tsx",
   cmdk: "primitives/cmdk.tsx",
@@ -54,23 +56,24 @@ const MODULES: Record<string, string> = {
   "@base-ui/react": "primitives/base-ui.tsx",
   "@shadcn/react/message-scroller": "primitives/message-scroller.tsx",
   "react-textarea-autosize": "compat/textarea-autosize.tsx",
+  "@formisch/react": "compat/formisch.tsx",
   "@/hooks/use-media-query": "hooks/use-media-query.ts",
   "@/hooks/use-copy-to-clipboard": "hooks/use-copy-to-clipboard.ts",
 };
 
 export function rewrite(code: string): string {
   return code
-    .replace(/^"use client"\n+/m, "")
+    .replace(/^"use (client|server)"\n+/m, "")
     .replace(
-      /import\s*\{([^}]*)\}\s*from\s*"radix-ui"/g,
-      (_, specifiers: string) =>
+      /import\s*(type\s+)?\{([^}]*)\}\s*from\s*"radix-ui"/g,
+      (_, typeOnly: string | undefined, specifiers: string) =>
         specifiers
           .split(",")
           .map((part) => part.trim())
           .filter(Boolean)
           .map((part) => {
             const name = part.replace(/^type\s+/, "").split(/\s+as\s+/)[0] ?? part;
-            return `import { ${part} } from "${lib}/primitives/${primitiveFile(name)}.tsx"`;
+            return `import ${typeOnly ?? ""}{ ${part} } from "${lib}/primitives/${primitiveFile(name)}.tsx"`;
           })
           .join("\n"),
     )
@@ -81,7 +84,10 @@ export function rewrite(code: string): string {
     .replace(/from "([^"]+)"/g, (whole, module: string) =>
       MODULES[module] ? `from "${lib}/${MODULES[module]}"` : whole,
     )
-    .replace(/from "@\/registry\/new-york-v4\/ui\/([\w-]+)"/g, (_, component: string) => `from "${ui(component)}"`)
+    .replace(
+      /from "@\/registry\/new-york-v4\/ui\/([\w-]+)"/g,
+      (_, component: string) => `from "${ui(component)}"`,
+    )
     .replace(/from "@\/registry\/new-york-v4\/examples\/([\w-]+)"/g, (_, example: string) =>
       fromComponents ? `from "../../demo/examples/${example}.tsx"` : `from "./${example}.tsx"`,
     )
@@ -89,13 +95,23 @@ export function rewrite(code: string): string {
     .replace(/from "@\/registry\/new-york-v4\/lib\/([\w-]+)"/g, `from "${lib}/lib/$1.ts"`);
 }
 
+/** Sibling imports (`./form-next-demo-action`) get the extension of the upstream file. */
+function withRelativeExtensions(code: string): string {
+  return code.replace(/from "\.\/([\w-]+)"/g, (whole, file: string) => {
+    const found = [".tsx", ".ts"].find((candidate) =>
+      existsSync(join(registry ?? "", kind ?? "", `${file}${candidate}`)),
+    );
+    return found ? `from "./${file}${found}"` : whole;
+  });
+}
+
 const target = fromComponents
-  ? join(import.meta.dir, "..", "src", "components", `${name}.tsx`)
-  : join(import.meta.dir, "..", "demo", "examples", `${name}.tsx`);
+  ? join(import.meta.dir, "..", "src", "components", `${name}${ext}`)
+  : join(import.meta.dir, "..", "demo", "examples", `${name}${ext}`);
 if (existsSync(target) && !force) {
   console.log(`skip ${target} (exists; --force to overwrite)`);
 } else {
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, rewrite(source));
+  writeFileSync(target, withRelativeExtensions(rewrite(source)));
   console.log(`wrote ${target}`);
 }

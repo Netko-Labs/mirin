@@ -152,3 +152,33 @@ describe("DropdownMenu", () => {
     h.unmount();
   });
 });
+
+describe("w-fit", () => {
+  test("stops a column from stretching the element, but leaves rows alone", async () => {
+    const h = await mount(
+      <ThemeProvider>
+        <div className="flex flex-col">
+          <div className="w-fit" data-testid="in-column">
+            a
+          </div>
+          <div className="flex items-center">
+            <div className="w-fit" data-testid="in-row">
+              b
+            </div>
+          </div>
+        </div>
+      </ThemeProvider>,
+    );
+    // The view that directly holds the text run with this label.
+    const holder = (label: string) =>
+      find(h.tree(), (node) =>
+        (node.children ?? []).some(
+          (child) =>
+            typeof child !== "string" && child.type === "text" && child.children?.includes(label),
+        ),
+      );
+    expect(holder("a")?.props.alignSelf).toBe("start");
+    expect(holder("b")?.props.alignSelf).toBeUndefined();
+    h.unmount();
+  });
+});

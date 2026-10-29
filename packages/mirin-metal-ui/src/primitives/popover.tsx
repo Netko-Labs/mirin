@@ -146,7 +146,7 @@ function Content({
   };
   return (
     <OverlayPortal>
-      <DismissLayer onDismiss={() => popover.setOpen(false)} />
+      <DismissLayer testID="popover-dismiss" onDismiss={() => popover.setOpen(false)} />
       <Popper
         anchor={popover.anchor}
         side={side}

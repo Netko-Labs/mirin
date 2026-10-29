@@ -5,6 +5,7 @@
  *
  *   cd crates/mirin-metal && cargo build --bin mirin-metal-host
  *   cd packages/mirin-metal-ui && bun demo/browser.tsx [host-binary] [example]
+ *   bun demo/browser.tsx calendar-demo
  */
 
 import { readdirSync } from "node:fs";
@@ -25,9 +26,19 @@ export function listExamples(): string[] {
     .sort();
 }
 
-/** Group by component: `button-group-demo` → `button-group`. */
+/** Component names, longest first, so `button-group-demo` groups under `button-group`. */
+const COMPONENTS = readdirSync(join(import.meta.dir, "../src/components"))
+  .filter((file) => file.endsWith(".tsx"))
+  .map((file) => file.replace(/\.tsx$/, ""))
+  .sort((a, b) => b.length - a.length);
+
+/** The component an example belongs to; examples like `form-rhf-demo` group by their first word. */
 function groupOf(name: string): string {
-  return name.replace(/-(demo|with-.+|disabled|outline|sm|lg|.+-demo)$/, "");
+  return (
+    COMPONENTS.find((component) => name === component || name.startsWith(`${component}-`)) ??
+    name.split("-")[0] ??
+    name
+  );
 }
 
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: string | null }> {
@@ -158,15 +169,21 @@ export function Browser({ initial }: { initial?: string }) {
 }
 
 if (import.meta.main) {
+  // Arguments: [host-binary] [example], or just [example].
+  const args = Bun.argv.slice(2).filter((arg) => arg !== "");
+  const names = listExamples();
+  const initial = args.find((arg) => names.includes(arg));
+  const unknown = args.find((arg) => !arg.includes("/") && !names.includes(arg));
+  if (unknown) console.warn(`no example named "${unknown}"; opening the first one`);
   const binary =
-    Bun.argv[2] ??
+    args.find((arg) => arg.includes("/")) ??
     new URL("../../../crates/mirin-metal/target/debug/mirin-metal-host", import.meta.url).pathname;
   process.env.MIRIN_METAL_TITLE = "metal-ui examples";
   process.env.MIRIN_METAL_SIZE ??= "1440x900";
   const transport = spawnNativeHost(binary);
   const root = render(
     <ThemeProvider>
-      <Browser initial={Bun.argv[3]} />
+      <Browser initial={initial} />
     </ThemeProvider>,
     transport,
   );

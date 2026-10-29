@@ -1,4 +1,4 @@
-import { Button } from "../../src/components/button.tsx"
+import { Button } from "../../src/components/button.tsx";
 import {
   Dialog,
   DialogClose,
@@ -8,9 +8,9 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "../../src/components/dialog.tsx"
-import { Input } from "../../src/components/input.tsx"
-import { Label } from "../../src/components/label.tsx"
+} from "../../src/components/dialog.tsx";
+import { Input } from "../../src/components/input.tsx";
+import { Label } from "../../src/components/label.tsx";
 
 export default function DialogDemo() {
   return (
@@ -23,8 +23,7 @@ export default function DialogDemo() {
           <DialogHeader>
             <DialogTitle>Edit profile</DialogTitle>
             <DialogDescription>
-              Make changes to your profile here. Click save when you&apos;re
-              done.
+              Make changes to your profile here. Click save when you&apos;re done.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
@@ -46,5 +45,5 @@ export default function DialogDemo() {
         </DialogContent>
       </form>
     </Dialog>
-  )
+  );
 }

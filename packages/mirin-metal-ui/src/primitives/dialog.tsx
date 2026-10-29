@@ -1,7 +1,8 @@
 /**
  * Radix `Dialog` and `AlertDialog` on Metal: same part names and props.
  * Content renders centered in the overlay layer above a scrim; pressing the
- * scrim closes a Dialog (not an AlertDialog).
+ * scrim closes a Dialog (not an AlertDialog). Content pinned to a window edge
+ * (`inset-y-0 right-0`, as Sheet does) keeps its own placement classes.
  */
 
 import { View } from "@mirinjs/metal";
@@ -99,6 +100,13 @@ function Overlay({ asChild, ...props }: Props) {
   return asChild ? <Slot {...shared} /> : <div {...shared} />;
 }
 
+/** Sheet-style content: pinned to an edge with `inset-*`/`top-0`/… instead of centered. */
+function isEdgeAnchored(className: string | undefined): boolean {
+  return (className ?? "")
+    .split(/\s+/)
+    .some((token) => /^(inset-[xy]-0|top-0|bottom-0|left-0|right-0)$/.test(token));
+}
+
 function Content({
   asChild,
   className,
@@ -113,13 +121,18 @@ function Content({
 }: Props) {
   const dialog = useDialogContext();
   if (!dialog.open) return null;
+  const edge = isEdgeAnchored(className);
   const shared: Props = {
     ...props,
     role: dialog.dismissable ? "dialog" : "alertdialog",
     "data-state": "open",
     occlude: true,
-    className: stripPlacement(className),
+    className: edge ? className : stripPlacement(className),
   };
+  if (edge) {
+    // `fixed` + insets resolve to absolute placement inside the overlay layer.
+    return asChild ? <Slot {...shared}>{children}</Slot> : <div {...shared}>{children}</div>;
+  }
   return (
     <View
       style={{

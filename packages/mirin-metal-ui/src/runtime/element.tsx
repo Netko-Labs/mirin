@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { Box, type BoxProps } from "./box.tsx";
 import { HtmlInput, HtmlSelect, HtmlTextarea } from "./controls.tsx";
 import { HtmlHr, HtmlImage, HtmlSvg } from "./media.tsx";
+import { HtmlCell, HtmlRow, HtmlTable } from "./table.tsx";
 
 const NULL_TAGS = new Set([
   "script",
@@ -52,6 +53,13 @@ export function Element(props: ElementProps): ReactNode {
       return <HtmlSvg {...props} />;
     case "hr":
       return <HtmlHr {...props} />;
+    case "table":
+      return <HtmlTable {...props} />;
+    case "tr":
+      return <HtmlRow {...props} />;
+    case "th":
+    case "td":
+      return <HtmlCell {...props} />;
     case "br":
       return <Box tag="br" viewStyle={{ width: "100%", height: 0 }} />;
     default:

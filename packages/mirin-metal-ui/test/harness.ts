@@ -25,6 +25,16 @@ export interface Harness {
   pressText(text: string): Promise<void>;
   type(testID: string, value: string): Promise<void>;
   hover(testID: string, hovered: boolean): Promise<void>;
+  /** Right-click the node at a window point (default 40,40). */
+  contextMenu(testID: string, x?: number, y?: number): Promise<void>;
+  /** A pointer phase (`down`/`move`/`up`) at window point (x, y) on the node's `bounds`. */
+  pointer(
+    testID: string,
+    phase: "down" | "move" | "up",
+    x: number,
+    y: number,
+    bounds: { x: number; y: number; width: number; height: number },
+  ): Promise<void>;
   settle(): Promise<void>;
   nodeId(testID: string): string | undefined;
   unmount(): void;
@@ -122,10 +132,22 @@ export async function mount(element: ReactNode): Promise<Harness> {
       emit({ type: "change", nodeId: id, value });
       await settle();
     },
+    async pointer(testID, phase, x, y, bounds) {
+      const id = root.nodeId(testID);
+      if (!id) throw new Error(`no node with testID ${testID}`);
+      emit({ type: "pointer", nodeId: id, phase, x, y, bounds });
+      await settle();
+    },
     async hover(testID, hovered) {
       const id = root.nodeId(testID);
       if (!id) throw new Error(`no node with testID ${testID}`);
       emit({ type: "hover", nodeId: id, hovered, bounds: { x: 10, y: 10, width: 80, height: 30 } });
+      await settle();
+    },
+    async contextMenu(testID, x = 40, y = 40) {
+      const id = root.nodeId(testID);
+      if (!id) throw new Error(`no node with testID ${testID}`);
+      emit({ type: "contextmenu", nodeId: id, x, y });
       await settle();
     },
     settle,

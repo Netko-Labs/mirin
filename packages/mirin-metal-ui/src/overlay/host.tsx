@@ -6,7 +6,14 @@
  */
 
 import { type Bounds, createPortal, View } from "@mirinjs/metal";
-import { createContext, type ReactNode, useContext, useState } from "react";
+import {
+  type ComponentType,
+  createContext,
+  type ReactNode,
+  useContext,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 export interface OverlayApi {
   layer: unknown;
@@ -20,6 +27,32 @@ export function useOverlay(): OverlayApi {
   return useContext(OverlayContext);
 }
 
+/**
+ * Components every `OverlayHost` mounts after the app content, registered at
+ * module load (sonner's `toast()` renders through one so examples need no
+ * `<Toaster />`). They render inside the theme and overlay contexts.
+ */
+const ambient = new Set<ComponentType>();
+const ambientListeners = new Set<() => void>();
+let ambientSnapshot: ComponentType[] = [];
+
+export function registerOverlayChild(component: ComponentType): void {
+  if (ambient.has(component)) return;
+  ambient.add(component);
+  ambientSnapshot = [...ambient];
+  for (const listener of ambientListeners) listener();
+}
+
+function useAmbient(): ComponentType[] {
+  return useSyncExternalStore(
+    (listener) => {
+      ambientListeners.add(listener);
+      return () => ambientListeners.delete(listener);
+    },
+    () => ambientSnapshot,
+  );
+}
+
 export function OverlayHost({
   children,
   onResize,
@@ -29,6 +62,7 @@ export function OverlayHost({
 }) {
   const [layer, setLayer] = useState<unknown>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const extras = useAmbient();
   return (
     <OverlayContext.Provider value={{ layer, size }}>
       <View style={{ flex: 1, flexDirection: "column", position: "relative" }}>
@@ -41,6 +75,9 @@ export function OverlayHost({
           }}
           style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
         />
+        {extras.map((Extra, index) => (
+          <Extra key={index} />
+        ))}
       </View>
     </OverlayContext.Provider>
   );

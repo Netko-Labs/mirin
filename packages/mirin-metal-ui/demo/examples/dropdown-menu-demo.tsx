@@ -1,4 +1,4 @@
-import { Button } from "../../src/components/button.tsx"
+import { Button } from "../../src/components/button.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,7 +12,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "../../src/components/dropdown-menu.tsx"
+} from "../../src/components/dropdown-menu.tsx";
 
 export default function DropdownMenuDemo() {
   return (
@@ -70,5 +70,5 @@ export default function DropdownMenuDemo() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
+  );
 }

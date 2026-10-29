@@ -1,6 +1,5 @@
-import { ArrowUpIcon } from "../../src/icons/index.ts"
-
-import { Button } from "../../src/components/button.tsx"
+import { Button } from "../../src/components/button.tsx";
+import { ArrowUpIcon } from "../../src/icons/index.ts";
 
 export default function ButtonDemo() {
   return (
@@ -10,5 +9,5 @@ export default function ButtonDemo() {
         <ArrowUpIcon />
       </Button>
     </div>
-  )
+  );
 }

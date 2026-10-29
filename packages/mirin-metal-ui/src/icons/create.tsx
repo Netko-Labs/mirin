@@ -5,7 +5,7 @@
  * `currentColor`, and to the inherited icon size (`[&_svg]:size-4`) or 16px.
  */
 
-import { Svg } from "@mirinjs/metal";
+import { Svg, View } from "@mirinjs/metal";
 import { type ReactNode, useMemo } from "react";
 import { useInherited } from "../runtime/context.ts";
 import { useTheme } from "../theme.ts";
@@ -80,9 +80,14 @@ export function createLucideIcon(name: string, node: IconNode): LucideIcon {
       inherited.svg.color ??
       inherited.text.color ??
       theme.colors.foreground;
-    return (
+    const svg = (
       <Svg markup={markup} width={width} height={height} color={tint} opacity={tw.view.opacity} />
     );
+    // `absolute right-3 …` icons (select chevrons, input adornments) float
+    // over their relative parent instead of taking a slot in the row.
+    if (tw.view.position !== "absolute") return svg;
+    const { top, left, right, bottom } = tw.view;
+    return <View style={{ position: "absolute", top, left, right, bottom }}>{svg}</View>;
   }
   const component = Icon as LucideIcon;
   component.displayName = name;

@@ -46,6 +46,8 @@ export interface TwStyle {
   objectFit?: "cover" | "contain";
   listStyle?: "disc" | "decimal";
   pointerEventsNone: boolean;
+  /** `w-fit`/`w-max`/`w-min`: size to content instead of stretching across a column. */
+  fitWidth?: boolean;
 }
 
 export function emptyStyle(): TwStyle {
@@ -186,9 +188,14 @@ export function applyUtility(
     case "inline":
     case "inline-block":
     case "contents":
+      // A later display utility (`hidden sm:flex`) undoes `hidden`, not `sr-only`.
+      if (acc.display === "none") acc.hidden = false;
       acc.display = token;
       return;
     case "hidden":
+      acc.hidden = true;
+      acc.display = "none";
+      return;
     case "sr-only":
       acc.hidden = true;
       return;
@@ -272,6 +279,12 @@ export function applyUtility(
       return;
     case "self-stretch":
       view.alignSelf = "stretch";
+      return;
+    // Fit-content width; the box applies it only inside a column parent.
+    case "w-fit":
+    case "w-max":
+    case "w-min":
+      acc.fitWidth = true;
       return;
     case "overflow-hidden":
     case "overflow-clip":
@@ -436,7 +449,8 @@ export function applyUtility(
   m = token.match(/^space-([xy])-(.+)$/);
   if (m) {
     const value = spacing(m[2] ?? "");
-    if (value !== undefined) {
+    // `-space-x-2` overlaps siblings; gaps cannot be negative, so it is a no-op.
+    if (value !== undefined && !negative) {
       if (m[1] === "x") acc.spaceX = value;
       else acc.spaceY = value;
     }
@@ -447,16 +461,24 @@ export function applyUtility(
     const value = spacing(m[2] ?? "");
     if (value === undefined) return;
     const axis = m[1] ?? "";
+    // Later classes win: a broader padding clears earlier narrower ones
+    // (`px-4 py-2 p-0` is zero), since the renderer prefers the narrow keys.
     if (axis === "") {
+      for (const key of ["paddingHorizontal", "paddingVertical", ...Object.values(PADDING_KEYS)])
+        delete view[key as keyof ViewStyle];
       view.padding = value;
       input.padding = value;
       return;
     }
     if (axis === "x") {
+      delete view.paddingLeft;
+      delete view.paddingRight;
       view.paddingHorizontal = value;
       return;
     }
     if (axis === "y") {
+      delete view.paddingTop;
+      delete view.paddingBottom;
       view.paddingVertical = value;
       return;
     }
@@ -480,6 +502,12 @@ export function applyUtility(
   m = token.match(/^(w|h|size|min-w|min-h|max-w|max-h|basis)-(.+)$/);
   if (m) {
     const kind = m[1];
+    if (m[2] === "auto" && (kind === "w" || kind === "h" || kind === "size")) {
+      // `h-auto` after `h-9` sizes to content again.
+      if (kind !== "h") delete view.width;
+      if (kind !== "w") delete view.height;
+      return;
+    }
     const value = length(m[2] ?? "");
     if (value === undefined) return;
     const px = typeof value === "number" ? value : undefined;

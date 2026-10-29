@@ -35,6 +35,8 @@ export interface SyntheticEvent {
   clientX: number;
   clientY: number;
   key?: string;
+  /** On `submit` events: the form's named control values. */
+  formData?: FormData;
   preventDefault: () => void;
   stopPropagation: () => void;
   persist: () => void;

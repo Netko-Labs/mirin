@@ -39,10 +39,11 @@ names its acceptance check. Checkpoint notes go at the bottom.
 - [x] B2b Simulation channel (`sim` commands, layout query, `testID`,
       `root.lastTree()`), used by Anko's `apps/metal/check.ts` and the
       metal-ui gallery check. Hover simulation is still missing.
-- [x] B7 `@mirinjs/metal-ui`: shadcn/ui ported 1:1 (30 components, theme
-      tokens, Tailwind translator, overlay layer). Open: Sidebar, Resizable,
-      Sonner, InputGroup, CodeBlock, icons/images, floating-ui style
-      positioning, hover-driven tooltip check.
+- [x] B7 `@mirinjs/metal-ui`: shadcn/ui `main` ported 1:1 (all components
+      and registry examples, JSX runtime, Tailwind engine, Radix and
+      third-party stand-ins, DOM-like forms). Open: keyboard navigation and
+      Escape, transforms/animation, per-corner radii, `has-`/`peer-`
+      selectors, non-bar charts.
 - [ ] B3 Tree patch protocol (insert/remove/update by node id) replacing
       whole-tree replacement; reconciler emits patches from mutation methods.
 - [ ] B4 `libmirin_metal` C ABI + polled event queue; Bun host boots it like

@@ -78,6 +78,17 @@ function matchAttr(variant: string, attrs: Attrs): boolean | undefined {
   return undefined;
 }
 
+/** `[&:first-child]` / `[&:not(:last-child)]` / `only`, from Box's sibling attrs. */
+function matchChildSelector(variant: string, attrs: Attrs): boolean | undefined {
+  if (variant === "only") {
+    return attrs["data-metal-first"] === true && attrs["data-metal-last"] === true;
+  }
+  const selector = variant.match(/^\[&:(?:(not)\(:)?(first|last)-child\)?\]$/);
+  if (!selector) return undefined;
+  const hit = attrs[`data-metal-${selector[2]}`] === true;
+  return selector[1] ? !hit : hit;
+}
+
 /** Resolve one variant to a target, or "skip" when it does not apply. */
 function evaluate(variant: string, state: StyleState): VariantTarget {
   // Pointer UI: keyboard focus and Radix's highlight both read as hover.
@@ -97,11 +108,16 @@ function evaluate(variant: string, state: StyleState): VariantTarget {
   if (variant === "disabled") return truthy(state.attrs.disabled) ? "self" : "skip";
   if (variant === "enabled") return truthy(state.attrs.disabled) ? "skip" : "self";
   if (variant === "checked") return truthy(state.attrs.checked) ? "self" : "skip";
+  // Box sets these from the element's position among its siblings.
+  if (variant === "first") return state.attrs["data-metal-first"] === true ? "self" : "skip";
+  if (variant === "last") return state.attrs["data-metal-last"] === true ? "self" : "skip";
   if (variant === "invalid") return truthy(state.attrs["aria-invalid"]) ? "self" : "skip";
   if (variant === "open") {
     return truthy(state.attrs.open) || state.attrs["data-state"] === "open" ? "self" : "skip";
   }
   if (variant === "ltr" || variant === "motion-safe") return "self";
+  const child = matchChildSelector(variant, state.attrs);
+  if (child !== undefined) return child ? "self" : "skip";
   const own = matchAttr(variant, state.attrs);
   if (own !== undefined) return own ? "self" : "skip";
 

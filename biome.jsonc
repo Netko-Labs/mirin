@@ -141,8 +141,15 @@
       "linter": {
         "rules": {
           "a11y": "off",
+          // Upstream shadcn idioms kept verbatim: TanStack Form's `children`
+          // render prop and `!= null` checks.
+          "correctness": { "noChildrenProp": "off" },
           "style": { "useNamingConvention": "off", "noNamespace": "off" },
-          "suspicious": { "noArrayIndexKey": "off", "noExplicitAny": "off" },
+          "suspicious": {
+            "noArrayIndexKey": "off",
+            "noExplicitAny": "off",
+            "noDoubleEquals": "off"
+          },
           "security": { "noDangerouslySetInnerHtml": "off" },
           "complexity": { "noUselessFragments": "off" }
         }
