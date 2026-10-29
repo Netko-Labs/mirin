@@ -8,13 +8,13 @@
 import { createContext } from "react";
 import type ReactReconciler from "react-reconciler";
 import { DefaultEventPriority, NoEventPriority } from "react-reconciler/constants";
-import { type TEXT_TYPE, VIEW_TYPE } from "../components.ts";
-import type { TextProps, ViewProps } from "../types.ts";
+import { INPUT_TYPE, type TEXT_TYPE, VIEW_TYPE } from "../components.ts";
+import type { TextInputProps, TextProps, ViewProps } from "../types.ts";
 import type { Container, HostInstance, HostNode, RawTextInstance } from "./instances.ts";
 import { insertNodeBefore, removeNode } from "./instances.ts";
 
-type HostType = typeof VIEW_TYPE | typeof TEXT_TYPE;
-type HostProps = ViewProps | TextProps;
+type HostType = typeof VIEW_TYPE | typeof TEXT_TYPE | typeof INPUT_TYPE;
+type HostProps = ViewProps | TextProps | TextInputProps;
 /** Sentinel: React requires a non-null host context even when unused. */
 type HostContext = Record<string, never>;
 const HOST_CONTEXT: HostContext = {};
@@ -50,9 +50,11 @@ export const hostConfig: HostConfig = {
     const id = nextInstanceId++;
     // Type-only narrowing: the reconciler types props as the union across host
     // types, but the element type discriminates which props these are.
-    return type === VIEW_TYPE
-      ? { kind: "view", id, props: props as ViewProps, children: [] }
-      : { kind: "text", id, props: props as TextProps, children: [] };
+    if (type === VIEW_TYPE) return { kind: "view", id, props: props as ViewProps, children: [] };
+    if (type === INPUT_TYPE) {
+      return { kind: "input", id, props: props as TextInputProps, children: [] };
+    }
+    return { kind: "text", id, props: props as TextProps, children: [] };
   },
   createTextInstance(text) {
     return { kind: "raw", text };

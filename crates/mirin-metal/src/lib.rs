@@ -18,5 +18,7 @@ mod tree;
 mod window;
 
 pub use events::{EventKind, NativeUiEvent};
-pub use tree::{parse_tree, Direction, NodeSpec, TextProps, ViewProps};
+pub use tree::{
+    parse_tree, Align, Direction, InputProps, Justify, NodeSpec, TextProps, ViewProps, Weight,
+};
 pub use window::{run, NativeUiOptions};

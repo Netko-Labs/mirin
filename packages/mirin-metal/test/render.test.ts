@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createElement, useState } from "react";
-import { Text, View } from "../src/components.ts";
+import { Text, TextInput, View } from "../src/components.ts";
 import { parseNativeEvent } from "../src/host.ts";
 import { render } from "../src/render.ts";
 import type { NativeEvent, NativeTransport } from "../src/types.ts";
@@ -57,7 +57,7 @@ describe("render", () => {
     expect(transport.sent.length).toBeGreaterThan(0);
     const tree = JSON.parse(transport.sent.at(-1) ?? "");
     expect(tree.type).toBe("view");
-    expect(tree.props).toEqual({ fill: true, center: true, gap: 12 });
+    expect(tree.props).toEqual({ id: expect.any(String), flex: 1, center: true, gap: 12 });
     expect(tree.children[0]).toEqual({
       type: "text",
       props: { color: "#f4f4f5", size: 28 },
@@ -86,13 +86,68 @@ describe("render", () => {
 });
 
 describe("parseNativeEvent", () => {
-  test("accepts press events and rejects junk", () => {
+  test("accepts press/change/submit events and rejects junk", () => {
     expect(parseNativeEvent('{"type":"press","nodeId":"3"}')).toEqual({
       type: "press",
       nodeId: "3",
     });
+    expect(parseNativeEvent('{"type":"change","nodeId":"7","value":"sel"}')).toEqual({
+      type: "change",
+      nodeId: "7",
+      value: "sel",
+    });
+    expect(parseNativeEvent('{"type":"submit","nodeId":"7"}')).toBeNull();
     expect(parseNativeEvent('{"type":"press"}')).toBeNull();
     expect(parseNativeEvent("not json")).toBeNull();
     expect(parseNativeEvent('"press"')).toBeNull();
+  });
+});
+
+describe("TextInput", () => {
+  test("serializes as a controlled input and routes change/submit back", async () => {
+    const transport = fakeTransport();
+    const seen: string[] = [];
+    function Editor() {
+      const [sql, setSql] = useState("select 1");
+      return createElement(
+        View,
+        null,
+        createElement(TextInput, {
+          value: sql,
+          multiline: true,
+          autoFocus: true,
+          style: { fontFamily: "monospace", borderColor: "#333" },
+          onChangeText: setSql,
+          onSubmitEditing: (text: string) => seen.push(text),
+        }),
+        createElement(Text, null, sql),
+      );
+    }
+    const root = render(createElement(Editor), transport);
+    await nextCommit();
+
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    const input = tree.children[0];
+    expect(input.type).toBe("input");
+    expect(input.props).toEqual({
+      id: expect.any(String),
+      value: "select 1",
+      multiline: true,
+      autofocus: true,
+      mono: true,
+      borderColor: "#333",
+      onChange: true,
+      onSubmit: true,
+    });
+
+    transport.emit({ type: "change", nodeId: input.props.id, value: "select 2" });
+    await nextCommit();
+    const updated = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(updated.children[0].props.value).toBe("select 2");
+    expect(updated.children[1].children).toEqual(["select 2"]);
+
+    transport.emit({ type: "submit", nodeId: input.props.id, value: "select 2" });
+    expect(seen).toEqual(["select 2"]);
+    root.unmount();
   });
 });

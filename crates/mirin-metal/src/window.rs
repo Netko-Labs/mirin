@@ -1,17 +1,19 @@
 //! Window shell: open a GPU-rendered GPUI window that renders a driver-owned
-//! element tree, applies streamed tree updates, and reports interaction events.
+//! element tree, applies streamed tree updates, keeps the editing state of
+//! `input` nodes, and reports interaction events.
 
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use gpui::{
-    prelude::*, px, size, App, Application, Bounds, Context, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowOptions,
+    prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, SharedString,
+    TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 
 use crate::events::{EventSender, NativeUiEvent};
 use crate::render::render_node;
-use crate::tree::NodeSpec;
+use crate::tree::{collect_inputs, NodeSpec};
 
 /// How often the update task drains the driver's tree channel.
 const UPDATE_POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -34,15 +36,93 @@ impl Default for NativeUiOptions {
     }
 }
 
+/// Renderer-owned editing state of one `input` node.
+pub(crate) struct InputState {
+    pub(crate) focus: FocusHandle,
+    pub(crate) buffer: String,
+    /// Caret position as a char index into `buffer`.
+    pub(crate) cursor: usize,
+    /// The driver's `value` the buffer was last synced from; a different value
+    /// in a new tree resets the buffer (controlled-input semantics).
+    pub(crate) synced_value: String,
+    /// Set by the tree sync when the node is new and asked for `autofocus`.
+    pub(crate) wants_focus: bool,
+}
+
 /// The root view: renders whatever tree the driver last sent.
-struct RootView {
-    tree: NodeSpec,
-    events: EventSender,
+pub(crate) struct RootView {
+    pub(crate) tree: NodeSpec,
+    pub(crate) events: EventSender,
+    pub(crate) inputs: HashMap<String, InputState>,
+}
+
+impl RootView {
+    fn new(tree: NodeSpec, events: EventSender, cx: &mut App) -> Self {
+        let mut view = Self {
+            tree,
+            events,
+            inputs: HashMap::new(),
+        };
+        view.sync_inputs(cx);
+        view
+    }
+
+    /// Replace the tree and reconcile input state with it.
+    fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
+        self.tree = tree;
+        self.sync_inputs(cx);
+    }
+
+    /// Create state for new inputs, reset buffers whose driver value changed,
+    /// and drop state for inputs that left the tree.
+    fn sync_inputs(&mut self, cx: &mut App) {
+        let mut specs = Vec::new();
+        collect_inputs(&self.tree, &mut specs);
+        let mut seen = Vec::with_capacity(specs.len());
+        for spec in specs {
+            seen.push(spec.id.clone());
+            match self.inputs.get_mut(&spec.id) {
+                Some(state) => {
+                    if state.synced_value != spec.value {
+                        state.buffer = spec.value.clone();
+                        state.cursor = state.buffer.chars().count();
+                        state.synced_value = spec.value.clone();
+                    }
+                }
+                None => {
+                    self.inputs.insert(
+                        spec.id.clone(),
+                        InputState {
+                            focus: cx.focus_handle(),
+                            cursor: spec.value.chars().count(),
+                            buffer: spec.value.clone(),
+                            synced_value: spec.value.clone(),
+                            wants_focus: spec.autofocus,
+                        },
+                    );
+                }
+            }
+        }
+        self.inputs.retain(|id, _| seen.contains(id));
+    }
+
+    /// Honour pending `autofocus` requests. Runs outside of rendering.
+    fn apply_pending_focus(&mut self, window: &mut Window) {
+        for state in self.inputs.values_mut() {
+            if state.wants_focus {
+                state.wants_focus = false;
+                window.focus(&state.focus);
+            }
+        }
+    }
 }
 
 impl Render for RootView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        render_node(&self.tree, &self.events)
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The tree is immutable per frame; clone it so input state can be read
+        // and listeners attached while walking it.
+        let tree = self.tree.clone();
+        render_node(&tree, self, window, cx)
     }
 }
 
@@ -68,10 +148,7 @@ pub fn run(
         };
         let event_sender = EventSender::new(events);
         let opened = cx.open_window(window_options, |_window, cx| {
-            cx.new(|_| RootView {
-                tree: initial_tree,
-                events: event_sender,
-            })
+            cx.new(|cx| RootView::new(initial_tree, event_sender, cx))
         });
         let window = match opened {
             Ok(window) => window,
@@ -82,6 +159,7 @@ pub fn run(
             }
         };
         cx.activate(true);
+        let _ = window.update(cx, |view, window, _cx| view.apply_pending_focus(window));
 
         // Apply driver updates: poll the channel on the foreground executor and
         // swap the root tree (coalescing to the newest one) when it changes.
@@ -93,8 +171,9 @@ pub fn run(
                     latest = Some(tree);
                 }
                 let Some(tree) = latest else { continue };
-                let applied = window.update(cx, |view, _window, cx| {
-                    view.tree = tree;
+                let applied = window.update(cx, |view, window, cx| {
+                    view.set_tree(tree, cx);
+                    view.apply_pending_focus(window);
                     cx.notify();
                 });
                 if applied.is_err() {

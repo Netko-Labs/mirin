@@ -1,32 +1,69 @@
 /**
- * Public types for the alpha native renderer: React components take normal
- * flexbox-flavored styles; the renderer translates them into the GPUI element
- * tree (crates/mirin-metal) where GPUI's own flex engine lays them out.
+ * Public types for the Metal renderer: React components take React Native-
+ * flavored props; the renderer translates them into the GPUI element tree
+ * (crates/mirin-metal `tree.rs`) where GPUI's own flex engine lays them out.
  */
 
 import type { ReactNode } from "react";
 
-/** Flexbox-flavored layout + appearance for a `<View>` (v1 subset). */
+/** `#RGB`, `#RRGGBB`, or `#RRGGBBAA`. */
+export type Color = string;
+
+/** Flexbox-flavored layout + appearance for a `<View>`. */
 export interface ViewStyle {
   flexDirection?: "row" | "column";
   gap?: number;
   padding?: number;
+  paddingHorizontal?: number;
+  paddingVertical?: number;
   width?: number;
   height?: number;
-  /** `flex: 1` fills the parent (maps to the native `fill`). */
+  minWidth?: number;
+  minHeight?: number;
+  maxHeight?: number;
+  /** `flex: 1` grows into the remaining space (the native `flex`). */
   flex?: number;
-  alignItems?: "center";
-  justifyContent?: "center";
-  /** `#RGB` or `#RRGGBB`. */
-  backgroundColor?: string;
+  /** `flexShrink: 0` keeps the view from shrinking below its content. */
+  flexShrink?: 0 | 1;
+  alignItems?: "flex-start" | "center" | "flex-end" | "stretch";
+  justifyContent?: "flex-start" | "center" | "flex-end" | "space-between";
+  backgroundColor?: Color;
+  /** Background while the pointer is over the view. */
+  hoverBackgroundColor?: Color;
   borderRadius?: number;
+  borderWidth?: number;
+  borderColor?: Color;
+  /** `overflow: "hidden"` clips; `"scroll"` scrolls vertically. */
+  overflow?: "visible" | "hidden" | "scroll";
+  opacity?: number;
 }
 
-/** Appearance for a `<Text>` (v1 subset). */
+/** Appearance for a `<Text>`. */
 export interface TextStyle {
-  /** `#RGB` or `#RRGGBB`. */
-  color?: string;
+  color?: Color;
   fontSize?: number;
+  fontWeight?: "normal" | "500" | "600" | "700" | "medium" | "semibold" | "bold";
+  /** `"monospace"` picks the system monospace family; anything else is the default. */
+  fontFamily?: "monospace" | "default";
+  opacity?: number;
+}
+
+/** Appearance for a `<TextInput>`. */
+export interface TextInputStyle {
+  color?: Color;
+  placeholderColor?: Color;
+  fontSize?: number;
+  fontFamily?: "monospace" | "default";
+  backgroundColor?: Color;
+  padding?: number;
+  borderRadius?: number;
+  borderColor?: Color;
+  /** Border while focused; falls back to `borderColor`. */
+  focusBorderColor?: Color;
+  width?: number;
+  height?: number;
+  minHeight?: number;
+  flex?: number;
 }
 
 export interface ViewProps {
@@ -37,14 +74,28 @@ export interface ViewProps {
 
 export interface TextProps {
   style?: TextStyle;
+  /** Keep on one line and cut with an ellipsis instead of wrapping. */
+  numberOfLines?: 1;
   children?: ReactNode;
 }
 
-/** An interaction event coming back from the native UI. */
-export interface NativeEvent {
-  type: "press";
-  nodeId: string;
+export interface TextInputProps {
+  /** Controlled value; a change resets the native buffer. */
+  value: string;
+  placeholder?: string;
+  multiline?: boolean;
+  autoFocus?: boolean;
+  style?: TextInputStyle;
+  onChangeText?: (text: string) => void;
+  /** Enter (single line) or Ctrl/Cmd+Enter (multiline). */
+  onSubmitEditing?: (text: string) => void;
 }
+
+/** An interaction event coming back from the native UI. */
+export type NativeEvent =
+  | { type: "press"; nodeId: string }
+  | { type: "change"; nodeId: string; value: string }
+  | { type: "submit"; nodeId: string; value: string };
 
 /**
  * The channel to the native renderer. `spawnNativeHost` provides the stdio

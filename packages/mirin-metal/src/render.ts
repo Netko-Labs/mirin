@@ -9,7 +9,7 @@ import ReactReconciler from "react-reconciler";
 import { ConcurrentRoot } from "react-reconciler/constants";
 import { hostConfig } from "./lib/host-config.ts";
 import type { Container } from "./lib/instances.ts";
-import { serializeRoot } from "./lib/serialize.ts";
+import { type Handlers, serializeRoot } from "./lib/serialize.ts";
 import type { NativeRoot, NativeTransport } from "./types.ts";
 
 const reconciler = ReactReconciler(hostConfig);
@@ -20,7 +20,7 @@ function reportError(error: Error): void {
 
 /** Render a React element tree into the native UI. */
 export function render(element: ReactNode, transport: NativeTransport): NativeRoot {
-  let pressHandlers = new Map<string, () => void>();
+  let handlers: Handlers = { press: new Map(), change: new Map(), submit: new Map() };
   const container: Container = {
     children: [],
     onCommit() {
@@ -28,13 +28,21 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       if (!serialized) {
         return;
       }
-      pressHandlers = serialized.pressHandlers;
+      handlers = serialized.handlers;
       transport.send(serialized.treeJson);
     },
   };
   transport.onEvent((event) => {
-    if (event.type === "press") {
-      pressHandlers.get(event.nodeId)?.();
+    switch (event.type) {
+      case "press":
+        handlers.press.get(event.nodeId)?.();
+        break;
+      case "change":
+        handlers.change.get(event.nodeId)?.(event.value);
+        break;
+      case "submit":
+        handlers.submit.get(event.nodeId)?.(event.value);
+        break;
     }
   });
 

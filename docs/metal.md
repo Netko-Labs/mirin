@@ -33,31 +33,52 @@ The model deliberately mirrors React Native: the driver (React in Bun) owns
 state and describes UI; the renderer is a pure function of the latest tree.
 "Last write wins" per update tick; there is no diffing protocol yet.
 
-## 2. Element tree (v1)
+## 2. Element tree (v2)
 
 ```json
 {
   "type": "view",
-  "props": {"fill": true, "center": true, "gap": 12, "background": "#111114"},
+  "props": {"id": "1", "fill": true, "direction": "row", "background": "#111114"},
   "children": [
-    {"type": "text", "props": {"size": 28, "color": "#f4f4f5"}, "children": ["count: 0"]},
-    {"type": "view",
-     "props": {"id": "3", "onPress": true, "padding": 12, "cornerRadius": 8, "background": "#3b82f6"},
-     "children": [{"type": "text", "props": {"color": "#ffffff"}, "children": ["tap me"]}]}
+    {"type": "view", "props": {"id": "2", "width": 220, "scroll": true, "padding": 12}, "children": [
+      {"type": "text", "props": {"size": 11, "weight": "semibold", "color": "#8b8b96"}, "children": ["CONNECTIONS"]},
+      {"type": "view", "props": {"id": "3", "onPress": true, "hoverBackground": "#1f1f27"}, "children": [
+        {"type": "text", "props": {"truncate": true}, "children": ["Check SQLite"]}]}]},
+    {"type": "input", "props": {"id": "4", "value": "select 1", "multiline": true, "mono": true,
+      "autofocus": true, "onChange": true, "onSubmit": true}}
   ]
 }
 ```
 
-- `view`: `direction` (`column` | `row`), `gap`, `padding`, `width`, `height`,
-  `fill`, `center`, `background` (`#RGB` / `#RRGGBB`), `cornerRadius`,
-  `onPress` (requires `id`).
-- `text`: string children plus `color` and `size`.
-- Events: `{"type":"press","nodeId":"3"}`.
+- `view`: `direction`, `gap`, `padding` / `paddingX` / `paddingY`, `width`,
+  `height`, `minWidth`, `minHeight`, `maxHeight`, `flex` (grow when ≥ 1),
+  `shrink`, `fill`, `center`, `align` (`start|center|end|stretch`), `justify`
+  (`start|center|end|between`), `background`, `hoverBackground`, `cornerRadius`,
+  `borderWidth` (1 or 2), `borderColor`, `scroll` (vertical), `clip`, `opacity`,
+  `onPress`. `id` is required for `onPress`, `hoverBackground`, and `scroll`
+  (GPUI keeps per-element state for those); the TypeScript side sends one for
+  every node.
+- `text`: string children plus `color`, `size`, `weight`
+  (`normal|medium|semibold|bold`), `mono` (system monospace via `fc-match`),
+  `truncate`, `opacity`.
+- `input`: `id` (required), `value`, `placeholder`, `multiline`, `mono`, `size`,
+  `color`, `placeholderColor`, `background`, `padding`, `cornerRadius`,
+  `borderColor`, `focusBorderColor`, `width`, `height`, `minHeight`, `flex`,
+  `fill`, `autofocus`, `onChange`, `onSubmit`. The renderer owns the editing
+  buffer, caret, and focus (`window::InputState`); a different `value` in a
+  later tree resets the buffer (controlled-input semantics). Enter submits a
+  single-line input; multiline inserts a newline and Ctrl/Cmd+Enter submits.
+  Ctrl/Cmd+V pastes from the system clipboard.
+- Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
+- Events: `{"type":"press","nodeId"}`, `{"type":"change","nodeId","value"}`,
+  `{"type":"submit","nodeId","value"}`.
 
-The TypeScript side maps React Native-style `style` props onto this
-(`packages/mirin-metal/src/lib/serialize.ts`): `flex >= 1` becomes `fill`,
-`alignItems + justifyContent = center` becomes `center`, `borderRadius` becomes
-`cornerRadius`.
+The TypeScript side (`packages/mirin-metal/src/lib/serialize.ts`) maps React
+Native-style props: `<View style>` (`flex`, `alignItems`, `justifyContent`,
+`overflow: "scroll" | "hidden"`, `hoverBackgroundColor`, …), `<Text
+numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
+`<TextInput value onChangeText onSubmitEditing multiline autoFocus style>`, and
+`<ScrollView>` (a scrolling `<View>`).
 
 ## 3. Process model (decision pending)
 
@@ -123,9 +144,12 @@ Renders through DirectX. Not yet verified.
   builds standalone on Fedora, `bun test` / `tsc` / biome / `cargo test` /
   `cargo clippy -D warnings` / `cargo fmt --check` pass, stdio demo renders and
   applies updates on Wayland and X11.
-- **M1 — real app loop.** Press events round-trip through the React demo
-  (`packages/mirin-metal/demo/counter.tsx`) with synthetic input, text input and
-  scroll views, image nodes, and a tree patch protocol.
+- **M1 — real app loop.** 🚧 Text input (`<TextInput>`, renderer-owned buffer,
+  caret, focus, paste, change/submit events), scroll views, hover, borders,
+  alignment, truncation, and monospace text landed 2026-10-29 and were driven
+  with synthetic keyboard input on Fedora/KDE. Still open: press verified only
+  through the fake transport, image nodes, text selection, a tree patch
+  protocol.
 - **M2 — in-process transport.** `libmirin_metal` C ABI + polled event queue
   replacing the stdio host; host/Worker boot shared with the CEF runtime;
   `docs/architecture.md` gains the Metal arm.

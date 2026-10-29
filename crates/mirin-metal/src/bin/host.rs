@@ -7,7 +7,7 @@
 use std::io::{BufRead, Write};
 use std::sync::mpsc;
 
-use mirin_metal::{parse_tree, run, EventKind, NativeUiEvent, NativeUiOptions, NodeSpec};
+use mirin_metal::{parse_tree, run, NativeUiEvent, NativeUiOptions, NodeSpec};
 
 fn main() {
     let (update_tx, update_rx) = mpsc::channel::<NodeSpec>();
@@ -36,10 +36,11 @@ fn main() {
     std::thread::spawn(move || {
         let mut out = std::io::stdout();
         while let Ok(event) = event_rx.recv() {
-            let kind = match event.kind {
-                EventKind::Press => "press",
-            };
-            let line = serde_json::json!({ "type": kind, "nodeId": event.node_id });
+            let mut line =
+                serde_json::json!({ "type": event.kind.name(), "nodeId": event.node_id });
+            if let Some(value) = event.kind.value() {
+                line["value"] = serde_json::Value::String(value.to_string());
+            }
             if writeln!(out, "{line}").and_then(|()| out.flush()).is_err() {
                 break;
             }

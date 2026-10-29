@@ -1,6 +1,6 @@
 /** Internal host-instance tree the reconciler mutates between commits. */
 
-import type { TextProps, ViewProps } from "../types.ts";
+import type { TextInputProps, TextProps, ViewProps } from "../types.ts";
 
 export interface ViewInstance {
   kind: "view";
@@ -17,13 +17,20 @@ export interface TextInstance {
   children: HostNode[];
 }
 
+export interface InputInstance {
+  kind: "input";
+  id: number;
+  props: TextInputProps;
+  children: HostNode[];
+}
+
 /** A raw string/number child, e.g. the text inside `<Text>`. */
 export interface RawTextInstance {
   kind: "raw";
   text: string;
 }
 
-export type HostInstance = ViewInstance | TextInstance;
+export type HostInstance = ViewInstance | TextInstance | InputInstance;
 export type HostNode = HostInstance | RawTextInstance;
 
 export interface Container {

@@ -19,10 +19,21 @@ export function parseNativeEvent(line: string): NativeEvent | null {
     return null;
   }
   const record = value as Record<string, unknown>;
-  if (record.type !== "press" || typeof record.nodeId !== "string") {
+  if (typeof record.nodeId !== "string") {
     return null;
   }
-  return { type: "press", nodeId: record.nodeId };
+  const nodeId = record.nodeId;
+  switch (record.type) {
+    case "press":
+      return { type: "press", nodeId };
+    case "change":
+    case "submit":
+      return typeof record.value === "string"
+        ? { type: record.type, nodeId, value: record.value }
+        : null;
+    default:
+      return null;
+  }
 }
 
 export function spawnNativeHost(binaryPath: string): NativeTransport {
