@@ -61,6 +61,35 @@ bundles retain the complete downloaded runtime.
 
 `app://` is mirin's bundled-asset scheme, served from the app bundle through a CEF scheme handler (dev mode points it at the working tree).
 
+## 1a. Metal engine config (accepted 2026-10-29)
+
+A project picks its UI engine in the manifest. Metal apps declare window UI as
+a component module instead of a URL; the rest of the manifest keeps its meaning.
+Design and rationale: `docs/metal/spec.html` §10–11.
+
+```ts
+export default defineConfig({
+  id: "dev.netko.anko",
+  engine: "metal",                    // "cef" (default) | "metal"
+  windows: {
+    main: { title: "Anko", width: 1280, height: 820, view: "src/windows/main.tsx" },
+    panel: {
+      view: "src/windows/panel.tsx",
+      // Wayland layer-shell surface for desktop-shell UI (panels, docks, launchers).
+      surface: { layer: "top", anchor: ["top", "left", "right"], exclusiveZone: 36, keyboard: "on-demand" },
+    },
+  },
+});
+```
+
+- `engine` selects the flavor at build time; Metal packages `libmirin_metal`
+  and no CEF.
+- `windows.*.view` (Metal) and `windows.*.url` (CEF) are mutually exclusive by
+  engine; using the other one is a config error naming the right key.
+- `windows.*.surface` is Metal-only; CEF rejects it with a clear error.
+- `cef.*` is ignored on Metal with a warning.
+- Status: accepted, not yet implemented (milestones R2 and R7).
+
 ## 2. Imperative escape hatches
 
 Everything declared is reachable as a live, typed handle at runtime:

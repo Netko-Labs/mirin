@@ -100,7 +100,7 @@
 
 <h1>Mirin Metal Runtime</h1>
 <div class="meta">
-  <span><strong>Status:</strong> Draft for owner review</span>
+  <span><strong>Status:</strong> Core decisions accepted 2026-10-29 (§19)</span>
   <span><strong>Date:</strong> 2026-10-29</span>
   <span><strong>Scope:</strong> Linux first (Fedora/KDE Wayland)</span>
   <span><strong>Related:</strong> <code>docs/metal.md</code>, <code>docs/architecture.md</code>, <code>docs/api-design.md</code></span>
@@ -233,7 +233,7 @@
 </table>
 
 <div class="callout decision">
-  <p><strong>Proposed: one UI Worker per app, not one per window.</strong> A JSC VM costs roughly 10–20 MB. Per-window Workers would isolate windows from each other, but a desktop runs dozens of apps, and windows of one app share state and components. Apps that need isolation can still split heavy work into extra Workers (<code>workers</code> in the manifest).</p>
+  <p><span class="tag ok">accepted 2026-10-29</span> <strong>One UI Worker per app, not one per window.</strong> A JSC VM costs roughly 10–20 MB. Per-window Workers would isolate windows from each other, but a desktop runs dozens of apps, and windows of one app share state and components. Apps that need isolation can still split heavy work into extra Workers (<code>workers</code> in the manifest).</p>
 </div>
 
 <h3>Boot sequence</h3>
@@ -400,8 +400,8 @@ const rows = await api.runQuery("select 1");</code></pre>
 
 <!-- ───────────────────────────────────────── 10 ─── -->
 <h2 id="config">10. Configuration</h2>
-<div class="callout signoff">
-  <p><span class="tag warn">needs owner sign-off</span> These are additions to the shared <code>mirinjs/config</code> surface, so they go through <code>docs/api-design.md</code>. They are additive and ignored or rejected clearly on the CEF flavor.</p>
+<div class="callout decision">
+  <p><span class="tag ok">accepted 2026-10-29</span> The owner signed off on these additions to the shared <code>mirinjs/config</code> surface; they are recorded in <code>docs/api-design.md</code> §1a. They are additive and rejected clearly on the CEF flavor.</p>
 </div>
 <pre><code>export default defineConfig({
   id: "dev.netko.anko",
@@ -584,14 +584,14 @@ export default function Main() {
 <!-- ───────────────────────────────────────── 19 ─── -->
 <h2 id="decisions">19. Decisions for the owner</h2>
 <table>
-  <tr><th>#</th><th>Decision</th><th>Recommendation</th></tr>
-  <tr><td>1</td><td>One UI Worker per app, or per window?</td><td>Per app (memory; shared state). Revisit if a real app needs window isolation.</td></tr>
-  <tr><td>2</td><td>Config: <code>engine: "metal"</code>, <code>windows.*.view</code>, <code>windows.*.surface</code></td><td>Approve as additive <code>mirinjs/config</code> keys (§10).</td></tr>
-  <tr><td>3</td><td>Event transport</td><td>Notify pipe with back-off polling as fallback (§6).</td></tr>
-  <tr><td>4</td><td>Shared platform crate</td><td>Extract <code>mirin-platform</code> in R4; both cores link it.</td></tr>
-  <tr><td>5</td><td>Popup menus on Metal</td><td>Render with metal-ui styling rather than native menus, so apps look consistent with the shell.</td></tr>
-  <tr><td>6</td><td>Platforms after Linux</td><td>macOS next if the desktop needs a dev story there; otherwise Linux only until the shell ships.</td></tr>
-  <tr><td>7</td><td>Fork policy</td><td>Keep GPUI and taffy forks vendored with <code>MIRIN.md</code> change logs; upstream the generic fixes.</td></tr>
+  <tr><th>#</th><th>Decision</th><th>Outcome</th></tr>
+  <tr><td>1</td><td>One UI Worker per app, or per window?</td><td><span class="tag ok">accepted</span> One per app. Revisit only if a real app needs window isolation.</td></tr>
+  <tr><td>2</td><td>Config: <code>engine: "metal"</code>, <code>windows.*.view</code>, <code>windows.*.surface</code></td><td><span class="tag ok">accepted</span> All three, as additive <code>mirinjs/config</code> keys (§10, <code>api-design.md</code> §1a).</td></tr>
+  <tr><td>3</td><td>Popup menus on Metal</td><td><span class="tag ok">accepted</span> Rendered with metal-ui styling, consistent with the shell.</td></tr>
+  <tr><td>4</td><td>Platforms after Linux</td><td><span class="tag ok">accepted</span> Linux only until the desktop shell ships; the design stays portable.</td></tr>
+  <tr><td>5</td><td>Event transport</td><td><span class="tag info">default</span> Notify pipe, back-off polling as fallback (§6). Implementation detail; revisit with R1 measurements.</td></tr>
+  <tr><td>6</td><td>Shared platform crate</td><td><span class="tag info">default</span> Extract <code>mirin-platform</code> in R4; both cores link it.</td></tr>
+  <tr><td>7</td><td>Fork policy</td><td><span class="tag info">default</span> GPUI and taffy forks vendored with <code>MIRIN.md</code> change logs; generic fixes upstreamed.</td></tr>
 </table>
 
 <!-- ───────────────────────────────────────── 20 ─── -->
