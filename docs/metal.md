@@ -197,6 +197,11 @@ porting guide.
 
 ## 3. Process model (decision pending)
 
+The full runtime design (process and thread model, `libmirin_metal` ABI, UI
+protocol v2, RPC, config, shell surfaces, tooling, budgets, milestones R1–R7,
+and the decisions awaiting owner sign-off) is specified in
+[`docs/metal/spec.html`](metal/spec.html). The summary below predates it.
+
 GPUI, like CEF, wants the process main thread. The two cannot share it, so
 Metal is a **separate app flavor**, never a mode of a CEF window. The proposed
 model keeps mirin's host/Worker split and swaps the engine:
