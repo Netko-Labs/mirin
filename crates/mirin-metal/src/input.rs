@@ -53,8 +53,8 @@ pub(crate) fn render_input(
     if let Some(height) = props.min_height {
         element = element.min_h(px(height));
     }
-    if props.flex >= 1.0 {
-        element = element.flex_grow().min_w(px(0.0)).min_h(px(0.0));
+    if props.flex > 0.0 {
+        element = crate::render::flex_from_zero(element, props.flex);
     }
     if props.fill {
         element = element.size_full();

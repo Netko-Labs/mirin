@@ -64,6 +64,7 @@ interface ViewNodeProps {
   right?: number;
   bottom?: number;
   flex?: number;
+  grow?: number;
   shrink?: boolean;
   fill?: boolean;
   center?: boolean;
@@ -321,6 +322,7 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.right !== undefined) props.right = style.right;
   if (style.bottom !== undefined) props.bottom = style.bottom;
   if (style.flex !== undefined) props.flex = style.flex;
+  if (style.flexGrow !== undefined) props.grow = style.flexGrow;
   if (style.flexShrink === 0) props.shrink = false;
   if (style.alignItems === "center" && style.justifyContent === "center") {
     props.center = true;

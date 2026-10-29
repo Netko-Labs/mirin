@@ -220,12 +220,16 @@ export function applyUtility(
       view.flexWrap = "nowrap";
       return;
     case "flex-1":
+      view.flex = 1;
+      return;
+    // Grow from the content size (flex-basis auto).
     case "flex-auto":
     case "grow":
-      view.flex = 1;
+      view.flexGrow = 1;
       return;
     case "grow-0":
       view.flex = 0;
+      view.flexGrow = 0;
       return;
     case "flex-none":
     case "shrink-0":

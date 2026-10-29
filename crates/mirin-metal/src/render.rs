@@ -34,13 +34,9 @@ pub(crate) fn render_node(
     }
 }
 
-fn render_view(
-    props: &ViewProps,
-    children: &[NodeSpec],
-    view: &mut RootView,
-    window: &mut Window,
-    cx: &mut Context<RootView>,
-) -> AnyElement {
+/// A `div` carrying every layout and appearance prop of a view (not its
+/// children, identity, or interaction).
+fn styled_view(props: &ViewProps) -> Div {
     let mut element = div();
     element = match props.direction {
         Direction::Column => element.flex().flex_col(),
@@ -94,8 +90,11 @@ fn render_view(
             element = element.bottom(px(bottom));
         }
     }
-    if props.flex >= 1.0 {
-        element = element.flex_grow().min_w(px(0.0)).min_h(px(0.0));
+    if props.flex > 0.0 {
+        element = flex_from_zero(element, props.flex);
+    } else if props.grow > 0.0 {
+        element.style().flex_grow = Some(props.grow);
+        element = element.min_w(px(0.0)).min_h(px(0.0));
     }
     if props.shrink == Some(false) {
         element = element.flex_shrink_0();
@@ -166,6 +165,20 @@ fn render_view(
     if let Some(opacity) = props.opacity {
         element = element.opacity(opacity);
     }
+    element
+}
+
+fn render_view(
+    props: &ViewProps,
+    children: &[NodeSpec],
+    view: &mut RootView,
+    window: &mut Window,
+    cx: &mut Context<RootView>,
+) -> AnyElement {
+    let element = styled_view(props);
+    if crate::list::virtualizes(props, children) {
+        return crate::list::render_list(element, props, view, cx);
+    }
     let child_ids: Vec<Option<String>> = children.iter().map(node_id).collect();
     let child_watch: Vec<bool> = children.iter().map(watches_layout).collect();
     let mut element = element.children(
@@ -179,9 +192,7 @@ fn render_view(
         element = element.on_children_prepainted(move |bounds, _window, _cx| {
             for ((id, watch), bounds) in child_ids.iter().zip(&child_watch).zip(bounds) {
                 if let Some(id) = id {
-                    if layout.record(id, bounds) && *watch {
-                        events.resize(id);
-                    }
+                    record_child_bounds(&layout, &events, id, *watch, bounds);
                 }
             }
         });
@@ -208,6 +219,10 @@ fn render_view(
     }
     if props.scroll_x {
         element = element.overflow_x_scroll();
+    }
+    if props.scroll || props.scroll_x {
+        let handle = view.scrolls.entry(id.to_string()).or_default();
+        element = element.track_scroll(handle);
     }
     if let Some(color) = props.hover_background.as_deref().and_then(parse_color) {
         element = element.hover(move |style| style.bg(rgba(color)));
@@ -254,13 +269,39 @@ fn render_view(
     element.into_any_element()
 }
 
+/// CSS `flex: N 1 0%` / React Native `flex: N`: grow from a zero basis. The 0%
+/// basis lets taffy skip measuring the subtree for its base size (each nested
+/// content-based grow costs another full layout of the subtree); against an
+/// indefinite container a percentage basis falls back to content, as in CSS.
+pub(crate) fn flex_from_zero<E: Styled>(mut element: E, flex: f32) -> E {
+    let style = element.style();
+    style.flex_grow = Some(flex);
+    style.flex_shrink = Some(1.0);
+    style.flex_basis = Some(relative(0.0).into());
+    element.min_w(px(0.0)).min_h(px(0.0))
+}
+
+/// Record a painted child's bounds; report a `layout` event when a watched
+/// node's bounds changed.
+pub(crate) fn record_child_bounds(
+    layout: &crate::sim::LayoutMap,
+    events: &crate::events::EventSender,
+    id: &str,
+    watch: bool,
+    bounds: gpui::Bounds<gpui::Pixels>,
+) {
+    if layout.record(id, bounds) && watch {
+        events.resize(id);
+    }
+}
+
 /// Whether a node asked for `layout` events when its bounds change.
-fn watches_layout(node: &NodeSpec) -> bool {
+pub(crate) fn watches_layout(node: &NodeSpec) -> bool {
     matches!(node, NodeSpec::View { props, .. } if props.on_layout && props.id.is_some())
 }
 
 /// The id a node carries, if any (views may omit one; inputs always have one).
-fn node_id(node: &NodeSpec) -> Option<String> {
+pub(crate) fn node_id(node: &NodeSpec) -> Option<String> {
     match node {
         NodeSpec::View { props, .. } => props.id.clone(),
         NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => None,

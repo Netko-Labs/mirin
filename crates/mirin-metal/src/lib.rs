@@ -15,10 +15,12 @@
 mod edges;
 mod events;
 mod input;
+mod list;
 mod media;
 mod pointer;
 mod render;
 mod sim;
+pub mod trace;
 mod tree;
 mod window;
 

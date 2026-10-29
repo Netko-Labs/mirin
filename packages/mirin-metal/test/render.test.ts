@@ -210,3 +210,27 @@ describe("createPortal", () => {
     root.unmount();
   });
 });
+
+describe("flex", () => {
+  test("flex grows from a zero basis; flexGrow grows from the content size", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        { style: { flex: 1 } },
+        createElement(View, { style: { flex: 2 } }),
+        createElement(View, { style: { flexGrow: 1 } }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "{}") as {
+      children: Array<{ props: Record<string, unknown> }>;
+    };
+    expect(tree.children[0]?.props.flex).toBe(2);
+    expect(tree.children[0]?.props.grow).toBeUndefined();
+    expect(tree.children[1]?.props.grow).toBe(1);
+    expect(tree.children[1]?.props.flex).toBeUndefined();
+    root.unmount();
+  });
+});

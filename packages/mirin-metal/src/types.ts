@@ -43,8 +43,19 @@ export interface ViewStyle {
   left?: number;
   right?: number;
   bottom?: number;
-  /** `flex: 1` grows into the remaining space (the native `flex`). */
+  /**
+   * `flex: N` grows into the remaining space from a zero basis, as in React
+   * Native and CSS `flex: N 1 0%` (Tailwind `flex-1`). Siblings split the space
+   * by their `flex` values regardless of content.
+   */
   flex?: number;
+  /**
+   * `flexGrow: N` grows from the content size instead (CSS `flex-grow`,
+   * Tailwind `grow`/`flex-auto`): content is measured first, then extra space
+   * is shared. Costlier than `flex`, so prefer `flex` when content size
+   * shouldn't matter.
+   */
+  flexGrow?: number;
   /** `flexShrink: 0` keeps the view from shrinking below its content. */
   flexShrink?: 0 | 1;
   alignItems?: "flex-start" | "center" | "flex-end" | "stretch";
@@ -216,7 +227,10 @@ export type SimCommand =
   | { kind: "layout" }
   | { kind: "drag"; id: string; fromX?: number; fromY?: number; toX?: number; toY?: number }
   | { kind: "contextmenu"; id: string }
-  | { kind: "hover"; id: string; hovered: boolean };
+  | { kind: "hover"; id: string; hovered: boolean }
+  /** Scroll a scrollable node down by `dy` px (negative scrolls up). */
+  | { kind: "scroll"; id: string; dy: number }
+  | { kind: "window"; action: "zoom" | "minimize" };
 
 /**
  * The channel to the native renderer. `spawnNativeHost` provides the stdio

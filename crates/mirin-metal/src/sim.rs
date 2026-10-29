@@ -8,7 +8,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{point, px, App, Bounds, FocusHandle, Keystroke, Modifiers, Pixels, Point, Window};
+use gpui::{
+    point, px, App, Bounds, FocusHandle, Keystroke, ListState, Modifiers, Pixels, Point,
+    ScrollHandle, Window,
+};
 use serde::Deserialize;
 
 use crate::events::{EventSender, PointerPhase};
@@ -55,6 +58,9 @@ pub enum SimCommand {
     /// Window management the user would do with the title bar: `zoom`
     /// toggles maximized, `minimize` minimizes.
     Window { action: String },
+    /// Scroll the scrollable node `id` down by `dy` pixels (negative scrolls
+    /// up), clamped to its content, as a wheel turn over it would.
+    Scroll { id: String, dy: f32 },
 }
 
 fn half() -> f32 {
@@ -71,55 +77,97 @@ pub struct LayoutNode {
     pub height: f32,
 }
 
-/// Bounds recorded during the last paint, keyed by node id.
+/// Bounds recorded during the last paint, keyed by node id. Entries carry the
+/// frame that painted them; lookups only see the latest frame, so nodes that
+/// left the tree or scrolled out of a virtualized list are not reported at
+/// stale positions.
 #[derive(Clone, Default)]
-pub(crate) struct LayoutMap(Rc<RefCell<HashMap<String, Bounds<Pixels>>>>);
+pub(crate) struct LayoutMap(Rc<RefCell<LayoutState>>);
+
+#[derive(Default)]
+pub(crate) struct LayoutState {
+    frame: u64,
+    nodes: HashMap<String, (Bounds<Pixels>, u64)>,
+}
 
 impl LayoutMap {
-    /// Record a node's bounds; returns whether they changed since last paint.
+    /// Start a frame: forget nodes the previous frame did not paint.
+    pub(crate) fn begin_frame(&self) {
+        let mut state = self.0.borrow_mut();
+        state.frame += 1;
+        let previous = state.frame - 1;
+        state.nodes.retain(|_, (_, frame)| *frame >= previous);
+    }
+
+    /// Record a node's bounds; returns whether they changed since it was last
+    /// painted (or it is newly painted).
     pub(crate) fn record(&self, id: &str, bounds: Bounds<Pixels>) -> bool {
-        self.0.borrow_mut().insert(id.to_string(), bounds) != Some(bounds)
+        let mut state = self.0.borrow_mut();
+        let frame = state.frame;
+        match state.nodes.get_mut(id) {
+            Some(entry) => {
+                let changed = entry.0 != bounds;
+                *entry = (bounds, frame);
+                changed
+            }
+            None => {
+                state.nodes.insert(id.to_string(), (bounds, frame));
+                true
+            }
+        }
+    }
+
+    /// Bounds painted in the latest frame.
+    fn painted(&self) -> Vec<(String, Bounds<Pixels>)> {
+        let state = self.0.borrow();
+        state
+            .nodes
+            .iter()
+            .filter(|(_, (_, frame))| *frame == state.frame)
+            .map(|(id, (bounds, _))| (id.clone(), *bounds))
+            .collect()
     }
 
     /// The smallest painted node containing `point`.
     pub(crate) fn innermost_at(&self, point: Point<Pixels>) -> Option<String> {
-        self.0
-            .borrow()
-            .iter()
+        self.painted()
+            .into_iter()
             .filter(|(_, bounds)| bounds.contains(&point))
             .min_by(|(_, a), (_, b)| {
                 let area = |b: &Bounds<Pixels>| f32::from(b.size.width) * f32::from(b.size.height);
                 area(a).total_cmp(&area(b))
             })
-            .map(|(id, _)| id.clone())
+            .map(|(id, _)| id)
     }
 
     /// Painted bounds of one node.
     pub(crate) fn node(&self, id: &str) -> Option<LayoutNode> {
-        self.0.borrow().get(id).map(|bounds| LayoutNode {
-            id: id.to_string(),
-            x: f32::from(bounds.origin.x),
-            y: f32::from(bounds.origin.y),
-            width: f32::from(bounds.size.width),
-            height: f32::from(bounds.size.height),
-        })
+        let state = self.0.borrow();
+        state
+            .nodes
+            .get(id)
+            .filter(|(_, frame)| *frame == state.frame)
+            .map(|(bounds, _)| layout_node(id.to_string(), *bounds))
     }
 
     pub(crate) fn snapshot(&self) -> Vec<LayoutNode> {
         let mut nodes: Vec<LayoutNode> = self
-            .0
-            .borrow()
-            .iter()
-            .map(|(id, bounds)| LayoutNode {
-                id: id.clone(),
-                x: f32::from(bounds.origin.x),
-                y: f32::from(bounds.origin.y),
-                width: f32::from(bounds.size.width),
-                height: f32::from(bounds.size.height),
-            })
+            .painted()
+            .into_iter()
+            .map(|(id, bounds)| layout_node(id, bounds))
             .collect();
         nodes.sort_by(|a, b| a.id.cmp(&b.id));
         nodes
+    }
+}
+
+fn layout_node(id: String, bounds: Bounds<Pixels>) -> LayoutNode {
+    LayoutNode {
+        id,
+        x: f32::from(bounds.origin.x),
+        y: f32::from(bounds.origin.y),
+        width: f32::from(bounds.size.width),
+        height: f32::from(bounds.size.height),
     }
 }
 
@@ -137,6 +185,13 @@ pub(crate) enum SimAction {
     Hover(String, bool),
     Zoom,
     Minimize,
+    Scroll(ScrollTarget, f32),
+}
+
+/// What a simulated scroll moves: a plain scroll view or a virtualized list.
+pub(crate) enum ScrollTarget {
+    View(ScrollHandle),
+    List(ListState),
 }
 
 /// Resolve a command against the view. Logs and returns `None` when it cannot
@@ -237,6 +292,19 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             ))
         }
         SimCommand::Hover { id, hovered } => Some(SimAction::Hover(id.clone(), *hovered)),
+        SimCommand::Scroll { id, dy } => {
+            if let Some(list) = view.lists.get(id) {
+                return Some(SimAction::Scroll(
+                    ScrollTarget::List(list.state.clone()),
+                    *dy,
+                ));
+            }
+            let Some(handle) = view.scrolls.get(id) else {
+                eprintln!("[mirin-metal] sim scroll: no scrollable node with id {id:?}");
+                return None;
+            };
+            Some(SimAction::Scroll(ScrollTarget::View(handle.clone()), *dy))
+        }
         SimCommand::Window { action } => match action.as_str() {
             "zoom" => Some(SimAction::Zoom),
             "minimize" => Some(SimAction::Minimize),
@@ -267,15 +335,22 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
         SimAction::ContextMenu(id, x, y) => events.context_menu(&id, x, y),
         SimAction::Hover(id, hovered) => events.hover(&id, hovered),
         SimAction::Zoom => {
-            if crate::window::trace_enabled() {
-                eprintln!(
-                    "[mirin-metal trace] {:>8.1}ms zoom requested",
-                    crate::window::trace_clock()
-                );
-            }
+            crate::trace::log(format_args!("zoom requested"));
             window.zoom_window();
         }
         SimAction::Minimize => window.minimize_window(),
+        SimAction::Scroll(ScrollTarget::View(handle), dy) => {
+            // GPUI offsets are negative once scrolled: content moves up.
+            let offset = handle.offset();
+            let max = handle.max_offset();
+            let y = (offset.y - px(dy)).clamp(-max.height, px(0.0));
+            handle.set_offset(point(offset.x, y));
+            window.refresh();
+        }
+        SimAction::Scroll(ScrollTarget::List(state), dy) => {
+            state.scroll_by(px(dy));
+            window.refresh();
+        }
     }
 }
 

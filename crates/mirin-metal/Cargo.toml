@@ -17,6 +17,19 @@ description = "mirin metal (alpha): GPU-rendered native UI for mirin apps, built
 gpui = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Async channel that wakes the window when the driver sends (already in gpui's tree).
+futures = "0.3"
+# Opt-in sampling profiler for the host (`--features profiling`); see
+# `MIRIN_METAL_PROFILE` in src/bin/host.rs. Not part of normal builds.
+pprof = { version = "0.15", optional = true }
+
+[features]
+profiling = ["dep:pprof"]
+
+# GPUI, taffy, and the text stack are unusably slow unoptimized; optimize
+# dependencies in dev builds too (this crate itself stays fast to compile).
+[profile.dev.package."*"]
+opt-level = 3
 
 [[example]]
 name = "hello"

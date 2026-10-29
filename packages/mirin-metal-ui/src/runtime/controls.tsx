@@ -61,7 +61,7 @@ function useInputStyle(props: Props, base: string): TextInputStyle {
       ...(typeof view.width === "number" ? { width: view.width } : {}),
       ...(typeof view.height === "number" ? { height: view.height } : {}),
       ...(view.minHeight !== undefined ? { minHeight: view.minHeight } : {}),
-      ...(view.width === "100%" || view.flex ? { flex: 1 } : {}),
+      ...(view.width === "100%" || view.flex || view.flexGrow ? { flex: 1 } : {}),
       ...(view.borderWidth === 0 ? { borderColor: "#00000000" } : {}),
     };
   }, [className, base, theme, key, inherited]);

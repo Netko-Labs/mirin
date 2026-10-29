@@ -82,6 +82,11 @@ export interface NativeHostOptions {
   height?: number;
   /** Extra environment for the host process. */
   env?: Record<string, string>;
+  /**
+   * Receive the host's stderr line by line (logs, `MIRIN_METAL_TRACE` timing)
+   * instead of inheriting it.
+   */
+  onStderr?: (line: string) => void;
 }
 
 export function spawnNativeHost(
@@ -102,9 +107,12 @@ export function spawnNativeHost(
   const child = Bun.spawn([binaryPath], {
     stdin: "pipe",
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: options.onStderr ? "pipe" : "inherit",
     env,
   });
+  if (options.onStderr && child.stderr instanceof ReadableStream) {
+    void forwardLines(child.stderr, options.onStderr);
+  }
   const listeners: Array<(event: NativeEvent) => void> = [];
   const closeListeners: Array<() => void> = [];
   void child.exited.then(() => {
@@ -156,4 +164,22 @@ export function spawnNativeHost(
       child.kill();
     },
   };
+}
+
+/** Read a byte stream as text and hand each complete line to `onLine`. */
+async function forwardLines(
+  stream: ReadableStream<Uint8Array>,
+  onLine: (line: string) => void,
+): Promise<void> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  let buffered = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+    const lines = buffered.split("\n");
+    buffered = lines.pop() ?? "";
+    for (const line of lines) onLine(line);
+  }
 }

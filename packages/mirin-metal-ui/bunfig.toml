@@ -1,0 +1,4 @@
+# React picks its development or production build from NODE_ENV, which Bun
+# leaves unset, so `bun demo/browser.tsx` would run the development build:
+# two to three times slower renders. Default to production for this package.
+define = { "process.env.NODE_ENV" = "\"production\"" }

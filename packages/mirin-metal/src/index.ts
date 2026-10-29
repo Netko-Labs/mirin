@@ -1,4 +1,9 @@
 export { Image, ScrollView, Svg, Text, TextInput, View } from "./components.ts";
+export {
+  type HeadlessDisplay,
+  type HeadlessDisplayOptions,
+  startHeadlessDisplay,
+} from "./headless.ts";
 export { type NativeHostOptions, spawnNativeHost } from "./host.ts";
 export { createPortal, render } from "./render.ts";
 export type {

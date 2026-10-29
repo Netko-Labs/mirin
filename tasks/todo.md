@@ -44,6 +44,11 @@ names its acceptance check. Checkpoint notes go at the bottom.
       third-party stand-ins, DOM-like forms). Open: keyboard navigation and
       Escape, transforms/animation, per-corner radii, `has-`/`peer-`
       selectors, non-bar charts.
+- [x] B8 Performance pass: virtualized long lists, zero-basis `flex`,
+      event-driven host wakeups, shared per-frame tree, production React in
+      metal-ui, optimized dev dependencies, off-screen benchmark
+      (`bench/native.tsx`) and opt-in host profiler. Click → frame 50 → 20 ms,
+      scroll frame 17.5 → 1.2 ms.
 - [ ] B3 Tree patch protocol (insert/remove/update by node id) replacing
       whole-tree replacement; reconciler emits patches from mutation methods.
 - [ ] B4 `libmirin_metal` C ABI + polled event queue; Bun host boots it like

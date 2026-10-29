@@ -13,17 +13,79 @@ use mirin_metal::{
 
 /// A stdin line is either a tree or `{"sim": {...}}`.
 fn parse_line(line: &str) -> Result<DriverMessage, String> {
-    let value: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
-    if let Some(sim) = value.get("sim") {
-        let command: SimCommand = serde_json::from_value(sim.clone()).map_err(|e| e.to_string())?;
-        return Ok(DriverMessage::Sim(command));
+    // Parse once: trees are large, and sim lines are recognisable by their
+    // leading key (the driver writes `{"sim":…}` for them).
+    if line.trim_start().starts_with("{\"sim\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SimLine {
+            sim: SimCommand,
+        }
+        let parsed: SimLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        return Ok(DriverMessage::Sim(parsed.sim));
     }
     parse_tree(line)
         .map(|tree| DriverMessage::Tree(Box::new(tree)))
         .map_err(|e| e.to_string())
 }
 
+/// `MIRIN_METAL_PROFILE=<path>` (with `--features profiling`): sample the
+/// process for `MIRIN_METAL_PROFILE_SECS` seconds (default 10) and write
+/// folded stacks (`frame;frame;frame count`) to `<path>`.
+#[cfg(feature = "profiling")]
+fn start_profiler() {
+    let Ok(path) = std::env::var("MIRIN_METAL_PROFILE") else {
+        return;
+    };
+    let seconds = std::env::var("MIRIN_METAL_PROFILE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(10);
+    std::thread::spawn(move || {
+        let guard = match pprof::ProfilerGuardBuilder::default()
+            .frequency(1000)
+            .build()
+        {
+            Ok(guard) => guard,
+            Err(error) => {
+                eprintln!("[mirin-metal-host] profiler failed to start: {error}");
+                return;
+            }
+        };
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
+        let report = match guard.report().build() {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("[mirin-metal-host] profiler report failed: {error}");
+                return;
+            }
+        };
+        let mut folded = String::new();
+        for (frames, count) in &report.data {
+            let stack: Vec<String> = frames
+                .frames
+                .iter()
+                .rev()
+                .flat_map(|symbols| symbols.iter().rev().map(|symbol| symbol.name()))
+                .collect();
+            folded.push_str(&format!(
+                "{};{} {count}\n",
+                frames.thread_name,
+                stack.join(";")
+            ));
+        }
+        match std::fs::write(&path, folded) {
+            Ok(()) => eprintln!("[mirin-metal-host] profile written to {path}"),
+            Err(error) => eprintln!("[mirin-metal-host] profile write failed: {error}"),
+        }
+    });
+}
+
+#[cfg(not(feature = "profiling"))]
+fn start_profiler() {}
+
 fn main() {
+    start_profiler();
     let (update_tx, update_rx) = mpsc::channel::<DriverMessage>();
     let (event_tx, event_rx) = mpsc::channel::<NativeUiEvent>();
 
@@ -35,7 +97,14 @@ fn main() {
             if line.trim().is_empty() {
                 continue;
             }
-            match parse_line(&line) {
+            let started = std::time::Instant::now();
+            let parsed = parse_line(&line);
+            mirin_metal::trace::log(format_args!(
+                "line parsed ({} KB) in {:.2}ms",
+                line.len() / 1024,
+                started.elapsed().as_secs_f64() * 1000.0
+            ));
+            match parsed {
                 Ok(message) => {
                     if update_tx.send(message).is_err() {
                         break;

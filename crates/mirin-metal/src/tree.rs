@@ -109,8 +109,13 @@ pub struct ViewProps {
     pub aspect_ratio: Option<f32>,
     /// Wrap children onto new lines along the main axis.
     pub wrap: bool,
-    /// `flex >= 1` grows to take the remaining main-axis space.
+    /// `flex > 0` grows into the remaining main-axis space from a zero basis
+    /// (CSS `flex: N 1 0%`, React Native `flex: N`), so the content need not
+    /// be measured first.
     pub flex: f32,
+    /// `grow > 0` grows from the content size (CSS `flex-grow` with
+    /// `flex-basis: auto`).
+    pub grow: f32,
     /// `false` keeps the node from shrinking below its content.
     pub shrink: Option<bool>,
     /// Fill the parent on both axes (root views typically set this).
@@ -345,6 +350,20 @@ pub(crate) fn collect_inputs<'a>(node: &'a NodeSpec, out: &mut Vec<&'a InputProp
         }
         NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
         NodeSpec::Input { props } => out.push(props),
+    }
+}
+
+/// Ids of scrollable views, for pruning renderer-owned scroll state.
+pub(crate) fn collect_scroll_ids(node: &NodeSpec, out: &mut std::collections::HashSet<String>) {
+    if let NodeSpec::View { props, children } = node {
+        if props.scroll || props.scroll_x {
+            if let Some(id) = &props.id {
+                out.insert(id.clone());
+            }
+        }
+        for child in children {
+            collect_scroll_ids(child, out);
+        }
     }
 }
 

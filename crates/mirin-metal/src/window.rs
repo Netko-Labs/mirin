@@ -2,24 +2,29 @@
 //! element tree, applies streamed tree updates, keeps the editing state of
 //! `input` nodes, and reports interaction events.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use futures::StreamExt;
+
 use gpui::{
-    prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, SharedString,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
+    prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, ScrollHandle,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 
 use crate::events::{EventSender, NativeUiEvent};
+use crate::list::VirtualList;
 use crate::media::MetalAssets;
 use crate::pointer::capture_root;
 use crate::render::render_node;
 use crate::sim::{self, LayoutMap, SimCommand};
-use crate::tree::{collect_inputs, NodeSpec};
+use crate::tree::{collect_inputs, collect_scroll_ids, NodeSpec};
 
-/// How often the update task drains the driver's tree channel.
-const UPDATE_POLL_INTERVAL: Duration = Duration::from_millis(16);
+/// After a simulated click, how long to wait for the driver's resulting tree
+/// before performing the commands queued behind it.
+const SIM_SETTLE_INTERVAL: Duration = Duration::from_millis(16);
 
 /// Options for the alpha native-UI window. All fields have sensible defaults.
 #[derive(Debug, Clone)]
@@ -65,32 +70,44 @@ pub(crate) struct InputState {
 
 /// The root view: renders whatever tree the driver last sent.
 pub(crate) struct RootView {
-    pub(crate) tree: NodeSpec,
+    /// Shared so each frame can walk it without a deep copy.
+    pub(crate) tree: Rc<NodeSpec>,
     pub(crate) events: EventSender,
     pub(crate) inputs: HashMap<String, InputState>,
     /// Bounds of id'd nodes from the last paint, for simulated clicks.
     pub(crate) layout: LayoutMap,
     /// Node currently capturing the pointer (`onPointer`), until release.
     pub(crate) dragging: Option<String>,
+    /// Scroll state of scrollable nodes, by id, for programmatic scrolling.
+    pub(crate) scrolls: HashMap<String, ScrollHandle>,
+    /// Virtualized long lists, by id (`list.rs`).
+    pub(crate) lists: HashMap<String, VirtualList>,
 }
 
 impl RootView {
     fn new(tree: NodeSpec, events: EventSender, layout: LayoutMap, cx: &mut App) -> Self {
         let mut view = Self {
-            tree,
+            tree: Rc::new(tree),
             events,
             inputs: HashMap::new(),
             layout,
             dragging: None,
+            scrolls: HashMap::new(),
+            lists: HashMap::new(),
         };
         view.sync_inputs(cx);
+        crate::list::sync(&mut view.lists, &view.tree);
         view
     }
 
     /// Replace the tree and reconcile input state with it.
     fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
-        self.tree = tree;
+        self.tree = Rc::new(tree);
         self.sync_inputs(cx);
+        crate::list::sync(&mut self.lists, &self.tree);
+        let mut ids = HashSet::new();
+        collect_scroll_ids(&self.tree, &mut ids);
+        self.scrolls.retain(|id, _| ids.contains(id));
     }
 
     /// Create state for new inputs, reset buffers whose driver value changed,
@@ -159,39 +176,39 @@ impl RootView {
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // The tree is immutable per frame; clone it so input state can be read
-        // and listeners attached while walking it.
+        // The tree is immutable per frame; hold a reference so input state can
+        // be read and listeners attached while walking it.
         let started = std::time::Instant::now();
+        self.layout.begin_frame();
         let tree = self.tree.clone();
         let content = render_node(&tree, self, window, cx);
-        if trace_enabled() {
-            let size = window.viewport_size();
-            eprintln!(
-                "[mirin-metal trace] {:>8.1}ms render {:.0}x{:.0} took {:.2}ms",
-                trace_clock(),
-                f32::from(size.width),
-                f32::from(size.height),
-                started.elapsed().as_secs_f64() * 1000.0
-            );
+        let render_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let root = capture_root(content, cx);
+        if !crate::trace::enabled() {
+            return root;
         }
-        capture_root(content, cx)
+        // Painted last, so its paint callback marks the end of GPUI's layout,
+        // prepaint, and paint for this frame.
+        let size = window.viewport_size();
+        let marker = gpui::canvas(
+            |_, _, _| {},
+            move |_, (), _, _| {
+                crate::trace::log(format_args!(
+                    "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms",
+                    f32::from(size.width),
+                    f32::from(size.height),
+                    started.elapsed().as_secs_f64() * 1000.0
+                ));
+            },
+        )
+        .absolute()
+        .size_0();
+        gpui::div()
+            .size_full()
+            .child(root)
+            .child(marker)
+            .into_any_element()
     }
-}
-
-/// `MIRIN_METAL_TRACE=1` logs frame timing to stderr.
-pub(crate) fn trace_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("MIRIN_METAL_TRACE").is_ok_and(|v| v == "1"))
-}
-
-/// Milliseconds since the first trace call.
-pub(crate) fn trace_clock() -> f64 {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_secs_f64()
-        * 1000.0
 }
 
 /// Open the native window rendering `initial_tree` and hand the calling thread
@@ -232,22 +249,42 @@ pub fn run(
             cx.activate(true);
             let _ = window.update(cx, |view, window, _cx| view.apply_pending_focus(window));
 
-            // Apply driver updates: poll the channel on the foreground executor and
-            // swap the root tree (coalescing to the newest one) when it changes.
+            // Driver messages arrive on a std channel from another thread; bridge
+            // them into an async channel so the window wakes as soon as one lands
+            // instead of polling on a timer.
+            let (wake_tx, mut wake_rx) = futures::channel::mpsc::unbounded::<DriverMessage>();
+            std::thread::spawn(move || {
+                while let Ok(message) = updates.recv() {
+                    if wake_tx.unbounded_send(message).is_err() {
+                        break;
+                    }
+                }
+            });
+
+            // Apply driver updates, coalescing to the newest tree per wake.
             cx.spawn(async move |cx| {
-                // Simulated commands waiting for a later tick: a focus or press must
+                // Simulated commands waiting for a later turn: a focus or press must
                 // land (and the driver's resulting tree arrive) before the commands
-                // after it, so at most one of those is performed per tick.
-                let mut pending: std::collections::VecDeque<SimCommand> =
-                    std::collections::VecDeque::new();
+                // after it, so at most one of those is performed per turn.
+                let mut pending: VecDeque<SimCommand> = VecDeque::new();
                 loop {
-                    cx.background_executor().timer(UPDATE_POLL_INTERVAL).await;
                     let mut latest_tree = None;
-                    while let Ok(message) = updates.try_recv() {
-                        match message {
+                    let mut absorb =
+                        |message: DriverMessage, pending: &mut VecDeque<SimCommand>| match message {
                             DriverMessage::Tree(tree) => latest_tree = Some(*tree),
                             DriverMessage::Sim(command) => pending.push_back(command),
+                        };
+                    if pending.is_empty() {
+                        match wake_rx.next().await {
+                            Some(message) => absorb(message, &mut pending),
+                            // The driver went away; the window keeps its last tree.
+                            None => return,
                         }
+                    } else {
+                        cx.background_executor().timer(SIM_SETTLE_INTERVAL).await;
+                    }
+                    while let Ok(message) = wake_rx.try_recv() {
+                        absorb(message, &mut pending);
                     }
                     let mut sims = Vec::new();
                     while let Some(command) = pending.pop_front() {
@@ -264,7 +301,12 @@ pub fn run(
                     // leased, because keystrokes re-enter the view's listeners.
                     let resolved = window.update(cx, |view, window, cx| {
                         if let Some(tree) = latest_tree {
+                            let started = std::time::Instant::now();
                             view.set_tree(tree, cx);
+                            crate::trace::log(format_args!(
+                                "tree applied in {:.2}ms",
+                                started.elapsed().as_secs_f64() * 1000.0
+                            ));
                             view.apply_pending_focus(window);
                             cx.notify();
                         }

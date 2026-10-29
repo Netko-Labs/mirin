@@ -19,11 +19,13 @@ import { useTheme } from "../src/theme.ts";
 
 const EXAMPLES_DIR = join(import.meta.dir, "examples");
 
+const EXAMPLES = readdirSync(EXAMPLES_DIR)
+  .filter((file) => file.endsWith(".tsx"))
+  .map((file) => file.replace(/\.tsx$/, ""))
+  .sort();
+
 export function listExamples(): string[] {
-  return readdirSync(EXAMPLES_DIR)
-    .filter((file) => file.endsWith(".tsx"))
-    .map((file) => file.replace(/\.tsx$/, ""))
-    .sort();
+  return EXAMPLES;
 }
 
 /** Component names, longest first, so `button-group-demo` groups under `button-group`. */
@@ -33,12 +35,17 @@ const COMPONENTS = readdirSync(join(import.meta.dir, "../src/components"))
   .sort((a, b) => b.length - a.length);
 
 /** The component an example belongs to; examples like `form-rhf-demo` group by their first word. */
-function groupOf(name: string): string {
-  return (
+const GROUPS = new Map(
+  EXAMPLES.map((name) => [
+    name,
     COMPONENTS.find((component) => name === component || name.startsWith(`${component}-`)) ??
-    name.split("-")[0] ??
-    name
-  );
+      name.split("-")[0] ??
+      name,
+  ]),
+);
+
+function groupOf(name: string): string {
+  return GROUPS.get(name) ?? name;
 }
 
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: string | null }> {
@@ -131,7 +138,10 @@ export function Browser({ initial }: { initial?: string }) {
             />
           </div>
         </div>
-        <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+        <div
+          className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2"
+          data-testid="example-list"
+        >
           {visible.map((name, index) => {
             const group = groupOf(name);
             const startsGroup = index === 0 || groupOf(visible[index - 1] ?? "") !== group;

@@ -195,8 +195,9 @@ describe("event handlers written for the DOM", () => {
         <button
           type="button"
           data-testid="traverse"
-          onClick={(event: { target: { closest: (selector: string) => unknown } }) => {
-            closest = event.target.closest("button");
+          onClick={(event: unknown) => {
+            const target = (event as { target: { closest: (selector: string) => unknown } }).target;
+            closest = target.closest("button");
           }}
         >
           traverse

@@ -44,6 +44,26 @@ What that means in practice:
   frame. When Metal needs something the shared surface lacks, propose it for
   `mirinjs` first (feature-flagged or no-op on CEF if needed).
 
+## 0b. Direction: a desktop environment
+
+Metal is the app platform of a new Linux desktop environment the owner is
+building: it powers the DE's native apps, and the DE also needs a shell
+(panels, launcher, notifications, and similar system surfaces). Design for
+that, not for a single demo app:
+
+- **Many resident apps.** Per-app CPU and memory multiply across the desktop.
+  Prefer retained trees with patch updates over whole-tree rebuilds, in-process
+  FFI over the stdio host, production React builds, and idle processes that do
+  no work.
+- **Shell surfaces.** Window creation should grow past "one top-level window":
+  multiple surfaces per process and Wayland layer-shell surfaces (anchored,
+  exclusive-zone panels and overlays) for the shell.
+- **System-wide concerns.** Theming, fonts, input methods, and accessibility
+  should come from the session, not each app. Inter-app IPC and the shell's
+  APIs belong in a shared surface, not app-private code.
+- **Owning the stack.** Forking GPUI is acceptable when it unblocks
+  performance or platform needs; keep the fork's changes small and documented.
+
 ## 1. Shape
 
 ```txt
@@ -80,8 +100,9 @@ state and describes UI; the renderer is a pure function of the latest tree.
 ```
 
 - `view`: `direction`, `gap`, `padding` / `paddingX` / `paddingY`, `width`,
-  `height`, `minWidth`, `minHeight`, `maxHeight`, `flex` (grow when ≥ 1),
-  `shrink`, `fill`, `center`, `align` (`start|center|end|stretch`), `justify`
+  `height`, `minWidth`, `minHeight`, `maxHeight`, `flex` (grow from a zero
+  basis, CSS `flex: N 1 0%` / React Native `flex`), `grow` (grow from the
+  content size, CSS `flex-grow`), `shrink`, `fill`, `center`, `align` (`start|center|end|stretch`), `justify`
   (`start|center|end|between`), `background`, `hoverBackground`, `cornerRadius`,
   `borderWidth` (1 or 2), `borderColor`, `scroll` (vertical), `scrollX`, `clip`, `opacity`,
   `onPress`. `id` is required for `onPress`, `hoverBackground`, and `scroll`
@@ -109,7 +130,15 @@ state and describes UI; the renderer is a pure function of the latest tree.
   fires a pressable view's `press` (resolved against the painted bounds;
   GPUI's mouse dispatch is crate-private, so hit-testing is approximated),
   `{"kind":"key","keystroke":"ctrl-enter"}` and `{"kind":"type","text"}` go
-  through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds.
+  through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds
+  (only nodes painted in the latest frame), and `{"kind":"scroll","id","dy"}`
+  scrolls a scroll view or virtualized list.
+- Virtualized lists: a vertical `scroll` view with 64 or more children, plain
+  column layout (stretch alignment, no wrap, no own interaction) renders as a
+  GPUI `list`. Only rows near the viewport are laid out and painted; row
+  heights are cached across frames, and a new tree invalidates only the rows
+  that changed. Horizontal padding moves onto each row, vertical padding
+  scrolls with the rows.
   `@mirinjs/metal` exposes this as `testID` props, `transport.simulate()`,
   `root.nodeId(testID)`, and `root.lastTree()`; Anko's `apps/metal/check.ts`
   is the worked example.
@@ -234,6 +263,41 @@ Renders through DirectX. Not yet verified.
   (flat dir, AppImage / rpm / deb), then macOS and Windows.
 - **M4 — app shell parity.** Menus, tray, dialogs, clipboard, shortcuts,
   notifications through the same `engine/` feature modules.
+
+## 5b. Performance
+
+`bun bench/native.tsx` in `packages/mirin-metal-ui` opens the example browser
+in an off-screen virtual compositor (`startHeadlessDisplay()`, which runs
+`kwin_wayland --virtual`; `--visible` uses the desktop), clicks between
+examples and scrolls the example list through the simulation channel, and
+splits each click into driver, transport, and frame stages from the host's
+`MIRIN_METAL_TRACE=1` log. For CPU profiles, build the host with
+`--features profiling` and set `MIRIN_METAL_PROFILE=<path>` (folded stacks).
+
+Findings and fixes (2026-10-29, release host, 866-node tree, medians):
+
+| | before | after |
+| --- | --- | --- |
+| click → painted frame | 50.4 ms | 20.4 ms |
+| full frame (GPUI layout + paint) | 17.5 ms | 1.2 ms |
+| scroll frame p95 | 18.4 ms | 1.7 ms |
+
+- GPUI lays out the whole window every frame (taffy, no cross-frame cache);
+  layout was ~60% of each frame. Long scroll lists are now virtualized.
+- `flex: 1` used to grow from the content size, so each nested `flex` level
+  re-measured the whole subtree. It now grows from a zero basis, which is
+  also what CSS `flex-1` and React Native `flex` mean.
+- The host woke on a 16 ms poll; it now wakes when a message arrives. Lines
+  are parsed once and the tree is shared per frame instead of deep-copied.
+- React ran its development build because Bun leaves `NODE_ENV` unset
+  (2–3× slower renders); `packages/mirin-metal-ui/bunfig.toml` defines
+  production. Apps should do the same until the Metal runner sets it.
+- Debug builds optimize dependencies (`[profile.dev.package."*"]`); unoptimized
+  GPUI/taffy made the debug host several times slower.
+
+Open: React work per update (the demo re-renders its whole list on select),
+whole-tree JSON per update (the patch protocol, B3), GPUI's full relayout for
+trees that are not long lists.
 
 ## 6. Run it
 
