@@ -15,6 +15,15 @@ export interface Inherited {
   svg: { size?: number; color?: string };
   /** Main axis of the parent element, for `w-fit`. */
   parentDirection?: "row" | "column";
+  /** Whether the parent stretches children across its cross axis (`items-stretch`). */
+  parentStretches?: boolean;
+  /** Whether the parent lays children out as a grid (`w-fit` then uses `justifySelf`). */
+  parentGrid?: boolean;
+  /**
+   * Corner radius of the nearest clipping ancestor (`overflow-hidden rounded-*`).
+   * The renderer clips to rectangles, so images round themselves to match.
+   */
+  clipRadius?: number;
 }
 
 export const InheritedContext = createContext<Inherited>({ text: {}, svg: {} });

@@ -1,0 +1,17 @@
+# mirin's GPUI fork
+
+`gpui` 0.2.2 from crates.io (Zed Industries, Apache-2.0), vendored so
+`mirin-metal` can extend layout where the published crate stops short. Every
+change is listed here and marked with a `// mirin:` comment in the source.
+Upstreaming candidates are marked as such.
+
+| Change | Files | Why |
+| --- | --- | --- |
+| Explicit grid track lists (`grid_template_columns` / `grid_template_rows`) | `src/style.rs`, `src/taffy.rs` | Tailwind `grid-cols-[16px_1fr]`, `grid-cols-[1fr_auto]`; the published crate only has `repeat(N, minmax(0, 1fr))`. Upstreamable. |
+| `justify_items` / `justify_self` | `src/style.rs`, `src/taffy.rs` | Grid inline-axis alignment (`justify-self-end`, `justify-items-center`). Upstreamable. |
+| Text min-content width is the widest word | `src/elements/text.rs` | Taffy asks text for its min-content size when sizing `auto`/`1fr` grid tracks and flex items; GPUI returned the unwrapped line, so text never wrapped there (a card header's title column pushed its action out of the card). Upstreamable. |
+| Typed float literals in `to_grid_repeat` | `src/taffy.rs` | rustc is phasing out `f32` fallback for untyped literals (future hard error). |
+
+To update: copy the new release over this directory (minus `examples/`,
+`Cargo.lock`, `Cargo.toml.orig`, and the `[[example]]` entries in
+`Cargo.toml`), then re-apply the changes above.

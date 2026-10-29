@@ -234,3 +234,24 @@ describe("flex", () => {
     root.unmount();
   });
 });
+
+describe("raw strings in views", () => {
+  test("a string a component returns renders as text in the view's textStyle", async () => {
+    const transport = fakeTransport();
+    const Label = () => "Status";
+    const root = render(
+      createElement(View, { textStyle: { color: "#ff0000", fontSize: 13 } }, createElement(Label)),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "{}") as {
+      children: Array<{ type: string; props: Record<string, unknown>; children: string[] }>;
+    };
+    expect(tree.children[0]).toEqual({
+      type: "text",
+      props: { color: "#ff0000", size: 13 },
+      children: ["Status"],
+    });
+    root.unmount();
+  });
+});

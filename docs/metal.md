@@ -133,6 +133,15 @@ state and describes UI; the renderer is a pure function of the latest tree.
   through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds
   (only nodes painted in the latest frame), and `{"kind":"scroll","id","dy"}`
   scrolls a scroll view or virtualized list.
+- Grid: `grid` lays children out as a CSS grid (taffy) with `gridColumns` /
+  `gridRows` track lists (a number is px; `"1fr"`, `"25%"`, `"auto"`,
+  `"min-content"`, `"max-content"`; `{"min","max"}` is `minmax`), item
+  placement `colStart`/`colEnd`/`colSpan`/`rowStart`/`rowEnd`/`rowSpan`,
+  `justifyItems`/`justifySelf` (inline axis; `align`/`alignSelf` are the block
+  axis), and per-axis `gapX`/`gapY`. Tracks are parsed strictly. Explicit
+  track lists and inline-axis alignment come from mirin's GPUI fork.
+- Strings placed directly in a view (a component returned one) render as
+  text in the view's `textStyle` (`@mirinjs/metal`) instead of being dropped.
 - Virtualized lists: a vertical `scroll` view with 64 or more rows in a plain
   column layout (stretch alignment, no wrap, no own interaction) renders as a
   GPUI `list`. The rows may sit inside up to four layout-only wrappers (only
@@ -171,9 +180,17 @@ strings unchanged (`scripts/port-ui.ts` rewrites only imports).
 - `<form>` behaves like the DOM: submit and reset buttons (also through
   `form="id"`), `FormData` on submit, and named controls registering values.
 
+Layout follows CSS where shadcn depends on it: grids are native (track lists,
+placement, `justify-*`), tables are rows sharing one grid template (pinned
+widths, the rest `minmax(0, 1fr)`; no measuring), `has-*` variants match what
+descendants render (`has-[>svg]`, `has-data-[slot=x]`, `has-[[aria-checked=true]]`,
+`:disabled`/`:checked`), inline-level boxes keep their content width in block
+flow, and text measures its min-content width as its widest word (mirin's
+GPUI fork). Images round to their clipping ancestor's radius.
+
 Differences from the web: no keyboard navigation or Escape handling yet; no
-transforms or animations; one radius per element; `has-[…]`, `peer-*`,
-`even:`/`odd:`, and descendant selectors are ignored; charts are bar-only.
+transforms or animations; one radius per element; `peer-*`, `even:`/`odd:`,
+and descendant selectors are ignored; charts are bar-only.
 `demo/browser.tsx` browses every example natively and `bun test` mounts each
 one headlessly plus behavior tests per component group. `PORTING.md` is the
 porting guide.
@@ -307,6 +324,14 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   GPU a real session does.
 - Idle cost: no frames and ~20 ms of host CPU per 5 s with the example browser
   open.
+
+- Layout fidelity (same day): `bench/shot.tsx` screenshots examples in a
+  private virtual KWin session (own D-Bus, so Spectacle talks to it) for
+  visual review without touching the desktop. Fixes it drove: native grid and
+  `has-*` (above); text min-content; a taffy fork for fit-content flex base
+  sizes (`crates/mirin-metal/vendor/taffy/MIRIN.md`); flex's zero minimum no
+  longer overrides explicit `min-w`/`min-h`; `w-full` on inputs is width,
+  not growth; the full Tailwind v4 palette (generated).
 
 Open: React work per update (the demo re-renders its whole list on select),
 whole-tree JSON per update (the patch protocol, B3), GPUI's full relayout for

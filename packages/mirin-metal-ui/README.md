@@ -53,8 +53,9 @@ See [PORTING.md](./PORTING.md) for the method and the list of conventions.
 - No transforms or animations: tooltip arrows and accordion chevrons stay
   still, carousels jump between slides, and drawers have no drag-to-dismiss.
 - One radius per element, so `rounded-l-*` rounds all corners.
-- Unsupported selectors are ignored: `has-[…]`, `peer-*`, `even:`/`odd:`,
-  descendant forms like `[&_tr:last-child]`.
+- Unsupported selectors are ignored: `peer-*`, `even:`/`odd:`, descendant
+  forms like `[&_tr:last-child]`. `has-*` works for tags, attributes,
+  `:checked`/`:disabled`, and direct children (`>`).
 - Charts: bar charts only. Toasts don't stack or swipe.
 
 ## Run the example browser
@@ -64,4 +65,6 @@ cd crates/mirin-metal && cargo build --bin mirin-metal-host
 cd packages/mirin-metal-ui && bun demo/browser.tsx              # every example
 bun demo/browser.tsx calendar-demo                             # open one example
 bun test                                                        # headless checks
+bun bench/shot.tsx --out /tmp/shots card-demo > /dev/null       # off-screen screenshots
+bun bench/native.tsx                                            # off-screen benchmark
 ```

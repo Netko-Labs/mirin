@@ -49,6 +49,11 @@ names its acceptance check. Checkpoint notes go at the bottom.
       metal-ui, optimized dev dependencies, off-screen benchmark
       (`bench/native.tsx`) and opt-in host profiler. Click → frame 50 → 20 ms,
       scroll frame 17.5 → 1.2 ms.
+- [x] B9 Layout fidelity: native CSS grid and `has-*` variants, grid-row
+      tables, text min-content, fit-content flex base sizes (GPUI + taffy
+      forks under `crates/mirin-metal/vendor/`), off-screen screenshots
+      (`bench/shot.tsx`). Open: carousel `aspect-square` content, `peer-*`,
+      per-corner radii, resizable/command `h-full` in fixed-height panes.
 - [ ] B3 Tree patch protocol (insert/remove/update by node id) replacing
       whole-tree replacement; reconciler emits patches from mutation methods.
 - [ ] B4 `libmirin_metal` C ABI + polled event queue; Bun host boots it like

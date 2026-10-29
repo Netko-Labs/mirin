@@ -276,16 +276,14 @@ describe("Table", () => {
         </Table>
       </ThemeProvider>,
     );
-    const rows = findAll(
-      h.tree(),
-      (n) => n.props.direction === "row" && n.props.borderBottom === 1,
-    );
-    const widths = rows.map((row) =>
-      (row.children ?? []).map((cell) => (typeof cell === "string" ? 0 : cell.props.width)),
-    );
-    expect(widths[0]).toEqual([100, 100]);
-    expect(widths[1]).toEqual([100, 100]);
-    expect(widths[2]).toEqual([200]);
+    // Every row is a grid with the same template: the pinned column and a
+    // flexible one; the total cell spans both.
+    const rows = findAll(h.tree(), (n) => n.props.grid === true && n.props.borderBottom === 1);
+    expect(rows.length).toBe(3);
+    const template = [100, { min: 0, max: "1fr" }];
+    for (const row of rows) expect(row.props.gridColumns).toEqual(template);
+    const total = rows[2]?.children?.[0];
+    expect(typeof total === "string" ? undefined : total?.props.colSpan).toBe(2);
     h.unmount();
   });
 });

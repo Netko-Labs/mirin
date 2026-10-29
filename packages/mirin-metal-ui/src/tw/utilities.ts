@@ -6,6 +6,7 @@
 
 import type { TextInputStyle, TextStyle, ViewStyle } from "@mirinjs/metal";
 import type { ThemeTokens } from "../theme.ts";
+import { applyGridUtility } from "./grid.ts";
 import { fraction, LEADING, NAMED_SIZES, PALETTE, radius, spacing, TEXT_SIZES } from "./scale.ts";
 import type { VariantTarget } from "./variants.ts";
 
@@ -30,8 +31,6 @@ export interface TwStyle {
   direction?: "row" | "column";
   /** `sr-only` or `hidden`: render nothing. */
   hidden: boolean;
-  gridCols?: number;
-  colSpan?: number | "full";
   spaceX?: number;
   spaceY?: number;
   textTransform?: "uppercase" | "lowercase" | "capitalize";
@@ -270,13 +269,17 @@ export function applyUtility(
     case "place-content-center":
       view.alignItems = "center";
       view.justifyContent = "center";
+      if (token === "place-items-center") view.justifyItems = "center";
       return;
     case "self-start":
       view.alignSelf = "flex-start";
       return;
     case "self-center":
+      view.alignSelf = "center";
+      return;
     case "place-self-center":
       view.alignSelf = "center";
+      view.justifySelf = "center";
       return;
     case "self-end":
       view.alignSelf = "flex-end";
@@ -289,6 +292,7 @@ export function applyUtility(
     case "w-max":
     case "w-min":
       acc.fitWidth = true;
+      delete view.width;
       return;
     case "overflow-hidden":
     case "overflow-clip":
@@ -433,9 +437,6 @@ export function applyUtility(
       view.right = 0;
       view.bottom = 0;
       return;
-    case "col-span-full":
-      acc.colSpan = "full";
-      return;
   }
 
   let m: RegExpMatchArray | null = token.match(/^group\/([\w-]+)$/);
@@ -444,10 +445,13 @@ export function applyUtility(
     return;
   }
 
-  m = token.match(/^(gap|gap-x|gap-y)-(.+)$/);
+  m = token.match(/^(gap-x|gap-y|gap)-(.+)$/);
   if (m) {
     const value = spacing(m[2] ?? "");
-    if (value !== undefined) view.gap = value;
+    if (value === undefined) return;
+    if (m[1] === "gap-x") view.columnGap = value;
+    else if (m[1] === "gap-y") view.rowGap = value;
+    else view.gap = value;
     return;
   }
   m = token.match(/^space-([xy])-(.+)$/);
@@ -506,6 +510,8 @@ export function applyUtility(
   m = token.match(/^(w|h|size|min-w|min-h|max-w|max-h|basis)-(.+)$/);
   if (m) {
     const kind = m[1];
+    // A later width utility overrides an earlier `w-fit`, as in CSS.
+    if (kind === "w" || kind === "size") acc.fitWidth = false;
     if (m[2] === "auto" && (kind === "w" || kind === "h" || kind === "size")) {
       // `h-auto` after `h-9` sizes to content again.
       if (kind !== "h") delete view.width;
@@ -519,7 +525,8 @@ export function applyUtility(
       case "w":
         view.width = value;
         if (px !== undefined) input.width = px;
-        if (value === "100%") input.flex = input.flex ?? 1;
+        // CSS `w-full` is width 100%; growth would stretch a textarea's height in a column.
+        if (value === "100%") input.width = "100%";
         return;
       case "h":
         view.height = value;
@@ -567,21 +574,7 @@ export function applyUtility(
     }
     return;
   }
-  m = token.match(/^grid-cols-(\d+)$/);
-  if (m) {
-    acc.gridCols = Number(m[1]);
-    return;
-  }
-  m = token.match(/^grid-cols-\[(.+)\]$/);
-  if (m) {
-    acc.gridCols = (m[1] ?? "").split("_").length;
-    return;
-  }
-  m = token.match(/^col-span-(\d+)$/);
-  if (m) {
-    acc.colSpan = Number(m[1]);
-    return;
-  }
+  if (applyGridUtility(token, view)) return;
   m = token.match(/^aspect-\[(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)\]$/);
   if (m) {
     view.aspectRatio = Number(m[1]) / Number(m[2]);

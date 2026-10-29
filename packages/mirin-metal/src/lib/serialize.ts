@@ -8,6 +8,8 @@ import type {
   Bounds,
   Color,
   Dimension,
+  GridPlacement,
+  GridTrack,
   PointerInfo,
   TextInputStyle,
   TextStyle,
@@ -86,6 +88,19 @@ interface ViewNodeProps {
   occlude?: boolean;
   onLayout?: boolean;
   alignSelf?: "start" | "center" | "end" | "stretch";
+  grid?: boolean;
+  gridColumns?: GridTrack[];
+  gridRows?: GridTrack[];
+  justifyItems?: "start" | "center" | "end" | "stretch";
+  justifySelf?: "start" | "center" | "end" | "stretch";
+  colStart?: number;
+  colEnd?: number;
+  colSpan?: number;
+  rowStart?: number;
+  rowEnd?: number;
+  rowSpan?: number;
+  gapX?: number;
+  gapY?: number;
 }
 
 interface TextNodeProps {
@@ -118,6 +133,7 @@ interface InputNodeProps {
   borderColor?: Color;
   focusBorderColor?: Color;
   width?: number;
+  widthPercent?: number;
   height?: number;
   minHeight?: number;
   flex?: number;
@@ -272,6 +288,26 @@ function serializeImage(instance: ImageInstance): ImageNode {
 }
 
 /** Split a `Dimension` into the protocol's pixel or fraction field. */
+/** Grid lines are 1-based and may count from the end; spans are at least 1. */
+function placeInGrid(
+  props: ViewNodeProps,
+  placement: GridPlacement | undefined,
+  axis: "col" | "row",
+): void {
+  if (!placement) return;
+  const line = (value: number | undefined) =>
+    value !== undefined && Number.isInteger(value) && value !== 0 ? value : undefined;
+  const start = line(placement.start);
+  const end = line(placement.end);
+  const span =
+    placement.span !== undefined && Number.isInteger(placement.span) && placement.span > 0
+      ? placement.span
+      : undefined;
+  if (start !== undefined) props[`${axis}Start`] = start;
+  if (end !== undefined) props[`${axis}End`] = end;
+  if (span !== undefined) props[`${axis}Span`] = span;
+}
+
 function dimension(value: Dimension | undefined): { px?: number; fraction?: number } {
   if (value === undefined) return {};
   if (typeof value === "number") return { px: value };
@@ -348,6 +384,17 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   }
   if (occlude) props.occlude = true;
   if (style.alignSelf) props.alignSelf = ALIGN[style.alignSelf];
+  if (style.display === "grid") {
+    props.grid = true;
+    if (style.gridTemplateColumns) props.gridColumns = style.gridTemplateColumns;
+    if (style.gridTemplateRows) props.gridRows = style.gridTemplateRows;
+  }
+  if (style.justifyItems) props.justifyItems = ALIGN[style.justifyItems];
+  if (style.justifySelf) props.justifySelf = ALIGN[style.justifySelf];
+  placeInGrid(props, style.gridColumn, "col");
+  placeInGrid(props, style.gridRow, "row");
+  if (style.columnGap !== undefined) props.gapX = style.columnGap;
+  if (style.rowGap !== undefined) props.gapY = style.rowGap;
   if (onPointer) {
     props.onPointer = true;
     handlers.pointer.set(String(instance.id), onPointer);
@@ -366,29 +413,40 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   }
   if (testID) handlers.testIds.set(testID, String(instance.id));
 
-  const children = instance.children
-    .filter((child): child is HostInstance => child.kind !== "raw")
-    .map((child) => serializeInstance(child, handlers));
+  // A string directly in a view (a component returned it) renders as text in
+  // the view's `textStyle` instead of being dropped.
+  const children = instance.children.map((child) =>
+    child.kind === "raw"
+      ? textNode(instance.props.textStyle ?? {}, undefined, [child.text])
+      : serializeInstance(child, handlers),
+  );
   return { type: "view", props, children };
 }
 
 function serializeText(instance: TextInstance): TextNode {
-  const style = instance.props.style ?? {};
+  const children = instance.children
+    .filter((child): child is RawTextInstance => child.kind === "raw")
+    .map((child) => child.text);
+  return textNode(instance.props.style ?? {}, instance.props.numberOfLines, children);
+}
+
+function textNode(
+  style: TextStyle,
+  numberOfLines: number | undefined,
+  children: string[],
+): TextNode {
   const props: TextNodeProps = {};
   if (style.color) props.color = style.color;
   if (style.fontSize !== undefined) props.size = style.fontSize;
   if (style.fontWeight && style.fontWeight !== "normal") props.weight = WEIGHT[style.fontWeight];
   if (style.fontFamily === "monospace") props.mono = true;
-  if (instance.props.numberOfLines === 1) props.truncate = true;
+  if (numberOfLines === 1) props.truncate = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
   if (style.textAlign && style.textAlign !== "left") props.align = style.textAlign;
   if (style.fontStyle === "italic") props.italic = true;
   if (style.textDecorationLine === "underline") props.underline = true;
   if (style.textDecorationLine === "line-through") props.lineThrough = true;
   if (style.lineHeight !== undefined) props.lineHeight = style.lineHeight;
-  const children = instance.children
-    .filter((child): child is RawTextInstance => child.kind === "raw")
-    .map((child) => child.text);
   return { type: "text", props, children };
 }
 
@@ -410,7 +468,8 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (style.borderRadius !== undefined) props.cornerRadius = style.borderRadius;
   if (style.borderColor) props.borderColor = style.borderColor;
   if (style.focusBorderColor) props.focusBorderColor = style.focusBorderColor;
-  if (style.width !== undefined) props.width = style.width;
+  if (style.width === "100%") props.widthPercent = 1;
+  else if (style.width !== undefined) props.width = style.width;
   if (style.height !== undefined) props.height = style.height;
   if (style.minHeight !== undefined) props.minHeight = style.minHeight;
   if (style.flex !== undefined) props.flex = style.flex;

@@ -8,6 +8,7 @@
 import { Svg, View } from "@mirinjs/metal";
 import { type ReactNode, useMemo } from "react";
 import { useInherited } from "../runtime/context.ts";
+import { useHasRegistration } from "../runtime/has.ts";
 import { useTheme } from "../theme.ts";
 import { translate } from "../tw/index.ts";
 
@@ -45,9 +46,13 @@ function markupFor(node: IconNode, strokeWidth: number): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 }
 
+const NO_ATTRS = {};
+
 export function createLucideIcon(name: string, node: IconNode): LucideIcon {
   const markups = new Map<number, string>();
   function Icon({ size, color, strokeWidth = 2, className }: LucideProps): ReactNode {
+    // Icons render as <svg> on the web, so `has-[>svg]` matches them.
+    useHasRegistration("svg", NO_ATTRS, "");
     const theme = useTheme();
     const inherited = useInherited();
     const tw = useMemo(

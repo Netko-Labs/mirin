@@ -9,9 +9,19 @@
 /** Attribute bag an element exposes to variants: `data-*`, `aria-*`, `disabled`, … */
 export type Attrs = Record<string, unknown>;
 
+/** A descendant an element can match with `has-*` (see `runtime/has.ts`). */
+export interface HasEntry {
+  tag: string;
+  attrs: Attrs;
+  /** A direct child (for `has-[>…]`). */
+  direct: boolean;
+}
+
 export interface StyleState {
   /** The element's own attributes. */
   attrs: Attrs;
+  /** Descendants registered for `has-*` variants, when the element uses them. */
+  has?: HasEntry[];
   /** Attributes of `group`/`group/<name>` ancestors, keyed by group name ("" = unnamed). */
   groups: Record<string, Attrs>;
   dark: boolean;
@@ -89,8 +99,60 @@ function matchChildSelector(variant: string, attrs: Attrs): boolean | undefined 
   return selector[1] ? !hit : hit;
 }
 
+/**
+ * Match a `has-*` selector against one descendant: `[>svg]`,
+ * `[>[data-slot=x]]`, `[select:disabled]`, `[:checked]`, or the shorthand
+ * forms `data-[slot=x]` / `aria-invalid` / `disabled` / `checked`.
+ */
+function matchHas(selector: string, entry: HasEntry): boolean {
+  const bracket = selector.match(/^\[(.*)\]$/);
+  if (!bracket) {
+    if (selector === "disabled") return truthy(entry.attrs.disabled);
+    if (selector === "checked") return isChecked(entry.attrs);
+    return matchAttr(selector, entry.attrs) === true;
+  }
+  let rest = bracket[1] ?? "";
+  if (rest.startsWith(">")) {
+    if (!entry.direct) return false;
+    rest = rest.slice(1);
+  }
+  const tag = rest.match(/^[a-z][a-z0-9-]*/)?.[0];
+  if (tag) {
+    if (entry.tag !== tag) return false;
+    rest = rest.slice(tag.length);
+  }
+  for (const part of rest.match(/\[[^\]]*\]|:[a-z-]+/g) ?? []) {
+    if (part === ":disabled") {
+      if (!truthy(entry.attrs.disabled) && entry.attrs["aria-disabled"] !== "true") return false;
+    } else if (part === ":checked") {
+      if (!isChecked(entry.attrs)) return false;
+    } else if (part.startsWith("[")) {
+      const attr = part.slice(1, -1).match(/^([\w-]+)(?:=["']?([^"'\]]*)["']?)?$/);
+      if (!attr) return false;
+      const value = entry.attrs[attr[1] ?? ""];
+      if (attr[2] === undefined ? !truthy(value) : String(value) !== attr[2]) return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isChecked(attrs: Attrs): boolean {
+  return (
+    truthy(attrs.checked) ||
+    attrs["data-state"] === "checked" ||
+    attrs["aria-checked"] === true ||
+    attrs["aria-checked"] === "true"
+  );
+}
+
 /** Resolve one variant to a target, or "skip" when it does not apply. */
 function evaluate(variant: string, state: StyleState): VariantTarget {
+  if (variant.startsWith("has-")) {
+    const selector = variant.slice(4);
+    return state.has?.some((entry) => matchHas(selector, entry)) ? "self" : "skip";
+  }
   // Pointer UI: keyboard focus and Radix's highlight both read as hover.
   if (variant === "hover" || variant === "focus" || variant === "data-[highlighted]")
     return "hover";

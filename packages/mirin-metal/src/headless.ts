@@ -73,11 +73,16 @@ export async function startHeadlessDisplay(
     }
     await Bun.sleep(50);
   }
+  // The compositor holds nothing worth a graceful shutdown, and a plain
+  // SIGTERM can leave it running if this process exits right after.
+  const stop = () => child.kill("SIGKILL");
+  process.once("exit", stop);
   return {
     // An empty DISPLAY keeps GPUI from falling back to the user's X server.
     env: { WAYLAND_DISPLAY: socket, DISPLAY: "" },
     close() {
-      child.kill();
+      process.off("exit", stop);
+      stop();
     },
   };
 }

@@ -14,6 +14,7 @@ import { Box, collectAttrs, TextRun } from "./box.tsx";
 import { FormContext, useInherited } from "./context.ts";
 import { syntheticEvent } from "./events.ts";
 import { useFormField } from "./form.tsx";
+import { useHasRegistration } from "./has.ts";
 
 type Props = Record<string, unknown>;
 type Handler = ((event: ReturnType<typeof syntheticEvent>) => void) | undefined;
@@ -61,7 +62,9 @@ function useInputStyle(props: Props, base: string): TextInputStyle {
       ...(typeof view.width === "number" ? { width: view.width } : {}),
       ...(typeof view.height === "number" ? { height: view.height } : {}),
       ...(view.minHeight !== undefined ? { minHeight: view.minHeight } : {}),
-      ...(view.width === "100%" || view.flex || view.flexGrow ? { flex: 1 } : {}),
+      // CSS `w-full` is width 100%, not growth (which a column applies to height).
+      ...(view.width === "100%" ? { width: "100%" as const } : {}),
+      ...(view.flex || view.flexGrow ? { flex: 1 } : {}),
       ...(view.borderWidth === 0 ? { borderColor: "#00000000" } : {}),
     };
   }, [className, base, theme, key, inherited]);
@@ -79,7 +82,14 @@ export function HtmlTextarea(props: Props): ReactNode {
   return <TextField {...props} multiline />;
 }
 
+/** Register a form control with the nearest `has-` owner (`has-[select:disabled]`). */
+function useControlRegistration(tag: string, props: Props): void {
+  const attrs = collectAttrs(props);
+  useHasRegistration(tag, attrs, JSON.stringify(attrs));
+}
+
 function TextField(props: Props & { multiline: boolean }) {
+  useControlRegistration(props.multiline ? "textarea" : "input", props);
   const [value, setValue] = useFieldValue(props);
   const form = useContext(FormContext);
   const style = useInputStyle(props, props.multiline ? "min-h-16" : "");
@@ -119,6 +129,7 @@ function HiddenInput(props: Props) {
 }
 
 function NativeCheck(props: Props) {
+  useControlRegistration("input", props);
   const theme = useTheme();
   const controlled = props.checked !== undefined;
   const [own, setOwn] = useState(props.defaultChecked === true);
@@ -186,6 +197,7 @@ function collectOptions(children: unknown, group?: string): Option[] {
 
 /** `<select>`: a trigger showing the chosen option and a listbox popup. */
 export function HtmlSelect(props: Props): ReactNode {
+  useControlRegistration("select", props);
   const options = collectOptions(props.children);
   const [value, setValue] = useFieldValue({
     ...props,

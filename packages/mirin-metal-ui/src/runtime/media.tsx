@@ -14,6 +14,7 @@ import { useTheme } from "../theme.ts";
 import { translate } from "../tw/index.ts";
 import { Box, collectAttrs } from "./box.tsx";
 import { useInherited } from "./context.ts";
+import { useHasRegistration } from "./has.ts";
 
 const CACHE_DIR = join(
   process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"),
@@ -65,6 +66,7 @@ export function useImage(src: string | undefined): string | null {
 
 export function HtmlImage(props: Record<string, unknown>) {
   const theme = useTheme();
+  const inherited = useInherited();
   const src = typeof props.src === "string" ? props.src : undefined;
   const className = typeof props.className === "string" ? props.className : undefined;
   const path = useImage(src);
@@ -107,7 +109,7 @@ export function HtmlImage(props: Record<string, unknown>) {
       style={{
         width,
         height,
-        borderRadius: tw.view.borderRadius,
+        borderRadius: tw.view.borderRadius ?? inherited.clipRadius,
         opacity: tw.view.opacity,
         flex: fills ? 1 : undefined,
       }}
@@ -156,7 +158,10 @@ function svgChildren(children: unknown): string {
     .join("");
 }
 
+const NO_ATTRS = {};
+
 export function HtmlSvg(props: Record<string, unknown>) {
+  useHasRegistration("svg", NO_ATTRS, "");
   const theme = useTheme();
   const inherited = useInherited();
   const className = typeof props.className === "string" ? props.className : undefined;

@@ -181,6 +181,24 @@ describe("w-fit", () => {
     expect(holder("b")?.props.alignSelf).toBeUndefined();
     h.unmount();
   });
+
+  test("a centering parent keeps centering a w-fit child", async () => {
+    const h = await mount(
+      <ThemeProvider>
+        <div className="flex flex-col items-center">
+          <div className="w-fit">c</div>
+        </div>
+      </ThemeProvider>,
+    );
+    const holder = find(h.tree(), (node) =>
+      (node.children ?? []).some(
+        (child) =>
+          typeof child !== "string" && child.type === "text" && child.children?.includes("c"),
+      ),
+    );
+    expect(holder?.props.alignSelf).toBeUndefined();
+    h.unmount();
+  });
 });
 
 describe("event handlers written for the DOM", () => {

@@ -296,7 +296,10 @@ mod tests {
     }
 
     fn view(props: ViewProps, children: Vec<NodeSpec>) -> NodeSpec {
-        NodeSpec::View { props, children }
+        NodeSpec::View {
+            props: Box::new(props),
+            children,
+        }
     }
 
     fn scroll_view() -> ViewProps {

@@ -32,6 +32,12 @@ wayland-protocols = { version = "0.32", features = ["client"] }
 [features]
 profiling = ["dep:pprof"]
 
+# mirin's forks: gpui 0.2.2 and the taffy 0.9.0 it pins, vendored with small,
+# documented changes (vendor/*/MIRIN.md). Keep versions in sync with upstream.
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }
+taffy = { path = "vendor/taffy" }
+
 # GPUI, taffy, and the text stack are unusably slow unoptimized; optimize
 # dependencies in dev builds too (this crate itself stays fast to compile).
 [profile.dev.package."*"]

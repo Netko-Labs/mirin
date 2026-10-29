@@ -44,17 +44,21 @@ pub(crate) fn render_input(
     if props.padding > 0.0 {
         element = element.p(px(props.padding));
     }
+    // Flex first so an explicit `minHeight` below wins over its zero minimum.
+    if props.flex > 0.0 {
+        element = crate::render::flex_from_zero(element, props.flex);
+    }
     if let Some(width) = props.width {
         element = element.w(px(width));
+    }
+    if let Some(fraction) = props.width_percent {
+        element = element.w(gpui::relative(fraction));
     }
     if let Some(height) = props.height {
         element = element.h(px(height));
     }
     if let Some(height) = props.min_height {
         element = element.min_h(px(height));
-    }
-    if props.flex > 0.0 {
-        element = crate::render::flex_from_zero(element, props.flex);
     }
     if props.fill {
         element = element.size_full();

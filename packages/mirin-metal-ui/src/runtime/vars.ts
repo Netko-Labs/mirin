@@ -26,6 +26,8 @@ function camel(name: string): string {
 function lookup(name: string, vars: CssVars, theme: ThemeTokens): string | undefined {
   const own = vars[name];
   if (own !== undefined) return own;
+  // Tailwind v4's spacing unit (`calc(var(--spacing) * 4)`).
+  if (name === "--spacing") return `${SPACING_UNIT}px`;
   return (theme as unknown as Record<string, string | undefined>)[camel(name.slice(2))];
 }
 
@@ -156,8 +158,32 @@ export function substituteVars(className: string, vars: CssVars, theme: ThemeTok
       const expression = shorthand ? `var(${shorthand[2]})` : bracket?.[2]?.replace(/_/g, " ");
       if (prefix === undefined || expression === undefined) return token;
       const resolved = resolveValue(expression, vars, theme);
-      if (resolved === undefined || /\s/.test(resolved)) return token;
-      return [...parts, `${prefix}[${resolved}]`].join(":");
+      if (resolved !== undefined && !/\s/.test(resolved)) {
+        return [...parts, `${prefix}[${resolved}]`].join(":");
+      }
+      // Lists like `grid-cols-[calc(var(--spacing)*4)_1fr]`: resolve each part.
+      const pieces = splitSpaces(expression).map((piece) => resolveValue(piece, vars, theme));
+      if (pieces.some((piece) => piece === undefined || /\s/.test(piece))) return token;
+      return [...parts, `${prefix}[${pieces.join("_")}]`].join(":");
     })
     .join(" ");
+}
+
+/** Split on spaces outside parentheses (`calc(a + b) 1fr` → two parts). */
+function splitSpaces(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of text) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    if (/\s/.test(ch) && depth === 0) {
+      if (current) parts.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current) parts.push(current);
+  return parts;
 }

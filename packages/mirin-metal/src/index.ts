@@ -10,6 +10,8 @@ export type {
   Bounds,
   Color,
   Dimension,
+  GridPlacement,
+  GridTrack,
   ImageProps,
   LayoutNode,
   NativeEvent,

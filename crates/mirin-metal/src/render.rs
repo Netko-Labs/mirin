@@ -54,6 +54,14 @@ fn styled_view(props: &ViewProps) -> Div {
     if let Some(padding) = props.padding_y {
         element = element.py(px(padding));
     }
+    // Flex first: it zeroes the minimum size (so flex items can shrink below
+    // their content), and explicit `minWidth`/`minHeight` below must win.
+    if props.flex > 0.0 {
+        element = flex_from_zero(element, props.flex);
+    } else if props.grow > 0.0 {
+        element.style().flex_grow = Some(props.grow);
+        element = element.min_w(px(0.0)).min_h(px(0.0));
+    }
     if let Some(width) = props.width {
         element = element.w(px(width));
     }
@@ -89,12 +97,6 @@ fn styled_view(props: &ViewProps) -> Div {
         if let Some(bottom) = props.bottom {
             element = element.bottom(px(bottom));
         }
-    }
-    if props.flex > 0.0 {
-        element = flex_from_zero(element, props.flex);
-    } else if props.grow > 0.0 {
-        element.style().flex_grow = Some(props.grow);
-        element = element.min_w(px(0.0)).min_h(px(0.0));
     }
     if props.shrink == Some(false) {
         element = element.flex_shrink_0();
@@ -153,6 +155,7 @@ fn styled_view(props: &ViewProps) -> Div {
         element = element.border_1();
     }
     apply_box_edges(&mut element, props);
+    crate::grid::apply_grid(&mut element, props);
     if let Some(color) = props.border_color.as_deref().and_then(parse_color) {
         element = element.border_color(rgba(color));
     }

@@ -5,14 +5,17 @@
 
 use serde::Deserialize;
 
+pub use crate::grid::GridTrack;
+
 /// One node in the UI tree. The JSON shape is React-element-like:
 /// `{"type":"view","props":{...},"children":[...]}`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum NodeSpec {
     View {
+        /// Boxed: views carry far more props than the other node types.
         #[serde(default)]
-        props: ViewProps,
+        props: Box<ViewProps>,
         #[serde(default)]
         children: Vec<NodeSpec>,
     },
@@ -162,6 +165,27 @@ pub struct ViewProps {
     pub on_layout: bool,
     /// Override the parent's cross-axis alignment for this node.
     pub align_self: Option<Align>,
+    /// Lay children out as a CSS grid (`grid.rs`) instead of a flex line.
+    pub grid: bool,
+    /// `grid-template-columns`; without it the grid has one implicit column.
+    pub grid_columns: Option<Vec<GridTrack>>,
+    /// `grid-template-rows`; rows are implicit (`auto`) otherwise.
+    pub grid_rows: Option<Vec<GridTrack>>,
+    /// Inline-axis alignment of grid items (CSS `justify-items`).
+    pub justify_items: Option<Align>,
+    /// This grid item's inline-axis alignment (CSS `justify-self`).
+    pub justify_self: Option<Align>,
+    /// Grid placement of this node: 1-based lines (negative counts from the
+    /// end) and spans, as in CSS `grid-column` / `grid-row`.
+    pub col_start: Option<i16>,
+    pub col_end: Option<i16>,
+    pub col_span: Option<u16>,
+    pub row_start: Option<i16>,
+    pub row_end: Option<i16>,
+    pub row_span: Option<u16>,
+    /// Gap between columns / rows, overriding `gap` on that axis.
+    pub gap_x: Option<f32>,
+    pub gap_y: Option<f32>,
 }
 
 /// Appearance props for a `text` node.
@@ -231,6 +255,9 @@ pub struct InputProps {
     pub focus_border_color: Option<String>,
     #[serde(default)]
     pub width: Option<f32>,
+    /// Width as a fraction (0..1) of the parent, e.g. 1 for CSS `width: 100%`.
+    #[serde(default)]
+    pub width_percent: Option<f32>,
     #[serde(default)]
     pub height: Option<f32>,
     #[serde(default)]
@@ -266,6 +293,7 @@ impl Default for InputProps {
             border_color: None,
             focus_border_color: None,
             width: None,
+            width_percent: None,
             height: None,
             min_height: None,
             flex: 0.0,

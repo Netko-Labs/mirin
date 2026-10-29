@@ -35,6 +35,7 @@ import {
 import { cssToMetal } from "./css.ts";
 import { syntheticEvent } from "./events.ts";
 import { type FormHandle, FormScope, resolveForm } from "./form.tsx";
+import { HasContext, useHasOwner, useHasRegistration } from "./has.ts";
 import { openExternal } from "./open.ts";
 import { ownVars, readsVars, substituteVars, VarsContext } from "./vars.ts";
 
@@ -216,48 +217,6 @@ export function TextRun({
   );
 }
 
-/** `col-span-N` of a grid child, read from its className. */
-function spanOf(node: ReactNode, columns: number): number {
-  if (!isValidElement(node)) return 1;
-  const className = (node.props as { className?: unknown }).className;
-  if (typeof className !== "string") return 1;
-  if (/(^|\s)col-span-full(\s|$)/.test(className)) return columns;
-  const match = className.match(/(?:^|\s)(?:\w+:)?col-span-(\d+)(?:\s|$)/);
-  return match ? Math.min(columns, Number(match[1])) : 1;
-}
-
-function gridRows(items: ReactNode[], columns: number, gap: number | undefined): ReactNode[] {
-  const rows: ReactNode[][] = [];
-  let row: ReactNode[] = [];
-  let used = 0;
-  items.forEach((item, index) => {
-    const span = spanOf(item, columns);
-    if (used + span > columns && row.length > 0) {
-      rows.push(row);
-      row = [];
-      used = 0;
-    }
-    row.push(
-      <View key={`cell-${index}`} style={{ flex: span, minWidth: 0, flexDirection: "column" }}>
-        {item}
-      </View>,
-    );
-    used += span;
-  });
-  if (row.length > 0) rows.push(row);
-  return rows.map((cells, index) => {
-    const filler = columns - cells.length;
-    return (
-      <View key={`row-${index}`} style={{ flexDirection: "row", gap, alignItems: "stretch" }}>
-        {cells}
-        {filler > 0 && cells.length < columns
-          ? Array.from({ length: filler }, (_, i) => <View key={`pad-${i}`} style={{ flex: 1 }} />)
-          : null}
-      </View>
-    );
-  });
-}
-
 function renderChildren(
   items: ReactNode[],
   tw: TwStyle,
@@ -343,6 +302,10 @@ export function Box(props: BoxProps): ReactNode {
     attrs["data-metal-last"] ??= sibling.last;
   }
   const stateKey = attrsKey(attrs);
+  const usesHas = classes?.includes("has-") === true;
+  const has = useHasOwner(usesHas);
+  useHasRegistration(tag, attrs, stateKey);
+  const hasEntries = usesHas ? has.entries : undefined;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: stateKey summarizes attrs
   const tw = useMemo(
@@ -352,9 +315,10 @@ export function Box(props: BoxProps): ReactNode {
         groups,
         dark: theme.mode === "dark",
         viewportWidth: theme.viewportWidth,
+        has: hasEntries,
       }),
     // attrs is summarized by stateKey.
-    [tag, classes, theme, stateKey, groups],
+    [tag, classes, theme, stateKey, groups, hasEntries],
   );
   if (tw.hidden || tw.display === "none") return null;
 
@@ -367,6 +331,7 @@ export function Box(props: BoxProps): ReactNode {
       size: tw.svg.size ?? inherited.svg.size,
       color: tw.svg.color ?? inherited.svg.color,
     },
+    clipRadius: inherited.clipRadius,
   };
   const textChanged =
     Object.keys(ownText).length > 0 ||
@@ -378,17 +343,84 @@ export function Box(props: BoxProps): ReactNode {
   const isInlineTag = INLINE_TAGS.has(tag);
   const display = tw.display ?? (isInlineTag ? "inline" : "block");
   const textOnly = items.length > 0 && items.every(isText);
-  const inlineFlow = !textOnly && items.length > 1 && items.every(isInlineNode);
+  // A grid by class, or by an override (table rows set `display: "grid"`).
+  const isGrid = display === "grid" || display === "inline-grid" || viewStyle?.display === "grid";
+  const inlineFlow = !isGrid && !textOnly && items.length > 1 && items.every(isInlineNode);
 
   const view: ViewStyle = { ...tw.view, ...css.view };
   let direction: "row" | "column";
   if (display === "flex" || display === "inline-flex") direction = tw.direction ?? "row";
-  else if (display === "grid" || display === "inline-grid") direction = "column";
+  else if (isGrid) direction = "column";
   else if (display === "inline" || display === "inline-block") direction = "row";
+  // `space-x-*` only spaces a horizontal run, so a block using it is a row
+  // (its children are often components, whose inline tags we cannot see).
+  else if (tw.spaceX !== undefined && tw.spaceY === undefined) direction = "row";
   else direction = inlineFlow ? "row" : (tw.direction ?? "column");
   view.flexDirection = direction;
+  if (isGrid) view.display = "grid";
   nextInherited.parentDirection = direction;
-  if (tw.fitWidth && inherited.parentDirection === "column") view.alignSelf ??= "flex-start";
+  nextInherited.parentGrid = isGrid;
+  // `w-fit` sizes to content. Only a stretching column parent would widen it,
+  // so only then pin it to the start; a centering parent keeps centering it.
+  if (
+    !inherited.parentGrid &&
+    inherited.parentDirection === "column" &&
+    inherited.parentStretches !== false &&
+    view.width === "100%" &&
+    (view.alignSelf ?? "stretch") === "stretch"
+  ) {
+    // A stretching column already fills the width; `width: 100%` adds
+    // nothing but taffy's percentage pitfalls (an `aspect-square w-full`
+    // button sized against the window while measuring its card).
+    view.width = undefined;
+  }
+  if (
+    !inherited.parentGrid &&
+    inherited.parentDirection === "row" &&
+    view.width === "100%" &&
+    view.flexShrink !== 0 &&
+    view.flexGrow !== 0 &&
+    view.flex !== 0
+  ) {
+    // In a row, filling the parent is growth. A percentage of a row sized by
+    // its content is cyclic: CSS ignores it while measuring, but taffy
+    // resolves it against a far larger width (a calendar month in a `w-fit`
+    // calendar measured as tall as the window).
+    view.width = undefined;
+    view.flexGrow ??= 1;
+  }
+  if (inherited.parentGrid) {
+    // Grid items stretch across their cell by default, so `w-full`/`h-full`
+    // add nothing there, and taffy resolves such percentages against the
+    // whole grid while sizing tracks (an `aspect-square w-full` cell grew to
+    // the grid's width).
+    if (view.width === "100%" && (view.justifySelf ?? "stretch") === "stretch") {
+      view.width = undefined;
+    }
+    if (view.height === "100%" && (view.alignSelf ?? "stretch") === "stretch") {
+      view.height = undefined;
+    }
+  }
+  // Inline-level boxes (`inline-flex` buttons and badges) keep their content
+  // width in block flow instead of stretching across the column.
+  if (
+    (display === "inline-flex" || display === "inline-block" || display === "inline-grid") &&
+    !inherited.parentGrid &&
+    inherited.parentDirection === "column" &&
+    inherited.parentStretches !== false
+  ) {
+    view.alignSelf ??= inherited.text.textAlign === "center" ? "center" : "flex-start";
+  }
+  if (tw.fitWidth && inherited.parentGrid) {
+    // In a grid, width is the inline axis: stop the column from stretching it.
+    view.justifySelf ??= "flex-start";
+  } else if (
+    tw.fitWidth &&
+    inherited.parentDirection === "column" &&
+    inherited.parentStretches !== false
+  ) {
+    view.alignSelf ??= "flex-start";
+  }
   if (inlineFlow && display !== "flex" && display !== "inline-flex") {
     view.flexWrap = "wrap";
     view.alignItems = view.alignItems ?? "center";
@@ -399,6 +431,10 @@ export function Box(props: BoxProps): ReactNode {
     if (direction === "row" && tw.spaceX !== undefined) view.gap = tw.spaceX;
   }
   if (isInlineTag && display === "inline") view.alignItems = view.alignItems ?? "center";
+  nextInherited.parentStretches = (view.alignItems ?? "stretch") === "stretch";
+  if (view.overflow === "hidden" && typeof view.borderRadius === "number") {
+    nextInherited.clipRadius = view.borderRadius;
+  }
 
   const disabled = attrs.disabled === true || attrs["aria-disabled"] === "true";
   const interactive = !tw.pointerEventsNone && !disabled;
@@ -421,12 +457,6 @@ export function Box(props: BoxProps): ReactNode {
         {items.map(String).join("")}
       </TextRun>,
     ];
-  } else if ((display === "grid" || display === "inline-grid") && (tw.gridCols ?? 1) > 1) {
-    body = [
-      <SiblingContext.Provider key="grid" value={null}>
-        {gridRows(renderChildren(items, tw, undefined), tw.gridCols ?? 1, view.gap)}
-      </SiblingContext.Provider>,
-    ];
   } else {
     body = withSiblingPositions(renderChildren(items, tw, listStyle));
   }
@@ -434,6 +464,7 @@ export function Box(props: BoxProps): ReactNode {
   const element: ReactElement = (
     <View
       ref={tag === "form" ? undefined : (ref as never)}
+      textStyle={nextInherited.text}
       testID={
         testID ??
         (typeof props["data-testid"] === "string" ? props["data-testid"] : undefined) ??
@@ -509,13 +540,22 @@ export function Box(props: BoxProps): ReactNode {
       </GroupContext.Provider>
     );
   }
-  if (textChanged || direction !== inherited.parentDirection) {
+  if (
+    textChanged ||
+    direction !== inherited.parentDirection ||
+    isGrid !== (inherited.parentGrid ?? false) ||
+    nextInherited.clipRadius !== inherited.clipRadius ||
+    nextInherited.parentStretches !== inherited.parentStretches
+  ) {
     wrapped = (
       <InheritedContext.Provider value={nextInherited}>{wrapped}</InheritedContext.Provider>
     );
   }
   if (definedVars) {
     wrapped = <VarsContext.Provider value={scopeVars}>{wrapped}</VarsContext.Provider>;
+  }
+  if (has.scope) {
+    wrapped = <HasContext.Provider value={has.scope}>{wrapped}</HasContext.Provider>;
   }
   return wrapped;
 }

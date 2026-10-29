@@ -61,6 +61,26 @@ export interface ViewStyle {
   alignItems?: "flex-start" | "center" | "flex-end" | "stretch";
   alignSelf?: "flex-start" | "center" | "flex-end" | "stretch";
   justifyContent?: "flex-start" | "center" | "flex-end" | "space-between";
+  /**
+   * `"grid"` lays children out as a CSS grid. `alignItems`/`alignSelf` then
+   * align within each row (block axis), `justifyItems`/`justifySelf` within
+   * each column (inline axis).
+   */
+  display?: "flex" | "grid";
+  /** CSS `grid-template-columns`, one entry per track. */
+  gridTemplateColumns?: GridTrack[];
+  /** CSS `grid-template-rows`; rows are implicit (`auto`) otherwise. */
+  gridTemplateRows?: GridTrack[];
+  /** Where this view sits in its parent grid (CSS `grid-column`). */
+  gridColumn?: GridPlacement;
+  /** CSS `grid-row`. */
+  gridRow?: GridPlacement;
+  justifyItems?: "flex-start" | "center" | "flex-end" | "stretch";
+  justifySelf?: "flex-start" | "center" | "flex-end" | "stretch";
+  /** Gap between columns, overriding `gap` horizontally. */
+  columnGap?: number;
+  /** Gap between rows, overriding `gap` vertically. */
+  rowGap?: number;
   backgroundColor?: Color;
   /** Background while the pointer is over the view. */
   hoverBackgroundColor?: Color;
@@ -104,10 +124,31 @@ export interface TextInputStyle {
   borderColor?: Color;
   /** Border while focused; falls back to `borderColor`. */
   focusBorderColor?: Color;
-  width?: number;
+  /** Pixels, or `"100%"` to fill the parent's width (CSS `width: 100%`). */
+  width?: number | "100%";
   height?: number;
   minHeight?: number;
   flex?: number;
+}
+
+/**
+ * One grid track: pixels, a share of the free space (`"1fr"`), a percentage of
+ * the grid (`"25%"`), a content keyword, or `minmax(min, max)`.
+ */
+export type GridTrack =
+  | number
+  | `${number}fr`
+  | `${number}%`
+  | "auto"
+  | "min-content"
+  | "max-content"
+  | { min: Exclude<GridTrack, `${number}fr` | object>; max: Exclude<GridTrack, object> };
+
+/** 1-based grid lines (negative counts from the end) and spans. */
+export interface GridPlacement {
+  start?: number;
+  end?: number;
+  span?: number;
 }
 
 /** A pointer phase on a view with `onPointer`, in window pixels. */
@@ -131,6 +172,11 @@ export interface ViewProps {
   /** Receives the mounted host instance (usable as a `createPortal` target). */
   ref?: Ref<unknown>;
   style?: ViewStyle;
+  /**
+   * Style for strings placed directly in this view (for example, a string a
+   * child component returns). Without it they render with default styling.
+   */
+  textStyle?: TextStyle;
   /** Click/tap. `bounds` is the view's painted rect, for anchoring popups. */
   onPress?: (event: { bounds?: Bounds }) => void;
   /** Pointer entered (`true`) or left (`false`) the view. */

@@ -82,6 +82,12 @@ bun scripts/port-ui.ts $R examples accordion-demo   # → demo/examples/accordio
 - Keyboard: there is no global key handling yet; Escape does not close
   overlays. Inputs submit on Enter (`onKeyDown` gets `key: "Enter"`).
 
+## Visual review (off-screen)
+
+`bun bench/shot.tsx --out /tmp/shots <example…> > /dev/null` renders examples
+in a private virtual compositor and saves screenshots, so layouts can be
+checked against shadcn without opening windows on the desktop.
+
 ## Testing (headless, no windows)
 
 Never open native windows or send desktop input (ydotool) while porting: the
