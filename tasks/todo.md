@@ -36,6 +36,13 @@ names its acceptance check. Checkpoint notes go at the bottom.
       `ScrollView`, hover, borders, opacity, alignment, truncation, mono ✅;
       Anko's `apps/metal` runs on it. Still open: real-click press check,
       `Image`, text selection, absolute positioning.
+- [x] B2b Simulation channel (`sim` commands, layout query, `testID`,
+      `root.lastTree()`), used by Anko's `apps/metal/check.ts` and the
+      metal-ui gallery check. Hover simulation is still missing.
+- [x] B7 `@mirinjs/metal-ui`: shadcn/ui ported 1:1 (30 components, theme
+      tokens, Tailwind translator, overlay layer). Open: Sidebar, Resizable,
+      Sonner, InputGroup, CodeBlock, icons/images, floating-ui style
+      positioning, hover-driven tooltip check.
 - [ ] B3 Tree patch protocol (insert/remove/update by node id) replacing
       whole-tree replacement; reconciler emits patches from mutation methods.
 - [ ] B4 `libmirin_metal` C ABI + polled event queue; Bun host boots it like
@@ -46,6 +53,14 @@ names its acceptance check. Checkpoint notes go at the bottom.
       pin.
 
 ## Checkpoints
+
+- 2026-10-29 (day 2): Anko Metal is a working SQL client (connection form for
+  SQLite/PostgreSQL/MySQL, schema tree with columns, tabs, history, saved
+  queries, paginated results with row details) verified by an in-process check
+  over the new simulation channel, including a PostgreSQL container run.
+  `@mirinjs/metal-ui` lands with a gallery check. Lesson: never send ydotool
+  input while the owner is at the machine; the simulation channel exists so
+  checks never touch the desktop.
 
 - 2026-10-29 (night): Anko works on Linux end to end (dev, check scenario,
   standalone build, rpm installed from /usr/bin) and a first Anko on Metal
