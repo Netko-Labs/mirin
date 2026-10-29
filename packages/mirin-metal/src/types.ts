@@ -20,7 +20,14 @@ export interface ViewStyle {
   height?: number;
   minWidth?: number;
   minHeight?: number;
+  maxWidth?: number;
   maxHeight?: number;
+  /** `absolute` takes the view out of flow, anchored to the nearest `relative` ancestor. */
+  position?: "relative" | "absolute";
+  top?: number;
+  left?: number;
+  right?: number;
+  bottom?: number;
   /** `flex: 1` grows into the remaining space (the native `flex`). */
   flex?: number;
   /** `flexShrink: 0` keeps the view from shrinking below its content. */
@@ -46,6 +53,7 @@ export interface TextStyle {
   /** `"monospace"` picks the system monospace family; anything else is the default. */
   fontFamily?: "monospace" | "default";
   opacity?: number;
+  textAlign?: "left" | "center" | "right";
 }
 
 /** Appearance for a `<TextInput>`. */
@@ -69,6 +77,8 @@ export interface TextInputStyle {
 export interface ViewProps {
   style?: ViewStyle;
   onPress?: () => void;
+  /** Pointer entered (`true`) or left (`false`) the view. */
+  onHoverChange?: (hovered: boolean) => void;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
   children?: ReactNode;
@@ -111,6 +121,7 @@ export type NativeEvent =
   | { type: "press"; nodeId: string }
   | { type: "change"; nodeId: string; value: string }
   | { type: "submit"; nodeId: string; value: string }
+  | { type: "hover"; nodeId: string; hovered: boolean }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] };
 
 /**

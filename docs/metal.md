@@ -121,6 +121,30 @@ numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
 `<TextInput value onChangeText onSubmitEditing multiline autoFocus style>`, and
 `<ScrollView>` (a scrolling `<View>`).
 
+## 2b. `@mirinjs/metal-ui`: shadcn/ui on Metal
+
+`packages/mirin-metal-ui` ports shadcn/ui 1:1 so apps built on that design
+system move to Metal by changing imports. Same component names and props
+(`Button`, `Card*`, `Dialog*`, `Select*`, `Tabs*`, `Table*`, `DropdownMenu*`,
+`Sheet*`, `Popover*`, `Tooltip*`, `Command*`, `Checkbox`, `Switch`, `Toggle`,
+`RadioGroup*`, `Badge`, `Alert*`, `Progress`, `Avatar*`, `Skeleton`, `Kbd`,
+`Breadcrumb*`, `Collapsible*`, `Separator`, `ScrollArea`, `Input`, `Textarea`,
+`Label`), `cva`/`cn` with shadcn's shapes, and the theme CSS variables as
+`ThemeTokens` (`darkTheme`/`lightTheme`). `className` strings keep working:
+`tw()` translates the Tailwind subset shadcn uses (layout, spacing, sizing,
+radii, borders, theme colors with `/alpha`, typography, `hover:bg-*`,
+absolute offsets) and ignores web-only utilities. Text styling on a container
+flows down to nested text like CSS.
+
+Differences from the web: overlays render into the `ThemeProvider`'s overlay
+layer (the Metal renderer's absolute positioning) instead of portals;
+anchored popups (`Select`, `Popover`, `DropdownMenu`, `Tooltip`) sit under or
+over their trigger rather than using floating-ui; tables are flex rows with
+fixed cell widths; icons are text glyphs; `asChild` is accepted and ignored.
+Not ported yet: `Sidebar`, `Resizable`, `Sonner`, `InputGroup`, `CodeBlock`.
+`demo/gallery.tsx` renders everything and `demo/check.ts` drives it through
+simulated input.
+
 ## 3. Process model (decision pending)
 
 GPUI, like CEF, wants the process main thread. The two cannot share it, so

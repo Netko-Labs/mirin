@@ -163,6 +163,20 @@
         "react": "^19.0.0",
       },
     },
+    "packages/mirin-metal-ui": {
+      "name": "@mirinjs/metal-ui",
+      "version": "0.1.0-alpha.1",
+      "dependencies": {
+        "@mirinjs/metal": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/react": "^19.2.0",
+        "react": "^19.2.0",
+      },
+      "peerDependencies": {
+        "react": "^19.0.0",
+      },
+    },
     "packages/native-darwin-arm64": {
       "name": "@mirinjs/darwin-arm64",
       "version": "0.1.0-alpha.26",
@@ -341,6 +355,8 @@
     "@mirinjs/linux-x64": ["@mirinjs/linux-x64@workspace:packages/native-linux-x64"],
 
     "@mirinjs/metal": ["@mirinjs/metal@workspace:packages/mirin-metal"],
+
+    "@mirinjs/metal-ui": ["@mirinjs/metal-ui@workspace:packages/mirin-metal-ui"],
 
     "@mirinjs/win32-arm64": ["@mirinjs/win32-arm64@workspace:packages/native-win32-arm64"],
 

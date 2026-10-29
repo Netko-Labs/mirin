@@ -23,6 +23,8 @@ pub enum EventKind {
     Submit { value: String },
     /// Reply to a `layout` simulation query (node id is `"root"`).
     Layout { nodes: Vec<LayoutNode> },
+    /// The pointer entered (`true`) or left (`false`) a `view` with `onHover`.
+    Hover { hovered: bool },
 }
 
 impl EventKind {
@@ -33,12 +35,13 @@ impl EventKind {
             EventKind::Change { .. } => "change",
             EventKind::Submit { .. } => "submit",
             EventKind::Layout { .. } => "layout",
+            EventKind::Hover { .. } => "hover",
         }
     }
 
     pub fn value(&self) -> Option<&str> {
         match self {
-            EventKind::Press | EventKind::Layout { .. } => None,
+            EventKind::Press | EventKind::Layout { .. } | EventKind::Hover { .. } => None,
             EventKind::Change { value } | EventKind::Submit { value } => Some(value),
         }
     }
@@ -76,6 +79,10 @@ impl EventSender {
                 value: value.to_string(),
             },
         );
+    }
+
+    pub(crate) fn hover(&self, node_id: &str, hovered: bool) {
+        self.send(node_id, EventKind::Hover { hovered });
     }
 
     pub(crate) fn layout(&self, nodes: Vec<LayoutNode>) {

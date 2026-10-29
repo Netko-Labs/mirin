@@ -53,6 +53,7 @@ packages/
   mirin-cli/        CLI package (`@mirinjs/cli`)
   create-mirin/     scaffold package
   mirin-metal/      `@mirinjs/metal`, the React renderer for Metal
+  mirin-metal-ui/   `@mirinjs/metal-ui`, shadcn/ui on Metal (components, theme tokens, Tailwind translator)
   native-*/         prebuilt core, codec, and CEF helper packages
 examples/
   hello-react/      minimal happy-path app

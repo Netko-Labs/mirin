@@ -68,6 +68,9 @@ the same change.
 - `packages/create-mirin` - project scaffold package.
 - `packages/mirin-metal` - `@mirinjs/metal`, the React renderer for Metal (write
   normal JSX, rendered as GPU UI through `crates/mirin-metal`).
+- `packages/mirin-metal-ui` - `@mirinjs/metal-ui`, shadcn/ui ported 1:1 onto
+  Metal (same component names, props, variants, theme tokens; `className`
+  strings translated from Tailwind).
 - `packages/native-*` - prebuilt native packages.
 - `examples/*` - real apps used for behavior checks and feature demos.
 - `docs/*` - architecture, API, platform, getting-started, and convention docs.

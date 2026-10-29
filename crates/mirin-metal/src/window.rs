@@ -41,7 +41,7 @@ impl Default for NativeUiOptions {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DriverMessage {
     /// Replace the rendered tree (last write wins per tick).
-    Tree(NodeSpec),
+    Tree(Box<NodeSpec>),
     /// Simulate input or query layout (`sim.rs`).
     Sim(SimCommand),
 }
@@ -199,14 +199,26 @@ pub fn run(
         // Apply driver updates: poll the channel on the foreground executor and
         // swap the root tree (coalescing to the newest one) when it changes.
         cx.spawn(async move |cx| {
+            // Simulated commands waiting for a later tick: a focus or press must
+            // land (and the driver's resulting tree arrive) before the commands
+            // after it, so at most one of those is performed per tick.
+            let mut pending: std::collections::VecDeque<SimCommand> =
+                std::collections::VecDeque::new();
             loop {
                 cx.background_executor().timer(UPDATE_POLL_INTERVAL).await;
                 let mut latest_tree = None;
-                let mut sims = Vec::new();
                 while let Ok(message) = updates.try_recv() {
                     match message {
-                        DriverMessage::Tree(tree) => latest_tree = Some(tree),
-                        DriverMessage::Sim(command) => sims.push(command),
+                        DriverMessage::Tree(tree) => latest_tree = Some(*tree),
+                        DriverMessage::Sim(command) => pending.push_back(command),
+                    }
+                }
+                let mut sims = Vec::new();
+                while let Some(command) = pending.pop_front() {
+                    let settles = matches!(command, SimCommand::Click { .. });
+                    sims.push(command);
+                    if settles {
+                        break;
                     }
                 }
                 if latest_tree.is_none() && sims.is_empty() {

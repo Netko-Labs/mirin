@@ -11,7 +11,8 @@ use gpui::{
 };
 
 use crate::tree::{
-    parse_color, Align, Direction, InputProps, Justify, NodeSpec, TextProps, ViewProps, Weight,
+    parse_color, Align, Direction, InputProps, Justify, NodeSpec, TextAlign, TextProps, ViewProps,
+    Weight,
 };
 use crate::window::RootView;
 
@@ -65,8 +66,29 @@ fn render_view(
     if let Some(height) = props.min_height {
         element = element.min_h(px(height));
     }
+    if let Some(width) = props.max_width {
+        element = element.max_w(px(width));
+    }
     if let Some(height) = props.max_height {
         element = element.max_h(px(height));
+    }
+    if props.relative {
+        element = element.relative();
+    }
+    if props.absolute {
+        element = element.absolute();
+        if let Some(top) = props.top {
+            element = element.top(px(top));
+        }
+        if let Some(left) = props.left {
+            element = element.left(px(left));
+        }
+        if let Some(right) = props.right {
+            element = element.right(px(right));
+        }
+        if let Some(bottom) = props.bottom {
+            element = element.bottom(px(bottom));
+        }
     }
     if props.flex >= 1.0 {
         element = element.flex_grow().min_w(px(0.0)).min_h(px(0.0));
@@ -132,7 +154,12 @@ fn render_view(
 
     // Interaction and scrolling need a stable element id.
     let Some(id) = props.id.as_deref() else {
-        if props.on_press || props.scroll || props.scroll_x || props.hover_background.is_some() {
+        if props.on_press
+            || props.on_hover
+            || props.scroll
+            || props.scroll_x
+            || props.hover_background.is_some()
+        {
             eprintln!("[mirin-metal] onPress/scroll/hoverBackground require an id; ignoring");
         }
         return element.into_any_element();
@@ -147,6 +174,13 @@ fn render_view(
     }
     if let Some(color) = props.hover_background.as_deref().and_then(parse_color) {
         element = element.hover(move |style| style.bg(rgba(color)));
+    }
+    if props.on_hover {
+        let events = view.events.clone();
+        let hover_id = node_id.clone();
+        element = element.on_hover(move |hovered: &bool, _window: &mut Window, _cx: &mut App| {
+            events.hover(hover_id.as_ref(), *hovered);
+        });
     }
     if props.on_press {
         let events = view.events.clone();
@@ -195,6 +229,11 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
     if let Some(opacity) = props.opacity {
         element = element.opacity(opacity);
     }
+    element = match props.align {
+        Some(TextAlign::Center) => element.text_center(),
+        Some(TextAlign::Right) => element.text_right(),
+        Some(TextAlign::Left) | None => element,
+    };
     element.into_any_element()
 }
 

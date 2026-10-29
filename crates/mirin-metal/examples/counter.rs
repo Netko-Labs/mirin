@@ -37,7 +37,10 @@ fn main() {
         while let Ok(event) = event_rx.recv() {
             if event.node_id == "increment" {
                 count += 1;
-                if update_tx.send(DriverMessage::Tree(tree(count))).is_err() {
+                if update_tx
+                    .send(DriverMessage::Tree(Box::new(tree(count))))
+                    .is_err()
+                {
                     return;
                 }
             }

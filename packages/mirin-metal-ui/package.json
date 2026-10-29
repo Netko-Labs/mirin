@@ -1,0 +1,45 @@
+{
+  "name": "@mirinjs/metal-ui",
+  "version": "0.1.0-alpha.1",
+  "description": "shadcn/ui for mirin metal: the same component names, props, variants, and theme tokens, rendered as native GPU UI. Existing className strings keep working through a Tailwind-to-style translator.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/Netko-Labs/mirin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netko-Labs/mirin.git",
+    "directory": "packages/mirin-metal-ui"
+  },
+  "bugs": "https://github.com/Netko-Labs/mirin/issues",
+  "keywords": [
+    "bun",
+    "desktop",
+    "react",
+    "gpui",
+    "shadcn",
+    "native-ui"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@mirinjs/metal": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "react": "^19.2.0"
+  }
+}

@@ -25,7 +25,14 @@ interface ViewNodeProps {
   height?: number;
   minWidth?: number;
   minHeight?: number;
+  maxWidth?: number;
   maxHeight?: number;
+  absolute?: boolean;
+  relative?: boolean;
+  top?: number;
+  left?: number;
+  right?: number;
+  bottom?: number;
   flex?: number;
   shrink?: boolean;
   fill?: boolean;
@@ -42,6 +49,7 @@ interface ViewNodeProps {
   clip?: boolean;
   opacity?: number;
   onPress?: boolean;
+  onHover?: boolean;
 }
 
 interface TextNodeProps {
@@ -51,6 +59,7 @@ interface TextNodeProps {
   mono?: boolean;
   truncate?: boolean;
   opacity?: number;
+  align?: "left" | "center" | "right";
 }
 
 interface InputNodeProps {
@@ -98,6 +107,7 @@ type TreeNode = ViewNode | TextNode | InputNode;
 
 export interface Handlers {
   press: Map<string, () => void>;
+  hover: Map<string, (hovered: boolean) => void>;
   change: Map<string, (text: string) => void>;
   submit: Map<string, (text: string) => void>;
   /** `testID` → native node id, for checks and tools. */
@@ -141,6 +151,7 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
   }
   const handlers: Handlers = {
     press: new Map(),
+    hover: new Map(),
     change: new Map(),
     submit: new Map(),
     testIds: new Map(),
@@ -174,7 +185,14 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.height !== undefined) props.height = style.height;
   if (style.minWidth !== undefined) props.minWidth = style.minWidth;
   if (style.minHeight !== undefined) props.minHeight = style.minHeight;
+  if (style.maxWidth !== undefined) props.maxWidth = style.maxWidth;
   if (style.maxHeight !== undefined) props.maxHeight = style.maxHeight;
+  if (style.position === "absolute") props.absolute = true;
+  if (style.position === "relative") props.relative = true;
+  if (style.top !== undefined) props.top = style.top;
+  if (style.left !== undefined) props.left = style.left;
+  if (style.right !== undefined) props.right = style.right;
+  if (style.bottom !== undefined) props.bottom = style.bottom;
   if (style.flex !== undefined) props.flex = style.flex;
   if (style.flexShrink === 0) props.shrink = false;
   if (style.alignItems === "center" && style.justifyContent === "center") {
@@ -193,10 +211,14 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.overflow === "hidden") props.clip = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
 
-  const { onPress, testID } = instance.props;
+  const { onPress, onHoverChange, testID } = instance.props;
   if (onPress) {
     props.onPress = true;
     handlers.press.set(String(instance.id), onPress);
+  }
+  if (onHoverChange) {
+    props.onHover = true;
+    handlers.hover.set(String(instance.id), onHoverChange);
   }
   if (testID) handlers.testIds.set(testID, String(instance.id));
 
@@ -215,6 +237,7 @@ function serializeText(instance: TextInstance): TextNode {
   if (style.fontFamily === "monospace") props.mono = true;
   if (instance.props.numberOfLines === 1) props.truncate = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
+  if (style.textAlign && style.textAlign !== "left") props.align = style.textAlign;
   const children = instance.children
     .filter((child): child is RawTextInstance => child.kind === "raw")
     .map((child) => child.text);

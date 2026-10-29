@@ -26,6 +26,10 @@ export function parseNativeEvent(line: string): NativeEvent | null {
   switch (record.type) {
     case "press":
       return { type: "press", nodeId };
+    case "hover":
+      return typeof record.hovered === "boolean"
+        ? { type: "hover", nodeId, hovered: record.hovered }
+        : null;
     case "layout":
       return Array.isArray(record.nodes)
         ? { type: "layout", nodeId: "root", nodes: record.nodes.flatMap(parseLayoutNode) }

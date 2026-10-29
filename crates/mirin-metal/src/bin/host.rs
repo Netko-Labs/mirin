@@ -19,7 +19,7 @@ fn parse_line(line: &str) -> Result<DriverMessage, String> {
         return Ok(DriverMessage::Sim(command));
     }
     parse_tree(line)
-        .map(DriverMessage::Tree)
+        .map(|tree| DriverMessage::Tree(Box::new(tree)))
         .map_err(|e| e.to_string())
 }
 
@@ -54,6 +54,9 @@ fn main() {
                 serde_json::json!({ "type": event.kind.name(), "nodeId": event.node_id });
             if let Some(value) = event.kind.value() {
                 line["value"] = serde_json::Value::String(value.to_string());
+            }
+            if let EventKind::Hover { hovered } = &event.kind {
+                line["hovered"] = serde_json::Value::Bool(*hovered);
             }
             if let EventKind::Layout { nodes } = &event.kind {
                 line["nodes"] = serde_json::Value::Array(

@@ -55,10 +55,6 @@ impl LayoutMap {
         self.0.borrow_mut().insert(id.to_string(), bounds);
     }
 
-    pub(crate) fn bounds(&self, id: &str) -> Option<Bounds<Pixels>> {
-        self.0.borrow().get(id).copied()
-    }
-
     /// The smallest painted node containing `point`.
     pub(crate) fn innermost_at(&self, point: Point<Pixels>) -> Option<String> {
         self.0
@@ -130,7 +126,10 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             if pressable(&view.tree, &id) {
                 return Some(SimAction::Press(id));
             }
-            eprintln!("[mirin-metal] sim click: node {id:?} is not an input or pressable");
+            eprintln!(
+                "[mirin-metal] sim click: node {id:?} is not an input or pressable ({})",
+                describe(&view.tree, &id)
+            );
             None
         }
         SimCommand::Key { keystroke } => match Keystroke::parse(keystroke) {
@@ -181,6 +180,38 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
             }
         }
         SimAction::Layout(nodes) => events.layout(nodes),
+    }
+}
+
+/// Debug description of the node with `id`, for the log line above.
+fn describe(node: &NodeSpec, id: &str) -> String {
+    match node {
+        NodeSpec::View { props, children } => {
+            if props.id.as_deref() == Some(id) {
+                return format!(
+                    "view onPress={} children={} first_text={:?}",
+                    props.on_press,
+                    children.len(),
+                    children.iter().find_map(|child| match child {
+                        NodeSpec::Text { children, .. } => Some(children.concat()),
+                        _ => None,
+                    })
+                );
+            }
+            children
+                .iter()
+                .map(|child| describe(child, id))
+                .find(|text| text != "absent")
+                .unwrap_or_else(|| "absent".to_string())
+        }
+        NodeSpec::Text { .. } => "absent".to_string(),
+        NodeSpec::Input { props } => {
+            if props.id == id {
+                "input".to_string()
+            } else {
+                "absent".to_string()
+            }
+        }
     }
 }
 

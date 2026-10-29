@@ -45,7 +45,17 @@ pub struct ViewProps {
     pub height: Option<f32>,
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
+    pub max_width: Option<f32>,
     pub max_height: Option<f32>,
+    /// Take the node out of flow and place it against its nearest `relative`
+    /// ancestor (or the window) using `top`/`left`/`right`/`bottom`.
+    pub absolute: bool,
+    /// Anchor for absolute descendants.
+    pub relative: bool,
+    pub top: Option<f32>,
+    pub left: Option<f32>,
+    pub right: Option<f32>,
+    pub bottom: Option<f32>,
     /// `flex >= 1` grows to take the remaining main-axis space.
     pub flex: f32,
     /// `false` keeps the node from shrinking below its content.
@@ -73,6 +83,8 @@ pub struct ViewProps {
     pub opacity: Option<f32>,
     /// Emit a `press` event carrying this node's `id` on click/tap.
     pub on_press: bool,
+    /// Emit `hover` events (`hovered: true|false`) for this node (needs `id`).
+    pub on_hover: bool,
 }
 
 /// Appearance props for a `text` node.
@@ -89,6 +101,15 @@ pub struct TextProps {
     /// Keep on one line and end with an ellipsis instead of wrapping.
     pub truncate: bool,
     pub opacity: Option<f32>,
+    pub align: Option<TextAlign>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
 }
 
 /// Props for an `input` node.

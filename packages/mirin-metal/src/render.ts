@@ -22,6 +22,7 @@ function reportError(error: Error): void {
 export function render(element: ReactNode, transport: NativeTransport): NativeRoot {
   let handlers: Handlers = {
     press: new Map(),
+    hover: new Map(),
     change: new Map(),
     submit: new Map(),
     testIds: new Map(),
@@ -49,6 +50,9 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "submit":
         handlers.submit.get(event.nodeId)?.(event.value);
+        break;
+      case "hover":
+        handlers.hover.get(event.nodeId)?.(event.hovered);
         break;
       case "layout":
         break;
