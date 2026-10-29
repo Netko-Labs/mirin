@@ -83,14 +83,15 @@ state and describes UI; the renderer is a pure function of the latest tree.
   `height`, `minWidth`, `minHeight`, `maxHeight`, `flex` (grow when ≥ 1),
   `shrink`, `fill`, `center`, `align` (`start|center|end|stretch`), `justify`
   (`start|center|end|between`), `background`, `hoverBackground`, `cornerRadius`,
-  `borderWidth` (1 or 2), `borderColor`, `scroll` (vertical), `clip`, `opacity`,
+  `borderWidth` (1 or 2), `borderColor`, `scroll` (vertical), `scrollX`, `clip`, `opacity`,
   `onPress`. `id` is required for `onPress`, `hoverBackground`, and `scroll`
   (GPUI keeps per-element state for those); the TypeScript side sends one for
   every node.
 - `text`: string children plus `color`, `size`, `weight`
   (`normal|medium|semibold|bold`), `mono` (system monospace via `fc-match`),
   `truncate`, `opacity`.
-- `input`: `id` (required), `value`, `placeholder`, `multiline`, `mono`, `size`,
+- `input`: `id` (required), `value`, `placeholder`, `multiline`, `secure`
+  (bullets instead of text), `mono`, `size`,
   `color`, `placeholderColor`, `background`, `padding`, `cornerRadius`,
   `borderColor`, `focusBorderColor`, `width`, `height`, `minHeight`, `flex`,
   `fill`, `autofocus`, `onChange`, `onSubmit`. The renderer owns the editing
@@ -101,7 +102,17 @@ state and describes UI; the renderer is a pure function of the latest tree.
   between inputs in document order (wrapping).
 - Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
 - Events: `{"type":"press","nodeId"}`, `{"type":"change","nodeId","value"}`,
-  `{"type":"submit","nodeId","value"}`.
+  `{"type":"submit","nodeId","value"}`, and `{"type":"layout","nodeId":"root",
+  "nodes":[{id,x,y,width,height}]}` in reply to a layout query.
+- Simulation (checks and tools): a stdin line `{"sim": ...}` instead of a tree.
+  `{"kind":"click","id"}` / `{"kind":"click","x","y"}` focuses an input or
+  fires a pressable view's `press` (resolved against the painted bounds;
+  GPUI's mouse dispatch is crate-private, so hit-testing is approximated),
+  `{"kind":"key","keystroke":"ctrl-enter"}` and `{"kind":"type","text"}` go
+  through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds.
+  `@mirinjs/metal` exposes this as `testID` props, `transport.simulate()`,
+  `root.nodeId(testID)`, and `root.lastTree()`; Anko's `apps/metal/check.ts`
+  is the worked example.
 
 The TypeScript side (`packages/mirin-metal/src/lib/serialize.ts`) maps React
 Native-style props: `<View style>` (`flex`, `alignItems`, `justifyContent`,

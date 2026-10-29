@@ -66,6 +66,8 @@ pub struct ViewProps {
     pub border_color: Option<String>,
     /// Scroll overflowing children vertically (needs `id`).
     pub scroll: bool,
+    /// Scroll overflowing children horizontally (needs `id`).
+    pub scroll_x: bool,
     /// Clip overflowing children.
     pub clip: bool,
     pub opacity: Option<f32>,
@@ -103,6 +105,9 @@ pub struct InputProps {
     /// Enter inserts a newline; Ctrl/Cmd+Enter submits.
     #[serde(default)]
     pub multiline: bool,
+    /// Render bullets instead of the text (passwords).
+    #[serde(default)]
+    pub secure: bool,
     #[serde(default)]
     pub mono: bool,
     #[serde(default)]
@@ -147,6 +152,7 @@ impl Default for InputProps {
             value: String::new(),
             placeholder: None,
             multiline: false,
+            secure: false,
             mono: false,
             size: None,
             color: None,

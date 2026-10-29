@@ -212,22 +212,34 @@ pub fn run(
                 if latest_tree.is_none() && sims.is_empty() {
                     continue;
                 }
-                let applied = window.update(cx, |view, window, cx| {
+                // Resolve while the view is leased; dispatch with only the window
+                // leased, because keystrokes re-enter the view's listeners.
+                let resolved = window.update(cx, |view, window, cx| {
                     if let Some(tree) = latest_tree {
                         view.set_tree(tree, cx);
                         view.apply_pending_focus(window);
                         cx.notify();
                     }
-                    for command in &sims {
-                        if let SimCommand::Layout = command {
-                            view.events.layout(view.layout.snapshot());
-                        } else {
-                            sim::apply(command, view, window, cx);
-                        }
+                    let actions: Vec<_> = sims
+                        .iter()
+                        .filter_map(|command| sim::resolve(command, view))
+                        .collect();
+                    (actions, view.events.clone())
+                });
+                let Ok((actions, events)) = resolved else {
+                    // Window is gone; nothing left to drive.
+                    return;
+                };
+                if actions.is_empty() {
+                    continue;
+                }
+                let any_window: gpui::AnyWindowHandle = window.into();
+                let dispatched = any_window.update(cx, |_root, window, cx| {
+                    for action in actions {
+                        sim::perform(action, &events, window, cx);
                     }
                 });
-                if applied.is_err() {
-                    // Window is gone; nothing left to drive.
+                if dispatched.is_err() {
                     return;
                 }
             }

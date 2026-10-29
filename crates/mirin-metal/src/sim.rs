@@ -8,9 +8,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{point, px, App, Bounds, Keystroke, Modifiers, Pixels, Point, Window};
+use gpui::{point, px, App, Bounds, FocusHandle, Keystroke, Modifiers, Pixels, Point, Window};
 use serde::Deserialize;
 
+use crate::events::EventSender;
 use crate::tree::NodeSpec;
 use crate::window::RootView;
 
@@ -89,8 +90,18 @@ impl LayoutMap {
     }
 }
 
-/// Dispatch a command into the window. Returns `false` when it could not be
-/// applied (unknown node, bad keystroke), after logging why.
+/// What a command resolves to once the view has been consulted. Resolution
+/// needs the view (layout, inputs, tree); dispatch must not hold the view,
+/// because GPUI re-enters its listeners.
+pub(crate) enum SimAction {
+    Focus(FocusHandle),
+    Press(String),
+    Keystrokes(Vec<Keystroke>),
+    Layout(Vec<LayoutNode>),
+}
+
+/// Resolve a command against the view. Logs and returns `None` when it cannot
+/// be applied (unknown node, bad keystroke).
 ///
 /// Keys go through GPUI's real keystroke dispatch (focus, key listeners, the
 /// input editing path). Clicks are resolved against the painted layout and
@@ -98,12 +109,7 @@ impl LayoutMap {
 /// `press` event. GPUI's mouse dispatch returns a crate-private type, so it
 /// cannot be driven from outside; hit-testing is therefore approximated by the
 /// recorded bounds (innermost node wins).
-pub(crate) fn apply(
-    command: &SimCommand,
-    view: &mut RootView,
-    window: &mut Window,
-    cx: &mut App,
-) -> bool {
+pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction> {
     match command {
         SimCommand::Click { id, x, y } => {
             let target = match (id, x, y) {
@@ -111,58 +117,70 @@ pub(crate) fn apply(
                 (None, Some(x), Some(y)) => view.layout.innermost_at(point(px(*x), px(*y))),
                 _ => {
                     eprintln!("[mirin-metal] sim click needs an id or x/y");
-                    return false;
+                    return None;
                 }
             };
             let Some(id) = target else {
                 eprintln!("[mirin-metal] sim click: nothing painted at that point");
-                return false;
+                return None;
             };
             if let Some(state) = view.inputs.get(&id) {
-                window.focus(&state.focus);
-                return true;
+                return Some(SimAction::Focus(state.focus.clone()));
             }
             if pressable(&view.tree, &id) {
-                view.events.press(&id);
-                return true;
+                return Some(SimAction::Press(id));
             }
             eprintln!("[mirin-metal] sim click: node {id:?} is not an input or pressable");
-            false
+            None
         }
         SimCommand::Key { keystroke } => match Keystroke::parse(keystroke) {
-            Ok(keystroke) => {
-                window.dispatch_keystroke(keystroke.with_simulated_ime(), cx);
-                true
-            }
+            Ok(keystroke) => Some(SimAction::Keystrokes(vec![keystroke.with_simulated_ime()])),
             Err(error) => {
                 eprintln!("[mirin-metal] sim key {keystroke:?}: {error:?}");
-                false
+                None
             }
         },
         SimCommand::Type { text } => {
-            for ch in text.chars() {
-                let key = match ch {
-                    ' ' => "space".to_string(),
-                    '\n' => "enter".to_string(),
-                    '\t' => "tab".to_string(),
-                    other => other.to_lowercase().to_string(),
-                };
-                let mut keystroke = Keystroke {
-                    modifiers: Modifiers {
-                        shift: ch.is_uppercase(),
-                        ..Modifiers::default()
-                    },
-                    key,
-                    key_char: None,
-                };
-                if !matches!(ch, ' ' | '\n' | '\t') {
-                    keystroke.key_char = Some(ch.to_string());
-                }
-                window.dispatch_keystroke(keystroke.with_simulated_ime(), cx);
-            }
-            true
+            let keystrokes = text
+                .chars()
+                .map(|ch| {
+                    let key = match ch {
+                        ' ' => "space".to_string(),
+                        '\n' => "enter".to_string(),
+                        '\t' => "tab".to_string(),
+                        other => other.to_lowercase().to_string(),
+                    };
+                    let mut keystroke = Keystroke {
+                        modifiers: Modifiers {
+                            shift: ch.is_uppercase(),
+                            ..Modifiers::default()
+                        },
+                        key,
+                        key_char: None,
+                    };
+                    if !matches!(ch, ' ' | '\n' | '\t') {
+                        keystroke.key_char = Some(ch.to_string());
+                    }
+                    keystroke.with_simulated_ime()
+                })
+                .collect();
+            Some(SimAction::Keystrokes(keystrokes))
         }
-        SimCommand::Layout => true,
+        SimCommand::Layout => Some(SimAction::Layout(view.layout.snapshot())),
+    }
+}
+
+/// Dispatch a resolved action with the window leased but not the view.
+pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Window, cx: &mut App) {
+    match action {
+        SimAction::Focus(handle) => window.focus(&handle),
+        SimAction::Press(id) => events.press(&id),
+        SimAction::Keystrokes(keystrokes) => {
+            for keystroke in keystrokes {
+                window.dispatch_keystroke(keystroke, cx);
+            }
+        }
+        SimAction::Layout(nodes) => events.layout(nodes),
     }
 }
 

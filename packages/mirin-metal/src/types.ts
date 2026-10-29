@@ -33,8 +33,8 @@ export interface ViewStyle {
   borderRadius?: number;
   borderWidth?: number;
   borderColor?: Color;
-  /** `overflow: "hidden"` clips; `"scroll"` scrolls vertically. */
-  overflow?: "visible" | "hidden" | "scroll";
+  /** `overflow: "hidden"` clips; `"scroll"` scrolls vertically, `"scroll-x"` horizontally, `"scroll-both"` both ways. */
+  overflow?: "visible" | "hidden" | "scroll" | "scroll-x" | "scroll-both";
   opacity?: number;
 }
 
@@ -86,6 +86,8 @@ export interface TextInputProps {
   value: string;
   placeholder?: string;
   multiline?: boolean;
+  /** Mask the text (passwords). */
+  secureTextEntry?: boolean;
   autoFocus?: boolean;
   style?: TextInputStyle;
   onChangeText?: (text: string) => void;

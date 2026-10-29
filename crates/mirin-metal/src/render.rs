@@ -132,7 +132,7 @@ fn render_view(
 
     // Interaction and scrolling need a stable element id.
     let Some(id) = props.id.as_deref() else {
-        if props.on_press || props.scroll || props.hover_background.is_some() {
+        if props.on_press || props.scroll || props.scroll_x || props.hover_background.is_some() {
             eprintln!("[mirin-metal] onPress/scroll/hoverBackground require an id; ignoring");
         }
         return element.into_any_element();
@@ -141,6 +141,9 @@ fn render_view(
     let mut element: Stateful<Div> = element.id(ElementId::Name(node_id.clone()));
     if props.scroll {
         element = element.overflow_y_scroll();
+    }
+    if props.scroll_x {
+        element = element.overflow_x_scroll();
     }
     if let Some(color) = props.hover_background.as_deref().and_then(parse_color) {
         element = element.hover(move |style| style.bg(rgba(color)));
@@ -277,7 +280,7 @@ fn render_input(
             if focused && index == state.cursor {
                 text.push_str(CARET);
             }
-            text.push(ch);
+            text.push(if props.secure { '\u{2022}' } else { ch });
         }
         if focused && state.cursor >= state.buffer.chars().count() {
             text.push_str(CARET);

@@ -38,6 +38,7 @@ interface ViewNodeProps {
   borderWidth?: number;
   borderColor?: Color;
   scroll?: boolean;
+  scrollX?: boolean;
   clip?: boolean;
   opacity?: number;
   onPress?: boolean;
@@ -57,6 +58,7 @@ interface InputNodeProps {
   value: string;
   placeholder?: string;
   multiline?: boolean;
+  secure?: boolean;
   mono?: boolean;
   size?: number;
   color?: Color;
@@ -186,7 +188,8 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.borderRadius !== undefined) props.cornerRadius = style.borderRadius;
   if (style.borderWidth !== undefined) props.borderWidth = style.borderWidth;
   if (style.borderColor) props.borderColor = style.borderColor;
-  if (style.overflow === "scroll") props.scroll = true;
+  if (style.overflow === "scroll" || style.overflow === "scroll-both") props.scroll = true;
+  if (style.overflow === "scroll-x" || style.overflow === "scroll-both") props.scrollX = true;
   if (style.overflow === "hidden") props.clip = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
 
@@ -225,6 +228,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   const props: InputNodeProps = { id, value: input.value };
   if (input.placeholder !== undefined) props.placeholder = input.placeholder;
   if (input.multiline) props.multiline = true;
+  if (input.secureTextEntry) props.secure = true;
   if (input.autoFocus) props.autofocus = true;
   if (style.fontFamily === "monospace") props.mono = true;
   if (style.fontSize !== undefined) props.size = style.fontSize;
