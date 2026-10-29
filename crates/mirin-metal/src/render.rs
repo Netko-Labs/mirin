@@ -113,11 +113,22 @@ fn render_view(
     if let Some(opacity) = props.opacity {
         element = element.opacity(opacity);
     }
-    let element = element.children(
+    let child_ids: Vec<Option<String>> = children.iter().map(node_id).collect();
+    let mut element = element.children(
         children
             .iter()
             .map(|child| render_node(child, view, window, cx)),
     );
+    if child_ids.iter().any(Option::is_some) {
+        let layout = view.layout.clone();
+        element = element.on_children_prepainted(move |bounds, _window, _cx| {
+            for (id, bounds) in child_ids.iter().zip(bounds) {
+                if let Some(id) = id {
+                    layout.record(id, bounds);
+                }
+            }
+        });
+    }
 
     // Interaction and scrolling need a stable element id.
     let Some(id) = props.id.as_deref() else {
@@ -143,6 +154,15 @@ fn render_view(
         );
     }
     element.into_any_element()
+}
+
+/// The id a node carries, if any (views may omit one; inputs always have one).
+fn node_id(node: &NodeSpec) -> Option<String> {
+    match node {
+        NodeSpec::View { props, .. } => props.id.clone(),
+        NodeSpec::Text { .. } => None,
+        NodeSpec::Input { props } => Some(props.id.clone()),
+    }
 }
 
 fn render_text(props: &TextProps, children: &[String]) -> AnyElement {

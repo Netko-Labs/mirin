@@ -98,6 +98,8 @@ export interface Handlers {
   press: Map<string, () => void>;
   change: Map<string, (text: string) => void>;
   submit: Map<string, (text: string) => void>;
+  /** `testID` → native node id, for checks and tools. */
+  testIds: Map<string, string>;
 }
 
 export interface SerializedUi {
@@ -135,7 +137,12 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
   if (!root) {
     return null;
   }
-  const handlers: Handlers = { press: new Map(), change: new Map(), submit: new Map() };
+  const handlers: Handlers = {
+    press: new Map(),
+    change: new Map(),
+    submit: new Map(),
+    testIds: new Map(),
+  };
   const tree = serializeInstance(root, handlers);
   // The root has no flex parent to grow into; it always fills the window.
   if (tree.type === "view") tree.props.fill = true;
@@ -183,11 +190,12 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.overflow === "hidden") props.clip = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
 
-  const { onPress } = instance.props;
+  const { onPress, testID } = instance.props;
   if (onPress) {
     props.onPress = true;
     handlers.press.set(String(instance.id), onPress);
   }
+  if (testID) handlers.testIds.set(testID, String(instance.id));
 
   const children = instance.children
     .filter((child): child is HostInstance => child.kind !== "raw")
@@ -239,5 +247,6 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
     props.onSubmit = true;
     handlers.submit.set(id, input.onSubmitEditing);
   }
+  if (input.testID) handlers.testIds.set(input.testID, id);
   return { type: "input", props };
 }

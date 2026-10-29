@@ -5,7 +5,7 @@
  * eventual in-process FFI transport.
  */
 
-import type { NativeEvent, NativeTransport } from "./types.ts";
+import type { LayoutNode, NativeEvent, NativeTransport } from "./types.ts";
 
 /** Parse one NDJSON line from the host into a typed event, or null. */
 export function parseNativeEvent(line: string): NativeEvent | null {
@@ -26,6 +26,10 @@ export function parseNativeEvent(line: string): NativeEvent | null {
   switch (record.type) {
     case "press":
       return { type: "press", nodeId };
+    case "layout":
+      return Array.isArray(record.nodes)
+        ? { type: "layout", nodeId: "root", nodes: record.nodes.flatMap(parseLayoutNode) }
+        : null;
     case "change":
     case "submit":
       return typeof record.value === "string"
@@ -34,6 +38,15 @@ export function parseNativeEvent(line: string): NativeEvent | null {
     default:
       return null;
   }
+}
+
+function parseLayoutNode(value: unknown): LayoutNode[] {
+  if (typeof value !== "object" || value === null) return [];
+  const node = value as Record<string, unknown>;
+  const { id, x, y, width, height } = node;
+  if (typeof id !== "string") return [];
+  if ([x, y, width, height].some((n) => typeof n !== "number")) return [];
+  return [{ id, x: x as number, y: y as number, width: width as number, height: height as number }];
 }
 
 export function spawnNativeHost(binaryPath: string): NativeTransport {
@@ -83,6 +96,10 @@ export function spawnNativeHost(binaryPath: string): NativeTransport {
     },
     onClose(listener) {
       closeListeners.push(listener);
+    },
+    simulate(command) {
+      child.stdin.write(`${JSON.stringify({ sim: command })}\n`);
+      void child.stdin.flush();
     },
     close() {
       void child.stdin.end();

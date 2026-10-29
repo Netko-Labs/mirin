@@ -5,7 +5,7 @@
 
 use std::sync::mpsc;
 
-use mirin_metal::{parse_tree, NativeUiEvent, NativeUiOptions, NodeSpec};
+use mirin_metal::{parse_tree, DriverMessage, NativeUiEvent, NativeUiOptions, NodeSpec};
 
 fn tree(count: u32) -> NodeSpec {
     let json = format!(
@@ -37,7 +37,7 @@ fn main() {
         while let Ok(event) = event_rx.recv() {
             if event.node_id == "increment" {
                 count += 1;
-                if update_tx.send(tree(count)).is_err() {
+                if update_tx.send(DriverMessage::Tree(tree(count))).is_err() {
                     return;
                 }
             }

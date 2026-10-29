@@ -21,6 +21,7 @@ function fakeTransport(): FakeTransport {
       listeners.push(listener);
     },
     onClose() {},
+    simulate() {},
     emit(event) {
       for (const listener of listeners) {
         listener(event);
@@ -123,6 +124,7 @@ describe("TextInput", () => {
           value: sql,
           multiline: true,
           autoFocus: true,
+          testID: "sql",
           style: { fontFamily: "monospace", borderColor: "#333" },
           onChangeText: setSql,
           onSubmitEditing: (text: string) => seen.push(text),
@@ -134,7 +136,10 @@ describe("TextInput", () => {
     await nextCommit();
 
     const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(root.lastTree()).toBe(transport.sent.at(-1) ?? null);
     const input = tree.children[0];
+    expect(root.nodeId("sql")).toBe(input.props.id);
+    expect(root.nodeId("missing")).toBeUndefined();
     expect(input.type).toBe("input");
     expect(input.props).toEqual({
       id: expect.any(String),

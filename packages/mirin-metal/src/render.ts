@@ -20,7 +20,13 @@ function reportError(error: Error): void {
 
 /** Render a React element tree into the native UI. */
 export function render(element: ReactNode, transport: NativeTransport): NativeRoot {
-  let handlers: Handlers = { press: new Map(), change: new Map(), submit: new Map() };
+  let handlers: Handlers = {
+    press: new Map(),
+    change: new Map(),
+    submit: new Map(),
+    testIds: new Map(),
+  };
+  let lastTree: string | null = null;
   const container: Container = {
     children: [],
     onCommit() {
@@ -29,6 +35,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         return;
       }
       handlers = serialized.handlers;
+      lastTree = serialized.treeJson;
       transport.send(serialized.treeJson);
     },
   };
@@ -42,6 +49,8 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "submit":
         handlers.submit.get(event.nodeId)?.(event.value);
+        break;
+      case "layout":
         break;
     }
   });
@@ -65,6 +74,12 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     unmount() {
       reconciler.updateContainer(null, root, null, null);
       transport.close();
+    },
+    lastTree() {
+      return lastTree;
+    },
+    nodeId(testID) {
+      return handlers.testIds.get(testID);
     },
   };
 }

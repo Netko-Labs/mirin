@@ -7,10 +7,24 @@
 use std::io::{BufRead, Write};
 use std::sync::mpsc;
 
-use mirin_metal::{parse_tree, run, NativeUiEvent, NativeUiOptions, NodeSpec};
+use mirin_metal::{
+    parse_tree, run, DriverMessage, EventKind, NativeUiEvent, NativeUiOptions, SimCommand,
+};
+
+/// A stdin line is either a tree or `{"sim": {...}}`.
+fn parse_line(line: &str) -> Result<DriverMessage, String> {
+    let value: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+    if let Some(sim) = value.get("sim") {
+        let command: SimCommand = serde_json::from_value(sim.clone()).map_err(|e| e.to_string())?;
+        return Ok(DriverMessage::Sim(command));
+    }
+    parse_tree(line)
+        .map(DriverMessage::Tree)
+        .map_err(|e| e.to_string())
+}
 
 fn main() {
-    let (update_tx, update_rx) = mpsc::channel::<NodeSpec>();
+    let (update_tx, update_rx) = mpsc::channel::<DriverMessage>();
     let (event_tx, event_rx) = mpsc::channel::<NativeUiEvent>();
 
     // stdin → tree updates. EOF means the driver went away; the window simply
@@ -21,13 +35,13 @@ fn main() {
             if line.trim().is_empty() {
                 continue;
             }
-            match parse_tree(&line) {
-                Ok(tree) => {
-                    if update_tx.send(tree).is_err() {
+            match parse_line(&line) {
+                Ok(message) => {
+                    if update_tx.send(message).is_err() {
                         break;
                     }
                 }
-                Err(error) => eprintln!("[mirin-metal-host] rejected tree: {error}"),
+                Err(error) => eprintln!("[mirin-metal-host] rejected line: {error}"),
             }
         }
     });
@@ -40,6 +54,19 @@ fn main() {
                 serde_json::json!({ "type": event.kind.name(), "nodeId": event.node_id });
             if let Some(value) = event.kind.value() {
                 line["value"] = serde_json::Value::String(value.to_string());
+            }
+            if let EventKind::Layout { nodes } = &event.kind {
+                line["nodes"] = serde_json::Value::Array(
+                    nodes
+                        .iter()
+                        .map(|node| {
+                            serde_json::json!({
+                                "id": node.id, "x": node.x, "y": node.y,
+                                "width": node.width, "height": node.height,
+                            })
+                        })
+                        .collect(),
+                );
             }
             if writeln!(out, "{line}").and_then(|()| out.flush()).is_err() {
                 break;

@@ -13,6 +13,7 @@ use gpui::{
 
 use crate::events::{EventSender, NativeUiEvent};
 use crate::render::render_node;
+use crate::sim::{self, LayoutMap, SimCommand};
 use crate::tree::{collect_inputs, NodeSpec};
 
 /// How often the update task drains the driver's tree channel.
@@ -36,6 +37,15 @@ impl Default for NativeUiOptions {
     }
 }
 
+/// What a driver sends to the window.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DriverMessage {
+    /// Replace the rendered tree (last write wins per tick).
+    Tree(NodeSpec),
+    /// Simulate input or query layout (`sim.rs`).
+    Sim(SimCommand),
+}
+
 /// Renderer-owned editing state of one `input` node.
 pub(crate) struct InputState {
     pub(crate) focus: FocusHandle,
@@ -56,6 +66,8 @@ pub(crate) struct RootView {
     pub(crate) tree: NodeSpec,
     pub(crate) events: EventSender,
     pub(crate) inputs: HashMap<String, InputState>,
+    /// Bounds of id'd nodes from the last paint, for simulated clicks.
+    pub(crate) layout: LayoutMap,
 }
 
 impl RootView {
@@ -64,6 +76,7 @@ impl RootView {
             tree,
             events,
             inputs: HashMap::new(),
+            layout: LayoutMap::default(),
         };
         view.sync_inputs(cx);
         view
@@ -155,7 +168,7 @@ impl Render for RootView {
 pub fn run(
     options: NativeUiOptions,
     initial_tree: NodeSpec,
-    updates: mpsc::Receiver<NodeSpec>,
+    updates: mpsc::Receiver<DriverMessage>,
     events: mpsc::Sender<NativeUiEvent>,
 ) {
     Application::new().run(move |cx: &mut App| {
@@ -188,15 +201,30 @@ pub fn run(
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(UPDATE_POLL_INTERVAL).await;
-                let mut latest = None;
-                while let Ok(tree) = updates.try_recv() {
-                    latest = Some(tree);
+                let mut latest_tree = None;
+                let mut sims = Vec::new();
+                while let Ok(message) = updates.try_recv() {
+                    match message {
+                        DriverMessage::Tree(tree) => latest_tree = Some(tree),
+                        DriverMessage::Sim(command) => sims.push(command),
+                    }
                 }
-                let Some(tree) = latest else { continue };
+                if latest_tree.is_none() && sims.is_empty() {
+                    continue;
+                }
                 let applied = window.update(cx, |view, window, cx| {
-                    view.set_tree(tree, cx);
-                    view.apply_pending_focus(window);
-                    cx.notify();
+                    if let Some(tree) = latest_tree {
+                        view.set_tree(tree, cx);
+                        view.apply_pending_focus(window);
+                        cx.notify();
+                    }
+                    for command in &sims {
+                        if let SimCommand::Layout = command {
+                            view.events.layout(view.layout.snapshot());
+                        } else {
+                            sim::apply(command, view, window, cx);
+                        }
+                    }
                 });
                 if applied.is_err() {
                     // Window is gone; nothing left to drive.

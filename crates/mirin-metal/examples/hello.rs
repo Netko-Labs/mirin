@@ -3,7 +3,7 @@
 
 use std::sync::mpsc;
 
-use mirin_metal::{parse_tree, NativeUiOptions};
+use mirin_metal::{parse_tree, DriverMessage, NativeUiOptions};
 
 fn main() {
     let tree = parse_tree(
@@ -20,7 +20,7 @@ fn main() {
     )
     .expect("static hello tree is valid");
 
-    let (_update_tx, update_rx) = mpsc::channel();
+    let (_update_tx, update_rx) = mpsc::channel::<DriverMessage>();
     let (event_tx, _event_rx) = mpsc::channel();
     mirin_metal::run(NativeUiOptions::default(), tree, update_rx, event_tx);
 }

@@ -3,15 +3,17 @@
 
 use std::sync::mpsc;
 
+use crate::sim::LayoutNode;
+
 /// An interaction event emitted by a rendered node.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NativeUiEvent {
     /// The `id` prop of the node that emitted the event.
     pub node_id: String,
     pub kind: EventKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
     /// A `view` with `onPress` was clicked.
     Press,
@@ -19,6 +21,8 @@ pub enum EventKind {
     Change { value: String },
     /// An `input` was submitted (Enter, or Ctrl/Cmd+Enter when multiline).
     Submit { value: String },
+    /// Reply to a `layout` simulation query (node id is `"root"`).
+    Layout { nodes: Vec<LayoutNode> },
 }
 
 impl EventKind {
@@ -28,12 +32,13 @@ impl EventKind {
             EventKind::Press => "press",
             EventKind::Change { .. } => "change",
             EventKind::Submit { .. } => "submit",
+            EventKind::Layout { .. } => "layout",
         }
     }
 
     pub fn value(&self) -> Option<&str> {
         match self {
-            EventKind::Press => None,
+            EventKind::Press | EventKind::Layout { .. } => None,
             EventKind::Change { value } | EventKind::Submit { value } => Some(value),
         }
     }
@@ -71,6 +76,10 @@ impl EventSender {
                 value: value.to_string(),
             },
         );
+    }
+
+    pub(crate) fn layout(&self, nodes: Vec<LayoutNode>) {
+        self.send("root", EventKind::Layout { nodes });
     }
 
     fn send(&self, node_id: &str, kind: EventKind) {

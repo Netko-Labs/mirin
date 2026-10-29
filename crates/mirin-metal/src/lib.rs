@@ -14,11 +14,13 @@
 
 mod events;
 mod render;
+mod sim;
 mod tree;
 mod window;
 
 pub use events::{EventKind, NativeUiEvent};
+pub use sim::{LayoutNode, SimCommand};
 pub use tree::{
     parse_tree, Align, Direction, InputProps, Justify, NodeSpec, TextProps, ViewProps, Weight,
 };
-pub use window::{run, NativeUiOptions};
+pub use window::{run, DriverMessage, NativeUiOptions};

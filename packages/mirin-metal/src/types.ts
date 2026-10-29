@@ -69,6 +69,8 @@ export interface TextInputStyle {
 export interface ViewProps {
   style?: ViewStyle;
   onPress?: () => void;
+  /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
+  testID?: string;
   children?: ReactNode;
 }
 
@@ -89,13 +91,37 @@ export interface TextInputProps {
   onChangeText?: (text: string) => void;
   /** Enter (single line) or Ctrl/Cmd+Enter (multiline). */
   onSubmitEditing?: (text: string) => void;
+  /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
+  testID?: string;
+}
+
+/** Painted bounds of one node, in window pixels (from a `layout` query). */
+export interface LayoutNode {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /** An interaction event coming back from the native UI. */
 export type NativeEvent =
   | { type: "press"; nodeId: string }
   | { type: "change"; nodeId: string; value: string }
-  | { type: "submit"; nodeId: string; value: string };
+  | { type: "submit"; nodeId: string; value: string }
+  | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] };
+
+/**
+ * Simulated input for checks: delivered inside the renderer like real input
+ * (keys go through GPUI's keystroke dispatch; clicks resolve against the
+ * painted layout and reach the node's handler).
+ */
+export type SimCommand =
+  | { kind: "click"; id: string }
+  | { kind: "click"; x: number; y: number }
+  | { kind: "key"; keystroke: string }
+  | { kind: "type"; text: string }
+  | { kind: "layout" };
 
 /**
  * The channel to the native renderer. `spawnNativeHost` provides the stdio
@@ -106,10 +132,16 @@ export interface NativeTransport {
   onEvent(listener: (event: NativeEvent) => void): void;
   /** The native side went away (window closed, host exited). */
   onClose(listener: () => void): void;
+  /** Inject simulated input or ask for a layout snapshot. */
+  simulate(command: SimCommand): void;
   close(): void;
 }
 
 /** A mounted native React root. */
 export interface NativeRoot {
   unmount(): void;
+  /** The JSON tree most recently sent to the renderer, or null before the first commit. */
+  lastTree(): string | null;
+  /** The native node id behind a `testID`, if that node is mounted. */
+  nodeId(testID: string): string | undefined;
 }
