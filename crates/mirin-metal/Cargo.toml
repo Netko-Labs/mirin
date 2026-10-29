@@ -23,6 +23,12 @@ futures = "0.3"
 # `MIRIN_METAL_PROFILE` in src/bin/host.rs. Not part of normal builds.
 pprof = { version = "0.15", optional = true }
 
+# Ask the Wayland compositor which GPU it composites on (src/gpu.rs). Both are
+# already in gpui's dependency tree.
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+
 [features]
 profiling = ["dep:pprof"]
 

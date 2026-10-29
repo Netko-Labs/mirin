@@ -85,6 +85,11 @@ fn start_profiler() {
 fn start_profiler() {}
 
 fn main() {
+    // Before any thread or GPUI starts: Vulkan reads this at load.
+    #[cfg(target_os = "linux")]
+    if let Some(filter) = mirin_metal::gpu::prefer_display_gpu() {
+        mirin_metal::trace::log(format_args!("vulkan drivers limited to {filter}"));
+    }
     start_profiler();
     let (update_tx, update_rx) = mpsc::channel::<DriverMessage>();
     let (event_tx, event_rx) = mpsc::channel::<NativeUiEvent>();

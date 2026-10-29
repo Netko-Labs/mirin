@@ -14,6 +14,8 @@
 
 mod edges;
 mod events;
+#[cfg(target_os = "linux")]
+pub mod gpu;
 mod input;
 mod list;
 mod media;

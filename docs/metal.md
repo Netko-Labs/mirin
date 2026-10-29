@@ -295,6 +295,17 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
 - Debug builds optimize dependencies (`[profile.dev.package."*"]`); unoptimized
   GPUI/taffy made the debug host several times slower.
 
+- The Vulkan loader opened every installed driver. On a hybrid laptop that
+  mapped NVIDIA's whole stack into each app even though rendering ran on the
+  AMD GPU (host RSS 389 MB). The host now asks the compositor for its main
+  device (`linux-dmabuf` feedback) and sets `VK_LOADER_DRIVERS_SELECT` to that
+  device's driver before GPUI starts (`gpu.rs`): 87 MB, and the discrete GPU
+  can stay suspended. User `VK_*` driver variables win; `MIRIN_METAL_GPU=all`
+  opts out. The virtual display forces Mesa EGL so it composites on the same
+  GPU a real session does.
+- Idle cost: no frames and ~20 ms of host CPU per 5 s with the example browser
+  open.
+
 Open: React work per update (the demo re-renders its whole list on select),
 whole-tree JSON per update (the patch protocol, B3), GPUI's full relayout for
 trees that are not long lists.

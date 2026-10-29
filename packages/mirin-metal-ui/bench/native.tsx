@@ -116,6 +116,22 @@ await Bun.sleep(300);
 const scrollFrames = trace
   .filter((line) => line.at >= scrollStart && line.message.startsWith("render"))
   .map((line) => Number(line.message.match(/frame ([\d.]+)ms/)?.[1] ?? 0));
+
+// Maximize and restore: time from the request to the last frame at the new
+// size once the driver has re-rendered for the new viewport (breakpoints).
+const resizes: number[] = [];
+for (let round = 0; round < 4; round += 1) {
+  const before = trace.length;
+  const started = Date.now();
+  transport.simulate({ kind: "window", action: "zoom" });
+  await Bun.sleep(800);
+  const sizes = trace
+    .slice(before)
+    .filter((line) => line.message.startsWith("render"))
+    .map((line) => ({ at: line.at, size: line.message.match(/render (\d+x\d+)/)?.[1] }));
+  const settled = sizes.at(-1);
+  if (settled) resizes.push(settled.at - started);
+}
 root.unmount();
 transport.close();
 display?.close();
@@ -148,6 +164,7 @@ const rows: Array<[string, number]> = [
   ["full frame (all frames)", median(frames)],
   ["scroll frame", median(scrollFrames)],
   ["scroll frame p95", p95(scrollFrames)],
+  ["maximize/restore → settled frame", median(resizes)],
 ];
 console.log(`host: ${binary}`);
 console.log(
