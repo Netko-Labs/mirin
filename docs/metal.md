@@ -15,6 +15,35 @@ release tooling. Metal seeds from the earlier `mirin-native` spike (branch
 `claude/mirin-native-gpu-validation-vumae7`), imported and renamed on
 2026-10-29.
 
+## 0. Relationship to mirin
+
+Metal and mirin are **two different worlds that share a contract**. The owner's
+rule (2026-10-29): they share what they can and are almost interoperable, but
+Metal is **not free to make breaking changes against `mirinjs`**.
+
+What that means in practice:
+
+- **Shared surface, shared ownership.** `mirin.config.ts` (`defineConfig`),
+  `app` (lifecycle, windows, sidecars, resources, workers), `dialog`,
+  `clipboard`, `notification`, `shortcut`, `tray`, `menu`, the typed RPC
+  helpers, and the updater keep the shapes `docs/api-design.md` defines. Metal
+  implements them, it does not redefine them. A change to any of these goes
+  through `docs/api-design.md` sign-off with mirinjs in mind, never Metal-only.
+- **Metal-only surface lives in `@mirinjs/metal`.** `<View>`, `<Text>`,
+  `<TextInput>`, `<ScrollView>`, the element-tree protocol, and the renderer
+  options are Metal's own and may move fast while alpha. They never leak into
+  `mirinjs`.
+- **Same process model.** A Metal app is still Bun host + Worker + Rust core;
+  only the engine behind the window differs (GPUI instead of CEF). Apps keep the
+  same `mirin.config.ts`, the same `app.windows.open`, the same packaging story.
+- **Interoperable, not identical.** An app's main-process code should move
+  between the two flavors unchanged. The UI code is different by design: DOM/
+  React-DOM in mirin, Metal components in Metal.
+- **Breaking changes.** Metal may break *its own* surface during alpha. It may
+  not break, fork, or shadow a `mirinjs` export, event name, config key, or RPC
+  frame. When Metal needs something the shared surface lacks, propose it for
+  `mirinjs` first (feature-flagged or no-op on CEF if needed).
+
 ## 1. Shape
 
 ```txt
@@ -99,15 +128,21 @@ host (bun --compile)             Bun Worker                 libmirin_metal (Rust
 - The stdio host is the alpha stand-in for that FFI transport and stays useful
   for out-of-process debugging.
 
-Open questions the owner decides before any FFI lands:
+Decisions, following §0:
 
-1. One `mirinjs` package with a `renderer: "cef" | "metal"` config switch, or a
-   separate `@mirinjs/metal` runtime entry? The current alpha assumes the latter.
-2. Whether `libmirin_metal` is a second cdylib or a feature of `libmirin_core`.
-   A second cdylib keeps the CEF core free of GPUI's dependency tree and lets
-   Metal ship without a CEF download.
-3. Diffing: whole-tree replacement is fine for the alpha; a patch protocol
-   (`insert` / `remove` / `update`) is needed before large trees.
+1. **Packaging.** `mirinjs` stays the one app API. Metal is consumed as
+   `@mirinjs/metal` (components + renderer) on top of it, not as a separate
+   runtime entry that re-exports `app`/`dialog`/… Apps import `app` from
+   `mirinjs` and `<View>` from `@mirinjs/metal`.
+2. **Native library.** A second cdylib, `libmirin_metal`, so the CEF core stays
+   free of GPUI's dependency tree and Metal apps ship without a CEF download.
+   It exposes the same command/event envelope (`{"v":1,"kind":...}`) and the
+   same feature modules (`engine/dialog`, `clipboard`, `notification`, …) so
+   the Worker-side `mirinjs` code is shared verbatim; only window creation and
+   the element-tree commands differ.
+3. **Diffing.** Whole-tree replacement is fine for the alpha; a patch protocol
+   (`insert` / `remove` / `update`) is a Metal-only change and can land whenever
+   trees get large, without touching `mirinjs`.
 
 ## 4. Platform notes
 
