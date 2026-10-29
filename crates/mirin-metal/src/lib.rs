@@ -24,6 +24,8 @@ mod pointer;
 mod render;
 mod sim;
 mod surface;
+#[cfg(target_os = "linux")]
+pub mod toplevels;
 pub mod trace;
 mod tree;
 mod window;

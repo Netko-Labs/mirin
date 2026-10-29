@@ -28,6 +28,9 @@ pprof = { version = "0.15", optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
+# The shell.toplevels capability (src/toplevels.rs); 0.2 is the version the
+# GPUI fork already builds.
+wayland-protocols-wlr = { version = "0.2", features = ["client"] }
 
 [features]
 profiling = ["dep:pprof"]

@@ -5,20 +5,35 @@
  * eventual in-process FFI transport.
  */
 
-import type { Bounds, LayoutNode, NativeEvent, NativeTransport } from "./types.ts";
+import { parseToplevelEvent, toplevelCommand } from "./lib/toplevels.ts";
+import type {
+  Bounds,
+  LayoutNode,
+  NativeEvent,
+  NativeHostTransport,
+  ToplevelEvent,
+} from "./types.ts";
 
-/** Parse one NDJSON line from the host into a typed event, or null. */
-export function parseNativeEvent(line: string): NativeEvent | null {
+/** One NDJSON line from the host as an object, or null. */
+function parseRecord(line: string): Record<string, unknown> | null {
   let value: unknown;
   try {
     value = JSON.parse(line);
   } catch {
     return null;
   }
-  if (typeof value !== "object" || value === null) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Parse one NDJSON line from the host into a typed event, or null. */
+export function parseNativeEvent(line: string): NativeEvent | null {
+  const record = parseRecord(line);
+  return record ? nativeEventFromRecord(record) : null;
+}
+
+function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | null {
   if (typeof record.nodeId !== "string") {
     return null;
   }
@@ -97,6 +112,16 @@ export interface SurfaceOptions {
 export interface NativeHostOptions {
   /** Window title (`MIRIN_METAL_TITLE`). */
   title?: string;
+  /**
+   * App id the compositor groups windows by, usually the manifest `id`
+   * (`MIRIN_METAL_APP_ID`).
+   */
+  appId?: string;
+  /**
+   * Privileged APIs (`MIRIN_METAL_CAPABILITIES`). `shell.toplevels` follows
+   * every window and enables `onToplevel` and `toplevel()` on the transport.
+   */
+  capabilities?: Array<"shell.toplevels">;
   /** Initial window size in px (`MIRIN_METAL_SIZE`). */
   width?: number;
   height?: number;
@@ -114,7 +139,7 @@ export interface NativeHostOptions {
 export function spawnNativeHost(
   binaryPath: string,
   options: NativeHostOptions = {},
-): NativeTransport {
+): NativeHostTransport {
   // Bun.spawn's default environment is the one the process started with;
   // pass the live `process.env` so runtime assignments reach the host.
   const env: Record<string, string> = {};
@@ -122,6 +147,10 @@ export function spawnNativeHost(
     if (value !== undefined) env[key] = value;
   }
   if (options.title !== undefined) env.MIRIN_METAL_TITLE = options.title;
+  if (options.appId !== undefined) env.MIRIN_METAL_APP_ID = options.appId;
+  if (options.capabilities !== undefined) {
+    env.MIRIN_METAL_CAPABILITIES = options.capabilities.join(",");
+  }
   if (options.width !== undefined && options.height !== undefined) {
     env.MIRIN_METAL_SIZE = `${Math.round(options.width)}x${Math.round(options.height)}`;
   }
@@ -137,6 +166,7 @@ export function spawnNativeHost(
     void forwardLines(child.stderr, options.onStderr);
   }
   const listeners: Array<(event: NativeEvent) => void> = [];
+  const toplevelListeners: Array<(event: ToplevelEvent) => void> = [];
   const closeListeners: Array<() => void> = [];
   void child.exited.then(() => {
     for (const listener of closeListeners) {
@@ -157,7 +187,14 @@ export function spawnNativeHost(
       const lines = buffered.split("\n");
       buffered = lines.pop() ?? "";
       for (const line of lines) {
-        const event = parseNativeEvent(line);
+        const record = parseRecord(line);
+        if (!record) continue;
+        const toplevel = parseToplevelEvent(record);
+        if (toplevel) {
+          for (const listener of toplevelListeners) listener(toplevel);
+          continue;
+        }
+        const event = nativeEventFromRecord(record);
         if (event) {
           for (const listener of listeners) {
             listener(event);
@@ -180,6 +217,13 @@ export function spawnNativeHost(
     },
     simulate(command) {
       child.stdin.write(`${JSON.stringify({ sim: command })}\n`);
+      void child.stdin.flush();
+    },
+    onToplevel(listener) {
+      toplevelListeners.push(listener);
+    },
+    toplevel(id, action) {
+      child.stdin.write(`${toplevelCommand(id, action)}\n`);
       void child.stdin.flush();
     },
     close() {

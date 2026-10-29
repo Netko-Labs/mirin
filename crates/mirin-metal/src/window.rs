@@ -31,6 +31,9 @@ const SIM_SETTLE_INTERVAL: Duration = Duration::from_millis(16);
 #[derive(Debug, Clone)]
 pub struct NativeUiOptions {
     pub title: SharedString,
+    /// The app id compositors group windows by (a dock's icon, a taskbar
+    /// entry); usually reverse-DNS, like the manifest `id`.
+    pub app_id: Option<String>,
     pub width: f32,
     pub height: f32,
     /// Open as a layer-shell surface (a panel, a dock) instead of a window;
@@ -42,6 +45,7 @@ impl Default for NativeUiOptions {
     fn default() -> Self {
         Self {
             title: "mirin metal (alpha)".into(),
+            app_id: None,
             width: 800.0,
             height: 600.0,
             surface: None,
@@ -243,6 +247,7 @@ pub fn run(
                     WindowBackgroundAppearance::Opaque
                 },
                 layer_shell: options.surface.clone(),
+                app_id: options.app_id.clone(),
                 ..Default::default()
             };
             let layout = LayoutMap::default();

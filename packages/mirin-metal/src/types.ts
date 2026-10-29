@@ -282,6 +282,17 @@ export type SimCommand =
  * The channel to the native renderer. `spawnNativeHost` provides the stdio
  * implementation; the eventual FFI wiring will provide an in-process one.
  */
+/**
+ * The stdio host's transport. Toplevel members need the `shell.toplevels`
+ * capability (`spawnNativeHost(binary, { capabilities: ["shell.toplevels"] })`).
+ */
+export interface NativeHostTransport extends NativeTransport {
+  /** Windows appearing, changing, and closing; replays nothing on attach. */
+  onToplevel(listener: (event: ToplevelEvent) => void): void;
+  /** Activate, minimize, maximize, or close another window. */
+  toplevel(id: number, action: ToplevelAction): void;
+}
+
 export interface NativeTransport {
   send(treeJson: string): void;
   onEvent(listener: (event: NativeEvent) => void): void;
@@ -300,3 +311,28 @@ export interface NativeRoot {
   /** The native node id behind a `testID`, if that node is mounted. */
   nodeId(testID: string): string | undefined;
 }
+
+// shell.toplevels: other windows, as the compositor reports them.
+
+/** A window as the compositor describes it; `id` may be reused once it closes. */
+export interface Toplevel {
+  id: number;
+  title: string;
+  appId: string;
+  activated: boolean;
+  minimized: boolean;
+  maximized: boolean;
+  fullscreen: boolean;
+}
+
+export type ToplevelEvent =
+  | { type: "changed"; toplevel: Toplevel }
+  | { type: "closed"; id: number };
+
+export type ToplevelAction =
+  | "activate"
+  | "close"
+  | "minimize"
+  | "unminimize"
+  | "maximize"
+  | "unmaximize";

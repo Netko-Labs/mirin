@@ -3250,6 +3250,7 @@ dependencies = [
  "serde_json",
  "wayland-client",
  "wayland-protocols 0.32.13",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]

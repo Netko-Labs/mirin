@@ -359,7 +359,14 @@ dock) instead of a window; the JSON is the `windows.*.surface` shape from
 `docs/api-design.md` §1a (`layer`, `anchor`, `exclusiveZone`, `keyboard`,
 `margin`, `namespace`; only the `layer` role so far), the surface is transparent
 where the tree is, and opening fails on compositors without wlr-layer-shell.
-`spawnNativeHost(binary, { surface })` sets it. A consumer
+`spawnNativeHost(binary, { surface })` sets it. `MIRIN_METAL_APP_ID` (`appId`)
+names the app to the compositor, which docks and taskbars group windows by.
+`MIRIN_METAL_CAPABILITIES=shell.toplevels` (`capabilities`) makes the host follow
+every window over wlr-foreign-toplevel-management on a second Wayland connection
+(`src/toplevels.rs`): it writes `{"type":"toplevel","toplevel":{...}}` and
+`{"type":"toplevel-closed","id":N}` lines, and `{"toplevel":{"id":N,"action":"activate"}}`
+on stdin activates, minimizes, maximizes, or closes a window (`onToplevel` and
+`toplevel()` on the transport). Unknown capabilities fail at startup. A consumer
 that depends on `@mirinjs/metal` must share one React instance with it: a
 `bun link` keeps the package's own `node_modules` (two Reacts, "Invalid hook
 call"), so until it is published use `"@mirinjs/metal": "file:../path"`.

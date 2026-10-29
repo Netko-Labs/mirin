@@ -7,10 +7,90 @@
 use std::io::{BufRead, Write};
 use std::sync::mpsc;
 
+#[cfg(target_os = "linux")]
+use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_surface, parse_tree, run, DriverMessage, EventKind, NativeUiEvent, NativeUiOptions,
     SimCommand,
 };
+
+/// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
+/// separated; the `capabilities` key in docs/api-design.md §1a).
+const CAPABILITIES: &[&str] = &["shell.toplevels"];
+
+/// What a stdin line asks for: the window (a tree or a simulation), or a
+/// taskbar action on another window (`{"toplevel": {...}}`, needs the
+/// `shell.toplevels` capability).
+enum HostLine {
+    Window(DriverMessage),
+    #[cfg(target_os = "linux")]
+    Toplevel(ToplevelCommand),
+}
+
+fn parse_host_line(line: &str) -> Result<HostLine, String> {
+    #[cfg(target_os = "linux")]
+    if line.trim_start().starts_with("{\"toplevel\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ToplevelLine {
+            toplevel: ToplevelCommand,
+        }
+        let parsed: ToplevelLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        return Ok(HostLine::Toplevel(parsed.toplevel));
+    }
+    parse_line(line).map(HostLine::Window)
+}
+
+/// Write one JSON line to stdout. Holding the lock for the whole line keeps
+/// the event and toplevel threads from interleaving.
+fn write_line(line: &serde_json::Value) -> bool {
+    let mut out = std::io::stdout().lock();
+    writeln!(out, "{line}").and_then(|()| out.flush()).is_ok()
+}
+
+fn requested_capabilities() -> Vec<String> {
+    let Ok(list) = std::env::var("MIRIN_METAL_CAPABILITIES") else {
+        return Vec::new();
+    };
+    let requested: Vec<String> = list
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+        .collect();
+    if let Some(unknown) = requested
+        .iter()
+        .find(|name| !CAPABILITIES.contains(&name.as_str()))
+    {
+        eprintln!("[mirin-metal-host] MIRIN_METAL_CAPABILITIES: unknown capability \"{unknown}\"");
+        std::process::exit(2);
+    }
+    requested
+}
+
+/// Start the `shell.toplevels` watcher; its updates go to stdout as
+/// `{"type":"toplevel",...}` and `{"type":"toplevel-closed","id":N}`.
+#[cfg(target_os = "linux")]
+fn start_toplevels() -> Option<Toplevels> {
+    let watched = toplevels::watch(|update| {
+        let line = match update {
+            ToplevelUpdate::Changed(toplevel) => {
+                serde_json::json!({ "type": "toplevel", "toplevel": toplevel })
+            }
+            ToplevelUpdate::Closed(id) => {
+                serde_json::json!({ "type": "toplevel-closed", "id": id })
+            }
+        };
+        write_line(&line);
+    });
+    match watched {
+        Ok(toplevels) => Some(toplevels),
+        Err(error) => {
+            eprintln!("[mirin-metal-host] shell.toplevels unavailable: {error}");
+            None
+        }
+    }
+}
 
 /// A stdin line is either a tree or `{"sim": {...}}`.
 fn parse_line(line: &str) -> Result<DriverMessage, String> {
@@ -95,6 +175,18 @@ fn main() {
     let (update_tx, update_rx) = mpsc::channel::<DriverMessage>();
     let (event_tx, event_rx) = mpsc::channel::<NativeUiEvent>();
 
+    let capabilities = requested_capabilities();
+    #[cfg(target_os = "linux")]
+    let toplevels = capabilities
+        .iter()
+        .any(|name| name == "shell.toplevels")
+        .then(start_toplevels)
+        .flatten();
+    #[cfg(not(target_os = "linux"))]
+    if !capabilities.is_empty() {
+        eprintln!("[mirin-metal-host] capabilities are Linux only; ignoring them");
+    }
+
     // stdin → tree updates. EOF means the driver went away; the window simply
     // stops updating (closing it quits the process).
     std::thread::spawn(move || {
@@ -104,18 +196,29 @@ fn main() {
                 continue;
             }
             let started = std::time::Instant::now();
-            let parsed = parse_line(&line);
+            let parsed = parse_host_line(&line);
             mirin_metal::trace::log(format_args!(
                 "line parsed ({} KB) in {:.2}ms",
                 line.len() / 1024,
                 started.elapsed().as_secs_f64() * 1000.0
             ));
             match parsed {
-                Ok(message) => {
+                Ok(HostLine::Window(message)) => {
                     if update_tx.send(message).is_err() {
                         break;
                     }
                 }
+                #[cfg(target_os = "linux")]
+                Ok(HostLine::Toplevel(command)) => match &toplevels {
+                    Some(toplevels) => {
+                        if let Err(error) = toplevels.perform(command) {
+                            eprintln!("[mirin-metal-host] toplevel action failed: {error}");
+                        }
+                    }
+                    None => eprintln!(
+                        "[mirin-metal-host] rejected line: toplevel actions need the shell.toplevels capability"
+                    ),
+                },
                 Err(error) => eprintln!("[mirin-metal-host] rejected line: {error}"),
             }
         }
@@ -123,7 +226,6 @@ fn main() {
 
     // interaction events → stdout.
     std::thread::spawn(move || {
-        let mut out = std::io::stdout();
         while let Ok(event) = event_rx.recv() {
             let mut line =
                 serde_json::json!({ "type": event.kind.name(), "nodeId": event.node_id });
@@ -161,7 +263,7 @@ fn main() {
                         .collect(),
                 );
             }
-            if writeln!(out, "{line}").and_then(|()| out.flush()).is_err() {
+            if !write_line(&line) {
                 break;
             }
         }
@@ -206,6 +308,10 @@ fn main() {
     run(
         NativeUiOptions {
             title: title.into(),
+            // `MIRIN_METAL_APP_ID=dev.dashi.files` names the app to the compositor.
+            app_id: std::env::var("MIRIN_METAL_APP_ID")
+                .ok()
+                .filter(|id| !id.is_empty()),
             width,
             height,
             surface,

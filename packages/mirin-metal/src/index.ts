@@ -15,6 +15,7 @@ export type {
   ImageProps,
   LayoutNode,
   NativeEvent,
+  NativeHostTransport,
   NativeRoot,
   NativeTransport,
   PointerInfo,
@@ -24,6 +25,9 @@ export type {
   TextInputStyle,
   TextProps,
   TextStyle,
+  Toplevel,
+  ToplevelAction,
+  ToplevelEvent,
   ViewProps,
   ViewStyle,
 } from "./types.ts";
