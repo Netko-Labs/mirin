@@ -12,6 +12,7 @@
 //! not yet wired into the CEF runtime, the FFI surface, or the TypeScript
 //! packages. See `README.md` for scope and the integration plan.
 
+mod edges;
 mod events;
 mod input;
 mod media;

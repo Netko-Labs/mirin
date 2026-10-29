@@ -74,6 +74,19 @@ pub struct ViewProps {
     pub padding: f32,
     pub padding_x: Option<f32>,
     pub padding_y: Option<f32>,
+    pub padding_top: Option<f32>,
+    pub padding_bottom: Option<f32>,
+    pub padding_left: Option<f32>,
+    pub padding_right: Option<f32>,
+    /// Margins in px (negative allowed). `*Auto` pushes the node away, like
+    /// CSS `margin-left: auto`.
+    pub margin_top: Option<f32>,
+    pub margin_bottom: Option<f32>,
+    pub margin_left: Option<f32>,
+    pub margin_right: Option<f32>,
+    pub margin_left_auto: bool,
+    pub margin_right_auto: bool,
+    pub margin_top_auto: bool,
     pub width: Option<f32>,
     pub height: Option<f32>,
     pub min_width: Option<f32>,
@@ -113,6 +126,13 @@ pub struct ViewProps {
     pub corner_radius: f32,
     /// Border width in px; 0 (default) draws none.
     pub border_width: f32,
+    /// Per-side border widths in px; override `borderWidth` for that side.
+    pub border_top: Option<f32>,
+    pub border_bottom: Option<f32>,
+    pub border_left: Option<f32>,
+    pub border_right: Option<f32>,
+    /// Drop shadow preset: `xs`, `sm`, `md`, `lg`, `xl`.
+    pub shadow: Option<String>,
     pub border_color: Option<String>,
     /// Scroll overflowing children vertically (needs `id`).
     pub scroll: bool,

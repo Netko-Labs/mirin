@@ -10,6 +10,7 @@ use gpui::{
     ElementId, FontWeight, MouseButton, MouseDownEvent, SharedString, Stateful, Window,
 };
 
+use crate::edges::{apply_box_edges, shadow_preset};
 use crate::input::render_input;
 use crate::media::{render_image, render_svg};
 use crate::tree::{
@@ -152,8 +153,12 @@ fn render_view(
     } else if props.border_width >= 1.0 {
         element = element.border_1();
     }
+    apply_box_edges(&mut element, props);
     if let Some(color) = props.border_color.as_deref().and_then(parse_color) {
         element = element.border_color(rgba(color));
+    }
+    if let Some(shadow) = props.shadow.as_deref() {
+        element.style().box_shadow = Some(shadow_preset(shadow));
     }
     if props.clip {
         element = element.overflow_hidden();

@@ -19,6 +19,15 @@ export interface ViewStyle {
   padding?: number;
   paddingHorizontal?: number;
   paddingVertical?: number;
+  paddingTop?: number;
+  paddingBottom?: number;
+  paddingLeft?: number;
+  paddingRight?: number;
+  /** Pixels, or `"auto"` to absorb free space (`marginLeft: "auto"` pushes right). */
+  marginTop?: number | "auto";
+  marginBottom?: number;
+  marginLeft?: number | "auto";
+  marginRight?: number | "auto";
   width?: Dimension;
   height?: Dimension;
   minWidth?: number;
@@ -46,7 +55,13 @@ export interface ViewStyle {
   hoverBackgroundColor?: Color;
   borderRadius?: number;
   borderWidth?: number;
+  borderTopWidth?: number;
+  borderBottomWidth?: number;
+  borderLeftWidth?: number;
+  borderRightWidth?: number;
   borderColor?: Color;
+  /** Drop shadow preset. */
+  shadow?: "xs" | "sm" | "md" | "lg" | "xl";
   /** `overflow: "hidden"` clips; `"scroll"` scrolls vertically, `"scroll-x"` horizontally, `"scroll-both"` both ways. */
   overflow?: "visible" | "hidden" | "scroll" | "scroll-x" | "scroll-both";
   opacity?: number;
