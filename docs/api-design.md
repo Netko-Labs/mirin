@@ -71,6 +71,7 @@ Design and rationale: `docs/metal/spec.html` §10–11.
 export default defineConfig({
   id: "dev.netko.anko",
   engine: "metal",                    // "cef" (default) | "metal"
+  capabilities: [],                   // privileged surfaces/APIs, e.g. "shell.surface", "session.lock"
   windows: {
     main: { title: "Anko", width: 1280, height: 820, view: "src/windows/main.tsx" },
     panel: {
@@ -86,7 +87,11 @@ export default defineConfig({
   and no CEF.
 - `windows.*.view` (Metal) and `windows.*.url` (CEF) are mutually exclusive by
   engine; using the other one is a config error naming the right key.
-- `windows.*.surface` is Metal-only; CEF rejects it with a clear error.
+- `windows.*.surface` is Metal-only; CEF rejects it with a clear error. Its
+  `role` is `layer` (default), `popup`, or `lock`; `output: "all"` creates one
+  surface per monitor.
+- `capabilities` lists privileged surfaces and APIs. The session grants them per
+  app id; an app using a privileged key it was not granted fails at startup.
 - `cef.*` is ignored on Metal with a warning.
 - Status: accepted, not yet implemented (milestones R2 and R7).
 

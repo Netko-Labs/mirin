@@ -334,6 +334,7 @@ mirin_metal_tray_destroy(id)</code></pre>
 <h3>Patch batch</h3>
 <pre><code>{
   "v": 2,
+  "ctx": 0,                                   // UI context (0 = the app's UI Worker)
   "ops": [
     ["create", 812, "view", { "direction": "row", "gap": 8, "onPress": true }],
     ["create", 813, "text", { "size": 14 }, "Save"],
@@ -346,7 +347,8 @@ mirin_metal_tray_destroy(id)</code></pre>
   ]
 }</code></pre>
 <ul>
-  <li>Node ids are allocated by the UI Worker (reconciler instance ids) and are unique per window.</li>
+  <li>Node ids are allocated by the UI Worker (reconciler instance ids) and are unique per window <em>and context</em>. <code>ctx</code> is reserved now for shell UI contexts (applets in their own Workers, <code>shell.html</code> E2); apps always send 0.</li>
+  <li>A <code>["slot", id, { "ctx": n }]</code> node hosts the root of context <code>n</code> inside this tree. Reserved in v2, implemented with UI contexts.</li>
   <li>A batch is atomic: the renderer applies it between frames and never paints a half-applied commit.</li>
   <li>Props use the existing v1 node vocabulary (<code>docs/metal.md</code> §2), parsed strictly at the boundary. Unknown ops or props reject the whole batch with an error event, never a partial tree.</li>
   <li>Virtualized lists, input state, scroll state, and layout caches key off node ids, so updates no longer rediscover them by walking the tree.</li>
@@ -407,6 +409,7 @@ const rows = await api.runQuery("select 1");</code></pre>
   id: "dev.netko.anko",
   name: "Anko",
   engine: "metal",                      // NEW: "cef" (default) | "metal"
+  capabilities: [],                     // NEW: privileged surfaces and APIs this app requests (§11)
 
   windows: {
     main: {
@@ -430,6 +433,7 @@ const rows = await api.runQuery("select 1");</code></pre>
 <ul>
   <li><code>engine</code> picks the flavor at build time; the CLI then packages <code>libmirin_metal</code> instead of CEF.</li>
   <li><code>view</code> is the Metal counterpart of <code>url</code>. Exactly one of them is valid per engine; the other is a config error naming the right key.</li>
+  <li><code>capabilities</code> lists privileged surfaces and APIs (<code>shell.surface</code>, <code>shell.toplevels</code>, <code>shell.workspaces</code>, <code>session.lock</code>, <code>services.*</code>). The session grants them per app identity; config validation runs every privileged key through one capability check from R2 on, granting everything in development until the session can decide.</li>
   <li>Every other key keeps its meaning. <code>cef.*</code> is ignored on Metal with a warning.</li>
 </ul>
 <p>A window component receives its handle through a hook, so UI code never imports main-process modules:</p>
@@ -451,6 +455,15 @@ export default function Main() {
   (exclusive zone), on a stacking layer, with controlled keyboard focus. GPUI does not create them,
   so this goes into mirin's GPUI fork as a new window kind.
 </p>
+<p>Surface roles a window can take (<code>windows.*.surface.role</code>, default <code>layer</code> when <code>surface</code> is present):</p>
+<table>
+  <tr><th>Role</th><th>Protocol</th><th>Use</th><th>Capability</th></tr>
+  <tr><td><code>toplevel</code></td><td>xdg-shell</td><td>Ordinary windows (no <code>surface</code> key)</td><td>none</td></tr>
+  <tr><td><code>layer</code></td><td>wlr-layer-shell</td><td>Panels, docks, launchers, notifications, OSD</td><td><code>shell.surface</code></td></tr>
+  <tr><td><code>popup</code></td><td>xdg_popup</td><td>Menus, selects, tooltips anchored to a parent surface, flipping at screen edges</td><td>none</td></tr>
+  <tr><td><code>lock</code></td><td>ext-session-lock</td><td>Lock screen, one per output</td><td><code>session.lock</code></td></tr>
+</table>
+<p>Layer surface options:</p>
 <table>
   <tr><th>Option</th><th>Values</th><th>Meaning</th></tr>
   <tr><td><code>layer</code></td><td><code>background | bottom | top | overlay</code></td><td>Stacking layer.</td></tr>
@@ -459,6 +472,9 @@ export default function Main() {
   <tr><td><code>keyboard</code></td><td><code>none | on-demand | exclusive</code></td><td>Keyboard focus policy (a launcher is <code>exclusive</code>).</td></tr>
   <tr><td><code>output</code></td><td>monitor name, or all</td><td>Which monitor; one surface per monitor when "all".</td></tr>
 </table>
+<h3>Outputs</h3>
+<p>Monitors appearing, disappearing, rescaling, or moving reach the App Worker as <code>app.outputs</code> events. A surface with <code>output: "all"</code> is instantiated per monitor and destroyed with it; its UI root receives the role and output (<code>useWindow().output</code>) so a panel renders per monitor.</p>
+<p>The desktop's own compositor, <code>mirin-comp</code> (Smithay), implements all of these and grants the privileged ones per capability; see <a href="shell.html"><code>shell.html</code></a> §3.</p>
 <p>Popups (menus, tooltips, selects) become real <code>xdg_popup</code> surfaces when they would overflow the window, instead of being clipped to it as today.</p>
 <p>The longer-term shell plan (compositor strategy, shell processes, capabilities, system services, applet contexts, roadmap S0–S5) is in <a href="shell.html"><code>docs/metal/shell.html</code></a>.</p>
 
@@ -554,12 +570,12 @@ export default function Main() {
 <h3>R2 · Two Workers, RPC, windows</h3>
 <ul>
   <li>App Worker running <code>src/main.ts</code>; UI Worker with one root per window; MessagePort RPC; <code>app</code> lifecycle and <code>app.windows</code>; <code>useWindow()</code>; <code>engine</code> and <code>view</code> config (after sign-off).</li>
-  <li><strong>Accept:</strong> <code>examples/hello-metal</code> with a typed RPC call and two windows; unchanged <code>mirinjs</code> unit tests.</li>
+  <li><strong>Accept:</strong> <code>examples/hello-metal</code> with a typed RPC call and two windows; unchanged <code>mirinjs</code> unit tests; config validation routes <code>surface</code> and <code>capabilities</code> through the capability check.</li>
 </ul>
 <h3>R3 · Retained trees and patches</h3>
 <ul>
   <li>Reconciler emits patch batches; Rust keeps per-window trees; virtualized lists, inputs, and scroll state keyed by node id.</li>
-  <li><strong>Accept:</strong> patch and byte budgets met; example browser and all metal-ui tests pass.</li>
+  <li><strong>Accept:</strong> patch and byte budgets met; example browser and all metal-ui tests pass; batches carry <code>ctx</code> and the renderer rejects unknown contexts.</li>
 </ul>
 <h3>R4 · Platform features</h3>
 <ul>
@@ -578,8 +594,8 @@ export default function Main() {
 </ul>
 <h3>R7 · Desktop integration and shell surfaces</h3>
 <ul>
-  <li>App identity, activation, session theme, portals; layer-shell surfaces and <code>xdg_popup</code> overlays in the GPUI fork; multi-monitor.</li>
-  <li><strong>Accept:</strong> an example top panel with an exclusive zone and a launcher overlay under KWin; theme follows a live color-scheme switch.</li>
+  <li>App identity, activation, session theme, portals; layer, popup, and lock surface roles in the GPUI fork; output events and per-output surfaces.</li>
+  <li><strong>Accept:</strong> a top panel per monitor with an exclusive zone, a launcher overlay, popups that escape their window, and a lock surface on every output, all in a nested compositor; theme follows a live color-scheme switch.</li>
 </ul>
 
 <!-- ───────────────────────────────────────── 19 ─── -->
