@@ -58,6 +58,21 @@ fn main() {
             if let EventKind::Hover { hovered } = &event.kind {
                 line["hovered"] = serde_json::Value::Bool(*hovered);
             }
+            if let EventKind::Pointer { phase, x, y, .. } = &event.kind {
+                line["phase"] = serde_json::json!(phase.name());
+                line["x"] = serde_json::json!(x);
+                line["y"] = serde_json::json!(y);
+            }
+            if let Some(bounds) = &event.bounds {
+                line["bounds"] = serde_json::json!({
+                    "x": bounds.x, "y": bounds.y,
+                    "width": bounds.width, "height": bounds.height,
+                });
+            }
+            if let EventKind::ContextMenu { x, y } = &event.kind {
+                line["x"] = serde_json::json!(x);
+                line["y"] = serde_json::json!(y);
+            }
             if let EventKind::Layout { nodes } = &event.kind {
                 line["nodes"] = serde_json::Value::Array(
                     nodes

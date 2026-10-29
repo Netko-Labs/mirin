@@ -13,12 +13,15 @@
 //! packages. See `README.md` for scope and the integration plan.
 
 mod events;
+mod input;
+mod media;
+mod pointer;
 mod render;
 mod sim;
 mod tree;
 mod window;
 
-pub use events::{EventKind, NativeUiEvent};
+pub use events::{EventKind, NativeUiEvent, PointerPhase};
 pub use sim::{LayoutNode, SimCommand};
 pub use tree::{
     parse_tree, Align, Direction, InputProps, Justify, NodeSpec, TextProps, ViewProps, Weight,

@@ -99,6 +99,18 @@ describe("parseNativeEvent", () => {
       type: "press",
       nodeId: "3",
     });
+    expect(
+      parseNativeEvent('{"type":"press","nodeId":"3","bounds":{"x":1,"y":2,"width":3,"height":4}}'),
+    ).toEqual({ type: "press", nodeId: "3", bounds: { x: 1, y: 2, width: 3, height: 4 } });
+    expect(
+      parseNativeEvent('{"type":"pointer","nodeId":"5","phase":"move","x":10,"y":20}'),
+    ).toEqual({ type: "pointer", nodeId: "5", phase: "move", x: 10, y: 20 });
+    expect(parseNativeEvent('{"type":"contextmenu","nodeId":"5","x":1,"y":2}')).toEqual({
+      type: "contextmenu",
+      nodeId: "5",
+      x: 1,
+      y: 2,
+    });
     expect(parseNativeEvent('{"type":"change","nodeId":"7","value":"sel"}')).toEqual({
       type: "change",
       nodeId: "7",

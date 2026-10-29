@@ -5,7 +5,7 @@
  * eventual in-process FFI transport.
  */
 
-import type { LayoutNode, NativeEvent, NativeTransport } from "./types.ts";
+import type { Bounds, LayoutNode, NativeEvent, NativeTransport } from "./types.ts";
 
 /** Parse one NDJSON line from the host into a typed event, or null. */
 export function parseNativeEvent(line: string): NativeEvent | null {
@@ -23,12 +23,24 @@ export function parseNativeEvent(line: string): NativeEvent | null {
     return null;
   }
   const nodeId = record.nodeId;
+  const bounds = parseBounds(record.bounds);
+  const withBounds = bounds ? { bounds } : {};
   switch (record.type) {
     case "press":
-      return { type: "press", nodeId };
+      return { type: "press", nodeId, ...withBounds };
     case "hover":
       return typeof record.hovered === "boolean"
-        ? { type: "hover", nodeId, hovered: record.hovered }
+        ? { type: "hover", nodeId, hovered: record.hovered, ...withBounds }
+        : null;
+    case "pointer": {
+      const { phase, x, y } = record;
+      if (phase !== "down" && phase !== "move" && phase !== "up") return null;
+      if (typeof x !== "number" || typeof y !== "number") return null;
+      return { type: "pointer", nodeId, phase, x, y, ...withBounds };
+    }
+    case "contextmenu":
+      return typeof record.x === "number" && typeof record.y === "number"
+        ? { type: "contextmenu", nodeId, x: record.x, y: record.y }
         : null;
     case "layout":
       return Array.isArray(record.nodes)
@@ -42,6 +54,13 @@ export function parseNativeEvent(line: string): NativeEvent | null {
     default:
       return null;
   }
+}
+
+function parseBounds(value: unknown): Bounds | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { x, y, width, height } = value as Record<string, unknown>;
+  if ([x, y, width, height].some((n) => typeof n !== "number")) return undefined;
+  return { x: x as number, y: y as number, width: width as number, height: height as number };
 }
 
 function parseLayoutNode(value: unknown): LayoutNode[] {

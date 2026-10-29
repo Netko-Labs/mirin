@@ -8,13 +8,18 @@
 import { createContext } from "react";
 import type ReactReconciler from "react-reconciler";
 import { DefaultEventPriority, NoEventPriority } from "react-reconciler/constants";
-import { INPUT_TYPE, type TEXT_TYPE, VIEW_TYPE } from "../components.ts";
-import type { TextInputProps, TextProps, ViewProps } from "../types.ts";
+import { IMAGE_TYPE, INPUT_TYPE, SVG_TYPE, type TEXT_TYPE, VIEW_TYPE } from "../components.ts";
+import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
 import type { Container, HostInstance, HostNode, RawTextInstance } from "./instances.ts";
 import { insertNodeBefore, removeNode } from "./instances.ts";
 
-type HostType = typeof VIEW_TYPE | typeof TEXT_TYPE | typeof INPUT_TYPE;
-type HostProps = ViewProps | TextProps | TextInputProps;
+type HostType =
+  | typeof VIEW_TYPE
+  | typeof TEXT_TYPE
+  | typeof INPUT_TYPE
+  | typeof SVG_TYPE
+  | typeof IMAGE_TYPE;
+type HostProps = ViewProps | TextProps | TextInputProps | SvgProps | ImageProps;
 /** Sentinel: React requires a non-null host context even when unused. */
 type HostContext = Record<string, never>;
 const HOST_CONTEXT: HostContext = {};
@@ -54,6 +59,8 @@ export const hostConfig: HostConfig = {
     if (type === INPUT_TYPE) {
       return { kind: "input", id, props: props as TextInputProps, children: [] };
     }
+    if (type === SVG_TYPE) return { kind: "svg", id, props: props as SvgProps, children: [] };
+    if (type === IMAGE_TYPE) return { kind: "image", id, props: props as ImageProps, children: [] };
     return { kind: "text", id, props: props as TextProps, children: [] };
   },
   createTextInstance(text) {

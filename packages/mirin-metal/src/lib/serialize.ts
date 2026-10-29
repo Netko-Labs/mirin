@@ -4,12 +4,22 @@
  * the node ids stamped into that tree.
  */
 
-import type { Color, TextInputStyle, TextStyle, ViewStyle } from "../types.ts";
+import type {
+  Bounds,
+  Color,
+  Dimension,
+  PointerInfo,
+  TextInputStyle,
+  TextStyle,
+  ViewStyle,
+} from "../types.ts";
 import type {
   HostInstance,
   HostNode,
+  ImageInstance,
   InputInstance,
   RawTextInstance,
+  SvgInstance,
   TextInstance,
   ViewInstance,
 } from "./instances.ts";
@@ -27,6 +37,10 @@ interface ViewNodeProps {
   minHeight?: number;
   maxWidth?: number;
   maxHeight?: number;
+  widthPercent?: number;
+  heightPercent?: number;
+  aspectRatio?: number;
+  wrap?: boolean;
   absolute?: boolean;
   relative?: boolean;
   top?: number;
@@ -50,6 +64,10 @@ interface ViewNodeProps {
   opacity?: number;
   onPress?: boolean;
   onHover?: boolean;
+  onPointer?: boolean;
+  onContextMenu?: boolean;
+  occlude?: boolean;
+  alignSelf?: "start" | "center" | "end" | "stretch";
 }
 
 interface TextNodeProps {
@@ -60,6 +78,10 @@ interface TextNodeProps {
   truncate?: boolean;
   opacity?: number;
   align?: "left" | "center" | "right";
+  italic?: boolean;
+  underline?: boolean;
+  lineThrough?: boolean;
+  lineHeight?: number;
 }
 
 interface InputNodeProps {
@@ -103,11 +125,38 @@ interface InputNode {
   props: InputNodeProps;
 }
 
-type TreeNode = ViewNode | TextNode | InputNode;
+interface SvgNode {
+  type: "svg";
+  props: {
+    markup: string;
+    size?: number;
+    width?: number;
+    height?: number;
+    color?: Color;
+    opacity?: number;
+  };
+}
+
+interface ImageNode {
+  type: "image";
+  props: {
+    src: string;
+    width?: number;
+    height?: number;
+    fill?: boolean;
+    cornerRadius?: number;
+    cover?: boolean;
+    opacity?: number;
+  };
+}
+
+type TreeNode = ViewNode | TextNode | InputNode | SvgNode | ImageNode;
 
 export interface Handlers {
-  press: Map<string, () => void>;
-  hover: Map<string, (hovered: boolean) => void>;
+  press: Map<string, (event: { bounds?: Bounds }) => void>;
+  hover: Map<string, (hovered: boolean, bounds?: Bounds) => void>;
+  pointer: Map<string, (event: PointerInfo) => void>;
+  contextMenu: Map<string, (event: { x: number; y: number }) => void>;
   change: Map<string, (text: string) => void>;
   submit: Map<string, (text: string) => void>;
   /** `testID` → native node id, for checks and tools. */
@@ -152,6 +201,8 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
   const handlers: Handlers = {
     press: new Map(),
     hover: new Map(),
+    pointer: new Map(),
+    contextMenu: new Map(),
     change: new Map(),
     submit: new Map(),
     testIds: new Map(),
@@ -170,7 +221,42 @@ function serializeInstance(instance: HostInstance, handlers: Handlers): TreeNode
       return serializeText(instance);
     case "input":
       return serializeInput(instance, handlers);
+    case "svg":
+      return serializeSvg(instance);
+    case "image":
+      return serializeImage(instance);
   }
+}
+
+function serializeSvg(instance: SvgInstance): SvgNode {
+  const { markup, size, width, height, color, opacity } = instance.props;
+  const props: SvgNode["props"] = { markup };
+  if (size !== undefined) props.size = size;
+  if (width !== undefined) props.width = width;
+  if (height !== undefined) props.height = height;
+  if (color) props.color = color;
+  if (opacity !== undefined) props.opacity = opacity;
+  return { type: "svg", props };
+}
+
+function serializeImage(instance: ImageInstance): ImageNode {
+  const { source, resizeMode, style = {} } = instance.props;
+  const props: ImageNode["props"] = { src: source };
+  if (style.width !== undefined) props.width = style.width;
+  if (style.height !== undefined) props.height = style.height;
+  if ((style.flex ?? 0) >= 1) props.fill = true;
+  if (style.borderRadius !== undefined) props.cornerRadius = style.borderRadius;
+  if (style.opacity !== undefined) props.opacity = style.opacity;
+  if (resizeMode === "cover") props.cover = true;
+  return { type: "image", props };
+}
+
+/** Split a `Dimension` into the protocol's pixel or fraction field. */
+function dimension(value: Dimension | undefined): { px?: number; fraction?: number } {
+  if (value === undefined) return {};
+  if (typeof value === "number") return { px: value };
+  const percent = Number.parseFloat(value);
+  return Number.isFinite(percent) ? { fraction: percent / 100 } : {};
 }
 
 function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
@@ -181,8 +267,14 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.padding !== undefined) props.padding = style.padding;
   if (style.paddingHorizontal !== undefined) props.paddingX = style.paddingHorizontal;
   if (style.paddingVertical !== undefined) props.paddingY = style.paddingVertical;
-  if (style.width !== undefined) props.width = style.width;
-  if (style.height !== undefined) props.height = style.height;
+  const width = dimension(style.width);
+  if (width.px !== undefined) props.width = width.px;
+  if (width.fraction !== undefined) props.widthPercent = width.fraction;
+  const height = dimension(style.height);
+  if (height.px !== undefined) props.height = height.px;
+  if (height.fraction !== undefined) props.heightPercent = height.fraction;
+  if (style.aspectRatio !== undefined) props.aspectRatio = style.aspectRatio;
+  if (style.flexWrap === "wrap") props.wrap = true;
   if (style.minWidth !== undefined) props.minWidth = style.minWidth;
   if (style.minHeight !== undefined) props.minHeight = style.minHeight;
   if (style.maxWidth !== undefined) props.maxWidth = style.maxWidth;
@@ -211,7 +303,17 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.overflow === "hidden") props.clip = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
 
-  const { onPress, onHoverChange, testID } = instance.props;
+  const { onPress, onHoverChange, onPointer, onContextMenu, occlude, testID } = instance.props;
+  if (occlude) props.occlude = true;
+  if (style.alignSelf) props.alignSelf = ALIGN[style.alignSelf];
+  if (onPointer) {
+    props.onPointer = true;
+    handlers.pointer.set(String(instance.id), onPointer);
+  }
+  if (onContextMenu) {
+    props.onContextMenu = true;
+    handlers.contextMenu.set(String(instance.id), onContextMenu);
+  }
   if (onPress) {
     props.onPress = true;
     handlers.press.set(String(instance.id), onPress);
@@ -238,6 +340,10 @@ function serializeText(instance: TextInstance): TextNode {
   if (instance.props.numberOfLines === 1) props.truncate = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
   if (style.textAlign && style.textAlign !== "left") props.align = style.textAlign;
+  if (style.fontStyle === "italic") props.italic = true;
+  if (style.textDecorationLine === "underline") props.underline = true;
+  if (style.textDecorationLine === "line-through") props.lineThrough = true;
+  if (style.lineHeight !== undefined) props.lineHeight = style.lineHeight;
   const children = instance.children
     .filter((child): child is RawTextInstance => child.kind === "raw")
     .map((child) => child.text);

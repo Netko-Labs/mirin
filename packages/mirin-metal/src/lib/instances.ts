@@ -1,6 +1,6 @@
 /** Internal host-instance tree the reconciler mutates between commits. */
 
-import type { TextInputProps, TextProps, ViewProps } from "../types.ts";
+import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
 
 export interface ViewInstance {
   kind: "view";
@@ -30,7 +30,26 @@ export interface RawTextInstance {
   text: string;
 }
 
-export type HostInstance = ViewInstance | TextInstance | InputInstance;
+export interface SvgInstance {
+  kind: "svg";
+  id: number;
+  props: SvgProps;
+  children: HostNode[];
+}
+
+export interface ImageInstance {
+  kind: "image";
+  id: number;
+  props: ImageProps;
+  children: HostNode[];
+}
+
+export type HostInstance =
+  | ViewInstance
+  | TextInstance
+  | InputInstance
+  | SvgInstance
+  | ImageInstance;
 export type HostNode = HostInstance | RawTextInstance;
 
 export interface Container {

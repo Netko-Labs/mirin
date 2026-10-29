@@ -11,11 +11,13 @@
  */
 
 import { createElement, type ReactElement } from "react";
-import type { TextInputProps, TextProps, ViewProps } from "./types.ts";
+import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "./types.ts";
 
 export const VIEW_TYPE = "mirin-view";
 export const TEXT_TYPE = "mirin-text";
 export const INPUT_TYPE = "mirin-input";
+export const SVG_TYPE = "mirin-svg";
+export const IMAGE_TYPE = "mirin-image";
 
 export function View(props: ViewProps): ReactElement {
   return createElement(VIEW_TYPE, props);
@@ -35,4 +37,14 @@ export function ScrollView(props: ViewProps): ReactElement {
     ...props,
     style: { ...props.style, overflow: "scroll" },
   });
+}
+
+/** A vector icon from inline SVG markup, tinted with `color`. */
+export function Svg(props: SvgProps): ReactElement {
+  return createElement(SVG_TYPE, props);
+}
+
+/** A raster image from a local file. */
+export function Image(props: ImageProps): ReactElement {
+  return createElement(IMAGE_TYPE, props);
 }

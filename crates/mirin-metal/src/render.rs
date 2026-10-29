@@ -6,13 +6,14 @@
 use std::sync::OnceLock;
 
 use gpui::{
-    div, prelude::*, px, rgba, AnyElement, App, ClickEvent, Context, Div, ElementId, FontWeight,
-    KeyDownEvent, MouseButton, MouseDownEvent, SharedString, Stateful, Window,
+    div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
+    ElementId, FontWeight, MouseButton, MouseDownEvent, SharedString, Stateful, Window,
 };
 
+use crate::input::render_input;
+use crate::media::{render_image, render_svg};
 use crate::tree::{
-    parse_color, Align, Direction, InputProps, Justify, NodeSpec, TextAlign, TextProps, ViewProps,
-    Weight,
+    parse_color, Align, Direction, Justify, NodeSpec, TextAlign, TextProps, ViewProps, Weight,
 };
 use crate::window::RootView;
 
@@ -27,6 +28,8 @@ pub(crate) fn render_node(
         NodeSpec::View { props, children } => render_view(props, children, view, window, cx),
         NodeSpec::Text { props, children } => render_text(props, children),
         NodeSpec::Input { props } => render_input(props, view, window, cx),
+        NodeSpec::Svg { props } => render_svg(props),
+        NodeSpec::Image { props } => render_image(props),
     }
 }
 
@@ -96,6 +99,29 @@ fn render_view(
     if props.shrink == Some(false) {
         element = element.flex_shrink_0();
     }
+    if let Some(fraction) = props.width_percent {
+        element = element.w(relative(fraction));
+    }
+    if let Some(fraction) = props.height_percent {
+        element = element.h(relative(fraction));
+    }
+    if let Some(ratio) = props.aspect_ratio {
+        element.style().aspect_ratio = Some(ratio);
+    }
+    if props.wrap {
+        element = element.flex_wrap();
+    }
+    if let Some(align) = props.align_self {
+        element.style().align_self = Some(match align {
+            Align::Start => AlignItems::FlexStart,
+            Align::Center => AlignItems::Center,
+            Align::End => AlignItems::FlexEnd,
+            Align::Stretch => AlignItems::Stretch,
+        });
+    }
+    if props.occlude {
+        element = element.block_mouse_except_scroll();
+    }
     if props.fill {
         element = element.size_full();
     }
@@ -156,6 +182,8 @@ fn render_view(
     let Some(id) = props.id.as_deref() else {
         if props.on_press
             || props.on_hover
+            || props.on_pointer
+            || props.on_context_menu
             || props.scroll
             || props.scroll_x
             || props.hover_background.is_some()
@@ -182,6 +210,30 @@ fn render_view(
             events.hover(hover_id.as_ref(), *hovered);
         });
     }
+    if props.on_pointer {
+        let pointer_id = id.to_string();
+        element = element.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |view, event: &MouseDownEvent, _window, _cx| {
+                view.dragging = Some(pointer_id.clone());
+                view.emit_pointer(&pointer_id, "down", event.position);
+            }),
+        );
+    }
+    if props.on_context_menu {
+        let menu_id = id.to_string();
+        let events = view.events.clone();
+        element = element.on_mouse_down(
+            MouseButton::Right,
+            move |event: &MouseDownEvent, _window: &mut Window, _cx: &mut App| {
+                events.context_menu(
+                    &menu_id,
+                    f32::from(event.position.x),
+                    f32::from(event.position.y),
+                );
+            },
+        );
+    }
     if props.on_press {
         let events = view.events.clone();
         element = element.cursor_pointer().on_click(
@@ -197,7 +249,7 @@ fn render_view(
 fn node_id(node: &NodeSpec) -> Option<String> {
     match node {
         NodeSpec::View { props, .. } => props.id.clone(),
-        NodeSpec::Text { .. } => None,
+        NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => None,
         NodeSpec::Input { props } => Some(props.id.clone()),
     }
 }
@@ -234,314 +286,25 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
         Some(TextAlign::Right) => element.text_right(),
         Some(TextAlign::Left) | None => element,
     };
+    if props.italic {
+        element = element.italic();
+    }
+    if props.underline {
+        element = element.underline();
+    }
+    if props.line_through {
+        element = element.line_through();
+    }
+    if let Some(height) = props.line_height {
+        element = element.line_height(px(height));
+    }
     element.into_any_element()
-}
-
-/// Caret glyph drawn at the cursor while the input has focus.
-const CARET: &str = "\u{258F}";
-
-fn render_input(
-    props: &InputProps,
-    view: &mut RootView,
-    window: &mut Window,
-    cx: &mut Context<RootView>,
-) -> AnyElement {
-    let Some(state) = view.inputs.get(&props.id) else {
-        // `sync_inputs` always runs before render; reaching here is a bug.
-        return div().into_any_element();
-    };
-    let focused = state.focus.is_focused(window);
-    let node_id: SharedString = props.id.clone().into();
-
-    let mut element = div()
-        .id(ElementId::Name(node_id.clone()))
-        .track_focus(&state.focus)
-        .cursor_text()
-        .flex()
-        .flex_col();
-    if props.multiline {
-        element = element.items_start().justify_start();
-    } else {
-        element = element
-            .justify_center()
-            .whitespace_nowrap()
-            .overflow_hidden();
-    }
-    if props.padding > 0.0 {
-        element = element.p(px(props.padding));
-    }
-    if let Some(width) = props.width {
-        element = element.w(px(width));
-    }
-    if let Some(height) = props.height {
-        element = element.h(px(height));
-    }
-    if let Some(height) = props.min_height {
-        element = element.min_h(px(height));
-    }
-    if props.flex >= 1.0 {
-        element = element.flex_grow().min_w(px(0.0)).min_h(px(0.0));
-    }
-    if props.fill {
-        element = element.size_full();
-    }
-    if let Some(color) = props.background.as_deref().and_then(parse_color) {
-        element = element.bg(rgba(color));
-    }
-    if props.corner_radius > 0.0 {
-        element = element.rounded(px(props.corner_radius));
-    }
-    let border = if focused {
-        props
-            .focus_border_color
-            .as_deref()
-            .or(props.border_color.as_deref())
-    } else {
-        props.border_color.as_deref()
-    };
-    if let Some(color) = border.and_then(parse_color) {
-        element = element.border_1().border_color(rgba(color));
-    }
-    if let Some(size) = props.size {
-        element = element.text_size(px(size));
-    }
-    if props.mono {
-        element = element.font_family(mono_family());
-    }
-
-    // Content: the buffer with a caret at the cursor, or the placeholder.
-    let showing_placeholder = state.buffer.is_empty() && !focused;
-    let content: String = if showing_placeholder {
-        props.placeholder.clone().unwrap_or_default()
-    } else {
-        let mut text = String::with_capacity(state.buffer.len() + CARET.len());
-        for (index, ch) in state.buffer.chars().enumerate() {
-            if focused && index == state.cursor {
-                text.push_str(CARET);
-            }
-            text.push(if props.secure { '\u{2022}' } else { ch });
-        }
-        if focused && state.cursor >= state.buffer.chars().count() {
-            text.push_str(CARET);
-        }
-        text
-    };
-    let color = if showing_placeholder {
-        props
-            .placeholder_color
-            .as_deref()
-            .or(props.color.as_deref())
-    } else {
-        props.color.as_deref()
-    };
-    if let Some(color) = color.and_then(parse_color) {
-        element = element.text_color(rgba(color));
-    }
-    let mut body = div().child(SharedString::from(content));
-    if props.multiline {
-        body = body.size_full().whitespace_normal();
-    }
-    element = element.child(body);
-
-    // Click focuses; keys edit the buffer.
-    let focus_id = props.id.clone();
-    element = element.on_mouse_down(
-        MouseButton::Left,
-        cx.listener(move |view, _event: &MouseDownEvent, window, cx| {
-            if let Some(state) = view.inputs.get(&focus_id) {
-                window.focus(&state.focus);
-            }
-            cx.notify();
-        }),
-    );
-    let key_id = props.id.clone();
-    let multiline = props.multiline;
-    let on_change = props.on_change;
-    let on_submit = props.on_submit;
-    element = element.on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
-        let outcome = {
-            let Some(state) = view.inputs.get_mut(&key_id) else {
-                return;
-            };
-            edit(state, event, multiline, cx)
-        };
-        match outcome {
-            Edit::None => {}
-            Edit::FocusNext => view.focus_neighbor(&key_id, 1, window),
-            Edit::FocusPrevious => view.focus_neighbor(&key_id, -1, window),
-            Edit::Changed => {
-                if on_change {
-                    if let Some(state) = view.inputs.get(&key_id) {
-                        view.events.change(&key_id, &state.buffer);
-                    }
-                }
-                cx.notify();
-            }
-            Edit::Submitted => {
-                if on_submit {
-                    if let Some(state) = view.inputs.get(&key_id) {
-                        view.events.submit(&key_id, &state.buffer);
-                    }
-                }
-            }
-        }
-    }));
-
-    element.into_any_element()
-}
-
-enum Edit {
-    None,
-    Changed,
-    Submitted,
-    FocusNext,
-    FocusPrevious,
-}
-
-/// Apply one keystroke to an input buffer.
-fn edit(
-    state: &mut crate::window::InputState,
-    event: &KeyDownEvent,
-    multiline: bool,
-    cx: &App,
-) -> Edit {
-    let keystroke = &event.keystroke;
-    let modifiers = keystroke.modifiers;
-    let command = modifiers.control || modifiers.platform;
-    let len = state.buffer.chars().count();
-    state.cursor = state.cursor.min(len);
-    if state.select_all {
-        state.select_all = false;
-        match keystroke.key.as_str() {
-            "backspace" | "delete" => {
-                state.buffer.clear();
-                state.cursor = 0;
-                return Edit::Changed;
-            }
-            "left" | "home" => {
-                state.cursor = 0;
-                return Edit::Changed;
-            }
-            "right" | "end" => {
-                state.cursor = len;
-                return Edit::Changed;
-            }
-            "enter" | "tab" | "escape" | "up" | "down" => {}
-            _ if command => {}
-            _ => {
-                // Typing over a selection replaces it.
-                state.buffer.clear();
-                state.cursor = 0;
-            }
-        }
-    }
-    let len = state.buffer.chars().count();
-    match keystroke.key.as_str() {
-        "backspace" => {
-            if state.cursor == 0 {
-                return Edit::None;
-            }
-            remove_char(state, state.cursor - 1);
-            state.cursor -= 1;
-            Edit::Changed
-        }
-        "delete" => {
-            if state.cursor >= len {
-                return Edit::None;
-            }
-            remove_char(state, state.cursor);
-            Edit::Changed
-        }
-        "left" => {
-            state.cursor = state.cursor.saturating_sub(1);
-            Edit::Changed
-        }
-        "right" => {
-            state.cursor = (state.cursor + 1).min(len);
-            Edit::Changed
-        }
-        "home" => {
-            state.cursor = 0;
-            Edit::Changed
-        }
-        "end" => {
-            state.cursor = len;
-            Edit::Changed
-        }
-        "enter" => {
-            if multiline && !command {
-                insert_str(state, "\n");
-                Edit::Changed
-            } else {
-                Edit::Submitted
-            }
-        }
-        "tab" => {
-            if modifiers.shift {
-                Edit::FocusPrevious
-            } else {
-                Edit::FocusNext
-            }
-        }
-        "v" if command => match cx.read_from_clipboard().and_then(|item| item.text()) {
-            Some(text) => {
-                let text = if multiline {
-                    text
-                } else {
-                    text.replace('\n', " ")
-                };
-                insert_str(state, &text);
-                Edit::Changed
-            }
-            None => Edit::None,
-        },
-        "a" if command => {
-            state.select_all = true;
-            state.cursor = len;
-            Edit::Changed
-        }
-        "space" => {
-            insert_str(state, " ");
-            Edit::Changed
-        }
-        _ => {
-            if command {
-                return Edit::None;
-            }
-            match keystroke.key_char.as_deref() {
-                Some(text) if !text.is_empty() && !text.chars().any(char::is_control) => {
-                    insert_str(state, text);
-                    Edit::Changed
-                }
-                _ => Edit::None,
-            }
-        }
-    }
-}
-
-fn insert_str(state: &mut crate::window::InputState, text: &str) {
-    let byte_index = char_to_byte(&state.buffer, state.cursor);
-    state.buffer.insert_str(byte_index, text);
-    state.cursor += text.chars().count();
-}
-
-fn remove_char(state: &mut crate::window::InputState, char_index: usize) {
-    let start = char_to_byte(&state.buffer, char_index);
-    let end = char_to_byte(&state.buffer, char_index + 1);
-    state.buffer.replace_range(start..end, "");
-}
-
-fn char_to_byte(text: &str, char_index: usize) -> usize {
-    text.char_indices()
-        .nth(char_index)
-        .map(|(byte, _)| byte)
-        .unwrap_or(text.len())
 }
 
 /// The system monospace family, resolved once through fontconfig so `mono`
 /// text matches what terminals on this desktop use. Falls back to a generic
 /// name GPUI can usually resolve.
-fn mono_family() -> SharedString {
+pub(crate) fn mono_family() -> SharedString {
     static FAMILY: OnceLock<SharedString> = OnceLock::new();
     FAMILY
         .get_or_init(|| {

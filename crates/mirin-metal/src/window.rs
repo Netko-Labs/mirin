@@ -12,6 +12,8 @@ use gpui::{
 };
 
 use crate::events::{EventSender, NativeUiEvent};
+use crate::media::MetalAssets;
+use crate::pointer::capture_root;
 use crate::render::render_node;
 use crate::sim::{self, LayoutMap, SimCommand};
 use crate::tree::{collect_inputs, NodeSpec};
@@ -68,15 +70,18 @@ pub(crate) struct RootView {
     pub(crate) inputs: HashMap<String, InputState>,
     /// Bounds of id'd nodes from the last paint, for simulated clicks.
     pub(crate) layout: LayoutMap,
+    /// Node currently capturing the pointer (`onPointer`), until release.
+    pub(crate) dragging: Option<String>,
 }
 
 impl RootView {
-    fn new(tree: NodeSpec, events: EventSender, cx: &mut App) -> Self {
+    fn new(tree: NodeSpec, events: EventSender, layout: LayoutMap, cx: &mut App) -> Self {
         let mut view = Self {
             tree,
             events,
             inputs: HashMap::new(),
-            layout: LayoutMap::default(),
+            layout,
+            dragging: None,
         };
         view.sync_inputs(cx);
         view
@@ -157,7 +162,8 @@ impl Render for RootView {
         // The tree is immutable per frame; clone it so input state can be read
         // and listeners attached while walking it.
         let tree = self.tree.clone();
-        render_node(&tree, self, window, cx)
+        let content = render_node(&tree, self, window, cx);
+        capture_root(content, cx)
     }
 }
 
@@ -171,91 +177,94 @@ pub fn run(
     updates: mpsc::Receiver<DriverMessage>,
     events: mpsc::Sender<NativeUiEvent>,
 ) {
-    Application::new().run(move |cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
-        let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(options.title.clone()),
+    Application::new()
+        .with_assets(MetalAssets)
+        .run(move |cx: &mut App| {
+            let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
+            let window_options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(options.title.clone()),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let event_sender = EventSender::new(events);
-        let opened = cx.open_window(window_options, |_window, cx| {
-            cx.new(|cx| RootView::new(initial_tree, event_sender, cx))
-        });
-        let window = match opened {
-            Ok(window) => window,
-            Err(error) => {
-                eprintln!("[mirin-metal] failed to open window: {error}");
-                cx.quit();
-                return;
-            }
-        };
-        cx.activate(true);
-        let _ = window.update(cx, |view, window, _cx| view.apply_pending_focus(window));
+            };
+            let layout = LayoutMap::default();
+            let event_sender = EventSender::new(events, layout.clone());
+            let opened = cx.open_window(window_options, |_window, cx| {
+                cx.new(|cx| RootView::new(initial_tree, event_sender, layout, cx))
+            });
+            let window = match opened {
+                Ok(window) => window,
+                Err(error) => {
+                    eprintln!("[mirin-metal] failed to open window: {error}");
+                    cx.quit();
+                    return;
+                }
+            };
+            cx.activate(true);
+            let _ = window.update(cx, |view, window, _cx| view.apply_pending_focus(window));
 
-        // Apply driver updates: poll the channel on the foreground executor and
-        // swap the root tree (coalescing to the newest one) when it changes.
-        cx.spawn(async move |cx| {
-            // Simulated commands waiting for a later tick: a focus or press must
-            // land (and the driver's resulting tree arrive) before the commands
-            // after it, so at most one of those is performed per tick.
-            let mut pending: std::collections::VecDeque<SimCommand> =
-                std::collections::VecDeque::new();
-            loop {
-                cx.background_executor().timer(UPDATE_POLL_INTERVAL).await;
-                let mut latest_tree = None;
-                while let Ok(message) = updates.try_recv() {
-                    match message {
-                        DriverMessage::Tree(tree) => latest_tree = Some(*tree),
-                        DriverMessage::Sim(command) => pending.push_back(command),
+            // Apply driver updates: poll the channel on the foreground executor and
+            // swap the root tree (coalescing to the newest one) when it changes.
+            cx.spawn(async move |cx| {
+                // Simulated commands waiting for a later tick: a focus or press must
+                // land (and the driver's resulting tree arrive) before the commands
+                // after it, so at most one of those is performed per tick.
+                let mut pending: std::collections::VecDeque<SimCommand> =
+                    std::collections::VecDeque::new();
+                loop {
+                    cx.background_executor().timer(UPDATE_POLL_INTERVAL).await;
+                    let mut latest_tree = None;
+                    while let Ok(message) = updates.try_recv() {
+                        match message {
+                            DriverMessage::Tree(tree) => latest_tree = Some(*tree),
+                            DriverMessage::Sim(command) => pending.push_back(command),
+                        }
+                    }
+                    let mut sims = Vec::new();
+                    while let Some(command) = pending.pop_front() {
+                        let settles = matches!(command, SimCommand::Click { .. });
+                        sims.push(command);
+                        if settles {
+                            break;
+                        }
+                    }
+                    if latest_tree.is_none() && sims.is_empty() {
+                        continue;
+                    }
+                    // Resolve while the view is leased; dispatch with only the window
+                    // leased, because keystrokes re-enter the view's listeners.
+                    let resolved = window.update(cx, |view, window, cx| {
+                        if let Some(tree) = latest_tree {
+                            view.set_tree(tree, cx);
+                            view.apply_pending_focus(window);
+                            cx.notify();
+                        }
+                        let actions: Vec<_> = sims
+                            .iter()
+                            .filter_map(|command| sim::resolve(command, view))
+                            .collect();
+                        (actions, view.events.clone())
+                    });
+                    let Ok((actions, events)) = resolved else {
+                        // Window is gone; nothing left to drive.
+                        return;
+                    };
+                    if actions.is_empty() {
+                        continue;
+                    }
+                    let any_window: gpui::AnyWindowHandle = window.into();
+                    let dispatched = any_window.update(cx, |_root, window, cx| {
+                        for action in actions {
+                            sim::perform(action, &events, window, cx);
+                        }
+                    });
+                    if dispatched.is_err() {
+                        return;
                     }
                 }
-                let mut sims = Vec::new();
-                while let Some(command) = pending.pop_front() {
-                    let settles = matches!(command, SimCommand::Click { .. });
-                    sims.push(command);
-                    if settles {
-                        break;
-                    }
-                }
-                if latest_tree.is_none() && sims.is_empty() {
-                    continue;
-                }
-                // Resolve while the view is leased; dispatch with only the window
-                // leased, because keystrokes re-enter the view's listeners.
-                let resolved = window.update(cx, |view, window, cx| {
-                    if let Some(tree) = latest_tree {
-                        view.set_tree(tree, cx);
-                        view.apply_pending_focus(window);
-                        cx.notify();
-                    }
-                    let actions: Vec<_> = sims
-                        .iter()
-                        .filter_map(|command| sim::resolve(command, view))
-                        .collect();
-                    (actions, view.events.clone())
-                });
-                let Ok((actions, events)) = resolved else {
-                    // Window is gone; nothing left to drive.
-                    return;
-                };
-                if actions.is_empty() {
-                    continue;
-                }
-                let any_window: gpui::AnyWindowHandle = window.into();
-                let dispatched = any_window.update(cx, |_root, window, cx| {
-                    for action in actions {
-                        sim::perform(action, &events, window, cx);
-                    }
-                });
-                if dispatched.is_err() {
-                    return;
-                }
-            }
-        })
-        .detach();
-    });
+            })
+            .detach();
+        });
 }

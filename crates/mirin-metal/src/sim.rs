@@ -11,7 +11,7 @@ use std::rc::Rc;
 use gpui::{point, px, App, Bounds, FocusHandle, Keystroke, Modifiers, Pixels, Point, Window};
 use serde::Deserialize;
 
-use crate::events::EventSender;
+use crate::events::{EventSender, PointerPhase};
 use crate::tree::NodeSpec;
 use crate::window::RootView;
 
@@ -34,6 +34,28 @@ pub enum SimCommand {
     Type { text: String },
     /// Report the painted bounds of every id'd node as a `layout` event.
     Layout,
+    /// Press node `id` at fraction (`fromX`, `fromY`) of its bounds, move to
+    /// (`toX`, `toY`), and release: the `pointer` events a drag produces.
+    Drag {
+        id: String,
+        #[serde(rename = "fromX", default = "half")]
+        from_x: f32,
+        #[serde(rename = "fromY", default = "half")]
+        from_y: f32,
+        #[serde(rename = "toX", default = "half")]
+        to_x: f32,
+        #[serde(rename = "toY", default = "half")]
+        to_y: f32,
+    },
+    /// Right-click the centre of node `id`.
+    #[serde(rename = "contextmenu")]
+    ContextMenu { id: String },
+    /// Pointer enters (`true`) or leaves (`false`) node `id`.
+    Hover { id: String, hovered: bool },
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 /// Painted bounds of one id'd node, in window pixels.
@@ -68,6 +90,17 @@ impl LayoutMap {
             .map(|(id, _)| id.clone())
     }
 
+    /// Painted bounds of one node.
+    pub(crate) fn node(&self, id: &str) -> Option<LayoutNode> {
+        self.0.borrow().get(id).map(|bounds| LayoutNode {
+            id: id.to_string(),
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+        })
+    }
+
     pub(crate) fn snapshot(&self) -> Vec<LayoutNode> {
         let mut nodes: Vec<LayoutNode> = self
             .0
@@ -94,6 +127,10 @@ pub(crate) enum SimAction {
     Press(String),
     Keystrokes(Vec<Keystroke>),
     Layout(Vec<LayoutNode>),
+    /// Down/move/up at window coordinates, with the node's bounds.
+    Drag(String, LayoutNode, [(f32, f32); 2]),
+    ContextMenu(String, f32, f32),
+    Hover(String, bool),
 }
 
 /// Resolve a command against the view. Logs and returns `None` when it cannot
@@ -166,6 +203,34 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             Some(SimAction::Keystrokes(keystrokes))
         }
         SimCommand::Layout => Some(SimAction::Layout(view.layout.snapshot())),
+        SimCommand::Drag {
+            id,
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+        } => {
+            let Some(bounds) = view.layout.node(id) else {
+                eprintln!("[mirin-metal] sim drag: no painted node with id {id:?}");
+                return None;
+            };
+            let at =
+                |fx: f32, fy: f32| (bounds.x + bounds.width * fx, bounds.y + bounds.height * fy);
+            let points = [at(*from_x, *from_y), at(*to_x, *to_y)];
+            Some(SimAction::Drag(id.clone(), bounds, points))
+        }
+        SimCommand::ContextMenu { id } => {
+            let Some(bounds) = view.layout.node(id) else {
+                eprintln!("[mirin-metal] sim contextmenu: no painted node with id {id:?}");
+                return None;
+            };
+            Some(SimAction::ContextMenu(
+                id.clone(),
+                bounds.x + bounds.width / 2.0,
+                bounds.y + bounds.height / 2.0,
+            ))
+        }
+        SimCommand::Hover { id, hovered } => Some(SimAction::Hover(id.clone(), *hovered)),
     }
 }
 
@@ -180,6 +245,13 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
             }
         }
         SimAction::Layout(nodes) => events.layout(nodes),
+        SimAction::Drag(id, bounds, [(x0, y0), (x1, y1)]) => {
+            events.pointer(&id, PointerPhase::Down, x0, y0, Some(bounds.clone()));
+            events.pointer(&id, PointerPhase::Move, x1, y1, Some(bounds.clone()));
+            events.pointer(&id, PointerPhase::Up, x1, y1, Some(bounds));
+        }
+        SimAction::ContextMenu(id, x, y) => events.context_menu(&id, x, y),
+        SimAction::Hover(id, hovered) => events.hover(&id, hovered),
     }
 }
 
@@ -204,7 +276,9 @@ fn describe(node: &NodeSpec, id: &str) -> String {
                 .find(|text| text != "absent")
                 .unwrap_or_else(|| "absent".to_string())
         }
-        NodeSpec::Text { .. } => "absent".to_string(),
+        NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {
+            "absent".to_string()
+        }
         NodeSpec::Input { props } => {
             if props.id == id {
                 "input".to_string()
@@ -222,6 +296,9 @@ fn pressable(node: &NodeSpec, id: &str) -> bool {
             (props.id.as_deref() == Some(id) && props.on_press)
                 || children.iter().any(|child| pressable(child, id))
         }
-        NodeSpec::Text { .. } | NodeSpec::Input { .. } => false,
+        NodeSpec::Text { .. }
+        | NodeSpec::Input { .. }
+        | NodeSpec::Svg { .. }
+        | NodeSpec::Image { .. } => false,
     }
 }

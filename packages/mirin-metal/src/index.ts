@@ -1,13 +1,18 @@
-export { ScrollView, Text, TextInput, View } from "./components.ts";
+export { Image, ScrollView, Svg, Text, TextInput, View } from "./components.ts";
 export { spawnNativeHost } from "./host.ts";
 export { render } from "./render.ts";
 export type {
+  Bounds,
   Color,
+  Dimension,
+  ImageProps,
   LayoutNode,
   NativeEvent,
   NativeRoot,
   NativeTransport,
+  PointerInfo,
   SimCommand,
+  SvgProps,
   TextInputProps,
   TextInputStyle,
   TextProps,

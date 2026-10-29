@@ -23,6 +23,8 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
   let handlers: Handlers = {
     press: new Map(),
     hover: new Map(),
+    pointer: new Map(),
+    contextMenu: new Map(),
     change: new Map(),
     submit: new Map(),
     testIds: new Map(),
@@ -43,7 +45,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
   transport.onEvent((event) => {
     switch (event.type) {
       case "press":
-        handlers.press.get(event.nodeId)?.();
+        handlers.press.get(event.nodeId)?.({ bounds: event.bounds });
         break;
       case "change":
         handlers.change.get(event.nodeId)?.(event.value);
@@ -52,7 +54,15 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         handlers.submit.get(event.nodeId)?.(event.value);
         break;
       case "hover":
-        handlers.hover.get(event.nodeId)?.(event.hovered);
+        handlers.hover.get(event.nodeId)?.(event.hovered, event.bounds);
+        break;
+      case "pointer": {
+        const { nodeId: _id, type: _type, ...info } = event;
+        handlers.pointer.get(event.nodeId)?.(info);
+        break;
+      }
+      case "contextmenu":
+        handlers.contextMenu.get(event.nodeId)?.({ x: event.x, y: event.y });
         break;
       case "layout":
         break;

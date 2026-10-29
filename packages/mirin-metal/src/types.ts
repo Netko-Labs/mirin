@@ -9,6 +9,9 @@ import type { ReactNode } from "react";
 /** `#RGB`, `#RRGGBB`, or `#RRGGBBAA`. */
 export type Color = string;
 
+/** A length in pixels, or a percentage of the parent (`"50%"`). */
+export type Dimension = number | `${number}%`;
+
 /** Flexbox-flavored layout + appearance for a `<View>`. */
 export interface ViewStyle {
   flexDirection?: "row" | "column";
@@ -16,12 +19,15 @@ export interface ViewStyle {
   padding?: number;
   paddingHorizontal?: number;
   paddingVertical?: number;
-  width?: number;
-  height?: number;
+  width?: Dimension;
+  height?: Dimension;
   minWidth?: number;
   minHeight?: number;
   maxWidth?: number;
   maxHeight?: number;
+  /** Width / height, e.g. `16 / 9`. */
+  aspectRatio?: number;
+  flexWrap?: "nowrap" | "wrap";
   /** `absolute` takes the view out of flow, anchored to the nearest `relative` ancestor. */
   position?: "relative" | "absolute";
   top?: number;
@@ -33,6 +39,7 @@ export interface ViewStyle {
   /** `flexShrink: 0` keeps the view from shrinking below its content. */
   flexShrink?: 0 | 1;
   alignItems?: "flex-start" | "center" | "flex-end" | "stretch";
+  alignSelf?: "flex-start" | "center" | "flex-end" | "stretch";
   justifyContent?: "flex-start" | "center" | "flex-end" | "space-between";
   backgroundColor?: Color;
   /** Background while the pointer is over the view. */
@@ -54,6 +61,9 @@ export interface TextStyle {
   fontFamily?: "monospace" | "default";
   opacity?: number;
   textAlign?: "left" | "center" | "right";
+  fontStyle?: "normal" | "italic";
+  textDecorationLine?: "none" | "underline" | "line-through";
+  lineHeight?: number;
 }
 
 /** Appearance for a `<TextInput>`. */
@@ -74,11 +84,35 @@ export interface TextInputStyle {
   flex?: number;
 }
 
+/** A pointer phase on a view with `onPointer`, in window pixels. */
+export interface PointerInfo {
+  phase: "down" | "move" | "up";
+  x: number;
+  y: number;
+  /** The view's painted bounds when the event fired. */
+  bounds?: Bounds;
+}
+
+/** Painted bounds of a node in window pixels. */
+export interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface ViewProps {
   style?: ViewStyle;
-  onPress?: () => void;
+  /** Click/tap. `bounds` is the view's painted rect, for anchoring popups. */
+  onPress?: (event: { bounds?: Bounds }) => void;
   /** Pointer entered (`true`) or left (`false`) the view. */
-  onHoverChange?: (hovered: boolean) => void;
+  onHoverChange?: (hovered: boolean, bounds?: Bounds) => void;
+  /** Stop pointer events from reaching views painted underneath (overlays). */
+  occlude?: boolean;
+  /** Press on this view, then every move and the release until the button lifts. */
+  onPointer?: (event: PointerInfo) => void;
+  /** Right-click, in window pixels. */
+  onContextMenu?: (event: { x: number; y: number }) => void;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
   children?: ReactNode;
@@ -107,6 +141,29 @@ export interface TextInputProps {
   testID?: string;
 }
 
+export interface SvgProps {
+  /** A complete `<svg>` document; strokes and fills are tinted with `color`. */
+  markup: string;
+  size?: number;
+  width?: number;
+  height?: number;
+  color?: Color;
+  opacity?: number;
+}
+
+export interface ImageProps {
+  /** Absolute path to a local image file. */
+  source: string;
+  resizeMode?: "cover" | "contain";
+  style?: {
+    width?: number;
+    height?: number;
+    borderRadius?: number;
+    opacity?: number;
+    flex?: number;
+  };
+}
+
 /** Painted bounds of one node, in window pixels (from a `layout` query). */
 export interface LayoutNode {
   id: string;
@@ -118,10 +175,12 @@ export interface LayoutNode {
 
 /** An interaction event coming back from the native UI. */
 export type NativeEvent =
-  | { type: "press"; nodeId: string }
+  | { type: "press"; nodeId: string; bounds?: Bounds }
   | { type: "change"; nodeId: string; value: string }
   | { type: "submit"; nodeId: string; value: string }
-  | { type: "hover"; nodeId: string; hovered: boolean }
+  | { type: "hover"; nodeId: string; hovered: boolean; bounds?: Bounds }
+  | ({ type: "pointer"; nodeId: string } & PointerInfo)
+  | { type: "contextmenu"; nodeId: string; x: number; y: number }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] };
 
 /**
@@ -134,7 +193,10 @@ export type SimCommand =
   | { kind: "click"; x: number; y: number }
   | { kind: "key"; keystroke: string }
   | { kind: "type"; text: string }
-  | { kind: "layout" };
+  | { kind: "layout" }
+  | { kind: "drag"; id: string; fromX?: number; fromY?: number; toX?: number; toY?: number }
+  | { kind: "contextmenu"; id: string }
+  | { kind: "hover"; id: string; hovered: boolean };
 
 /**
  * The channel to the native renderer. `spawnNativeHost` provides the stdio

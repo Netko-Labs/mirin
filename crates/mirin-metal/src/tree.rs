@@ -27,6 +27,39 @@ pub enum NodeSpec {
     /// lives in the renderer; the driver receives `change`/`submit` events and
     /// may reset the contents through `value`.
     Input { props: InputProps },
+    /// A vector icon: inline SVG markup drawn as a mask tinted with `color`.
+    Svg { props: SvgProps },
+    /// A raster image from a local file path.
+    Image { props: ImageProps },
+}
+
+/// Props for an `svg` node.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct SvgProps {
+    /// Complete `<svg>` document. Strokes and fills become the mask; the
+    /// renderer paints it with `color`.
+    pub markup: String,
+    pub size: Option<f32>,
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+    pub color: Option<String>,
+    pub opacity: Option<f32>,
+}
+
+/// Props for an `image` node.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImageProps {
+    /// Absolute path to a PNG/JPEG/GIF/WebP/SVG file.
+    pub src: String,
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+    pub fill: bool,
+    pub corner_radius: f32,
+    /// `cover` crops to fill the box; `contain` (default) letterboxes.
+    pub cover: bool,
+    pub opacity: Option<f32>,
 }
 
 /// Layout/appearance props for a `view` node (flexbox-flavored, like RN).
@@ -56,6 +89,13 @@ pub struct ViewProps {
     pub left: Option<f32>,
     pub right: Option<f32>,
     pub bottom: Option<f32>,
+    /// Width/height as a fraction (0..1) of the parent.
+    pub width_percent: Option<f32>,
+    pub height_percent: Option<f32>,
+    /// Width / height ratio, e.g. `1.777` for 16:9.
+    pub aspect_ratio: Option<f32>,
+    /// Wrap children onto new lines along the main axis.
+    pub wrap: bool,
     /// `flex >= 1` grows to take the remaining main-axis space.
     pub flex: f32,
     /// `false` keeps the node from shrinking below its content.
@@ -85,6 +125,15 @@ pub struct ViewProps {
     pub on_press: bool,
     /// Emit `hover` events (`hovered: true|false`) for this node (needs `id`).
     pub on_hover: bool,
+    /// Emit `pointer` events (down on this node, then move/up anywhere until
+    /// release) with window coordinates and this node's bounds (needs `id`).
+    pub on_pointer: bool,
+    /// Emit `contextmenu` on right-click with window coordinates (needs `id`).
+    pub on_context_menu: bool,
+    /// Stop pointer events from reaching nodes painted underneath (overlays).
+    pub occlude: bool,
+    /// Override the parent's cross-axis alignment for this node.
+    pub align_self: Option<Align>,
 }
 
 /// Appearance props for a `text` node.
@@ -102,6 +151,11 @@ pub struct TextProps {
     pub truncate: bool,
     pub opacity: Option<f32>,
     pub align: Option<TextAlign>,
+    pub italic: bool,
+    pub underline: bool,
+    pub line_through: bool,
+    /// Line height in pixels.
+    pub line_height: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -266,7 +320,7 @@ pub(crate) fn collect_inputs<'a>(node: &'a NodeSpec, out: &mut Vec<&'a InputProp
                 collect_inputs(child, out);
             }
         }
-        NodeSpec::Text { .. } => {}
+        NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
         NodeSpec::Input { props } => out.push(props),
     }
 }
@@ -310,7 +364,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_fields_and_types() {
-        assert!(parse_tree(r#"{"type":"image","props":{}}"#).is_err());
+        assert!(parse_tree(r#"{"type":"canvas","props":{}}"#).is_err());
         assert!(parse_tree(r#"{"type":"view","props":{"bogus":1}}"#).is_err());
         assert!(parse_tree(r#"{"type":"input","props":{"value":"x"}}"#).is_err());
     }
