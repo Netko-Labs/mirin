@@ -203,6 +203,13 @@ Feature status:
 
 - **Window controls** — ✅ minimize / maximize (toggle) / restore / fullscreen /
   always-on-top / activate / show / hide via CEF Views (`linux::control`).
+- **Geometry + frame events** — ✅ `x`/`y` place the window through
+  `WindowDelegate::initial_bounds` (no `x`/`y` still centers), `minWidth`/
+  `minHeight` map to `ViewDelegate::minimum_size`, and the delegate reports
+  `on_window_bounds_changed` as `window.moved` / `window.resized` frame events
+  and `on_window_activation_changed` as `window.focus` / `window.blur`, so
+  `getFrame()`, `isMaximized()`, and focus listeners work like on macOS/Windows
+  (Anko's window-state persistence depends on these).
 - **Custom title bar / frameless** — ✅ **works on X11.** `is_frameless` yields a truly
   borderless window; the app draws its own header + min/max/close, and mirin drives
   native move / resize / live-resize / double-click-maximize via `_NET_WM_MOVERESIZE`

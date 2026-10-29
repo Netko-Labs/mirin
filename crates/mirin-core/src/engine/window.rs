@@ -160,11 +160,20 @@ pub(crate) fn create_window_on_ui(id: u32, opts: WindowOpts) {
         opts.title_bar_style.as_deref(),
         Some("hidden") | Some("hiddenInset")
     );
+    let geometry = linux::WindowGeometry {
+        x: opts.x.map(|x| x as i32),
+        y: opts.y.map(|y| y as i32),
+        width: opts.width as i32,
+        height: opts.height as i32,
+        min_width: opts.min_width as i32,
+        min_height: opts.min_height as i32,
+    };
     let mut win_delegate = linux::MirinWindowDelegate::new(
         RefCell::new(browser_view),
+        id,
         opts.title.clone(),
-        opts.width as i32,
-        opts.height as i32,
+        geometry,
+        RefCell::new(None),
         opts.visible,
         opts.always_on_top,
         frameless,
