@@ -18,6 +18,23 @@ function reportError(error: Error): void {
   console.error("[mirin-metal]", error);
 }
 
+/**
+ * Render `children` into another mounted host view (a portal). Context flows
+ * through as in React DOM portals; overlays use it to escape clipping.
+ */
+export function createPortal(children: ReactNode, container: unknown, key?: string): ReactNode {
+  // Type-only cast: the reconciler types the container as its Container, but
+  // any mounted host instance (which also has `children`) works as a target.
+  // Type-only cast: react-reconciler ships its own ReactPortal declaration that
+  // does not overlap @types/react's; the runtime object is the same.
+  return reconciler.createPortal(
+    children,
+    container as Container,
+    null,
+    key ?? null,
+  ) as unknown as ReactNode;
+}
+
 /** Render a React element tree into the native UI. */
 export function render(element: ReactNode, transport: NativeTransport): NativeRoot {
   let handlers: Handlers = {
@@ -25,6 +42,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     hover: new Map(),
     pointer: new Map(),
     contextMenu: new Map(),
+    layout: new Map(),
     change: new Map(),
     submit: new Map(),
     testIds: new Map(),
@@ -61,6 +79,9 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         handlers.pointer.get(event.nodeId)?.(info);
         break;
       }
+      case "resize":
+        handlers.layout.get(event.nodeId)?.(event.bounds);
+        break;
       case "contextmenu":
         handlers.contextMenu.get(event.nodeId)?.({ x: event.x, y: event.y });
         break;

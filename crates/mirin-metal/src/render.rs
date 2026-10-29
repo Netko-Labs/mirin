@@ -162,6 +162,7 @@ fn render_view(
         element = element.opacity(opacity);
     }
     let child_ids: Vec<Option<String>> = children.iter().map(node_id).collect();
+    let child_watch: Vec<bool> = children.iter().map(watches_layout).collect();
     let mut element = element.children(
         children
             .iter()
@@ -169,10 +170,13 @@ fn render_view(
     );
     if child_ids.iter().any(Option::is_some) {
         let layout = view.layout.clone();
+        let events = view.events.clone();
         element = element.on_children_prepainted(move |bounds, _window, _cx| {
-            for (id, bounds) in child_ids.iter().zip(bounds) {
+            for ((id, watch), bounds) in child_ids.iter().zip(&child_watch).zip(bounds) {
                 if let Some(id) = id {
-                    layout.record(id, bounds);
+                    if layout.record(id, bounds) && *watch {
+                        events.resize(id);
+                    }
                 }
             }
         });
@@ -243,6 +247,11 @@ fn render_view(
         );
     }
     element.into_any_element()
+}
+
+/// Whether a node asked for `layout` events when its bounds change.
+fn watches_layout(node: &NodeSpec) -> bool {
+    matches!(node, NodeSpec::View { props, .. } if props.on_layout && props.id.is_some())
 }
 
 /// The id a node carries, if any (views may omit one; inputs always have one).

@@ -38,6 +38,8 @@ export function parseNativeEvent(line: string): NativeEvent | null {
       if (typeof x !== "number" || typeof y !== "number") return null;
       return { type: "pointer", nodeId, phase, x, y, ...withBounds };
     }
+    case "resize":
+      return bounds ? { type: "resize", nodeId, bounds } : null;
     case "contextmenu":
       return typeof record.x === "number" && typeof record.y === "number"
         ? { type: "contextmenu", nodeId, x: record.x, y: record.y }

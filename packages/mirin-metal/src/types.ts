@@ -109,6 +109,8 @@ export interface ViewProps {
   onHoverChange?: (hovered: boolean, bounds?: Bounds) => void;
   /** Stop pointer events from reaching views painted underneath (overlays). */
   occlude?: boolean;
+  /** Called with the view's painted bounds whenever they change. */
+  onLayout?: (bounds: Bounds) => void;
   /** Press on this view, then every move and the release until the button lifts. */
   onPointer?: (event: PointerInfo) => void;
   /** Right-click, in window pixels. */
@@ -181,6 +183,7 @@ export type NativeEvent =
   | { type: "hover"; nodeId: string; hovered: boolean; bounds?: Bounds }
   | ({ type: "pointer"; nodeId: string } & PointerInfo)
   | { type: "contextmenu"; nodeId: string; x: number; y: number }
+  | { type: "resize"; nodeId: string; bounds: Bounds }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] };
 
 /**

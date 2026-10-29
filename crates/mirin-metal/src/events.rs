@@ -39,6 +39,8 @@ pub enum EventKind {
     },
     /// Right-click on a `view` with `onContextMenu`, in window coordinates.
     ContextMenu { x: f32, y: f32 },
+    /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
+    Resize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +71,7 @@ impl EventKind {
             EventKind::Hover { .. } => "hover",
             EventKind::Pointer { .. } => "pointer",
             EventKind::ContextMenu { .. } => "contextmenu",
+            EventKind::Resize => "resize",
         }
     }
 
@@ -78,7 +81,8 @@ impl EventKind {
             | EventKind::Layout { .. }
             | EventKind::Hover { .. }
             | EventKind::Pointer { .. }
-            | EventKind::ContextMenu { .. } => None,
+            | EventKind::ContextMenu { .. }
+            | EventKind::Resize => None,
             EventKind::Change { value } | EventKind::Submit { value } => Some(value),
         }
     }
@@ -140,6 +144,10 @@ impl EventSender {
                 bounds,
             },
         );
+    }
+
+    pub(crate) fn resize(&self, node_id: &str) {
+        self.send(node_id, EventKind::Resize);
     }
 
     pub(crate) fn context_menu(&self, node_id: &str, x: f32, y: f32) {

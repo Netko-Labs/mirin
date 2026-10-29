@@ -132,6 +132,9 @@ pub struct ViewProps {
     pub on_context_menu: bool,
     /// Stop pointer events from reaching nodes painted underneath (overlays).
     pub occlude: bool,
+    /// Emit a `layout` event with this node's bounds whenever they change
+    /// (needs `id`). Popups use it to measure themselves and the window.
+    pub on_layout: bool,
     /// Override the parent's cross-axis alignment for this node.
     pub align_self: Option<Align>,
 }

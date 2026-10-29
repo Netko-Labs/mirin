@@ -73,8 +73,9 @@ pub struct LayoutNode {
 pub(crate) struct LayoutMap(Rc<RefCell<HashMap<String, Bounds<Pixels>>>>);
 
 impl LayoutMap {
-    pub(crate) fn record(&self, id: &str, bounds: Bounds<Pixels>) {
-        self.0.borrow_mut().insert(id.to_string(), bounds);
+    /// Record a node's bounds; returns whether they changed since last paint.
+    pub(crate) fn record(&self, id: &str, bounds: Bounds<Pixels>) -> bool {
+        self.0.borrow_mut().insert(id.to_string(), bounds) != Some(bounds)
     }
 
     /// The smallest painted node containing `point`.

@@ -67,6 +67,7 @@ interface ViewNodeProps {
   onPointer?: boolean;
   onContextMenu?: boolean;
   occlude?: boolean;
+  onLayout?: boolean;
   alignSelf?: "start" | "center" | "end" | "stretch";
 }
 
@@ -157,6 +158,7 @@ export interface Handlers {
   hover: Map<string, (hovered: boolean, bounds?: Bounds) => void>;
   pointer: Map<string, (event: PointerInfo) => void>;
   contextMenu: Map<string, (event: { x: number; y: number }) => void>;
+  layout: Map<string, (bounds: Bounds) => void>;
   change: Map<string, (text: string) => void>;
   submit: Map<string, (text: string) => void>;
   /** `testID` → native node id, for checks and tools. */
@@ -203,6 +205,7 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
     hover: new Map(),
     pointer: new Map(),
     contextMenu: new Map(),
+    layout: new Map(),
     change: new Map(),
     submit: new Map(),
     testIds: new Map(),
@@ -303,7 +306,12 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.overflow === "hidden") props.clip = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
 
-  const { onPress, onHoverChange, onPointer, onContextMenu, occlude, testID } = instance.props;
+  const { onPress, onHoverChange, onPointer, onContextMenu, onLayout, occlude, testID } =
+    instance.props;
+  if (onLayout) {
+    props.onLayout = true;
+    handlers.layout.set(String(instance.id), onLayout);
+  }
   if (occlude) props.occlude = true;
   if (style.alignSelf) props.alignSelf = ALIGN[style.alignSelf];
   if (onPointer) {

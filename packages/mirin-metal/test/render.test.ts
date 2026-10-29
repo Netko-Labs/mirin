@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createElement, useState } from "react";
+import { createContext, createElement, useContext, useState } from "react";
 import { Text, TextInput, View } from "../src/components.ts";
 import { parseNativeEvent } from "../src/host.ts";
-import { render } from "../src/render.ts";
+import { createPortal, render } from "../src/render.ts";
 import type { NativeEvent, NativeTransport } from "../src/types.ts";
 
 interface FakeTransport extends NativeTransport {
@@ -172,6 +172,41 @@ describe("TextInput", () => {
 
     transport.emit({ type: "submit", nodeId: input.props.id, value: "select 2" });
     expect(seen).toEqual(["select 2"]);
+    root.unmount();
+  });
+});
+
+describe("createPortal", () => {
+  test("renders into another mounted view and keeps context", async () => {
+    const transport = fakeTransport();
+    const Label = createContext("missing");
+    function Reader() {
+      return createElement(Text, null, useContext(Label));
+    }
+    function App() {
+      const [layer, setLayer] = useState<unknown>(null);
+      return createElement(
+        Label.Provider,
+        { value: "from context" },
+        createElement(
+          View,
+          null,
+          createElement(
+            View,
+            { testID: "content" },
+            layer ? createPortal(createElement(Reader), layer) : null,
+          ),
+          createElement(View, { ref: setLayer, testID: "layer" } as never),
+        ),
+      );
+    }
+    const root = render(createElement(App), transport);
+    await nextCommit();
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    const [content, layer] = tree.children;
+    expect(content.children).toEqual([]);
+    expect(layer.children[0]).toEqual({ type: "text", props: {}, children: ["from context"] });
     root.unmount();
   });
 });
