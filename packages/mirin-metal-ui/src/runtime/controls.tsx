@@ -34,6 +34,7 @@ function useInputStyle(props: Props, base: string): TextInputStyle {
   const className = str(props.className);
   const attrs = collectAttrs(props);
   const key = JSON.stringify(attrs);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: key summarizes attrs
   return useMemo(() => {
     const tw = translate(`${base} ${className ?? ""}`, theme.colors, theme.radius, {
       attrs,
@@ -57,7 +58,6 @@ function useInputStyle(props: Props, base: string): TextInputStyle {
       ...(view.width === "100%" || view.flex ? { flex: 1 } : {}),
       ...(view.borderWidth === 0 ? { borderColor: "#00000000" } : {}),
     };
-    // biome-ignore lint/correctness/useExhaustiveDependencies: key summarizes attrs
   }, [className, base, theme, key, inherited]);
 }
 

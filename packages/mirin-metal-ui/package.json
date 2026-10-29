@@ -36,8 +36,16 @@
     "access": "public"
   },
   "dependencies": {
+    "@formisch/react": "^1.1.1",
+    "@hookform/resolvers": "^6.0.2",
     "@mirinjs/metal": "workspace:*",
-    "lucide": "1.64.0"
+    "@tanstack/react-form": "^1.33.5",
+    "@tanstack/react-table": "^9.3.1",
+    "date-fns": "^4.4.0",
+    "lucide": "1.64.0",
+    "react-hook-form": "^7.91.0",
+    "valibot": "^1.5.0",
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "react": "^19.0.0"

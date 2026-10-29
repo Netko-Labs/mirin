@@ -123,7 +123,13 @@ describe("DropdownMenu", () => {
             <DropdownMenuCheckboxItem checked={bar} onCheckedChange={setBar}>
               Status Bar
             </DropdownMenuCheckboxItem>
-            <DropdownMenuItem onSelect={() => (chosen = "profile")}>Profile</DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                chosen = "profile";
+              }}
+            >
+              Profile
+            </DropdownMenuItem>
           </DropdownMenuContent>
           <span>{bar ? "bar on" : "bar off"}</span>
         </DropdownMenu>

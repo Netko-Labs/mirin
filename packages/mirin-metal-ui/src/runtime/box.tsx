@@ -89,7 +89,6 @@ const TAG_CLASSES: Record<string, string> = {
   tfoot: "flex flex-col",
   tr: "flex flex-row",
   td: "flex-1",
-  th_cell: "flex-1",
 };
 
 /** Text properties that inherit, like CSS. */
@@ -294,6 +293,7 @@ export function Box(props: BoxProps): ReactNode {
   const attrs = collectAttrs(props);
   const stateKey = attrsKey(attrs);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: stateKey summarizes attrs
   const tw = useMemo(
     () =>
       translate(cn(TAG_CLASSES[tag], className), theme.colors, theme.radius, {
@@ -303,7 +303,6 @@ export function Box(props: BoxProps): ReactNode {
         viewportWidth: theme.viewportWidth,
       }),
     // attrs is summarized by stateKey.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: stateKey covers attrs
     [tag, className, theme, stateKey, groups],
   );
   if (tw.hidden || tw.display === "none") return null;
