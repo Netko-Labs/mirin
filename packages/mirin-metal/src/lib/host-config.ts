@@ -8,7 +8,15 @@
 import { createContext } from "react";
 import type ReactReconciler from "react-reconciler";
 import { DefaultEventPriority, NoEventPriority } from "react-reconciler/constants";
-import { IMAGE_TYPE, INPUT_TYPE, SVG_TYPE, type TEXT_TYPE, VIEW_TYPE } from "../components.ts";
+import { IMAGE_TYPE, INPUT_TYPE, SVG_TYPE, TEXT_TYPE, VIEW_TYPE } from "../components.ts";
+
+const TEXT_TYPE_NAME: string = TEXT_TYPE;
+const warnedHosts = new Set<string>();
+function warnUnknownHost(type: string): void {
+  if (warnedHosts.has(type)) return;
+  warnedHosts.add(type);
+  console.warn(`[mirin-metal] unknown host type "${type}" rendered as a view`);
+}
 import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
 import type { Container, HostInstance, HostNode, RawTextInstance } from "./instances.ts";
 import { insertNodeBefore, removeNode } from "./instances.ts";
@@ -61,7 +69,11 @@ export const hostConfig: HostConfig = {
     }
     if (type === SVG_TYPE) return { kind: "svg", id, props: props as SvgProps, children: [] };
     if (type === IMAGE_TYPE) return { kind: "image", id, props: props as ImageProps, children: [] };
-    return { kind: "text", id, props: props as TextProps, children: [] };
+    if (type === TEXT_TYPE_NAME) return { kind: "text", id, props: props as TextProps, children: [] };
+    // An unknown host type (e.g. a library rendering "form" with React's own
+    // JSX runtime): keep its children visible as a plain view.
+    warnUnknownHost(type);
+    return { kind: "view", id, props: {} as ViewProps, children: [] };
   },
   createTextInstance(text) {
     return { kind: "raw", text };
