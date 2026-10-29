@@ -74,12 +74,34 @@ function parseLayoutNode(value: unknown): LayoutNode[] {
   return [{ id, x: x as number, y: y as number, width: width as number, height: height as number }];
 }
 
+/**
+ * A Wayland layer-shell surface (a panel, a dock, a launcher) instead of a
+ * window: the `windows.*.surface` shape from docs/api-design.md §1a.
+ */
+export interface SurfaceOptions {
+  role?: "layer";
+  /** Stacking layer; default `top`. */
+  layer?: "background" | "bottom" | "top" | "overlay";
+  /** Output edges to attach to; both opposite edges stretch along that axis. */
+  anchor?: Array<"top" | "bottom" | "left" | "right">;
+  /** Px other windows avoid along the anchored edge; -1 ignores other zones. */
+  exclusiveZone?: number;
+  /** Keyboard focus policy; default `none`. */
+  keyboard?: "none" | "on-demand" | "exclusive";
+  /** Px from the anchored edges. */
+  margin?: number | { top?: number; right?: number; bottom?: number; left?: number };
+  /** The surface's purpose for the compositor; defaults to the title. */
+  namespace?: string;
+}
+
 export interface NativeHostOptions {
   /** Window title (`MIRIN_METAL_TITLE`). */
   title?: string;
   /** Initial window size in px (`MIRIN_METAL_SIZE`). */
   width?: number;
   height?: number;
+  /** Open a layer-shell surface instead of a window (`MIRIN_METAL_SURFACE`). */
+  surface?: SurfaceOptions;
   /** Extra environment for the host process. */
   env?: Record<string, string>;
   /**
@@ -103,6 +125,7 @@ export function spawnNativeHost(
   if (options.width !== undefined && options.height !== undefined) {
     env.MIRIN_METAL_SIZE = `${Math.round(options.width)}x${Math.round(options.height)}`;
   }
+  if (options.surface !== undefined) env.MIRIN_METAL_SURFACE = JSON.stringify(options.surface);
   Object.assign(env, options.env);
   const child = Bun.spawn([binaryPath], {
     stdin: "pipe",

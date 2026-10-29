@@ -470,8 +470,11 @@ export default function Main() {
   <tr><td><code>anchor</code></td><td>edges</td><td>Which screen edges the surface attaches to.</td></tr>
   <tr><td><code>exclusiveZone</code></td><td>px</td><td>Space other windows avoid (a panel's height).</td></tr>
   <tr><td><code>keyboard</code></td><td><code>none | on-demand | exclusive</code></td><td>Keyboard focus policy (a launcher is <code>exclusive</code>).</td></tr>
+  <tr><td><code>margin</code></td><td>px, or <code>{ top, right, bottom, left }</code></td><td>Distance from the anchored edges (a floating dock's gap).</td></tr>
+  <tr><td><code>namespace</code></td><td>string</td><td>The surface's purpose for the compositor (<code>"dashi.dock"</code>); defaults to the window title.</td></tr>
   <tr><td><code>output</code></td><td>monitor name, or all</td><td>Which monitor; one surface per monitor when "all".</td></tr>
 </table>
+<p>Status: the <code>layer</code> role is in the GPUI fork (<code>WindowOptions::layer_shell</code>) and the alpha host (<code>MIRIN_METAL_SURFACE</code>); <code>popup</code>, <code>lock</code>, and <code>output</code> are not yet.</p>
 <h3>Outputs</h3>
 <p>Monitors appearing, disappearing, rescaling, or moving reach the App Worker as <code>app.outputs</code> events. A surface with <code>output: "all"</code> is instantiated per monitor and destroyed with it; its UI root receives the role and output (<code>useWindow().output</code>) so a panel renders per monitor.</p>
 <p>The desktop's own compositor, <code>mirin-comp</code> (Smithay), implements all of these and grants the privileged ones per capability; see <a href="shell.html"><code>shell.html</code></a> §3.</p>

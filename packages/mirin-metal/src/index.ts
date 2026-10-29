@@ -4,7 +4,7 @@ export {
   type HeadlessDisplayOptions,
   startHeadlessDisplay,
 } from "./headless.ts";
-export { type NativeHostOptions, spawnNativeHost } from "./host.ts";
+export { type NativeHostOptions, type SurfaceOptions, spawnNativeHost } from "./host.ts";
 export { createPortal, render } from "./render.ts";
 export type {
   Bounds,

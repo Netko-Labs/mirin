@@ -1132,6 +1132,89 @@ pub struct WindowOptions {
 
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
+
+    // mirin: layer-shell surfaces for desktop-shell UI.
+    /// Open the window as a wlr-layer-shell surface (panels, docks, launchers)
+    /// instead of a toplevel. Wayland only; opening fails when the compositor
+    /// lacks the protocol, and other platforms ignore it.
+    pub layer_shell: Option<LayerShellOptions>,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// A wlr-layer-shell surface: anchored to output edges on a stacking layer,
+/// optionally reserving an exclusive zone that other windows avoid.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LayerShellOptions {
+    /// Identifies the surface's purpose to the compositor ("panel", "dock").
+    pub namespace: String,
+    /// The stacking layer.
+    pub layer: Layer,
+    /// Output edges the surface attaches to. Anchoring both opposite edges
+    /// stretches the surface along that axis.
+    pub anchor: LayerAnchor,
+    /// Space reserved along the anchored edge: positive reserves that many
+    /// pixels, 0 avoids other surfaces' zones, -1 ignores them.
+    pub exclusive_zone: i32,
+    /// Distance from the anchored edges, in pixels.
+    pub margin: LayerMargin,
+    /// Keyboard focus policy.
+    pub keyboard_interactivity: KeyboardInteractivity,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// The stacking layer of a [`LayerShellOptions`] surface, bottom to top.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layer {
+    /// Below everything (wallpapers).
+    Background,
+    /// Below windows (desktop widgets).
+    Bottom,
+    /// Above windows (panels, docks).
+    #[default]
+    Top,
+    /// Above everything, including fullscreen windows (launchers, OSD).
+    Overlay,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// Output edges a layer surface attaches to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayerAnchor {
+    /// Attach to the top edge.
+    pub top: bool,
+    /// Attach to the bottom edge.
+    pub bottom: bool,
+    /// Attach to the left edge.
+    pub left: bool,
+    /// Attach to the right edge.
+    pub right: bool,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// Distance from each anchored edge, in pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayerMargin {
+    /// From the top edge.
+    pub top: i32,
+    /// From the right edge.
+    pub right: i32,
+    /// From the bottom edge.
+    pub bottom: i32,
+    /// From the left edge.
+    pub left: i32,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// When a layer surface receives keyboard focus.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyboardInteractivity {
+    /// Never (a clock, a dock).
+    #[default]
+    None,
+    /// When clicked, like a window (a panel with a search field).
+    OnDemand,
+    /// Always while mapped on the top or overlay layer (a launcher).
+    Exclusive,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1181,6 +1264,10 @@ pub(crate) struct WindowParams {
     pub window_min_size: Option<Size<Pixels>>,
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
+
+    // mirin: layer-shell surfaces for desktop-shell UI.
+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
+    pub layer_shell: Option<LayerShellOptions>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1239,6 +1326,7 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,
+            layer_shell: None,
         }
     }
 }

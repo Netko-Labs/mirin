@@ -1,0 +1,193 @@
+//! Window surface roles beyond ordinary toplevels: a `surface` description
+//! (the `windows.*.surface` shape in docs/api-design.md §1a) parsed into
+//! GPUI's layer-shell options. Only the `layer` role exists so far.
+
+use gpui::{KeyboardInteractivity, Layer, LayerAnchor, LayerMargin, LayerShellOptions};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SurfaceSpec {
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    layer: Option<String>,
+    #[serde(default)]
+    anchor: Vec<String>,
+    #[serde(default)]
+    exclusive_zone: Option<i32>,
+    #[serde(default)]
+    keyboard: Option<String>,
+    #[serde(default)]
+    margin: Option<MarginSpec>,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default)]
+    output: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MarginSpec {
+    All(i32),
+    Edges {
+        #[serde(default)]
+        top: i32,
+        #[serde(default)]
+        right: i32,
+        #[serde(default)]
+        bottom: i32,
+        #[serde(default)]
+        left: i32,
+    },
+}
+
+/// Parse a surface description; `namespace` defaults to `fallback_namespace`
+/// (the window title).
+pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<LayerShellOptions, String> {
+    let spec: SurfaceSpec =
+        serde_json::from_str(json).map_err(|error| format!("invalid surface: {error}"))?;
+    match spec.role.as_deref() {
+        None | Some("layer") => {}
+        Some(role @ ("popup" | "lock")) => {
+            return Err(format!("surface role \"{role}\" is not supported yet"))
+        }
+        Some(role) => return Err(format!("unknown surface role \"{role}\"")),
+    }
+    if spec.output.is_some() {
+        return Err("surface output is not supported yet".into());
+    }
+    let layer = match spec.layer.as_deref() {
+        None | Some("top") => Layer::Top,
+        Some("background") => Layer::Background,
+        Some("bottom") => Layer::Bottom,
+        Some("overlay") => Layer::Overlay,
+        Some(other) => return Err(format!("unknown surface layer \"{other}\"")),
+    };
+    let mut anchor = LayerAnchor::default();
+    for edge in &spec.anchor {
+        match edge.as_str() {
+            "top" => anchor.top = true,
+            "bottom" => anchor.bottom = true,
+            "left" => anchor.left = true,
+            "right" => anchor.right = true,
+            other => return Err(format!("unknown surface anchor \"{other}\"")),
+        }
+    }
+    let keyboard_interactivity = match spec.keyboard.as_deref() {
+        None | Some("none") => KeyboardInteractivity::None,
+        Some("on-demand") => KeyboardInteractivity::OnDemand,
+        Some("exclusive") => KeyboardInteractivity::Exclusive,
+        Some(other) => return Err(format!("unknown surface keyboard policy \"{other}\"")),
+    };
+    let exclusive_zone = spec.exclusive_zone.unwrap_or(0);
+    if exclusive_zone < -1 {
+        return Err(format!(
+            "surface exclusiveZone must be -1 or more, got {exclusive_zone}"
+        ));
+    }
+    let margin = match spec.margin {
+        None => LayerMargin::default(),
+        Some(MarginSpec::All(all)) => LayerMargin {
+            top: all,
+            right: all,
+            bottom: all,
+            left: all,
+        },
+        Some(MarginSpec::Edges {
+            top,
+            right,
+            bottom,
+            left,
+        }) => LayerMargin {
+            top,
+            right,
+            bottom,
+            left,
+        },
+    };
+    let namespace = spec
+        .namespace
+        .filter(|namespace| !namespace.is_empty())
+        .unwrap_or_else(|| fallback_namespace.to_string());
+    Ok(LayerShellOptions {
+        namespace,
+        layer,
+        anchor,
+        exclusive_zone,
+        margin,
+        keyboard_interactivity,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_panel() {
+        let options = parse_surface(
+            r#"{"layer":"top","anchor":["top","left","right"],"exclusiveZone":28,"keyboard":"on-demand","namespace":"menubar"}"#,
+            "title",
+        )
+        .unwrap();
+        assert_eq!(options.layer, Layer::Top);
+        assert_eq!(
+            options.anchor,
+            LayerAnchor {
+                top: true,
+                bottom: false,
+                left: true,
+                right: true
+            }
+        );
+        assert_eq!(options.exclusive_zone, 28);
+        assert_eq!(
+            options.keyboard_interactivity,
+            KeyboardInteractivity::OnDemand
+        );
+        assert_eq!(options.namespace, "menubar");
+    }
+
+    #[test]
+    fn defaults_and_margins() {
+        let options = parse_surface(r#"{"anchor":["bottom"],"margin":8}"#, "Dock").unwrap();
+        assert_eq!(options.layer, Layer::Top);
+        assert_eq!(options.exclusive_zone, 0);
+        assert_eq!(options.keyboard_interactivity, KeyboardInteractivity::None);
+        assert_eq!(options.namespace, "Dock");
+        assert_eq!(options.margin.bottom, 8);
+        assert_eq!(options.margin.left, 8);
+
+        let options = parse_surface(r#"{"margin":{"bottom":6}}"#, "x").unwrap();
+        assert_eq!(
+            options.margin,
+            LayerMargin {
+                top: 0,
+                right: 0,
+                bottom: 6,
+                left: 0
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_and_unknown_values() {
+        for json in [
+            r#"{"role":"popup"}"#,
+            r#"{"role":"window"}"#,
+            r#"{"layer":"middle"}"#,
+            r#"{"anchor":["center"]}"#,
+            r#"{"keyboard":"always"}"#,
+            r#"{"exclusiveZone":-2}"#,
+            r#"{"output":"all"}"#,
+            r#"{"exclusive":28}"#,
+            "not json",
+        ] {
+            assert!(
+                parse_surface(json, "x").is_err(),
+                "{json} should be rejected"
+            );
+        }
+    }
+}

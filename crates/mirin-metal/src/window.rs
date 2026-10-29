@@ -10,8 +10,9 @@ use std::time::Duration;
 use futures::StreamExt;
 
 use gpui::{
-    prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, ScrollHandle,
-    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, LayerShellOptions,
+    ScrollHandle, SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowOptions,
 };
 
 use crate::events::{EventSender, NativeUiEvent};
@@ -32,6 +33,9 @@ pub struct NativeUiOptions {
     pub title: SharedString,
     pub width: f32,
     pub height: f32,
+    /// Open as a layer-shell surface (a panel, a dock) instead of a window;
+    /// see `parse_surface`. The surface is transparent where the tree is.
+    pub surface: Option<LayerShellOptions>,
 }
 
 impl Default for NativeUiOptions {
@@ -40,6 +44,7 @@ impl Default for NativeUiOptions {
             title: "mirin metal (alpha)".into(),
             width: 800.0,
             height: 600.0,
+            surface: None,
         }
     }
 }
@@ -225,12 +230,19 @@ pub fn run(
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
+            let is_surface = options.surface.is_some();
             let window_options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
                     title: Some(options.title.clone()),
                     ..Default::default()
                 }),
+                window_background: if is_surface {
+                    WindowBackgroundAppearance::Transparent
+                } else {
+                    WindowBackgroundAppearance::Opaque
+                },
+                layer_shell: options.surface.clone(),
                 ..Default::default()
             };
             let layout = LayoutMap::default();

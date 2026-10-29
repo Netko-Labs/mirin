@@ -948,6 +948,7 @@ impl Window {
             window_decorations,
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
+            layer_shell,
         } = options;
 
         let bounds = window_bounds
@@ -968,6 +969,7 @@ impl Window {
                 window_min_size,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
+                layer_shell,
             },
         )?;
 

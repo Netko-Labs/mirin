@@ -89,7 +89,10 @@ export default defineConfig({
   engine; using the other one is a config error naming the right key.
 - `windows.*.surface` is Metal-only; CEF rejects it with a clear error. Its
   `role` is `layer` (default), `popup`, or `lock`; `output: "all"` creates one
-  surface per monitor.
+  surface per monitor. Layer surfaces also take `margin` (px, or per edge) and
+  `namespace` (the surface's purpose for the compositor; defaults to the
+  title). The alpha host already opens layer surfaces through
+  `spawnNativeHost(binary, { surface })` (docs/metal.md §6).
 - `capabilities` lists privileged surfaces and APIs. The session grants them per
   app id; an app using a privileged key it was not granted fails at startup.
 - `cef.*` is ignored on Metal with a warning.

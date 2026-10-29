@@ -8,7 +8,8 @@ use std::io::{BufRead, Write};
 use std::sync::mpsc;
 
 use mirin_metal::{
-    parse_tree, run, DriverMessage, EventKind, NativeUiEvent, NativeUiOptions, SimCommand,
+    parse_surface, parse_tree, run, DriverMessage, EventKind, NativeUiEvent, NativeUiOptions,
+    SimCommand,
 };
 
 /// A stdin line is either a tree or `{"sim": {...}}`.
@@ -167,25 +168,47 @@ fn main() {
     });
 
     let title = std::env::var("MIRIN_METAL_TITLE").unwrap_or_else(|_| "mirin metal".into());
-    // `MIRIN_METAL_SIZE=1280x820` picks the initial window size.
+    // `MIRIN_METAL_SURFACE=<json>` opens a layer-shell surface (a panel, a
+    // dock) instead of a window; the shape is `windows.*.surface` in
+    // docs/api-design.md §1a.
+    let surface = match std::env::var("MIRIN_METAL_SURFACE") {
+        Ok(json) => match parse_surface(&json, &title) {
+            Ok(surface) => Some(surface),
+            Err(error) => {
+                eprintln!("[mirin-metal] MIRIN_METAL_SURFACE: {error}");
+                std::process::exit(2);
+            }
+        },
+        Err(_) => None,
+    };
+    // `MIRIN_METAL_SIZE=1280x820` picks the initial window size. Surfaces may
+    // be thin (a 28px menu bar); windows keep a usable minimum.
+    let minimum = if surface.is_some() { 1.0 } else { 200.0 };
     let (width, height) = std::env::var("MIRIN_METAL_SIZE")
         .ok()
         .and_then(|size| {
             let (w, h) = size.split_once('x')?;
             Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
         })
-        .filter(|(w, h)| *w >= 200.0 && *h >= 200.0)
+        .filter(|(w, h)| *w >= minimum && *h >= minimum)
         .unwrap_or((
             NativeUiOptions::default().width,
             NativeUiOptions::default().height,
         ));
-    let initial = parse_tree(r##"{"type":"view","props":{"fill":true,"background":"#111114"}}"##)
-        .expect("static initial tree is valid JSON");
+    // Until the driver's first tree: a dark window, or nothing for a surface
+    // (a dock must not flash an opaque block).
+    let initial = if surface.is_some() {
+        r##"{"type":"view","props":{"fill":true}}"##
+    } else {
+        r##"{"type":"view","props":{"fill":true,"background":"#111114"}}"##
+    };
+    let initial = parse_tree(initial).expect("static initial tree is valid JSON");
     run(
         NativeUiOptions {
             title: title.into(),
             width,
             height,
+            surface,
         },
         initial,
         update_rx,

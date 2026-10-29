@@ -582,6 +582,8 @@ impl MacWindow {
             display_id,
             window_min_size,
             tabbing_identifier,
+            // mirin: layer-shell is Wayland only.
+            layer_shell: _,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,

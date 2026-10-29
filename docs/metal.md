@@ -57,7 +57,9 @@ that, not for a single demo app:
   no work.
 - **Shell surfaces.** Window creation should grow past "one top-level window":
   multiple surfaces per process and Wayland layer-shell surfaces (anchored,
-  exclusive-zone panels and overlays) for the shell.
+  exclusive-zone panels and overlays) for the shell. Layer surfaces exist in the
+  GPUI fork and the alpha host (`MIRIN_METAL_SURFACE`, section 6); popups, lock
+  surfaces, and per-output surfaces do not yet.
 - **System-wide concerns.** Theming, fonts, input methods, and accessibility
   should come from the session, not each app. Inter-app IPC and the shell's
   APIs belong in a shared surface, not app-private code.
@@ -351,7 +353,13 @@ cd crates/mirin-metal && cargo build --bin mirin-metal-host
 cd ../../packages/mirin-metal && bun demo/counter.tsx
 ```
 
-The host reads `MIRIN_METAL_TITLE` and `MIRIN_METAL_SIZE=1280x820`. A consumer
+The host reads `MIRIN_METAL_TITLE` and `MIRIN_METAL_SIZE=1280x820`.
+`MIRIN_METAL_SURFACE=<json>` opens a Wayland layer-shell surface (a panel, a
+dock) instead of a window; the JSON is the `windows.*.surface` shape from
+`docs/api-design.md` §1a (`layer`, `anchor`, `exclusiveZone`, `keyboard`,
+`margin`, `namespace`; only the `layer` role so far), the surface is transparent
+where the tree is, and opening fails on compositors without wlr-layer-shell.
+`spawnNativeHost(binary, { surface })` sets it. A consumer
 that depends on `@mirinjs/metal` must share one React instance with it: a
 `bun link` keeps the package's own `node_modules` (two Reacts, "Invalid hook
 call"), so until it is published use `"@mirinjs/metal": "file:../path"`.
