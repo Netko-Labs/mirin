@@ -6,11 +6,16 @@
  *   cd crates/mirin-metal && cargo build --bin mirin-metal-host
  *   cd packages/mirin-metal-ui && bun demo/browser.tsx [host-binary] [example]
  *   bun demo/browser.tsx calendar-demo
+ *
+ * The window uses the unified title bar: the sidebar and the toolbar run up to
+ * the top edge, and on Dashi the compositor's window controls are drawn over
+ * the sidebar's top. The toolbar is a drag region. Elsewhere (or with
+ * `MIRIN_METAL_TITLEBAR=standard`) it has the compositor's own title bar.
  */
 
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { render, spawnNativeHost } from "@mirinjs/metal";
+import { render, spawnNativeHost, useWindowChrome } from "@mirinjs/metal";
 import { Component, type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { Button } from "../src/components/button.tsx";
 import { SearchIcon } from "../src/icons/index.ts";
@@ -113,6 +118,10 @@ function ThemeToggle() {
 }
 
 export function Browser({ initial }: { initial?: string }) {
+  // With a unified title bar the compositor draws its window controls over
+  // the top-left of the sidebar: leave that strip empty (and draggable).
+  const { controls } = useWindowChrome();
+  const controlsStrip = controls ? Math.ceil(controls.y + controls.height) : 0;
   const examples = listExamples();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(
@@ -122,7 +131,10 @@ export function Browser({ initial }: { initial?: string }) {
   return (
     <div className="flex flex-1 flex-row">
       <aside className="flex w-72 shrink-0 flex-col border-r bg-sidebar">
-        <div className="flex flex-col gap-3 border-b p-4">
+        {controls ? (
+          <div data-drag-region className="shrink-0" style={{ height: controlsStrip }} />
+        ) : null}
+        <div className={`flex flex-col gap-3 border-b p-4 ${controls ? "pt-2" : ""}`}>
           <div className="flex flex-row items-center justify-between">
             <p className="text-sm font-semibold">metal-ui</p>
             <span className="text-xs text-muted-foreground">{`${examples.length} examples`}</span>
@@ -166,7 +178,10 @@ export function Browser({ initial }: { initial?: string }) {
         </div>
       </aside>
       <main className="flex flex-1 flex-col">
-        <header className="flex h-14 shrink-0 flex-row items-center justify-between border-b px-6">
+        <header
+          data-drag-region
+          className={`flex shrink-0 flex-row items-center justify-between border-b px-6 ${controls ? "h-11" : "h-14"}`}
+        >
           <p className="font-mono text-sm">{selected}</p>
           <ThemeToggle />
         </header>
@@ -190,7 +205,9 @@ if (import.meta.main) {
     new URL("../../../crates/mirin-metal/target/debug/mirin-metal-host", import.meta.url).pathname;
   process.env.MIRIN_METAL_TITLE = "metal-ui examples";
   process.env.MIRIN_METAL_SIZE ??= "1440x900";
-  const transport = spawnNativeHost(binary);
+  const transport = spawnNativeHost(binary, {
+    titleBar: process.env.MIRIN_METAL_TITLEBAR === "standard" ? "standard" : "unified",
+  });
   const root = render(
     <ThemeProvider>
       <Browser initial={initial} />

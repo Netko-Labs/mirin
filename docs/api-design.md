@@ -73,7 +73,7 @@ export default defineConfig({
   engine: "metal",                    // "cef" (default) | "metal"
   capabilities: [],                   // privileged surfaces/APIs, e.g. "shell.surface", "session.lock"
   windows: {
-    main: { title: "Anko", width: 1280, height: 820, view: "src/windows/main.tsx" },
+    main: { title: "Anko", width: 1280, height: 820, view: "src/windows/main.tsx", titleBar: "unified" },
     panel: {
       view: "src/windows/panel.tsx",
       // Wayland layer-shell surface for desktop-shell UI (panels, docks, launchers).
@@ -99,6 +99,19 @@ export default defineConfig({
   other options; it unlocks only when the driver calls `unlock()` on the host
   transport (the host line `{"unlock": true}`). If the host exits or is killed
   first, the session stays locked, so a crashing lock screen never unlocks.
+- `windows.*.titleBar` is Metal-only: `"standard"` (default) or `"unified"`. A
+  unified window puts the app's own toolbar in the title bar, as macOS Notes
+  does: the content runs to the top edge and the compositor's window controls
+  are drawn over it. Only Dashi's compositor does this (through its private
+  `dashi-chrome-v1` protocol, docs/metal.md §4); elsewhere it falls back to
+  the standard title bar. The alpha host takes it as
+  `spawnNativeHost(binary, { titleBar })` (`MIRIN_METAL_TITLEBAR`, strictly
+  `standard` or `unified`). `@mirinjs/metal` adds `useWindowChrome()`, which
+  returns `{ titleBar, controls }` (`titleBar` is the style the window
+  effectively has; `controls` is the `{ x, y, width, height }` the window
+  controls cover, to leave empty, or `null` for none), and a `dragRegion`
+  boolean on `<View>`: a press moves the window, a double click zooms it, and
+  children with their own press handlers or inputs keep their clicks.
 - `capabilities` lists privileged surfaces and APIs. The session grants them per
   app id; an app using a privileged key it was not granted fails at startup.
 - `cef.*` is ignored on Metal with a warning.

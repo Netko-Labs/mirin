@@ -122,6 +122,13 @@ export interface BoxProps {
   ref?: Ref<unknown>;
   testID?: string;
   occlude?: boolean;
+  /**
+   * Metal-only: acts as a title bar (a press moves the window, a double click
+   * zooms it); buttons and inputs inside keep their clicks. For the toolbar of
+   * a window opened with `titleBar: "unified"`. In JSX on a DOM tag, write the
+   * `data-drag-region` attribute (React's DOM types have no `dragRegion`).
+   */
+  dragRegion?: boolean;
   onLayout?: (bounds: { x: number; y: number; width: number; height: number }) => void;
   onClick?: (event: ReturnType<typeof syntheticEvent>) => void;
   onMouseDown?: (event: ReturnType<typeof syntheticEvent>) => void;
@@ -274,6 +281,7 @@ export function Box(props: BoxProps): ReactNode {
     ref,
     testID,
     occlude,
+    dragRegion,
     onLayout,
     onClick,
     onMouseDown,
@@ -471,6 +479,7 @@ export function Box(props: BoxProps): ReactNode {
         (typeof props["data-slot"] === "string" ? props["data-slot"] : undefined)
       }
       occlude={occlude}
+      dragRegion={dragRegion ?? (props["data-drag-region"] === true || undefined)}
       onLayout={onLayout}
       style={{ ...view, ...viewStyle }}
       onPress={

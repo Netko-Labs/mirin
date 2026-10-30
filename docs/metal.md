@@ -267,6 +267,52 @@ Radeon 890M with Mesa RADV:
   they become dirty (`vendor/gpui/MIRIN.md`). Measured in dashi-comp: an
   idle desktop draws nothing.
 
+### Unified title bar (Dashi)
+
+Apps such as macOS Notes put their own toolbar in the title bar: the sidebar and
+toolbar run to the top edge and the window controls float over the content.
+Metal does this on Dashi's compositor through a Dashi-private protocol,
+`dashi-chrome-v1` (`dashi_chrome_manager_v1.get_chrome(toplevel)` makes a
+`dashi_chrome_v1`; `set_style(standard | unified)`; the event
+`controls(x, y, width, height)`). The XML lives in dashi-comp
+(`comp/protocols/dashi-chrome-v1.xml`) and is copied into the GPUI fork
+(`vendor/gpui/protocols/`).
+
+- **Ask for it.** `spawnNativeHost(binary, { titleBar: "unified" })`, or
+  `MIRIN_METAL_TITLEBAR=unified`. The value is `standard` (default) or
+  `unified`; anything else makes the host exit with status 2. In the host it
+  becomes `TitlebarOptions::appears_transparent`, and the Wayland client binds
+  the manager when it is advertised and sets the style before the window's
+  first commit (`vendor/gpui/MIRIN.md`). Windows still ask for server-side
+  decorations, which Dashi needs to honor the style.
+- **What the compositor does.** No title bar and no title text; the surface
+  starts at the top of the frame. Dashi still draws the rounded corners, the
+  shadow, and the traffic lights at their usual spot, now over the surface; a
+  press on a light goes to the compositor, everything else to the app. The
+  app moves the window with `xdg_toplevel.move` and zooms it with
+  `set_maximized` / `unset_maximized`.
+- **The controls area.** `controls` is the rectangle (window coordinates) the
+  lights occupy, with margins; the app keeps it empty. The host sends it as a
+  `chrome` event, `{"type":"chrome","nodeId":"root","titleBar":"unified",
+  "controls":{"x":0,"y":0,"width":80,"height":28}}`, when the window opens and
+  on every change; `useWindowChrome()` returns `{ titleBar, controls }` and
+  re-renders on it.
+- **Drag regions.** `<View dragRegion>`: a press there starts a compositor move
+  (`window.start_window_move()`), a double click zooms
+  (`window.zoom_window()`). A descendant with `onPress`, `onPointer`, or a
+  `TextInput` keeps its clicks: those handlers run first and mark the press
+  taken, and the region ignores a taken press. In metal-ui write
+  `<header data-drag-region>`.
+- **Fallback.** On a compositor without the protocol (KDE, GNOME) the window
+  keeps the standard server-side title bar, `titleBar` reports `"standard"`,
+  and `controls` is `null`. The same holds if Dashi does not honor the style
+  (the app asked for client-side decorations): the effective style is only
+  `unified` while the compositor reports a controls area. Apps should render
+  the same toolbar either way, padding by `controls` when it exists.
+- **First frame.** The hook starts at `standard / null` until the first
+  `chrome` event, which arrives at startup; an app that pads by `controls`
+  re-lays out once.
+
 ### macOS
 
 Renders through Metal (the Apple API) with no extra system deps. Not yet
@@ -367,7 +413,9 @@ dock) instead of a window; the JSON is the `windows.*.surface` shape from
 `docs/api-design.md` §1a (`layer`, `anchor`, `exclusiveZone`, `keyboard`,
 `margin`, `namespace`; only the `layer` role so far), the surface is transparent
 where the tree is, and opening fails on compositors without wlr-layer-shell.
-`spawnNativeHost(binary, { surface })` sets it. `MIRIN_METAL_APP_ID` (`appId`)
+`spawnNativeHost(binary, { surface })` sets it. `MIRIN_METAL_TITLEBAR=unified`
+(`titleBar`) puts the app's toolbar in the title bar on Dashi (section 4,
+"Unified title bar"). `MIRIN_METAL_APP_ID` (`appId`)
 names the app to the compositor, which docks and taskbars group windows by.
 `MIRIN_METAL_CAPABILITIES=shell.toplevels` (`capabilities`) makes the host follow
 every window over wlr-foreign-toplevel-management on a second Wayland connection
