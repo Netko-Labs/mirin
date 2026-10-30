@@ -949,6 +949,7 @@ impl Window {
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
             layer_shell,
+            session_lock,
         } = options;
 
         let bounds = window_bounds
@@ -970,6 +971,7 @@ impl Window {
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
                 layer_shell,
+                session_lock,
             },
         )?;
 
@@ -4372,6 +4374,13 @@ impl Window {
                 .dispatch_tree
                 .on_action(action_type, Rc::new(listener));
         }
+    }
+
+    // mirin: session-lock surfaces for a lock screen.
+    /// Unlock the session this window locked (`WindowOptions::session_lock`).
+    /// The only way a lock surface unlocks: closing or exiting does not.
+    pub fn unlock_session(&self) {
+        self.platform_window.unlock_session();
     }
 
     /// Read information about the GPU backing this window.

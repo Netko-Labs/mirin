@@ -32,7 +32,7 @@ mod window;
 
 pub use events::{EventKind, NativeUiEvent, PointerPhase};
 pub use sim::{LayoutNode, SimCommand};
-pub use surface::parse_surface;
+pub use surface::{parse_surface, Surface};
 pub use tree::{
     parse_tree, Align, Direction, InputProps, Justify, NodeSpec, TextProps, ViewProps, Weight,
 };

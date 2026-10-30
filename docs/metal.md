@@ -58,8 +58,9 @@ that, not for a single demo app:
 - **Shell surfaces.** Window creation should grow past "one top-level window":
   multiple surfaces per process and Wayland layer-shell surfaces (anchored,
   exclusive-zone panels and overlays) for the shell. Layer surfaces exist in the
-  GPUI fork and the alpha host (`MIRIN_METAL_SURFACE`, section 6); popups, lock
-  surfaces, and per-output surfaces do not yet.
+  GPUI fork and the alpha host (`MIRIN_METAL_SURFACE`, section 6), and so do
+  session-lock surfaces (`{ role: "lock" }`, unlocked only by `unlock()`);
+  popups and per-output surfaces do not yet.
 - **System-wide concerns.** Theming, fonts, input methods, and accessibility
   should come from the session, not each app. Inter-app IPC and the shell's
   APIs belong in a shared surface, not app-private code.

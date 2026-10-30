@@ -294,6 +294,12 @@ export interface NativeHostTransport extends NativeTransport {
   onToplevel(listener: (event: ToplevelEvent) => void): void;
   /** Activate, minimize, maximize, or close another window. */
   toplevel(id: number, action: ToplevelAction): void;
+  /**
+   * Unlock the session a `{ role: "lock" }` surface locked, then the host
+   * exits. The only way it unlocks: closing or killing the host leaves the
+   * session locked.
+   */
+  unlock(): void;
 }
 
 export interface NativeTransport {

@@ -1,6 +1,7 @@
 //! Window surface roles beyond ordinary toplevels: a `surface` description
 //! (the `windows.*.surface` shape in docs/api-design.md §1a) parsed into
-//! GPUI's layer-shell options. Only the `layer` role exists so far.
+//! GPUI's layer-shell options, or a session-lock surface (`role: "lock"`,
+//! which takes no other options). `popup` is reserved.
 
 use gpui::{KeyboardInteractivity, Layer, LayerAnchor, LayerMargin, LayerShellOptions};
 use serde::Deserialize;
@@ -42,16 +43,35 @@ enum MarginSpec {
     },
 }
 
+/// What a window opens as.
+#[derive(Clone, Debug)]
+pub enum Surface {
+    Layer(LayerShellOptions),
+    /// Locks the session; it unlocks only on `{"unlock": true}` from the
+    /// driver, never because the process went away.
+    Lock,
+}
+
 /// Parse a surface description; `namespace` defaults to `fallback_namespace`
 /// (the window title).
-pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<LayerShellOptions, String> {
+pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, String> {
     let spec: SurfaceSpec =
         serde_json::from_str(json).map_err(|error| format!("invalid surface: {error}"))?;
     match spec.role.as_deref() {
         None | Some("layer") => {}
-        Some(role @ ("popup" | "lock")) => {
-            return Err(format!("surface role \"{role}\" is not supported yet"))
+        Some("lock") => {
+            let layered = spec.layer.is_some()
+                || !spec.anchor.is_empty()
+                || spec.exclusive_zone.is_some()
+                || spec.keyboard.is_some()
+                || spec.margin.is_some()
+                || spec.namespace.is_some();
+            if layered || spec.output.is_some() {
+                return Err("a lock surface takes no other options".into());
+            }
+            return Ok(Surface::Lock);
         }
+        Some("popup") => return Err("surface role \"popup\" is not supported yet".into()),
         Some(role) => return Err(format!("unknown surface role \"{role}\"")),
     }
     if spec.output.is_some() {
@@ -110,27 +130,33 @@ pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<LayerShellO
         .namespace
         .filter(|namespace| !namespace.is_empty())
         .unwrap_or_else(|| fallback_namespace.to_string());
-    Ok(LayerShellOptions {
+    Ok(Surface::Layer(LayerShellOptions {
         namespace,
         layer,
         anchor,
         exclusive_zone,
         margin,
         keyboard_interactivity,
-    })
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn layer(json: &str, title: &str) -> LayerShellOptions {
+        match parse_surface(json, title).unwrap() {
+            Surface::Layer(options) => options,
+            Surface::Lock => panic!("{json} parsed as a lock surface"),
+        }
+    }
+
     #[test]
     fn parses_a_panel() {
-        let options = parse_surface(
+        let options = layer(
             r#"{"layer":"top","anchor":["top","left","right"],"exclusiveZone":28,"keyboard":"on-demand","namespace":"menubar"}"#,
             "title",
-        )
-        .unwrap();
+        );
         assert_eq!(options.layer, Layer::Top);
         assert_eq!(
             options.anchor,
@@ -151,7 +177,7 @@ mod tests {
 
     #[test]
     fn defaults_and_margins() {
-        let options = parse_surface(r#"{"anchor":["bottom"],"margin":8}"#, "Dock").unwrap();
+        let options = layer(r#"{"anchor":["bottom"],"margin":8}"#, "Dock");
         assert_eq!(options.layer, Layer::Top);
         assert_eq!(options.exclusive_zone, 0);
         assert_eq!(options.keyboard_interactivity, KeyboardInteractivity::None);
@@ -159,7 +185,7 @@ mod tests {
         assert_eq!(options.margin.bottom, 8);
         assert_eq!(options.margin.left, 8);
 
-        let options = parse_surface(r#"{"margin":{"bottom":6}}"#, "x").unwrap();
+        let options = layer(r#"{"margin":{"bottom":6}}"#, "x");
         assert_eq!(
             options.margin,
             LayerMargin {
@@ -169,6 +195,16 @@ mod tests {
                 left: 0
             }
         );
+    }
+
+    #[test]
+    fn lock_surfaces_take_nothing_else() {
+        assert!(matches!(
+            parse_surface(r#"{"role":"lock"}"#, "x"),
+            Ok(Surface::Lock)
+        ));
+        assert!(parse_surface(r#"{"role":"lock","layer":"overlay"}"#, "x").is_err());
+        assert!(parse_surface(r#"{"role":"lock","namespace":"lock"}"#, "x").is_err());
     }
 
     #[test]

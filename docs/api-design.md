@@ -92,7 +92,11 @@ export default defineConfig({
   surface per monitor. Layer surfaces also take `margin` (px, or per edge) and
   `namespace` (the surface's purpose for the compositor; defaults to the
   title). The alpha host already opens layer surfaces through
-  `spawnNativeHost(binary, { surface })` (docs/metal.md §6).
+  `spawnNativeHost(binary, { surface })` (docs/metal.md §6). A `lock` surface
+  locks the session (ext-session-lock-v1) on the first output and takes no
+  other options; it unlocks only when the driver calls `unlock()` on the host
+  transport (the host line `{"unlock": true}`). If the host exits or is killed
+  first, the session stays locked, so a crashing lock screen never unlocks.
 - `capabilities` lists privileged surfaces and APIs. The session grants them per
   app id; an app using a privileged key it was not granted fails at startup.
 - `cef.*` is ignored on Metal with a warning.

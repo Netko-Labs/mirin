@@ -24,6 +24,10 @@ use wayland_protocols::{
 };
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+// mirin: session-lock surfaces for a lock screen.
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_surface_v1, ext_session_lock_v1,
+};
 
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
@@ -98,20 +102,25 @@ pub(crate) enum SurfaceRole {
         surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
         anchor: LayerAnchor,
     },
+    // mirin: session-lock surfaces for a lock screen.
+    Lock {
+        lock: ext_session_lock_v1::ExtSessionLockV1,
+        surface: ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+    },
 }
 
 impl SurfaceRole {
     fn toplevel(&self) -> Option<&xdg_toplevel::XdgToplevel> {
         match self {
             Self::Toplevel { toplevel, .. } => Some(toplevel),
-            Self::Layer { .. } => None,
+            Self::Layer { .. } | Self::Lock { .. } => None,
         }
     }
 
     fn xdg_surface(&self) -> Option<&xdg_surface::XdgSurface> {
         match self {
             Self::Toplevel { xdg_surface, .. } => Some(xdg_surface),
-            Self::Layer { .. } => None,
+            Self::Layer { .. } | Self::Lock { .. } => None,
         }
     }
 
@@ -125,6 +134,10 @@ impl SurfaceRole {
                 xdg_surface.destroy();
             }
             Self::Layer { surface, .. } => surface.destroy(),
+            // The lock object is left alone: destroying it once locked is a
+            // protocol error, and a lock screen that goes away without
+            // `unlock_session` must leave the session locked.
+            Self::Lock { surface, .. } => surface.destroy(),
         }
     }
 }
@@ -325,8 +338,18 @@ impl WaylandWindow {
         parent: Option<XdgToplevel>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
-        // mirin: layer-shell surfaces for desktop-shell UI.
+        // mirin: layer-shell and session-lock surfaces for desktop-shell UI.
         let role = match &params.layer_shell {
+            _ if params.session_lock => match create_lock_surface(&globals, &surface) {
+                Ok((lock, lock_surface)) => SurfaceRole::Lock {
+                    lock,
+                    surface: lock_surface,
+                },
+                Err(error) => {
+                    surface.destroy();
+                    return Err(error);
+                }
+            },
             Some(options) => {
                 match create_layer_surface(&globals, &surface, options, params.bounds.size) {
                     Ok(layer_surface) => SurfaceRole::Layer {
@@ -538,6 +561,36 @@ impl WaylandWindowStatePtr {
             }
             zwlr_layer_surface_v1::Event::Closed => true,
             _ => false,
+        }
+    }
+
+    // mirin: session-lock surfaces for a lock screen.
+    /// Handle a lock surface's configure: the compositor sizes it to the output.
+    pub fn handle_lock_surface_event(&self, event: ext_session_lock_surface_v1::Event) {
+        let ext_session_lock_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        else {
+            return;
+        };
+        if width > 0 && height > 0 {
+            let new_size = size(px(width as f32), px(height as f32));
+            self.state.borrow_mut().window_bounds = Bounds {
+                origin: Point::default(),
+                size: new_size,
+            };
+            self.resize(new_size);
+        }
+        let mut state = self.state.borrow_mut();
+        if let SurfaceRole::Lock { surface, .. } = &state.role {
+            surface.ack_configure(serial);
+        }
+        if !state.acknowledged_first_configure {
+            state.acknowledged_first_configure = true;
+            drop(state);
+            self.frame();
         }
     }
 
@@ -864,6 +917,27 @@ impl WaylandWindowStatePtr {
     }
 }
 
+// mirin: session-lock surfaces for a lock screen.
+/// Lock the session and make `surface` its lock surface on the first output;
+/// the compositor's configure sizes it.
+fn create_lock_surface(
+    globals: &Globals,
+    surface: &wl_surface::WlSurface,
+) -> anyhow::Result<(
+    ext_session_lock_v1::ExtSessionLockV1,
+    ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+)> {
+    let Some(manager) = globals.session_lock_manager.as_ref() else {
+        anyhow::bail!("the compositor has no ext-session-lock-v1");
+    };
+    let Some(output) = globals.first_output.as_ref() else {
+        anyhow::bail!("no output to lock");
+    };
+    let lock = manager.lock(&globals.qh, surface.id());
+    let lock_surface = lock.get_lock_surface(surface, output, &globals.qh, surface.id());
+    Ok((lock, lock_surface))
+}
+
 // mirin: layer-shell surfaces for desktop-shell UI.
 /// Create and configure the layer surface for `options`; the first commit
 /// (made by the caller) asks the compositor for its configure.
@@ -1033,6 +1107,8 @@ impl PlatformWindow for WaylandWindow {
                 surface.set_size(width, height);
                 return;
             }
+            // A lock surface takes the output's size from the compositor.
+            SurfaceRole::Lock { .. } => return,
         }
 
         state
@@ -1298,6 +1374,15 @@ impl PlatformWindow for WaylandWindow {
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
         state.client.update_ime_position(bounds);
+    }
+
+    // mirin: session-lock surfaces for a lock screen.
+    fn unlock_session(&self) {
+        let state = self.borrow();
+        if let SurfaceRole::Lock { lock, surface } = &state.role {
+            surface.destroy();
+            lock.unlock_and_destroy();
+        }
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {

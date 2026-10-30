@@ -95,9 +95,13 @@ function parseLayoutNode(value: unknown): LayoutNode[] {
 
 /**
  * A Wayland layer-shell surface (a panel, a dock, a launcher) instead of a
- * window: the `windows.*.surface` shape from docs/api-design.md §1a.
+ * window: the `windows.*.surface` shape from docs/api-design.md §1a. A
+ * `{ role: "lock" }` surface locks the session (ext-session-lock) and takes
+ * no other options; it unlocks only through `unlock()`.
  */
-export interface SurfaceOptions {
+export type SurfaceOptions = LayerSurfaceOptions | { role: "lock" };
+
+export interface LayerSurfaceOptions {
   role?: "layer";
   /** Stacking layer; default `top`. */
   layer?: "background" | "bottom" | "top" | "overlay";
@@ -228,6 +232,10 @@ export function spawnNativeHost(
     },
     toplevel(id, action) {
       child.stdin.write(`${toplevelCommand(id, action)}\n`);
+      void child.stdin.flush();
+    },
+    unlock() {
+      child.stdin.write('{"unlock":true}\n');
       void child.stdin.flush();
     },
     close() {

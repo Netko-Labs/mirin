@@ -63,6 +63,10 @@ use wayland_protocols::xdg::decoration::zv1::client::{
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+// mirin: session-lock surfaces for a lock screen.
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1,
+};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
@@ -120,6 +124,9 @@ pub struct Globals {
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     // mirin: layer-shell surfaces for desktop-shell UI.
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    // mirin: session-lock surfaces for a lock screen, on the first output.
+    pub session_lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
+    pub first_output: Option<wl_output::WlOutput>,
     pub executor: ForegroundExecutor,
 }
 
@@ -129,6 +136,7 @@ impl Globals {
         executor: ForegroundExecutor,
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
+        first_output: Option<wl_output::WlOutput>,
     ) -> Self {
         Globals {
             activation: globals.bind(&qh, 1..=1, ()).ok(),
@@ -158,6 +166,8 @@ impl Globals {
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             layer_shell: globals.bind(&qh, 1..=4, ()).ok(),
+            session_lock_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            first_output,
             executor,
             qh,
         }
@@ -457,6 +467,8 @@ impl WaylandClient {
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
+        // mirin: the output a lock surface goes on.
+        let mut first_output: Option<wl_output::WlOutput> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
         globals.contents().with_list(|list| {
@@ -478,6 +490,7 @@ impl WaylandClient {
                             (),
                         );
                         in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        first_output.get_or_insert(output);
                     }
                     _ => {}
                 }
@@ -510,6 +523,7 @@ impl WaylandClient {
             common.foreground_executor.clone(),
             qh.clone(),
             seat.clone(),
+            first_output,
         );
 
         let data_device = globals
@@ -959,6 +973,52 @@ delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
 // mirin: layer-shell surfaces for desktop-shell UI.
 delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
+// mirin: session-lock surfaces for a lock screen.
+delegate_noop!(WaylandClientStatePtr: ignore ext_session_lock_manager_v1::ExtSessionLockManagerV1);
+
+// mirin: session-lock surfaces for a lock screen. `finished` means the
+// compositor refused the lock (or ended it): the window closes.
+impl Dispatch<ext_session_lock_v1::ExtSessionLockV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &ext_session_lock_v1::ExtSessionLockV1,
+        event: ext_session_lock_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let ext_session_lock_v1::Event::Finished = event {
+            let client = this.get_client();
+            let mut state = client.borrow_mut();
+            let Some(window) = get_window(&mut state, surface_id) else {
+                return;
+            };
+            drop(state);
+            window.close();
+        }
+    }
+}
+
+impl Dispatch<ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ObjectId>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _: &ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+        event: ext_session_lock_surface_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+        window.handle_lock_surface_event(event);
+    }
+}
 
 impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     fn event(

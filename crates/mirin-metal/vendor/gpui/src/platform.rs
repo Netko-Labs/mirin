@@ -546,6 +546,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
+    // mirin: session-lock surfaces for a lock screen.
+    /// Unlock a session this window locked (`WindowOptions::session_lock`).
+    fn unlock_session(&self) {}
+
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
@@ -1138,6 +1142,13 @@ pub struct WindowOptions {
     /// instead of a toplevel. Wayland only; opening fails when the compositor
     /// lacks the protocol, and other platforms ignore it.
     pub layer_shell: Option<LayerShellOptions>,
+
+    // mirin: session-lock surfaces for a lock screen.
+    /// Lock the session (ext-session-lock-v1) and show this window as the
+    /// lock surface on the first output. The session unlocks only through
+    /// [`Window::unlock_session`]; if the process exits without it, the
+    /// compositor stays locked. Wayland only.
+    pub session_lock: bool,
 }
 
 // mirin: layer-shell surfaces for desktop-shell UI.
@@ -1268,6 +1279,10 @@ pub(crate) struct WindowParams {
     // mirin: layer-shell surfaces for desktop-shell UI.
     #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
     pub layer_shell: Option<LayerShellOptions>,
+
+    // mirin: session-lock surfaces for a lock screen.
+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
+    pub session_lock: bool,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1327,6 +1342,7 @@ impl Default for WindowOptions {
             window_decorations: None,
             tabbing_identifier: None,
             layer_shell: None,
+            session_lock: false,
         }
     }
 }

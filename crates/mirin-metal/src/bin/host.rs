@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_surface, parse_tree, run, DriverMessage, EventKind, NativeUiEvent, NativeUiOptions,
-    SimCommand,
+    SimCommand, Surface,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -28,6 +28,19 @@ enum HostLine {
 }
 
 fn parse_host_line(line: &str) -> Result<HostLine, String> {
+    // A lock surface's way out, after the driver authenticated the person.
+    if line.trim_start().starts_with("{\"unlock\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct UnlockLine {
+            unlock: bool,
+        }
+        let parsed: UnlockLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        if !parsed.unlock {
+            return Err("\"unlock\" must be true".into());
+        }
+        return Ok(HostLine::Window(DriverMessage::Unlock));
+    }
     #[cfg(target_os = "linux")]
     if line.trim_start().starts_with("{\"toplevel\"") {
         #[derive(serde::Deserialize)]
@@ -187,6 +200,11 @@ fn main() {
         eprintln!("[mirin-metal-host] capabilities are Linux only; ignoring them");
     }
 
+    // A lock surface whose driver goes away exits at once, still locked: the
+    // session must never unlock because a lock screen crashed.
+    let lock_surface = std::env::var("MIRIN_METAL_SURFACE")
+        .is_ok_and(|json| matches!(parse_surface(&json, ""), Ok(Surface::Lock)));
+
     // stdin → tree updates. EOF means the driver went away; the window simply
     // stops updating (closing it quits the process).
     std::thread::spawn(move || {
@@ -221,6 +239,9 @@ fn main() {
                 },
                 Err(error) => eprintln!("[mirin-metal-host] rejected line: {error}"),
             }
+        }
+        if lock_surface {
+            std::process::exit(0);
         }
     });
 

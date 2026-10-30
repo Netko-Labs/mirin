@@ -10,9 +10,8 @@ use std::time::Duration;
 use futures::StreamExt;
 
 use gpui::{
-    prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, LayerShellOptions,
-    ScrollHandle, SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowOptions,
+    prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, ScrollHandle,
+    SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
 
 use crate::events::{EventSender, NativeUiEvent};
@@ -21,11 +20,14 @@ use crate::media::MetalAssets;
 use crate::pointer::capture_root;
 use crate::render::render_node;
 use crate::sim::{self, LayoutMap, SimCommand};
+use crate::surface::Surface;
 use crate::tree::{collect_inputs, collect_scroll_ids, NodeSpec};
 
 /// After a simulated click, how long to wait for the driver's resulting tree
 /// before performing the commands queued behind it.
 const SIM_SETTLE_INTERVAL: Duration = Duration::from_millis(16);
+/// How long an unlocking lock surface stays so the unlock reaches the compositor.
+const UNLOCK_FLUSH: Duration = Duration::from_millis(100);
 
 /// Options for the alpha native-UI window. All fields have sensible defaults.
 #[derive(Debug, Clone)]
@@ -36,9 +38,10 @@ pub struct NativeUiOptions {
     pub app_id: Option<String>,
     pub width: f32,
     pub height: f32,
-    /// Open as a layer-shell surface (a panel, a dock) instead of a window;
-    /// see `parse_surface`. The surface is transparent where the tree is.
-    pub surface: Option<LayerShellOptions>,
+    /// Open as a layer-shell surface (a panel, a dock) or a session-lock
+    /// surface instead of a window; see `parse_surface`. A layer surface is
+    /// transparent where the tree is; a lock surface is opaque.
+    pub surface: Option<Surface>,
 }
 
 impl Default for NativeUiOptions {
@@ -60,6 +63,9 @@ pub enum DriverMessage {
     Tree(Box<NodeSpec>),
     /// Simulate input or query layout (`sim.rs`).
     Sim(SimCommand),
+    /// Unlock the session this lock surface locked, then quit
+    /// (`{"unlock": true}`; the only way a lock surface unlocks).
+    Unlock,
 }
 
 /// Renderer-owned editing state of one `input` node.
@@ -234,19 +240,23 @@ pub fn run(
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
-            let is_surface = options.surface.is_some();
+            let is_layer = matches!(options.surface, Some(Surface::Layer(_)));
             let window_options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
                     title: Some(options.title.clone()),
                     ..Default::default()
                 }),
-                window_background: if is_surface {
+                window_background: if is_layer {
                     WindowBackgroundAppearance::Transparent
                 } else {
                     WindowBackgroundAppearance::Opaque
                 },
-                layer_shell: options.surface.clone(),
+                layer_shell: match &options.surface {
+                    Some(Surface::Layer(layer)) => Some(layer.clone()),
+                    _ => None,
+                },
+                session_lock: matches!(options.surface, Some(Surface::Lock)),
                 app_id: options.app_id.clone(),
                 ..Default::default()
             };
@@ -292,10 +302,12 @@ pub fn run(
                 let mut pending: VecDeque<SimCommand> = VecDeque::new();
                 loop {
                     let mut latest_tree = None;
+                    let mut unlock = false;
                     let mut absorb =
                         |message: DriverMessage, pending: &mut VecDeque<SimCommand>| match message {
                             DriverMessage::Tree(tree) => latest_tree = Some(*tree),
                             DriverMessage::Sim(command) => pending.push_back(command),
+                            DriverMessage::Unlock => unlock = true,
                         };
                     if pending.is_empty() {
                         match wake_rx.next().await {
@@ -308,6 +320,14 @@ pub fn run(
                     }
                     while let Ok(message) = wake_rx.try_recv() {
                         absorb(message, &mut pending);
+                    }
+                    if unlock {
+                        let _ = window.update(cx, |_view, window, _cx| window.unlock_session());
+                        // Give the event loop a moment to send the unlock
+                        // before the process goes.
+                        cx.background_executor().timer(UNLOCK_FLUSH).await;
+                        let _ = cx.update(|cx| cx.quit());
+                        return;
                     }
                     let mut sims = Vec::new();
                     while let Some(command) = pending.pop_front() {

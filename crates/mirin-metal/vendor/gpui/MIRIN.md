@@ -12,6 +12,7 @@ Upstreaming candidates are marked as such.
 | Text min-content width is the widest word | `src/elements/text.rs` | Taffy asks text for its min-content size when sizing `auto`/`1fr` grid tracks and flex items; GPUI returned the unwrapped line, so text never wrapped there (a card header's title column pushed its action out of the card). Upstreamable. |
 | wlr-layer-shell surfaces (`WindowOptions::layer_shell`, `LayerShellOptions`) | `src/platform.rs`, `src/window.rs`, `src/platform/linux/wayland/{client,window}.rs`, `src/platform/mac/window.rs`, `Cargo.toml` | Desktop-shell UI (menu bar, dock, launcher) are layer surfaces; GPUI only made xdg toplevels. The Wayland window's surface role became an enum, toplevel-only requests are no-ops on layer surfaces, and `wayland-protocols-wlr` 0.2 is a new optional dependency. Upstreamable in spirit (Zed would want its own API shape). |
 | Typed float literals in `to_grid_repeat` | `src/taffy.rs` | rustc is phasing out `f32` fallback for untyped literals (future hard error). |
+| Session-lock surfaces (`WindowOptions::session_lock`, `Window::unlock_session`) | `src/platform.rs`, `src/window.rs`, `src/platform/linux/wayland/{client,window}.rs` | A lock screen: ext-session-lock-v1 on the first output; unlocks only on request, never on exit. |
 
 To update: copy the new release over this directory (minus `examples/`,
 `Cargo.lock`, `Cargo.toml.orig`, and the `[[example]]` entries in
