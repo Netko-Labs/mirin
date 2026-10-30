@@ -222,6 +222,8 @@ pub(crate) struct WaylandClientState {
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
+    // mirin: the bound wl_output proxies, to put a layer surface on one by name.
+    output_proxies: HashMap<ObjectId, wl_output::WlOutput>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
@@ -471,6 +473,7 @@ impl WaylandClient {
         let mut first_output: Option<wl_output::WlOutput> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
+        let mut output_proxies = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -490,6 +493,7 @@ impl WaylandClient {
                             (),
                         );
                         in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        output_proxies.insert(output.id(), output.clone());
                         first_output.get_or_insert(output);
                     }
                     _ => {}
@@ -583,6 +587,7 @@ impl WaylandClient {
             ime_pre_edit: None,
             composing: false,
             outputs: HashMap::default(),
+            output_proxies,
             in_progress_outputs,
             windows: HashMap::default(),
             common,
@@ -718,6 +723,19 @@ impl LinuxClient for WaylandClient {
             .as_ref()
             .and_then(|w| w.toplevel());
 
+        // mirin: a layer surface asked for a screen by name.
+        let layer_output = params
+            .layer_shell
+            .as_ref()
+            .and_then(|options| options.output.as_deref())
+            .and_then(|name| {
+                state
+                    .outputs
+                    .iter()
+                    .find(|(_, output)| output.name.as_deref() == Some(name))
+                    .and_then(|(id, _)| state.output_proxies.get(id).cloned())
+            });
+
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
@@ -726,6 +744,7 @@ impl LinuxClient for WaylandClient {
             params,
             state.common.appearance,
             parent,
+            layer_output,
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
@@ -943,6 +962,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     state
                         .in_progress_outputs
                         .insert(output.id(), InProgressOutput::default());
+                    state.output_proxies.insert(output.id(), output);
                 }
                 _ => {}
             },

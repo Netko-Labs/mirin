@@ -74,9 +74,24 @@ pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, St
         Some("popup") => return Err("surface role \"popup\" is not supported yet".into()),
         Some(role) => return Err(format!("unknown surface role \"{role}\"")),
     }
-    if spec.output.is_some() {
-        return Err("surface output is not supported yet".into());
-    }
+    // One screen by its output name ("eDP-1"); "all" (a surface per screen)
+    // is the driver's to do, by opening one host per screen.
+    let output = match spec.output {
+        None => None,
+        Some(name)
+            if !name.is_empty()
+                && name.len() <= 64
+                && name != "all"
+                && name.chars().all(|c| c.is_ascii_graphic()) =>
+        {
+            Some(name)
+        }
+        Some(name) => {
+            return Err(format!(
+                "surface output must be one screen's name, got \"{name}\""
+            ))
+        }
+    };
     let layer = match spec.layer.as_deref() {
         None | Some("top") => Layer::Top,
         Some("background") => Layer::Background,
@@ -137,6 +152,7 @@ pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, St
         exclusive_zone,
         margin,
         keyboard_interactivity,
+        output,
     }))
 }
 
@@ -173,6 +189,21 @@ mod tests {
             KeyboardInteractivity::OnDemand
         );
         assert_eq!(options.namespace, "menubar");
+        assert_eq!(options.output, None);
+    }
+
+    #[test]
+    fn a_surface_can_name_its_screen() {
+        assert_eq!(
+            layer(r#"{"output":"DP-2"}"#, "x").output.as_deref(),
+            Some("DP-2")
+        );
+        for json in [r#"{"output":""}"#, r#"{"output":"two words"}"#] {
+            assert!(
+                parse_surface(json, "x").is_err(),
+                "{json} should be rejected"
+            );
+        }
     }
 
     #[test]

@@ -13,7 +13,10 @@ use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
-use wayland_client::{Proxy, protocol::wl_surface};
+use wayland_client::{
+    Proxy,
+    protocol::{wl_output, wl_surface},
+};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
@@ -345,6 +348,7 @@ impl WaylandWindow {
         params: WindowParams,
         appearance: WindowAppearance,
         parent: Option<XdgToplevel>,
+        layer_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let session_lock = params.session_lock;
@@ -361,7 +365,13 @@ impl WaylandWindow {
                 }
             },
             Some(options) => {
-                match create_layer_surface(&globals, &surface, options, params.bounds.size) {
+                match create_layer_surface(
+                    &globals,
+                    &surface,
+                    options,
+                    params.bounds.size,
+                    layer_output.as_ref(),
+                ) {
                     Ok(layer_surface) => SurfaceRole::Layer {
                         surface: layer_surface,
                         anchor: options.anchor,
@@ -978,6 +988,7 @@ fn create_layer_surface(
     surface: &wl_surface::WlSurface,
     options: &LayerShellOptions,
     size: Size<Pixels>,
+    output: Option<&wl_output::WlOutput>,
 ) -> anyhow::Result<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1> {
     let Some(layer_shell) = globals.layer_shell.as_ref() else {
         anyhow::bail!("the compositor does not support wlr-layer-shell");
@@ -990,7 +1001,7 @@ fn create_layer_surface(
     };
     let layer_surface = layer_shell.get_layer_surface(
         surface,
-        None,
+        output,
         layer,
         options.namespace.clone(),
         &globals.qh,

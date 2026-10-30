@@ -1177,6 +1177,9 @@ pub struct LayerShellOptions {
     pub margin: LayerMargin,
     /// Keyboard focus policy.
     pub keyboard_interactivity: KeyboardInteractivity,
+    /// The screen to show on, by its output name ("eDP-1", "DP-2"); the
+    /// compositor picks when unset or when no screen has that name.
+    pub output: Option<String>,
 }
 
 // mirin: layer-shell surfaces for desktop-shell UI.

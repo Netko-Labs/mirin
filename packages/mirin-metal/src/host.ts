@@ -115,6 +115,12 @@ export interface LayerSurfaceOptions {
   margin?: number | { top?: number; right?: number; bottom?: number; left?: number };
   /** The surface's purpose for the compositor; defaults to the title. */
   namespace?: string;
+  /**
+   * The screen to show on, by its output name ("eDP-1", "DP-2"); the
+   * compositor picks when unset or when no screen has that name. For a
+   * surface on every screen, open one host per screen.
+   */
+  output?: string;
 }
 
 export interface NativeHostOptions {

@@ -88,8 +88,10 @@ export default defineConfig({
 - `windows.*.view` (Metal) and `windows.*.url` (CEF) are mutually exclusive by
   engine; using the other one is a config error naming the right key.
 - `windows.*.surface` is Metal-only; CEF rejects it with a clear error. Its
-  `role` is `layer` (default), `popup`, or `lock`; `output: "all"` creates one
-  surface per monitor. Layer surfaces also take `margin` (px, or per edge) and
+  `role` is `layer` (default), `popup`, or `lock`; `output` names the screen
+  a layer surface shows on (an output name such as `eDP-1`; the alpha host
+  takes one name, and a surface on every screen is one host per screen; the
+  manifest's `output: "all"` will do that for an app). Layer surfaces also take `margin` (px, or per edge) and
   `namespace` (the surface's purpose for the compositor; defaults to the
   title). The alpha host already opens layer surfaces through
   `spawnNativeHost(binary, { surface })` (docs/metal.md §6). A `lock` surface
