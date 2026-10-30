@@ -260,6 +260,12 @@ Radeon 890M with Mesa RADV:
   `cargo update libc --precise 0.2.186` after any `cargo update`. Revisit when
   GPUI bumps its tar fork.
 - `proc-macro-error2 2.0.1` triggers a future-incompat warning; harmless today.
+- **Idle windows don't commit.** Stock GPUI commits a Wayland surface after
+  every frame callback, drawn or not, so an unchanged window commits at the
+  display's rate and an on-demand compositor never goes idle. The fork asks
+  for a frame callback only when a frame draws and wakes idle windows when
+  they become dirty (`vendor/gpui/MIRIN.md`). Measured in dashi-comp: an
+  idle desktop draws nothing.
 
 ### macOS
 
