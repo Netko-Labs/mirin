@@ -77,6 +77,7 @@ wayland = [
     "wayland-protocols",
     "wayland-protocols-plasma",
     "wayland-protocols-wlr",
+    "wayland-scanner",
     "filedescriptor",
     "xkbcommon",
     "open",
@@ -453,6 +454,12 @@ optional = true
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wayland-protocols-wlr]
 version = "0.2.0"
 features = ["client"]
+optional = true
+
+# mirin: generates the client side of Dashi's private dashi-chrome-v1 protocol
+# (protocols/dashi-chrome-v1.xml). Already in the tree through wayland-protocols.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wayland-scanner]
+version = "0.31"
 optional = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wayland-protocols-plasma]

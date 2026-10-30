@@ -19,6 +19,8 @@ use wayland_client::{
 };
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
+// mirin: Dashi's unified title bar.
+use super::dashi_chrome::dashi_chrome_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols::{
@@ -61,6 +63,8 @@ pub(crate) struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    // mirin: the compositor's traffic-light area changed.
+    chrome_changed: Option<Box<dyn FnMut()>>,
 }
 
 struct RawWindow {
@@ -157,6 +161,10 @@ pub struct WaylandWindowState {
     drew: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    // mirin: set when the window asked Dashi for the unified title bar, and
+    // the area the compositor's traffic lights cover (None: no such area).
+    chrome: Option<dashi_chrome_v1::DashiChromeV1>,
+    chrome_controls: Option<Bounds<Pixels>>,
     app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
@@ -197,6 +205,7 @@ impl WaylandWindowState {
         surface: wl_surface::WlSurface,
         role: SurfaceRole,
         decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+        chrome: Option<dashi_chrome_v1::DashiChromeV1>,
         appearance: WindowAppearance,
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
@@ -232,6 +241,8 @@ impl WaylandWindowState {
             drew: false,
             surface,
             decoration,
+            chrome,
+            chrome_controls: None,
             app_id: None,
             blur: None,
             viewport,
@@ -308,6 +319,9 @@ impl Drop for WaylandWindow {
         state.renderer.destroy();
         if let Some(decoration) = &state.decoration {
             decoration.destroy();
+        }
+        if let Some(chrome) = &state.chrome {
+            chrome.destroy();
         }
         if let Some(blur) = &state.blur {
             blur.release();
@@ -416,6 +430,23 @@ impl WaylandWindow {
                 decoration_manager.get_toplevel_decoration(toplevel, &globals.qh, surface.id())
             });
 
+        // mirin: a window with a transparent title bar asks Dashi for the
+        // unified chrome: no title bar, the compositor's traffic lights over
+        // our surface. Before the first commit, so the window opens placed
+        // for it. Without the protocol the window keeps the standard
+        // server-side title bar and `chrome_controls` stays None.
+        let chrome = params
+            .titlebar
+            .as_ref()
+            .is_some_and(|titlebar| titlebar.appears_transparent)
+            .then(|| globals.dashi_chrome.as_ref().zip(role.toplevel()))
+            .flatten()
+            .map(|(manager, toplevel)| {
+                let chrome = manager.get_chrome(toplevel, &globals.qh, surface.id());
+                chrome.set_style(dashi_chrome_v1::Style::Unified);
+                chrome
+            });
+
         let viewport = globals
             .viewporter
             .as_ref()
@@ -427,6 +458,7 @@ impl WaylandWindow {
                 surface.clone(),
                 role,
                 decoration,
+                chrome,
                 appearance,
                 viewport,
                 client,
@@ -633,6 +665,31 @@ impl WaylandWindowStatePtr {
             state.acknowledged_first_configure = true;
             drop(state);
             self.frame();
+        }
+    }
+
+    // mirin: the compositor's traffic-light area (`controls`); an empty
+    // rectangle means none (standard style, or unified was not honored).
+    pub fn handle_chrome_event(&self, event: dashi_chrome_v1::Event) {
+        let dashi_chrome_v1::Event::Controls {
+            x,
+            y,
+            width,
+            height,
+        } = event;
+        let controls = (width > 0 && height > 0).then(|| Bounds {
+            origin: crate::point(px(x as f32), px(y as f32)),
+            size: size(px(width as f32), px(height as f32)),
+        });
+        {
+            let mut state = self.state.borrow_mut();
+            if state.chrome_controls == controls {
+                return;
+            }
+            state.chrome_controls = controls;
+        }
+        if let Some(changed) = self.callbacks.borrow_mut().chrome_changed.as_mut() {
+            changed();
         }
     }
 
@@ -1327,6 +1384,15 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+    }
+
+    // mirin: Dashi's unified title bar.
+    fn chrome_controls(&self) -> Option<Bounds<Pixels>> {
+        self.borrow().chrome_controls
+    }
+
+    fn on_chrome_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().chrome_changed = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {

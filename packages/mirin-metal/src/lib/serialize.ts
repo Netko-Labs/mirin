@@ -86,6 +86,7 @@ interface ViewNodeProps {
   onPointer?: boolean;
   onContextMenu?: boolean;
   occlude?: boolean;
+  dragRegion?: boolean;
   onLayout?: boolean;
   alignSelf?: "start" | "center" | "end" | "stretch";
   grid?: boolean;
@@ -379,13 +380,22 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.overflow === "hidden") props.clip = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
 
-  const { onPress, onHoverChange, onPointer, onContextMenu, onLayout, occlude, testID } =
-    instance.props;
+  const {
+    onPress,
+    onHoverChange,
+    onPointer,
+    onContextMenu,
+    onLayout,
+    occlude,
+    dragRegion,
+    testID,
+  } = instance.props;
   if (onLayout) {
     props.onLayout = true;
     handlers.layout.set(String(instance.id), onLayout);
   }
   if (occlude) props.occlude = true;
+  if (dragRegion) props.dragRegion = true;
   if (style.alignSelf) props.alignSelf = ALIGN[style.alignSelf];
   if (style.display === "grid") {
     props.grid = true;

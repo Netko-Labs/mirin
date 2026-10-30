@@ -497,6 +497,14 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
+    /// mirin: the area a compositor-drawn set of window controls covers over
+    /// a window that asked for a transparent title bar (Dashi's unified
+    /// chrome), in window coordinates. `None` when there is no such area.
+    fn chrome_controls(&self) -> Option<Bounds<Pixels>> {
+        None
+    }
+    /// mirin: called when `chrome_controls` changes.
+    fn on_chrome_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     /// mirin: for platforms that stop asking for frames while nothing changes

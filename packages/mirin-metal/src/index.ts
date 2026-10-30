@@ -1,3 +1,4 @@
+export { useWindowChrome } from "./chrome.ts";
 export { Image, ScrollView, Svg, Text, TextInput, View } from "./components.ts";
 export {
   type HeadlessDisplay,
@@ -25,9 +26,11 @@ export type {
   TextInputStyle,
   TextProps,
   TextStyle,
+  TitleBarStyle,
   Toplevel,
   ToplevelAction,
   ToplevelEvent,
   ViewProps,
   ViewStyle,
+  WindowChrome,
 } from "./types.ts";

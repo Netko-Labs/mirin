@@ -11,6 +11,7 @@ import type {
   LayoutNode,
   NativeEvent,
   NativeHostTransport,
+  TitleBarStyle,
   ToplevelEvent,
 } from "./types.ts";
 
@@ -36,6 +37,9 @@ export function parseNativeEvent(line: string): NativeEvent | null {
 function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | null {
   if (typeof record.nodeId !== "string") {
     return null;
+  }
+  if (record.type === "chrome") {
+    return parseChromeEvent(record);
   }
   const nodeId = record.nodeId;
   const bounds = parseBounds(record.bounds);
@@ -75,6 +79,14 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
     default:
       return null;
   }
+}
+
+function parseChromeEvent(record: Record<string, unknown>): NativeEvent | null {
+  const { titleBar } = record;
+  if (titleBar !== "standard" && titleBar !== "unified") return null;
+  if (record.controls === null) return { type: "chrome", nodeId: "root", titleBar, controls: null };
+  const controls = parseBounds(record.controls);
+  return controls ? { type: "chrome", nodeId: "root", titleBar, controls } : null;
 }
 
 function parseBounds(value: unknown): Bounds | undefined {
@@ -141,6 +153,14 @@ export interface NativeHostOptions {
   height?: number;
   /** Open a layer-shell surface instead of a window (`MIRIN_METAL_SURFACE`). */
   surface?: SurfaceOptions;
+  /**
+   * `"unified"` runs the app's content up to the window's top edge, with the
+   * compositor's window controls drawn over it (`MIRIN_METAL_TITLEBAR`;
+   * default `"standard"`). Only Dashi's compositor does this; elsewhere it
+   * falls back to the standard title bar. Read the result with
+   * `useWindowChrome()`.
+   */
+  titleBar?: TitleBarStyle;
   /** Extra environment for the host process. */
   env?: Record<string, string>;
   /**
@@ -169,6 +189,7 @@ export function spawnNativeHost(
     env.MIRIN_METAL_SIZE = `${Math.round(options.width)}x${Math.round(options.height)}`;
   }
   if (options.surface !== undefined) env.MIRIN_METAL_SURFACE = JSON.stringify(options.surface);
+  if (options.titleBar !== undefined) env.MIRIN_METAL_TITLEBAR = options.titleBar;
   Object.assign(env, options.env);
   const child = Bun.spawn([binaryPath], {
     stdin: "pipe",

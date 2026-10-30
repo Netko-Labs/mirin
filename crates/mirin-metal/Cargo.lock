@@ -2211,6 +2211,7 @@ dependencies = [
  "wayland-protocols 0.31.2",
  "wayland-protocols-plasma",
  "wayland-protocols-wlr",
+ "wayland-scanner",
  "windows 0.61.3",
  "windows-core 0.61.2",
  "windows-numerics",

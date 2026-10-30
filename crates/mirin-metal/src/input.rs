@@ -128,6 +128,7 @@ pub(crate) fn render_input(
     element = element.on_mouse_down(
         MouseButton::Left,
         cx.listener(move |view, _event: &MouseDownEvent, window, cx| {
+            view.press_claimed = true;
             if let Some(state) = view.inputs.get(&focus_id) {
                 window.focus(&state.focus);
             }

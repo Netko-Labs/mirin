@@ -207,11 +207,14 @@ fn render_view(
             || props.on_hover
             || props.on_pointer
             || props.on_context_menu
+            || props.drag_region
             || props.scroll
             || props.scroll_x
             || props.hover_background.is_some()
         {
-            eprintln!("[mirin-metal] onPress/scroll/hoverBackground require an id; ignoring");
+            eprintln!(
+                "[mirin-metal] onPress/dragRegion/scroll/hoverBackground require an id; ignoring"
+            );
         }
         return element.into_any_element();
     };
@@ -242,6 +245,7 @@ fn render_view(
         element = element.on_mouse_down(
             MouseButton::Left,
             cx.listener(move |view, event: &MouseDownEvent, _window, _cx| {
+                view.press_claimed = true;
                 view.dragging = Some(pointer_id.clone());
                 view.emit_pointer(&pointer_id, "down", event.position);
             }),
@@ -263,10 +267,34 @@ fn render_view(
     }
     if props.on_press {
         let events = view.events.clone();
+        // Pressing a button inside a drag region is a click, not a move.
+        element = element.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|view, _event: &MouseDownEvent, _window, _cx| view.press_claimed = true),
+        );
         element = element.cursor_pointer().on_click(
             move |_event: &ClickEvent, _window: &mut Window, _cx: &mut App| {
                 events.press(node_id.as_ref());
             },
+        );
+    }
+    if props.drag_region {
+        // Like a title bar: a press starts a compositor-driven move (the
+        // pointer grab goes to the compositor, `xdg_toplevel.move`), a
+        // double click zooms. Listeners run deepest first, so a descendant
+        // that took the press has already said so (`press_claimed`).
+        element = element.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|view, event: &MouseDownEvent, window, _cx| {
+                if view.press_claimed {
+                    return;
+                }
+                if event.click_count >= 2 {
+                    window.zoom_window();
+                } else {
+                    window.start_window_move();
+                }
+            }),
         );
     }
     element.into_any_element()

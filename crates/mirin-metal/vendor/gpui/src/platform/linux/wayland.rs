@@ -1,6 +1,7 @@
 mod client;
 mod clipboard;
 mod cursor;
+mod dashi_chrome;
 mod display;
 mod serial;
 mod window;

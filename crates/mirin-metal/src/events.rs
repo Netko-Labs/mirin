@@ -4,6 +4,7 @@
 use std::sync::mpsc;
 
 use crate::sim::{LayoutMap, LayoutNode};
+use crate::titlebar::Chrome;
 
 /// An interaction event emitted by a rendered node.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +44,10 @@ pub enum EventKind {
     ContextMenu { x: f32, y: f32 },
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
     Resize,
+    /// The window's chrome: its effective title bar style and the area the
+    /// compositor's window controls cover. Sent when the window opens and on
+    /// every change (node id is `"root"`).
+    Chrome(Chrome),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +80,7 @@ impl EventKind {
             EventKind::Pointer { .. } => "pointer",
             EventKind::ContextMenu { .. } => "contextmenu",
             EventKind::Resize => "resize",
+            EventKind::Chrome(_) => "chrome",
         }
     }
 
@@ -85,7 +91,8 @@ impl EventKind {
             | EventKind::Hover { .. }
             | EventKind::Pointer { .. }
             | EventKind::ContextMenu { .. }
-            | EventKind::Resize => None,
+            | EventKind::Resize
+            | EventKind::Chrome(_) => None,
             EventKind::Change { value }
             | EventKind::Submit { value }
             | EventKind::Key { value } => Some(value),
@@ -166,6 +173,10 @@ impl EventSender {
 
     pub(crate) fn context_menu(&self, node_id: &str, x: f32, y: f32) {
         self.send(node_id, EventKind::ContextMenu { x, y });
+    }
+
+    pub(crate) fn chrome(&self, chrome: Chrome) {
+        self.send("root", EventKind::Chrome(chrome));
     }
 
     pub(crate) fn layout(&self, nodes: Vec<LayoutNode>) {

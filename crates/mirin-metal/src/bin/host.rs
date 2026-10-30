@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_surface, parse_tree, run, DriverMessage, EventKind, NativeUiEvent, NativeUiOptions,
-    SimCommand, Surface,
+    SimCommand, Surface, TitleBar,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -271,6 +271,15 @@ fn main() {
                 line["x"] = serde_json::json!(x);
                 line["y"] = serde_json::json!(y);
             }
+            if let EventKind::Chrome(chrome) = &event.kind {
+                line["titleBar"] = serde_json::json!(chrome.title_bar.name());
+                line["controls"] = match &chrome.controls {
+                    Some(c) => serde_json::json!({
+                        "x": c.x, "y": c.y, "width": c.width, "height": c.height,
+                    }),
+                    None => serde_json::Value::Null,
+                };
+            }
             if let EventKind::Layout { nodes } = &event.kind {
                 line["nodes"] = serde_json::Value::Array(
                     nodes
@@ -304,6 +313,23 @@ fn main() {
         },
         Err(_) => None,
     };
+    // `MIRIN_METAL_TITLEBAR=unified` puts the app's own toolbar in the title
+    // bar where the compositor supports it (Dashi); anything but `standard`
+    // and `unified` is an error.
+    let title_bar = match std::env::var("MIRIN_METAL_TITLEBAR") {
+        Ok(value) => match TitleBar::parse(&value) {
+            Ok(title_bar) => title_bar,
+            Err(error) => {
+                eprintln!("[mirin-metal] MIRIN_METAL_TITLEBAR: {error}");
+                std::process::exit(2);
+            }
+        },
+        Err(std::env::VarError::NotPresent) => TitleBar::Standard,
+        Err(error) => {
+            eprintln!("[mirin-metal] MIRIN_METAL_TITLEBAR: {error}");
+            std::process::exit(2);
+        }
+    };
     // `MIRIN_METAL_SIZE=1280x820` picks the initial window size. Surfaces may
     // be thin (a 28px menu bar); windows keep a usable minimum.
     let minimum = if surface.is_some() { 1.0 } else { 200.0 };
@@ -336,6 +362,7 @@ fn main() {
             width,
             height,
             surface,
+            title_bar,
         },
         initial,
         update_rx,

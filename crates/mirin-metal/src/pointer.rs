@@ -7,8 +7,8 @@
 //! edge, and left a drag that ended outside it stuck).
 
 use gpui::{
-    canvas, div, prelude::*, AnyElement, Context, DispatchPhase, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point,
+    canvas, div, prelude::*, AnyElement, Context, DispatchPhase, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point,
 };
 
 use crate::events::PointerPhase;
@@ -40,6 +40,15 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
     let listeners = canvas(
         |_, _, _| {},
         move |_, _, window, _| {
+            // Each left press starts unclaimed; the capture phase runs before
+            // any node's listener (a drag region asks whether a descendant
+            // took the press).
+            let presses = view.clone();
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
+                if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
+                    let _ = presses.update(cx, |view, _| view.press_claimed = false);
+                }
+            });
             let moves = view.clone();
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
                 if phase != DispatchPhase::Bubble {

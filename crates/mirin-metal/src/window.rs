@@ -21,6 +21,7 @@ use crate::pointer::capture_root;
 use crate::render::render_node;
 use crate::sim::{self, LayoutMap, SimCommand};
 use crate::surface::Surface;
+use crate::titlebar::{Chrome, Controls, TitleBar};
 use crate::tree::{collect_inputs, collect_scroll_ids, NodeSpec};
 
 /// After a simulated click, how long to wait for the driver's resulting tree
@@ -42,6 +43,9 @@ pub struct NativeUiOptions {
     /// surface instead of a window; see `parse_surface`. A layer surface is
     /// transparent where the tree is; a lock surface is opaque.
     pub surface: Option<Surface>,
+    /// `Unified` runs the tree up to the window's top edge where the
+    /// compositor supports it (see `titlebar.rs`); ignored for surfaces.
+    pub title_bar: TitleBar,
 }
 
 impl Default for NativeUiOptions {
@@ -52,6 +56,7 @@ impl Default for NativeUiOptions {
             width: 800.0,
             height: 600.0,
             surface: None,
+            title_bar: TitleBar::Standard,
         }
     }
 }
@@ -114,6 +119,10 @@ pub(crate) struct RootView {
     pub(crate) layout: LayoutMap,
     /// Node currently capturing the pointer (`onPointer`), until release.
     pub(crate) dragging: Option<String>,
+    /// A descendant of a drag region took the current left press (a button,
+    /// an input), so the region must not start moving the window. Reset on
+    /// every press before it dispatches; deeper nodes handle it first.
+    pub(crate) press_claimed: bool,
     /// Scroll state of scrollable nodes, by id, for programmatic scrolling.
     pub(crate) scrolls: HashMap<String, ScrollHandle>,
     /// Virtualized long lists, by id (`list.rs`).
@@ -128,6 +137,7 @@ impl RootView {
             inputs: HashMap::new(),
             layout,
             dragging: None,
+            press_claimed: false,
             scrolls: HashMap::new(),
             lists: HashMap::new(),
         };
@@ -267,10 +277,14 @@ pub fn run(
             // Desktop surfaces (layers, a lock screen) draw over what the
             // compositor shows behind them; their tree paints its own background.
             let is_layer = options.surface.is_some();
+            let unified = !is_layer && options.title_bar == TitleBar::Unified;
             let window_options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
                     title: Some(options.title.clone()),
+                    // The unified style: GPUI's Wayland backend asks Dashi
+                    // to leave the title bar to the app (vendor/gpui/MIRIN.md).
+                    appears_transparent: unified,
                     ..Default::default()
                 }),
                 window_background: if is_layer {
@@ -288,6 +302,7 @@ pub fn run(
             };
             let layout = LayoutMap::default();
             let event_sender = EventSender::new(events, layout.clone());
+            let event_sender_for_chrome = event_sender.clone();
             let opened = cx.open_window(window_options, |_window, cx| {
                 cx.new(|cx| RootView::new(initial_tree, event_sender, layout, cx))
             });
@@ -306,6 +321,27 @@ pub fn run(
             let _ = window.update(cx, |view, window, _cx| {
                 window.set_window_title(&title);
                 view.apply_pending_focus(window);
+            });
+            // Report the chrome now and whenever the compositor moves or
+            // drops its window controls (it runs once on registering).
+            let requested = if unified {
+                TitleBar::Unified
+            } else {
+                TitleBar::Standard
+            };
+            let chrome_events = event_sender_for_chrome;
+            let _ = window.update(cx, |_view, window, _cx| {
+                window
+                    .observe_window_chrome(move |window, _cx| {
+                        let controls = window.chrome_controls().map(|bounds| Controls {
+                            x: f32::from(bounds.origin.x),
+                            y: f32::from(bounds.origin.y),
+                            width: f32::from(bounds.size.width),
+                            height: f32::from(bounds.size.height),
+                        });
+                        chrome_events.chrome(Chrome::effective(requested, controls));
+                    })
+                    .detach();
             });
 
             // Driver messages arrive on a std channel from another thread; bridge

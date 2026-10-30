@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 import ReactReconciler from "react-reconciler";
 import { ConcurrentRoot } from "react-reconciler/constants";
+import { ChromeStore, chromeFromEvent, withChrome } from "./chrome.ts";
 import { hostConfig } from "./lib/host-config.ts";
 import type { Container } from "./lib/instances.ts";
 import { type Handlers, serializeRoot } from "./lib/serialize.ts";
@@ -49,6 +50,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     testIds: new Map(),
   };
   let lastTree: string | null = null;
+  const chrome = new ChromeStore();
   const container: Container = {
     children: [],
     onCommit() {
@@ -97,6 +99,9 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       case "contextmenu":
         handlers.contextMenu.get(event.nodeId)?.({ x: event.x, y: event.y });
         break;
+      case "chrome":
+        chrome.set(chromeFromEvent(event));
+        break;
       case "layout":
         break;
     }
@@ -115,7 +120,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     () => {},
     null,
   );
-  reconciler.updateContainer(element, root, null, null);
+  reconciler.updateContainer(withChrome(chrome, element), root, null, null);
 
   return {
     unmount() {

@@ -168,6 +168,20 @@ export interface Bounds {
   height: number;
 }
 
+/** The window's title bar style: the compositor's (`standard`) or the app's own toolbar (`unified`). */
+export type TitleBarStyle = "standard" | "unified";
+
+/** What `useWindowChrome()` returns. */
+export interface WindowChrome {
+  /** The style the window effectively has: `unified` only where the compositor honored it. */
+  titleBar: TitleBarStyle;
+  /**
+   * The area the compositor's window controls cover over the window, in window
+   * pixels from its top-left; keep it empty. `null` when there are none.
+   */
+  controls: Bounds | null;
+}
+
 export interface ViewProps {
   /** Receives the mounted host instance (usable as a `createPortal` target). */
   ref?: Ref<unknown>;
@@ -183,6 +197,13 @@ export interface ViewProps {
   onHoverChange?: (hovered: boolean, bounds?: Bounds) => void;
   /** Stop pointer events from reaching views painted underneath (overlays). */
   occlude?: boolean;
+  /**
+   * Behaves like a title bar: pressing here moves the window, double-clicking
+   * zooms it. Descendants with their own `onPress`, `onPointer`, or a
+   * `TextInput` keep the clicks on them. Use it on a unified toolbar's empty
+   * areas (see `useWindowChrome`).
+   */
+  dragRegion?: boolean;
   /** Called with the view's painted bounds whenever they change. */
   onLayout?: (bounds: Bounds) => void;
   /** Press on this view, then every move and the release until the button lifts. */
@@ -261,7 +282,8 @@ export type NativeEvent =
   | ({ type: "pointer"; nodeId: string } & PointerInfo)
   | { type: "contextmenu"; nodeId: string; x: number; y: number }
   | { type: "resize"; nodeId: string; bounds: Bounds }
-  | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] };
+  | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] }
+  | ({ type: "chrome"; nodeId: "root" } & WindowChrome);
 
 /**
  * Simulated input for checks: delivered inside the renderer like real input

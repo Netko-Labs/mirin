@@ -160,6 +160,10 @@ pub struct ViewProps {
     pub on_context_menu: bool,
     /// Stop pointer events from reaching nodes painted underneath (overlays).
     pub occlude: bool,
+    /// A press here moves the window and a double click zooms it, as on a
+    /// title bar (needs `id`). Descendants with their own `onPress`,
+    /// `onPointer`, or an `input` keep the clicks on them.
+    pub drag_region: bool,
     /// Emit a `layout` event with this node's bounds whenever they change
     /// (needs `id`). Popups use it to measure themselves and the window.
     pub on_layout: bool,
@@ -402,6 +406,21 @@ pub(crate) fn collect_scroll_ids(node: &NodeSpec, out: &mut std::collections::Ha
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drag_region_is_a_view_prop() {
+        let tree = parse_tree(r##"{"type":"view","props":{"id":"bar","dragRegion":true}}"##)
+            .expect("a drag region must parse");
+        let NodeSpec::View { props, .. } = &tree else {
+            panic!("root must be a view");
+        };
+        assert!(props.drag_region);
+        let plain = parse_tree(r##"{"type":"view","props":{"id":"bar"}}"##).expect("plain view");
+        let NodeSpec::View { props, .. } = &plain else {
+            panic!("root must be a view");
+        };
+        assert!(!props.drag_region);
+    }
 
     #[test]
     fn parses_a_nested_tree() {

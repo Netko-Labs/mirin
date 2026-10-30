@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createContext, createElement, useContext, useState } from "react";
+import { useWindowChrome } from "../src/chrome.ts";
 import { Text, TextInput, View } from "../src/components.ts";
 import { parseNativeEvent } from "../src/host.ts";
 import { createPortal, render } from "../src/render.ts";
@@ -258,6 +259,86 @@ describe("raw strings in views", () => {
       props: { color: "#ff0000", size: 13 },
       children: ["Status"],
     });
+    root.unmount();
+  });
+});
+
+describe("window chrome", () => {
+  test("parses chrome events, with and without controls", () => {
+    expect(
+      parseNativeEvent(
+        '{"type":"chrome","nodeId":"root","titleBar":"unified","controls":{"x":0,"y":0,"width":80,"height":28}}',
+      ),
+    ).toEqual({
+      type: "chrome",
+      nodeId: "root",
+      titleBar: "unified",
+      controls: { x: 0, y: 0, width: 80, height: 28 },
+    });
+    expect(
+      parseNativeEvent('{"type":"chrome","nodeId":"root","titleBar":"standard","controls":null}'),
+    ).toEqual({ type: "chrome", nodeId: "root", titleBar: "standard", controls: null });
+    // Junk: an unknown style, missing controls, controls that are not a rectangle.
+    expect(
+      parseNativeEvent('{"type":"chrome","nodeId":"root","titleBar":"x","controls":null}'),
+    ).toBeNull();
+    expect(parseNativeEvent('{"type":"chrome","nodeId":"root","titleBar":"unified"}')).toBeNull();
+    expect(
+      parseNativeEvent('{"type":"chrome","nodeId":"root","titleBar":"unified","controls":{"x":1}}'),
+    ).toBeNull();
+  });
+
+  test("useWindowChrome starts standard and follows the chrome event", async () => {
+    const transport = fakeTransport();
+    const seen: Array<{ titleBar: string; controls: unknown }> = [];
+    const Probe = () => {
+      const chrome = useWindowChrome();
+      seen.push(chrome);
+      return createElement(Text, null, chrome.titleBar);
+    };
+    const root = render(createElement(Probe), transport);
+    await nextCommit();
+    expect(seen.at(-1)).toEqual({ titleBar: "standard", controls: null });
+
+    const controls = { x: 0, y: 0, width: 80, height: 28 };
+    transport.emit({ type: "chrome", nodeId: "root", titleBar: "unified", controls });
+    await nextCommit();
+    expect(seen.at(-1)).toEqual({ titleBar: "unified", controls });
+
+    // The same report again does not render again.
+    const renders = seen.length;
+    transport.emit({
+      type: "chrome",
+      nodeId: "root",
+      titleBar: "unified",
+      controls: { ...controls },
+    });
+    await nextCommit();
+    expect(seen.length).toBe(renders);
+
+    transport.emit({ type: "chrome", nodeId: "root", titleBar: "standard", controls: null });
+    await nextCommit();
+    expect(seen.at(-1)).toEqual({ titleBar: "standard", controls: null });
+    root.unmount();
+  });
+
+  test("dragRegion reaches the native tree only when set", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(View, { dragRegion: true }),
+        createElement(View, { onPress: () => {} }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "{}") as {
+      children: Array<{ props: Record<string, unknown> }>;
+    };
+    expect(tree.children[0]?.props.dragRegion).toBe(true);
+    expect(tree.children[1]?.props.dragRegion).toBeUndefined();
     root.unmount();
   });
 });

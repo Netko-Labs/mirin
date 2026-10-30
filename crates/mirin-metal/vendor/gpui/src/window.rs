@@ -888,6 +888,8 @@ pub struct Window {
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
+    // mirin: observers of the compositor-drawn controls' area.
+    pub(crate) chrome_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
@@ -1125,6 +1127,20 @@ impl Window {
                     .log_err();
             }
         }));
+        // mirin: the compositor's window controls moved or went away.
+        platform_window.on_chrome_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window
+                            .chrome_observers
+                            .clone()
+                            .retain(&(), |callback| callback(window, cx));
+                    })
+                    .log_err();
+            }
+        }));
         platform_window.on_active_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
@@ -1278,6 +1294,7 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
+            chrome_observers: SubscriberSet::new(),
             active,
             hovered,
             needs_present,
@@ -1359,6 +1376,33 @@ impl Window {
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let (subscription, activate) = self.appearance_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    // mirin: Dashi's unified title bar. When the window asked for a
+    // transparent title bar and the compositor draws its window controls over
+    // the window (Dashi), this is their area in window coordinates, which
+    // the app keeps empty. `None` on every other compositor.
+    /// The area of the compositor-drawn window controls over this window.
+    pub fn chrome_controls(&self) -> Option<Bounds<Pixels>> {
+        self.platform_window.chrome_controls()
+    }
+
+    // mirin: see `chrome_controls`.
+    /// Registers a callback to be invoked when `chrome_controls` changes.
+    /// It also runs once right away.
+    pub fn observe_window_chrome(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.chrome_observers.insert(
             (),
             Box::new(move |window, cx| {
                 callback(window, cx);

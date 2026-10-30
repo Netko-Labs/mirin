@@ -71,6 +71,7 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
+    dashi_chrome::{dashi_chrome_manager_v1, dashi_chrome_v1},
     display::WaylandDisplay,
     window::{ImeInput, WaylandWindowStatePtr},
 };
@@ -127,6 +128,9 @@ pub struct Globals {
     // mirin: session-lock surfaces for a lock screen, on the first output.
     pub session_lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub first_output: Option<wl_output::WlOutput>,
+    // mirin: Dashi's private chrome protocol (unified title bar); None on
+    // every other compositor.
+    pub dashi_chrome: Option<dashi_chrome_manager_v1::DashiChromeManagerV1>,
     pub executor: ForegroundExecutor,
 }
 
@@ -168,6 +172,7 @@ impl Globals {
             layer_shell: globals.bind(&qh, 1..=4, ()).ok(),
             session_lock_manager: globals.bind(&qh, 1..=1, ()).ok(),
             first_output,
+            dashi_chrome: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
         }
@@ -995,6 +1000,28 @@ delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
 delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
 // mirin: session-lock surfaces for a lock screen.
 delegate_noop!(WaylandClientStatePtr: ignore ext_session_lock_manager_v1::ExtSessionLockManagerV1);
+// mirin: Dashi's unified title bar.
+delegate_noop!(WaylandClientStatePtr: ignore dashi_chrome_manager_v1::DashiChromeManagerV1);
+
+// mirin: the compositor tells where its traffic lights are (`controls`).
+impl Dispatch<dashi_chrome_v1::DashiChromeV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &dashi_chrome_v1::DashiChromeV1,
+        event: dashi_chrome_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+        window.handle_chrome_event(event);
+    }
+}
 
 // mirin: session-lock surfaces for a lock screen. `finished` means the
 // compositor refused the lock (or ended it): the window closes.
