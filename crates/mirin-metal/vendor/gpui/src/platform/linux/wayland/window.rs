@@ -338,6 +338,7 @@ impl WaylandWindow {
         parent: Option<XdgToplevel>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
+        let session_lock = params.session_lock;
         // mirin: layer-shell and session-lock surfaces for desktop-shell UI.
         let role = match &params.layer_shell {
             _ if params.session_lock => match create_lock_surface(&globals, &surface) {
@@ -417,8 +418,11 @@ impl WaylandWindow {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         });
 
-        // Kick things off
-        surface.commit();
+        // Kick things off. A lock surface is configured without one (mirin:
+        // committing before its first ack_configure is a protocol error).
+        if !session_lock {
+            surface.commit();
+        }
 
         Ok((this, surface.id()))
     }
