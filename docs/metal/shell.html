@@ -101,7 +101,7 @@
   one feature. A shell needs more: a compositor strategy, system services, a privilege model, and a
   way to host third-party applets. The architecture does <strong>not</strong> need to change in its
   foundations: process-per-app, GPUI as a Wayland client, the Worker split, the patch protocol, and
-  the <code>mirinjs</code> contract all hold. It needs <strong>seven extension points</strong>
+  the <code>mirinjs</code> contract all hold. It needs <strong>eight extension points</strong>
   (§5), and two of them should shape R1–R7 now so the shell does not force a redesign later.
 </p>
 <div class="callout decision">
@@ -207,6 +207,13 @@
   <li>Later: a pre-forked runtime template to cut app cold start, and shared glyph and icon caches across processes.</li>
 </ul>
 
+<h3>E8 · Agent-first <span class="tag info">proposal</span></h3>
+<ul>
+  <li>Owner decision 2026-10-29: Dashi is agent-first and exposes MCP to control the OS. The plan is Dashi's <code>docs/agents.html</code>; its specifics await sign-off.</li>
+  <li>The compositor owns what an agent must not bypass: consent per agent and scope, an agent seat (a second <code>wl_seat</code>) so agents act without moving the person's pointer or focus, the activity indicator, and a stop key. <code>dashi-mcp</code>, one process per MCP connection over stdio, reaches it through the standard protocols in §6 plus one small privileged protocol for what none covers.</li>
+  <li>Runtime consequences: Metal's accessibility tree (AccessKit to AT-SPI, planned after v1 in the runtime spec) becomes the tree agents read too, so it moves up; the GPUI fork binds every <code>wl_seat</code>; apps may later declare typed actions that become MCP tools, which is a <code>mirinjs</code> API and needs the owner's sign-off.</li>
+</ul>
+
 <h3>What stays the same</h3>
 <p>Process-per-app, GPUI as the client toolkit, the Worker split, the patch protocol, the <code>mirinjs</code> contract, and the accepted decisions in the runtime spec.</p>
 
@@ -247,6 +254,7 @@
   <tr><td>3</td><td>OS base</td><td><span class="tag ok">accepted</span> A regular, package-based Fedora spin (S5).</td></tr>
   <tr><td>4</td><td>Fold E1–E3 into the runtime spec now</td><td><span class="tag ok">accepted</span> Done: surface roles and outputs in R7, context namespaces in protocol v2, capabilities in config (runtime spec §7, §10, §11, §18).</td></tr>
   <tr><td>5</td><td>Language for system services</td><td><span class="tag info">default</span> Rust (<code>zbus</code>) behind a typed TypeScript API.</td></tr>
+  <tr><td>6</td><td>Agents</td><td><span class="tag ok">accepted 2026-10-29</span> Agent-first: the OS exposes MCP so agents can observe and control it (E8). Consent model, agent seat, and the rest are open in Dashi's <code>docs/agents.html</code>.</td></tr>
 </table>
 
 <h2 id="risks">9. Risks</h2>
