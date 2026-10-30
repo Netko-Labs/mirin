@@ -264,7 +264,9 @@ pub fn run(
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
-            let is_layer = matches!(options.surface, Some(Surface::Layer(_)));
+            // Desktop surfaces (layers, a lock screen) draw over what the
+            // compositor shows behind them; their tree paints its own background.
+            let is_layer = options.surface.is_some();
             let window_options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
