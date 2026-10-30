@@ -68,6 +68,22 @@ pub enum DriverMessage {
     Unlock,
 }
 
+/// Whether a new driver `value` resets the buffer. A value the renderer sent
+/// itself (a late echo, possibly skipping older ones) does not; anything else
+/// does, and forgets the pending echoes.
+pub(crate) fn driver_resets(echoes: &mut VecDeque<String>, value: &str) -> bool {
+    match echoes.iter().position(|sent| sent == value) {
+        Some(echoed) => {
+            echoes.drain(..=echoed);
+            false
+        }
+        None => {
+            echoes.clear();
+            true
+        }
+    }
+}
+
 /// Renderer-owned editing state of one `input` node.
 pub(crate) struct InputState {
     pub(crate) focus: FocusHandle,
@@ -77,6 +93,11 @@ pub(crate) struct InputState {
     /// The driver's `value` the buffer was last synced from; a different value
     /// in a new tree resets the buffer (controlled-input semantics).
     pub(crate) synced_value: String,
+    /// Buffers sent as `change` events that the driver hasn't echoed back
+    /// yet, oldest first. A driver value matching one is that echo arriving
+    /// late, not a reset: typing faster than the round trip must not lose
+    /// keystrokes.
+    pub(crate) echoes: VecDeque<String>,
     /// Set by the tree sync when the node is new and asked for `autofocus`.
     pub(crate) wants_focus: bool,
     /// Ctrl/Cmd+A: the next insertion or deletion replaces the whole buffer.
@@ -136,8 +157,10 @@ impl RootView {
             match self.inputs.get_mut(&spec.id) {
                 Some(state) => {
                     if state.synced_value != spec.value {
-                        state.buffer = spec.value.clone();
-                        state.cursor = state.buffer.chars().count();
+                        if driver_resets(&mut state.echoes, &spec.value) {
+                            state.buffer = spec.value.clone();
+                            state.cursor = state.buffer.chars().count();
+                        }
                         state.synced_value = spec.value.clone();
                     }
                 }
@@ -149,6 +172,7 @@ impl RootView {
                             cursor: spec.value.chars().count(),
                             buffer: spec.value.clone(),
                             synced_value: spec.value.clone(),
+                            echoes: VecDeque::new(),
                             wants_focus: spec.autofocus,
                             select_all: false,
                         },
@@ -379,4 +403,33 @@ pub fn run(
             })
             .detach();
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::driver_resets;
+    use std::collections::VecDeque;
+
+    fn sent(values: &[&str]) -> VecDeque<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn late_echoes_never_reset_the_buffer() {
+        // Typed "abc" faster than the driver answers; its "a" arrives last.
+        let mut echoes = sent(&["a", "ab", "abc"]);
+        assert!(!driver_resets(&mut echoes, "a"));
+        assert_eq!(echoes, sent(&["ab", "abc"]));
+        // A driver that batches may skip straight to the newest.
+        assert!(!driver_resets(&mut echoes, "abc"));
+        assert!(echoes.is_empty());
+    }
+
+    #[test]
+    fn a_new_value_from_the_driver_wins() {
+        let mut echoes = sent(&["pass"]);
+        assert!(driver_resets(&mut echoes, ""));
+        assert!(echoes.is_empty());
+        assert!(driver_resets(&mut echoes, "ABC"));
+    }
 }

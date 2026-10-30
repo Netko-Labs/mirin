@@ -13,6 +13,8 @@ use crate::window::RootView;
 
 /// Caret glyph drawn at the cursor while the input has focus.
 const CARET: &str = "\u{258F}";
+/// Unechoed `change` values kept per input (see `InputState::echoes`).
+const MAX_ECHOES: usize = 64;
 
 pub(crate) fn render_input(
     props: &InputProps,
@@ -150,8 +152,14 @@ pub(crate) fn render_input(
             Edit::FocusPrevious => view.focus_neighbor(&key_id, -1, window),
             Edit::Changed => {
                 if on_change {
-                    if let Some(state) = view.inputs.get(&key_id) {
+                    if let Some(state) = view.inputs.get_mut(&key_id) {
                         view.events.change(&key_id, &state.buffer);
+                        // Expect it back; a driver that never echoes (or
+                        // transforms the text) only ever keeps a few.
+                        if state.echoes.len() >= MAX_ECHOES {
+                            state.echoes.pop_front();
+                        }
+                        state.echoes.push_back(state.buffer.clone());
                     }
                 }
                 cx.notify();
