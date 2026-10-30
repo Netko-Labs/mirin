@@ -1,9 +1,14 @@
 //! Pointer capture for draggable nodes (sliders, resize handles). A press on
 //! a node with `onPointer` starts a capture; moves and the release are then
-//! reported from the root, wherever the pointer goes, until the button lifts.
+//! reported wherever the pointer goes, until the button lifts. That includes
+//! outside the window: while a button is held the compositor keeps sending
+//! the pointer to the surface it was pressed on, so the listeners are
+//! window-wide, not tied to the root's hitbox (which stops at the window's
+//! edge, and left a drag that ended outside it stuck).
 
 use gpui::{
-    div, prelude::*, AnyElement, Context, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    canvas, div, prelude::*, AnyElement, Context, DispatchPhase, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point,
 };
 
 use crate::events::PointerPhase;
@@ -29,22 +34,42 @@ impl RootView {
 
 /// Wrap the rendered tree so moves and the release reach an active capture.
 pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> AnyElement {
+    let view = cx.weak_entity();
+    // Window-wide listeners have to be registered while painting; a canvas
+    // with nothing to draw is the place.
+    let listeners = canvas(
+        |_, _, _| {},
+        move |_, _, window, _| {
+            let moves = view.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+                let _ = moves.update(cx, |view, _| {
+                    if let Some(id) = view.dragging.clone() {
+                        view.emit_pointer(&id, "move", event.position);
+                    }
+                });
+            });
+            let releases = view;
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                    return;
+                }
+                let _ = releases.update(cx, |view, _| {
+                    if let Some(id) = view.dragging.take() {
+                        view.emit_pointer(&id, "up", event.position);
+                    }
+                });
+            });
+        },
+    )
+    .absolute()
+    .size_0();
     div()
         .size_full()
         .font_family(crate::render::sans_family())
-        .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _window, _cx| {
-            if let Some(id) = view.dragging.clone() {
-                view.emit_pointer(&id, "move", event.position);
-            }
-        }))
-        .on_mouse_up(
-            MouseButton::Left,
-            cx.listener(|view, event: &MouseUpEvent, _window, _cx| {
-                if let Some(id) = view.dragging.take() {
-                    view.emit_pointer(&id, "up", event.position);
-                }
-            }),
-        )
         .child(content)
+        .child(listeners)
         .into_any_element()
 }
