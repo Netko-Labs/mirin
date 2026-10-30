@@ -213,6 +213,8 @@ export interface TextInputProps {
   onChangeText?: (text: string) => void;
   /** Enter (single line) or Ctrl/Cmd+Enter (multiline). */
   onSubmitEditing?: (text: string) => void;
+  /** Navigation keys the input doesn't use itself (a launcher's list). */
+  onKeyPress?: (key: "Escape" | "ArrowUp" | "ArrowDown") => void;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
 }
@@ -254,6 +256,7 @@ export type NativeEvent =
   | { type: "press"; nodeId: string; bounds?: Bounds }
   | { type: "change"; nodeId: string; value: string }
   | { type: "submit"; nodeId: string; value: string }
+  | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
   | { type: "hover"; nodeId: string; hovered: boolean; bounds?: Bounds }
   | ({ type: "pointer"; nodeId: string } & PointerInfo)
   | { type: "contextmenu"; nodeId: string; x: number; y: number }

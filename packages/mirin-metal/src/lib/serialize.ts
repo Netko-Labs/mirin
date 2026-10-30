@@ -140,6 +140,7 @@ interface InputNodeProps {
   autofocus?: boolean;
   onChange?: boolean;
   onSubmit?: boolean;
+  onKey?: boolean;
 }
 
 interface ViewNode {
@@ -194,6 +195,7 @@ export interface Handlers {
   layout: Map<string, (bounds: Bounds) => void>;
   change: Map<string, (text: string) => void>;
   submit: Map<string, (text: string) => void>;
+  key: Map<string, (key: "Escape" | "ArrowUp" | "ArrowDown") => void>;
   /** `testID` → native node id, for checks and tools. */
   testIds: Map<string, string>;
 }
@@ -241,6 +243,7 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
     layout: new Map(),
     change: new Map(),
     submit: new Map(),
+    key: new Map(),
     testIds: new Map(),
   };
   const tree = serializeInstance(root, handlers);
@@ -480,6 +483,10 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (input.onSubmitEditing) {
     props.onSubmit = true;
     handlers.submit.set(id, input.onSubmitEditing);
+  }
+  if (input.onKeyPress) {
+    props.onKey = true;
+    handlers.key.set(id, input.onKeyPress);
   }
   if (input.testID) handlers.testIds.set(input.testID, id);
   return { type: "input", props };

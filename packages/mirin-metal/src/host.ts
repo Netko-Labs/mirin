@@ -68,6 +68,10 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return typeof record.value === "string"
         ? { type: record.type, nodeId, value: record.value }
         : null;
+    case "key":
+      return record.value === "Escape" || record.value === "ArrowUp" || record.value === "ArrowDown"
+        ? { type: "key", nodeId, value: record.value }
+        : null;
     default:
       return null;
   }

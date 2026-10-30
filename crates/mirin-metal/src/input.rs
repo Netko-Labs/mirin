@@ -136,6 +136,7 @@ pub(crate) fn render_input(
     let multiline = props.multiline;
     let on_change = props.on_change;
     let on_submit = props.on_submit;
+    let on_key = props.on_key;
     element = element.on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
         let outcome = {
             let Some(state) = view.inputs.get_mut(&key_id) else {
@@ -162,6 +163,11 @@ pub(crate) fn render_input(
                     }
                 }
             }
+            Edit::Key(key) => {
+                if on_key {
+                    view.events.key(&key_id, key);
+                }
+            }
         }
     }));
 
@@ -172,6 +178,8 @@ enum Edit {
     None,
     Changed,
     Submitted,
+    /// A navigation key the driver may act on (`onKey`).
+    Key(&'static str),
     FocusNext,
     FocusPrevious,
 }
@@ -261,6 +269,9 @@ fn edit(
                 Edit::FocusNext
             }
         }
+        "escape" => Edit::Key("Escape"),
+        "up" => Edit::Key("ArrowUp"),
+        "down" => Edit::Key("ArrowDown"),
         "v" if command => match cx.read_from_clipboard().and_then(|item| item.text()) {
             Some(text) => {
                 let text = if multiline {

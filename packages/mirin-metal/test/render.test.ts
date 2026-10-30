@@ -117,6 +117,12 @@ describe("parseNativeEvent", () => {
       value: "sel",
     });
     expect(parseNativeEvent('{"type":"submit","nodeId":"7"}')).toBeNull();
+    expect(parseNativeEvent('{"type":"key","nodeId":"7","value":"Escape"}')).toEqual({
+      type: "key",
+      nodeId: "7",
+      value: "Escape",
+    });
+    expect(parseNativeEvent('{"type":"key","nodeId":"7","value":"F5"}')).toBeNull();
     expect(parseNativeEvent('{"type":"press"}')).toBeNull();
     expect(parseNativeEvent("not json")).toBeNull();
     expect(parseNativeEvent('"press"')).toBeNull();

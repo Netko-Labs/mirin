@@ -24,6 +24,8 @@ pub enum EventKind {
     Change { value: String },
     /// An `input` was submitted (Enter, or Ctrl/Cmd+Enter when multiline).
     Submit { value: String },
+    /// A navigation key in an `input` with `onKey`: Escape, ArrowUp, ArrowDown.
+    Key { value: String },
     /// Reply to a `layout` simulation query (node id is `"root"`).
     Layout { nodes: Vec<LayoutNode> },
     /// The pointer entered (`true`) or left (`false`) a `view` with `onHover`.
@@ -67,6 +69,7 @@ impl EventKind {
             EventKind::Press => "press",
             EventKind::Change { .. } => "change",
             EventKind::Submit { .. } => "submit",
+            EventKind::Key { .. } => "key",
             EventKind::Layout { .. } => "layout",
             EventKind::Hover { .. } => "hover",
             EventKind::Pointer { .. } => "pointer",
@@ -83,7 +86,9 @@ impl EventKind {
             | EventKind::Pointer { .. }
             | EventKind::ContextMenu { .. }
             | EventKind::Resize => None,
-            EventKind::Change { value } | EventKind::Submit { value } => Some(value),
+            EventKind::Change { value }
+            | EventKind::Submit { value }
+            | EventKind::Key { value } => Some(value),
         }
     }
 }
@@ -119,6 +124,15 @@ impl EventSender {
             node_id,
             EventKind::Submit {
                 value: value.to_string(),
+            },
+        );
+    }
+
+    pub(crate) fn key(&self, node_id: &str, key: &str) {
+        self.send(
+            node_id,
+            EventKind::Key {
+                value: key.to_string(),
             },
         );
     }

@@ -45,6 +45,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     layout: new Map(),
     change: new Map(),
     submit: new Map(),
+    key: new Map(),
     testIds: new Map(),
   };
   let lastTree: string | null = null;
@@ -78,6 +79,9 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "submit":
         handlers.submit.get(event.nodeId)?.(event.value);
+        break;
+      case "key":
+        handlers.key.get(event.nodeId)?.(event.value);
         break;
       case "hover":
         handlers.hover.get(event.nodeId)?.(event.hovered, event.bounds);

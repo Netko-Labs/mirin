@@ -273,6 +273,9 @@ pub struct InputProps {
     pub on_change: bool,
     #[serde(default)]
     pub on_submit: bool,
+    /// Report Escape, ArrowUp, and ArrowDown (a launcher's list navigation).
+    #[serde(default)]
+    pub on_key: bool,
 }
 
 impl Default for InputProps {
@@ -301,6 +304,7 @@ impl Default for InputProps {
             autofocus: false,
             on_change: false,
             on_submit: false,
+            on_key: false,
         }
     }
 }

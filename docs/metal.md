@@ -160,7 +160,8 @@ The TypeScript side (`packages/mirin-metal/src/lib/serialize.ts`) maps React
 Native-style props: `<View style>` (`flex`, `alignItems`, `justifyContent`,
 `overflow: "scroll" | "hidden"`, `hoverBackgroundColor`, …), `<Text
 numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
-`<TextInput value onChangeText onSubmitEditing multiline autoFocus style>`, and
+`<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
+(`onKeyPress` reports Escape, ArrowUp, and ArrowDown, for list navigation), and
 `<ScrollView>` (a scrolling `<View>`).
 
 ## 2b. `@mirinjs/metal-ui`: shadcn/ui on Metal
