@@ -116,9 +116,9 @@
 <h2 id="layers">2. What a desktop is made of</h2>
 <table>
   <tr><th>Layer</th><th>Examples</th><th>Who provides it in this plan</th></tr>
-  <tr><td>Compositor</td><td>Window management, input routing, outputs, effects, protocols</td><td><code>mirin-comp</code>, Rust on Smithay (§3)</td></tr>
+  <tr><td>Compositor</td><td>Window management, input routing, outputs, effects, protocols</td><td><code>mirin-comp</code>, Rust on Smithay (§3) for rendering, input, and protocols; window-management policy moves to Bun over its IPC (decision 5)</td></tr>
   <tr><td>Shell UI</td><td>Panel, dock, launcher, notifications, OSD, quick settings, app switcher, lock screen, greeter</td><td>Metal apps with shell surfaces (§4)</td></tr>
-  <tr><td>Session services</td><td>Notifications server, tray host, audio, network, power, Bluetooth, polkit agent, portals, settings</td><td>Rust services behind a typed API (§5, E4)</td></tr>
+  <tr><td>Session services</td><td>Notifications server, tray host, audio, network, power, Bluetooth, polkit agent, portals, settings</td><td>Bun services behind a typed API (§5, E4)</td></tr>
   <tr><td>Apps</td><td>Settings, files, terminal, Anko, third-party apps</td><td>Metal apps (and CEF apps where a webview fits)</td></tr>
   <tr><td>Design system</td><td>Tokens, components, icons, motion</td><td><code>@mirinjs/metal-ui</code>, tokens served by the session (E6)</td></tr>
   <tr><td>OS image</td><td>Base system, updates, session startup</td><td>A regular Fedora spin (§8)</td></tr>
@@ -184,7 +184,7 @@
 
 <h3>E4 · System services <span class="tag info">S2</span></h3>
 <ul>
-  <li>A D-Bus layer in Rust (<code>zbus</code>) in <code>mirin-platform</code>, event-driven, exposed to Workers through a typed package, <code>@mirinjs/shell</code>.</li>
+  <li>A D-Bus layer in Bun (the D-Bus wire protocol over its Unix socket; <code>bun:ffi</code> where a libc call is needed), event-driven, exposed through a typed package, <code>@mirinjs/shell</code>.</li>
   <li>Services: open windows and taskbar actions, workspaces, notifications server, tray host (StatusNotifierItem), media (MPRIS), audio (PipeWire), network (NetworkManager), power and sessions (UPower, logind), Bluetooth (BlueZ), polkit agent, idle and inhibition.</li>
   <li>Long-running services live in <code>mirin-services</code>; the shell subscribes over RPC, so UI restarts never drop state.</li>
 </ul>
@@ -210,7 +210,7 @@
 <h3>E8 · Agent-first <span class="tag info">proposal</span></h3>
 <ul>
   <li>Owner decision 2026-10-29: Dashi is agent-first and exposes MCP to control the OS. The plan is Dashi's <code>docs/agents.html</code>; its specifics await sign-off.</li>
-  <li>The compositor owns what an agent must not bypass: consent per agent and scope, an agent seat (a second <code>wl_seat</code>) so agents act without moving the person's pointer or focus, the activity indicator, and a stop key. It serves MCP itself on a socket (accepted); <code>dashi-mcp</code> bridges an agent's stdio to it, one process per agent.</li>
+  <li>The compositor owns what an agent must not bypass: consent per agent and scope, an agent seat (a second <code>wl_seat</code>) so agents act without moving the person's pointer or focus, the activity indicator, and a stop key. The MCP server itself is Bun, in the shell session (decision 5); the compositor offers it windows, capture, and later input over its IPC, and <code>dashi-mcp</code> bridges an agent's stdio to it.</li>
   <li>Runtime consequences: Metal's accessibility tree (AccessKit to AT-SPI, planned after v1 in the runtime spec) becomes the tree agents read too, so it moves up; the GPUI fork binds every <code>wl_seat</code>; apps may later declare typed actions that become MCP tools, which is a <code>mirinjs</code> API and needs the owner's sign-off.</li>
 </ul>
 
@@ -253,8 +253,8 @@
   <tr><td>2</td><td>Third-party applets and extensions</td><td><span class="tag ok">accepted</span> Isolated UI contexts (Workers) embedded through slots, with declared capabilities (E2).</td></tr>
   <tr><td>3</td><td>OS base</td><td><span class="tag ok">accepted</span> A regular, package-based Fedora spin (S5).</td></tr>
   <tr><td>4</td><td>Fold E1–E3 into the runtime spec now</td><td><span class="tag ok">accepted</span> Done: surface roles and outputs in R7, context namespaces in protocol v2, capabilities in config (runtime spec §7, §10, §11, §18).</td></tr>
-  <tr><td>5</td><td>Language for system services</td><td><span class="tag info">default</span> Rust (<code>zbus</code>) behind a typed TypeScript API.</td></tr>
-  <tr><td>6</td><td>Agents</td><td><span class="tag ok">accepted 2026-10-29</span> Agent-first: the OS exposes MCP so agents can observe and control it (E8). Accepted with it: consent asked on screen, MCP served by the compositor, an agent seat. The rest are open in Dashi's <code>docs/agents.html</code>.</td></tr>
+  <tr><td>5</td><td>Language for system services</td><td><span class="tag ok">accepted 2026-10-29</span> Bun. Owner rule, so people can hack the OS in TypeScript: all logic and every server is Bun; Rust is only for rendering and low-level work Bun can't do on its own (DRM/KMS, GPU, the Wayland protocol server, libinput and the per-event input path, Metal hosts).</td></tr>
+  <tr><td>6</td><td>Agents</td><td><span class="tag ok">accepted 2026-10-29</span> Agent-first: the OS exposes MCP so agents can observe and control it (E8). Accepted with it: consent asked on screen, an MCP server in Bun, an agent seat. The rest are open in Dashi's <code>docs/agents.html</code>.</td></tr>
 </table>
 
 <h2 id="risks">9. Risks</h2>
