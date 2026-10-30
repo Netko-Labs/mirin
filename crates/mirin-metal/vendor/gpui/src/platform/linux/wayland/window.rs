@@ -2,7 +2,7 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     ffi::c_void,
     ptr::NonNull,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -145,6 +145,13 @@ impl SurfaceRole {
 pub struct WaylandWindowState {
     role: SurfaceRole,
     acknowledged_first_configure: bool,
+    // mirin: a frame callback is on its way (a drawn frame asked for one).
+    // Without one the window is idle: nothing commits, so the compositor
+    // has nothing to draw, until GPUI wakes it (`redraw_waker`).
+    frame_pending: bool,
+    // mirin: this frame drew (and so committed); otherwise there's nothing
+    // to commit.
+    drew: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     app_id: Option<String>,
@@ -218,6 +225,8 @@ impl WaylandWindowState {
         Ok(Self {
             role,
             acknowledged_first_configure: false,
+            frame_pending: false,
+            drew: false,
             surface,
             decoration,
             app_id: None,
@@ -447,7 +456,10 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
-        state.surface.frame(&state.globals.qh, state.surface.id());
+        // mirin: the next frame callback is asked for only when this frame
+        // draws (`draw`), so an unchanged window stops committing.
+        state.frame_pending = false;
+        state.drew = false;
         state.resize_throttle = false;
         drop(state);
 
@@ -455,6 +467,22 @@ impl WaylandWindowStatePtr {
         if let Some(fun) = cb.request_frame.as_mut() {
             fun(Default::default());
         }
+    }
+
+    /// mirin: GPUI has something to draw. An idle window (no frame callback
+    /// coming) draws now; otherwise the coming callback will.
+    pub fn wake(&self) {
+        let idle = {
+            let state = self.state.borrow();
+            state.acknowledged_first_configure && !state.frame_pending
+        };
+        if idle {
+            self.frame();
+        }
+    }
+
+    fn downgrade(&self) -> (Weak<RefCell<WaylandWindowState>>, Weak<RefCell<Callbacks>>) {
+        (Rc::downgrade(&self.state), Rc::downgrade(&self.callbacks))
     }
 
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
@@ -1296,12 +1324,37 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+        // mirin: ask for the next frame callback before presenting, so the
+        // present's commit carries it.
+        state.surface.frame(&state.globals.qh, state.surface.id());
+        state.frame_pending = true;
+        state.drew = true;
         state.renderer.draw(scene);
     }
 
     fn completed_frame(&self) {
         let state = self.borrow();
-        state.surface.commit();
+        // mirin: an unchanged frame commits nothing; committing anyway kept
+        // the compositor drawing at the display's rate for idle windows.
+        if state.drew {
+            state.surface.commit();
+        }
+    }
+
+    fn redraw_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let (state, callbacks) = self.0.downgrade();
+        let executor = self.borrow().globals.executor.clone();
+        Some(Rc::new(move || {
+            let (state, callbacks) = (state.clone(), callbacks.clone());
+            // Later, on the event loop: this runs while GPUI is mid-update.
+            executor
+                .spawn(async move {
+                    if let (Some(state), Some(callbacks)) = (state.upgrade(), callbacks.upgrade()) {
+                        WaylandWindowStatePtr { state, callbacks }.wake();
+                    }
+                })
+                .detach();
+        }))
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

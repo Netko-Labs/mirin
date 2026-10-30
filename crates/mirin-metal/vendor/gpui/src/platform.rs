@@ -499,6 +499,13 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
+    /// mirin: for platforms that stop asking for frames while nothing changes
+    /// (Wayland: no commit, so no frame callback), a function that schedules
+    /// a frame. GPUI calls it when the window becomes dirty or wants its next
+    /// frame. Platforms that tick at the display's rate return `None`.
+    fn redraw_waker(&self) -> Option<Rc<dyn Fn()>> {
+        None
+    }
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     // macOS specific methods
