@@ -6,7 +6,10 @@
 //! that GPU from runtime suspend. Desktop apps should render where the
 //! compositor does, so buffers are shared without copies: the compositor
 //! names its main device through `linux-dmabuf` feedback, and this module
-//! limits the loader to that device's driver.
+//! limits the loader to that device's driver, once a child of the process
+//! has seen that driver find a device; otherwise (a VM's GPU without 3D, a
+//! card its Vulkan driver doesn't run) every driver loads, software Vulkan
+//! included, and the app still gets a window.
 
 use std::fs;
 use std::path::Path;
@@ -38,9 +41,69 @@ pub fn prefer_display_gpu() -> Option<String> {
     }
     let device = compositor_main_device()?;
     let filter = driver_filter(Path::new("/sys/dev/char"), device)?;
+    // A driver that is installed but finds no device (a VM's GPU without 3D,
+    // an old card its Vulkan driver doesn't run) would leave GPUI with no
+    // GPU at all and the app with no window. Ask a child of this process,
+    // so the probe's driver threads never run beside the setenv below; with
+    // no device there, every driver loads, software Vulkan included.
+    if !driver_has_device(&filter) {
+        return None;
+    }
     // Sound in practice: documented to run before any other thread exists.
     std::env::set_var("VK_LOADER_DRIVERS_SELECT", &filter);
     Some(filter)
+}
+
+/// The argument that makes this process answer [`driver_has_device`]'s question and exit.
+pub const PROBE_ARG: &str = "--mirin-vulkan-probe";
+
+/// Whether the Vulkan drivers `filter` selects see at least one device:
+/// this program, run again with [`PROBE_ARG`] and the filter, says so by its
+/// exit status. Unknown (it could not run) counts as yes: the filter stays,
+/// as before the probe existed.
+fn driver_has_device(filter: &str) -> bool {
+    let Ok(program) = std::env::current_exe() else {
+        return true;
+    };
+    match std::process::Command::new(program)
+        .arg(PROBE_ARG)
+        .env("VK_LOADER_DRIVERS_SELECT", filter)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(status) => status.success() || status.code().is_none_or(|code| code != PROBE_NO_DEVICE),
+        Err(_) => true,
+    }
+}
+
+/// The probe's exit status when the drivers it was given see no device.
+const PROBE_NO_DEVICE: i32 = 3;
+
+/// Run as the probe (the program was started with [`PROBE_ARG`]): exit 0 if
+/// Vulkan, as the environment selects it, sees a device, else
+/// [`PROBE_NO_DEVICE`]. Call first thing in `main`.
+pub fn answer_probe() -> ! {
+    // SAFETY: loading the system's Vulkan loader runs its initializers; this
+    // process does nothing else and exits right after.
+    let found = unsafe { ash::Entry::load() }.ok().is_some_and(|entry| {
+        let info = ash::vk::InstanceCreateInfo::default();
+        // SAFETY: a default create info with no layers or extensions; the
+        // instance is destroyed before the entry goes.
+        match unsafe { entry.create_instance(&info, None) } {
+            Ok(instance) => {
+                // SAFETY: the instance is valid until destroyed just below.
+                let count = unsafe { instance.enumerate_physical_devices() }
+                    .map_or(0, |devices| devices.len());
+                // SAFETY: nothing else uses the instance.
+                unsafe { instance.destroy_instance(None) };
+                count > 0
+            }
+            Err(_) => false,
+        }
+    });
+    std::process::exit(if found { 0 } else { PROBE_NO_DEVICE })
 }
 
 /// The loader filter for a DRM device's kernel driver, e.g. `*radeon*`.

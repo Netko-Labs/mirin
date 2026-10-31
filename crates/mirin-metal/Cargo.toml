@@ -31,6 +31,9 @@ wayland-protocols = { version = "0.32", features = ["client"] }
 # The shell.toplevels capability (src/toplevels.rs); 0.2 is the version the
 # GPUI fork already builds.
 wayland-protocols-wlr = { version = "0.2", features = ["client"] }
+# Probe that the chosen GPU's Vulkan driver has a device (src/gpu.rs); the
+# version blade-graphics already builds.
+ash = "0.38"
 
 [features]
 profiling = ["dep:pprof"]
