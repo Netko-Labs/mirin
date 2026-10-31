@@ -645,6 +645,16 @@ impl WaylandClient {
             event_loop: Some(event_loop),
         }));
 
+        // mirin: hear the outputs out (name, mode, done) before any window
+        // opens. A layer surface asks for its screen by name, and the names
+        // arrive after the bind: without this a host that opens its window
+        // at once found no output of that name, and its surface landed on
+        // whichever screen the compositor picked.
+        let mut ptr = WaylandClientStatePtr(Rc::downgrade(&state));
+        if let Err(error) = event_queue.roundtrip(&mut ptr) {
+            log::warn!("wayland: the first roundtrip failed: {error}");
+        }
+
         WaylandSource::new(conn, event_queue)
             .insert(handle)
             .unwrap();
