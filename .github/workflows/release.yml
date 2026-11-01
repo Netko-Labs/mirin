@@ -69,10 +69,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Audit dependencies
-        # GHSA-g3hv-75wg-m249 (minimatch < 11, glob-pattern DoS) has no fix for
-        # minimatch 3, which serve-handler pins; it is reached only through the
-        # docs' dev-only `serve`, whose one pattern is our own serve.json.
-        run: bun audit --ignore=GHSA-g3hv-75wg-m249
+        run: bun audit
 
       - name: Validate source
         run: |
