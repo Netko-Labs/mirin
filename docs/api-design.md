@@ -166,6 +166,35 @@ app.rpc.progress.broadcast({ pct: 80 });
 
 Implementation notes (see architecture.md §4): JSON frames over a token-authenticated localhost WebSocket; handlers run in the Bun Worker.
 
+### Nested routers
+
+A router's routes can be other routers, to any depth, so an app can keep its controllers apart and still serve one router (`app.serve` takes one router; a second call replaces the first):
+
+```ts
+const windowController = rpc.router({
+  min: rpc.mutation((_: null) => { /* … */ }),
+  close: rpc.mutation((_: null) => { /* … */ }),
+  focused: rpc.event<{ id: number }>(),
+});
+
+export const router = rpc.router({
+  window: windowController,
+  install: rpc.router({ getVersionList: rpc.query((_: null) => versions()) }),
+});
+
+await api.window.min(null);
+await api.install.getVersionList(null);
+api.window.focused.on(({ id }) => highlight(id));
+app.rpc.window.focused.broadcast({ id: 1 });
+```
+
+- On the wire a nested procedure is named by its path, joined with dots (`window.min`); flat routers keep their names, so existing apps are unchanged.
+- `rpc.router` throws when two procedures end up with the same path (a flat `"window.min"` beside a nested `window.min`), when a value is neither a procedure nor a router, and when a router contains itself.
+- Inside a nested router the names `on`, `then`, `emit`, `broadcast`, `apply`, `bind`, `call`, and `toString` are taken: the client and the emitters are proxies that only know the router's type, and use those names for subscribing, for staying a normal function, and for sending. Top-level names are not restricted.
+- Calling a path that isn't a query or mutation fails with a message that says what it is: unknown, an event, or a router (with some of its procedures).
+
+Requested in Netko-Labs/mirin#21; accepted by the owner 2026-11-01.
+
 ## 4. Shipped feature families
 
 The original MVP left native shell APIs out. They now exist as focused modules
@@ -223,6 +252,8 @@ an app can write a scenario without importing CLI internals. Same split as
 ## 6. Resolved & open items
 
 Resolved 2026-06-09 with owner: split manifest+main (over single `defineApp` file); `query`/`mutation`/`event` naming (over flattened `fn`); `app://` scheme; global router + ctx (over per-window routers).
+
+Resolved 2026-11-01 with owner: nested routers, named on the wire by dotted paths (§3, Netko-Labs/mirin#21).
 
 Still open (low stakes, decide when implementing):
 1. `ctx` shape details (abort signal? headers-like metadata?).

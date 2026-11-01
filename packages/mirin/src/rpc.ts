@@ -3,8 +3,12 @@
  *
  * Imported by BOTH the main process (handlers run here, in the Bun Worker)
  * and UI code (type-only, via `client<Router>()` from mirin/client).
- * The router is global; handlers learn their caller from `ctx`.
+ * The router is global; handlers learn their caller from `ctx`. Routers nest:
+ * a router's routes can be other routers, and their procedures are called by
+ * path (`api.window.min()`, `window.min` on the wire).
  */
+
+import { procedures } from "./shared/rpc-paths.ts";
 
 export interface RpcContext {
   /** Name of the calling window, if it was opened with one. */
@@ -35,14 +39,29 @@ export interface EventProc<P> {
 // no runtime value is widened through this union.
 export type Procedure = QueryProc<any, any> | MutationProc<any, any> | EventProc<any>;
 
-export interface Router<T extends Record<string, Procedure> = Record<string, Procedure>> {
+/** What a router holds: procedures, and other routers under their own names. */
+export interface Routes {
+  // Type-level `any` keeps each nested router's own procedure types.
+  readonly [name: string]: Procedure | Router<any>;
+}
+
+export interface Router<T extends Routes = Routes> {
   readonly type: "router";
   readonly routes: T;
 }
 
 export const rpc = {
-  router<T extends Record<string, Procedure>>(routes: T): Router<T> {
-    return { type: "router", routes };
+  /**
+   * Define a router. Nested routers keep their procedures apart
+   * (`window.close` and `install.close` are two procedures). Throws when two
+   * procedures end up with the same path, or when a nested router uses a name
+   * the client needs (`on`, `then`, `emit`, `broadcast`, `apply`, `bind`,
+   * `call`, `toString`).
+   */
+  router<T extends Routes>(routes: T): Router<T> {
+    const router: Router<T> = { type: "router", routes };
+    procedures(router);
+    return router;
   },
 
   /** Request/response, semantically a read. Runtime-identical to mutation in the MVP. */

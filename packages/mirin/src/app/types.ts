@@ -41,13 +41,18 @@ export interface WindowOpenOptions extends WindowConfig {
   name?: string;
 }
 
-/** Typed push emitters derived from a router's `event` procedures.
+/** Typed push emitters derived from a router's `event` procedures, nested
+ * routers under their names (`rpc.window.focused.broadcast(...)`).
  * Type-level `any` keeps the caller's router payload inference intact. */
 export type BroadcastEmitters<R extends Router<any>> = R extends Router<infer T>
   ? {
-      [K in keyof T as T[K] extends EventProc<any> ? K : never]: T[K] extends EventProc<infer P>
+      [K in keyof T as T[K] extends EventProc<any> | Router<any>
+        ? K
+        : never]: T[K] extends EventProc<infer P>
         ? { broadcast(payload: P): void }
-        : never;
+        : T[K] extends Router<any>
+          ? BroadcastEmitters<T[K]>
+          : never;
     }
   : never;
 

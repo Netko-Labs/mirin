@@ -25,6 +25,13 @@ const todo = await api.addTodo("write docs"); // { id: string; text: string }
 Argument and return types come from the handler. Rename a procedure and every
 call site fails to typecheck.
 
+Nested routers are nested on the client too:
+
+```ts
+await api.window.min(null);
+const versions = await api.install.getVersionList(null); // string[]
+```
+
 ## Subscribing to events
 
 ```ts
