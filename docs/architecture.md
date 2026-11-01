@@ -142,9 +142,11 @@ across dev vs prod. Two opt-in config blocks fill that gap (both macOS, both off
 default):
 
 **Notifications** — `notification.show({ title, body? })` crosses the Bun FFI boundary
-as one validated JSON payload and delegates to the platform notification service via
-`notify-rust`, on the UI thread once CEF's loop is running (the macOS service can
-block, which would stall the Worker) and on the caller's thread before that.
+as one validated JSON payload and delegates to the platform notification service:
+`notify-rust` on macOS and Windows, and on Linux one `Notify` call to the session's
+`org.freedesktop.Notifications` over zbus (`linux/notification.rs`). It runs on the UI
+thread once CEF's loop is running (the macOS service can block, which would stall the
+Worker) and on the caller's thread before that.
 Delivery is best-effort and has no action/click lifecycle.
 
 **Sidecars** — `sidecars: { name: "path/to/bin" | { bin, entitlements } }`. Each binary

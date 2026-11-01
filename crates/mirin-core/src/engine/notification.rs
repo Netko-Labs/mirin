@@ -1,7 +1,9 @@
 //! Cross-platform desktop notifications. The native library accepts a small
 //! JSON payload and delegates delivery to the operating system notification
-//! service through `notify-rust`.
+//! service: through `notify-rust` on macOS and Windows, and over D-Bus on Linux
+//! (`linux/notification.rs`).
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use notify_rust::Notification;
 use serde::Deserialize;
 
@@ -52,6 +54,17 @@ pub fn notification_show(spec_json: String) -> bool {
 }
 
 /// Hand the notification to the operating system. UI thread only.
+#[cfg(target_os = "linux")]
+pub(crate) fn deliver(spec: &NotificationSpec) -> bool {
+    crate::linux::notification::show(
+        spec.title.trim(),
+        spec.body.as_deref().filter(|body| !body.is_empty()),
+        spec.app_name.as_deref().filter(|name| !name.is_empty()),
+    )
+}
+
+/// Hand the notification to the operating system. UI thread only.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn deliver(spec: &NotificationSpec) -> bool {
     let mut notification = Notification::new();
     notification.summary(spec.title.trim());
@@ -63,6 +76,12 @@ pub(crate) fn deliver(spec: &NotificationSpec) -> bool {
     }
 
     notification.show().is_ok()
+}
+
+/// No notification service on other targets.
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+pub(crate) fn deliver(_spec: &NotificationSpec) -> bool {
+    false
 }
 
 #[cfg(test)]

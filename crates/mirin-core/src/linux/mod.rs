@@ -12,11 +12,15 @@
 //! maximize/fullscreen/always-on-top, `WM_CLASS` + `_NET_WM_ICON`) is done via Xlib
 //! against the CEF window's XID — see `window/mod.rs`.
 //!
+//! Notifications go straight to the session's notification service over D-Bus
+//! (`notification.rs`).
+//!
 //! App-shell features (menu/tray/dialog/clipboard/shortcut) are handled by
 //! the engine's `not(any(macos, windows))` fallback arms for now and grow into
 //! dedicated submodules here as the port reaches the L4 milestone
 //! (`docs/linux-port.md`).
 
+pub mod notification;
 pub mod window;
 
 pub use window::{
