@@ -89,7 +89,7 @@
     },
     "packages/create-mirin": {
       "name": "create-mirinjs",
-      "version": "0.1.0-alpha.27",
+      "version": "0.1.0-alpha.28",
       "bin": {
         "create-mirinjs": "./src/index.ts",
       },
@@ -127,45 +127,45 @@
     },
     "packages/mirin": {
       "name": "mirinjs",
-      "version": "0.1.0-alpha.27",
+      "version": "0.1.0-alpha.28",
     },
     "packages/mirin-cli": {
       "name": "@mirinjs/cli",
-      "version": "0.1.0-alpha.27",
+      "version": "0.1.0-alpha.28",
       "bin": {
         "mirin": "./src/index.ts",
       },
       "dependencies": {
-        "create-mirinjs": "0.1.0-alpha.27",
-        "mirinjs": "0.1.0-alpha.27",
+        "create-mirinjs": "0.1.0-alpha.28",
+        "mirinjs": "0.1.0-alpha.28",
       },
       "optionalDependencies": {
-        "@mirinjs/darwin-arm64": "0.1.0-alpha.27",
-        "@mirinjs/linux-arm64": "0.1.0-alpha.27",
-        "@mirinjs/linux-x64": "0.1.0-alpha.27",
-        "@mirinjs/win32-arm64": "0.1.0-alpha.27",
-        "@mirinjs/win32-x64": "0.1.0-alpha.27",
+        "@mirinjs/darwin-arm64": "0.1.0-alpha.28",
+        "@mirinjs/linux-arm64": "0.1.0-alpha.28",
+        "@mirinjs/linux-x64": "0.1.0-alpha.28",
+        "@mirinjs/win32-arm64": "0.1.0-alpha.28",
+        "@mirinjs/win32-x64": "0.1.0-alpha.28",
       },
     },
     "packages/native-darwin-arm64": {
       "name": "@mirinjs/darwin-arm64",
-      "version": "0.1.0-alpha.27",
+      "version": "0.1.0-alpha.28",
     },
     "packages/native-linux-arm64": {
       "name": "@mirinjs/linux-arm64",
-      "version": "0.1.0-alpha.27",
+      "version": "0.1.0-alpha.28",
     },
     "packages/native-linux-x64": {
       "name": "@mirinjs/linux-x64",
-      "version": "0.1.0-alpha.27",
+      "version": "0.1.0-alpha.28",
     },
     "packages/native-win32-arm64": {
       "name": "@mirinjs/win32-arm64",
-      "version": "0.1.0-alpha.27",
+      "version": "0.1.0-alpha.28",
     },
     "packages/native-win32-x64": {
       "name": "@mirinjs/win32-x64",
-      "version": "0.1.0-alpha.27",
+      "version": "0.1.0-alpha.28",
     },
   },
   "overrides": {
