@@ -138,7 +138,10 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Audit Bun dependencies
-        run: bun audit
+        # GHSA-g3hv-75wg-m249 (minimatch < 11, glob-pattern DoS) has no fix for
+        # minimatch 3, which serve-handler pins; it is reached only through the
+        # docs' dev-only `serve`, whose one pattern is our own serve.json.
+        run: bun audit --ignore=GHSA-g3hv-75wg-m249
 
       - name: Audit Rust dependencies
         uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
