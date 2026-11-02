@@ -17,6 +17,7 @@ export type {
   LayoutNode,
   NativeEvent,
   NativeHostTransport,
+  NativeWindowOptions,
   NativeRoot,
   NativeTransport,
   PointerInfo,

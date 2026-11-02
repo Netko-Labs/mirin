@@ -164,6 +164,13 @@ export interface NativeHostOptions {
   /** Extra environment for the host process. */
   env?: Record<string, string>;
   /**
+   * Start the host with no window (`MIRIN_METAL_DEFERRED`): its GPU context
+   * and fonts load now, and `open()` on the transport shows the window at
+   * once later. A shell keeps one warm this way for its menus and sheets.
+   * The window options here (title, size, surface, …) are then ignored.
+   */
+  deferred?: boolean;
+  /**
    * Receive the host's stderr line by line (logs, `MIRIN_METAL_TRACE` timing)
    * instead of inheriting it.
    */
@@ -180,7 +187,8 @@ export function spawnNativeHost(
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
-  if (options.title !== undefined) env.MIRIN_METAL_TITLE = options.title;
+  if (options.deferred) env.MIRIN_METAL_DEFERRED = "1";
+  if (options.title !== undefined && !options.deferred) env.MIRIN_METAL_TITLE = options.title;
   if (options.appId !== undefined) env.MIRIN_METAL_APP_ID = options.appId;
   if (options.capabilities !== undefined) {
     env.MIRIN_METAL_CAPABILITIES = options.capabilities.join(",");
@@ -263,6 +271,10 @@ export function spawnNativeHost(
     },
     unlock() {
       child.stdin.write('{"unlock":true}\n');
+      void child.stdin.flush();
+    },
+    open(window) {
+      child.stdin.write(`${JSON.stringify({ open: window })}\n`);
       void child.stdin.flush();
     },
     close() {

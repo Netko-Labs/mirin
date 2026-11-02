@@ -10,8 +10,8 @@ use std::sync::mpsc;
 #[cfg(target_os = "linux")]
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
-    parse_surface, parse_tree, run, DriverMessage, EventKind, NativeUiEvent, NativeUiOptions,
-    SimCommand, Surface, TitleBar,
+    parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind, NativeUiEvent,
+    NativeUiOptions, SimCommand, Surface, TitleBar,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -23,11 +23,45 @@ const CAPABILITIES: &[&str] = &["shell.toplevels"];
 /// `shell.toplevels` capability).
 enum HostLine {
     Window(DriverMessage),
+    /// A deferred host's window, at last (`MIRIN_METAL_DEFERRED=1`).
+    Open(NativeUiOptions),
     #[cfg(target_os = "linux")]
     Toplevel(ToplevelCommand),
 }
 
+/// `{"open": {...}}`: what `MIRIN_METAL_TITLE`, `_APP_ID`, `_SIZE`,
+/// `_SURFACE`, and `_TITLEBAR` say for a host started without a window.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpenRequest {
+    title: Option<String>,
+    app_id: Option<String>,
+    width: Option<f32>,
+    height: Option<f32>,
+    surface: Option<serde_json::Value>,
+    title_bar: Option<String>,
+}
+
 fn parse_host_line(line: &str) -> Result<HostLine, String> {
+    if line.trim_start().starts_with("{\"open\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OpenLine {
+            open: OpenRequest,
+        }
+        let parsed: OpenLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let open = parsed.open;
+        let size = open.width.zip(open.height);
+        let surface = open.surface.map(|surface| surface.to_string());
+        return window_options(
+            open.title.unwrap_or_else(|| "mirin metal".into()),
+            open.app_id,
+            size,
+            surface.as_deref(),
+            open.title_bar.as_deref(),
+        )
+        .map(HostLine::Open);
+    }
     // A lock surface's way out, after the driver authenticated the person.
     if line.trim_start().starts_with("{\"unlock\"") {
         #[derive(serde::Deserialize)]
@@ -191,6 +225,11 @@ fn main() {
     }
     start_profiler();
     let (update_tx, update_rx) = mpsc::channel::<DriverMessage>();
+    // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
+    // driver's `{"open": {...}}` line comes (a host kept warm).
+    let deferred = std::env::var("MIRIN_METAL_DEFERRED").is_ok_and(|v| v == "1");
+    let (opened_tx, opened_rx) = mpsc::channel::<NativeUiOptions>();
+    let mut opened_tx = deferred.then_some(opened_tx);
     let (event_tx, event_rx) = mpsc::channel::<NativeUiEvent>();
 
     let capabilities = requested_capabilities();
@@ -226,6 +265,12 @@ fn main() {
                 started.elapsed().as_secs_f64() * 1000.0
             ));
             match parsed {
+                Ok(HostLine::Open(options)) => match opened_tx.take() {
+                    Some(tx) => {
+                        let _ = tx.send(options);
+                    }
+                    None => eprintln!("[mirin-metal-host] rejected line: the window is already open"),
+                },
                 Ok(HostLine::Window(message)) => {
                     if update_tx.send(message).is_err() {
                         break;
@@ -304,73 +349,79 @@ fn main() {
         }
     });
 
-    let title = std::env::var("MIRIN_METAL_TITLE").unwrap_or_else(|_| "mirin metal".into());
-    // `MIRIN_METAL_SURFACE=<json>` opens a layer-shell surface (a panel, a
-    // dock) instead of a window; the shape is `windows.*.surface` in
-    // docs/api-design.md §1a.
-    let surface = match std::env::var("MIRIN_METAL_SURFACE") {
-        Ok(json) => match parse_surface(&json, &title) {
-            Ok(surface) => Some(surface),
-            Err(error) => {
-                eprintln!("[mirin-metal] MIRIN_METAL_SURFACE: {error}");
-                std::process::exit(2);
-            }
-        },
-        Err(_) => None,
-    };
-    // `MIRIN_METAL_TITLEBAR=unified` puts the app's own toolbar in the title
-    // bar where the compositor supports it (Dashi); anything but `standard`
-    // and `unified` is an error.
-    let title_bar = match std::env::var("MIRIN_METAL_TITLEBAR") {
-        Ok(value) => match TitleBar::parse(&value) {
-            Ok(title_bar) => title_bar,
-            Err(error) => {
-                eprintln!("[mirin-metal] MIRIN_METAL_TITLEBAR: {error}");
-                std::process::exit(2);
-            }
-        },
-        Err(std::env::VarError::NotPresent) => TitleBar::Standard,
-        Err(error) => {
-            eprintln!("[mirin-metal] MIRIN_METAL_TITLEBAR: {error}");
-            std::process::exit(2);
-        }
-    };
-    // `MIRIN_METAL_SIZE=1280x820` picks the initial window size. Surfaces may
-    // be thin (a 28px menu bar); windows keep a usable minimum.
-    let minimum = if surface.is_some() { 1.0 } else { 200.0 };
-    let (width, height) = std::env::var("MIRIN_METAL_SIZE")
-        .ok()
-        .and_then(|size| {
-            let (w, h) = size.split_once('x')?;
-            Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    if deferred {
+        run_deferred(opened_rx, initial_tree, update_rx, event_tx);
+        return;
+    }
+    let size = std::env::var("MIRIN_METAL_SIZE").ok().and_then(|size| {
+        let (w, h) = size.split_once('x')?;
+        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    });
+    let options = window_options(
+        std::env::var("MIRIN_METAL_TITLE").unwrap_or_else(|_| "mirin metal".into()),
+        std::env::var("MIRIN_METAL_APP_ID").ok(),
+        size,
+        std::env::var("MIRIN_METAL_SURFACE").ok().as_deref(),
+        std::env::var("MIRIN_METAL_TITLEBAR").ok().as_deref(),
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("[mirin-metal] {error}");
+        std::process::exit(2);
+    });
+    let initial = initial_tree(&options);
+    run(options, initial, update_rx, event_tx);
+}
+
+/// A window's options from what the driver said (environment or `open` line).
+fn window_options(
+    title: String,
+    app_id: Option<String>,
+    size: Option<(f32, f32)>,
+    surface: Option<&str>,
+    title_bar: Option<&str>,
+) -> Result<NativeUiOptions, String> {
+    // `surface` opens a layer-shell surface (a panel, a dock) instead of a
+    // window; the shape is `windows.*.surface` in docs/api-design.md §1a.
+    let surface = surface
+        .map(|json| {
+            parse_surface(json, &title).map_err(|error| format!("MIRIN_METAL_SURFACE: {error}"))
         })
+        .transpose()?;
+    // `unified` puts the app's own toolbar in the title bar where the
+    // compositor supports it (Dashi); anything but `standard` and `unified`
+    // is an error.
+    let title_bar = title_bar
+        .map(|value| {
+            TitleBar::parse(value).map_err(|error| format!("MIRIN_METAL_TITLEBAR: {error}"))
+        })
+        .transpose()?
+        .unwrap_or(TitleBar::Standard);
+    // Surfaces may be thin (a 28px menu bar); windows keep a usable minimum.
+    let minimum = if surface.is_some() { 1.0 } else { 200.0 };
+    let (width, height) = size
         .filter(|(w, h)| *w >= minimum && *h >= minimum)
         .unwrap_or((
             NativeUiOptions::default().width,
             NativeUiOptions::default().height,
         ));
-    // Until the driver's first tree: a dark window, or nothing for a surface
-    // (a dock must not flash an opaque block).
-    let initial = if surface.is_some() {
+    Ok(NativeUiOptions {
+        title: title.into(),
+        // The app id names the app to the compositor (`dev.dashi.files`).
+        app_id: app_id.filter(|id| !id.is_empty()),
+        width,
+        height,
+        surface,
+        title_bar,
+    })
+}
+
+/// Until the driver's first tree: a dark window, or nothing for a surface
+/// (a dock must not flash an opaque block).
+fn initial_tree(options: &NativeUiOptions) -> mirin_metal::NodeSpec {
+    let initial = if options.surface.is_some() {
         r##"{"type":"view","props":{"fill":true}}"##
     } else {
         r##"{"type":"view","props":{"fill":true,"background":"#111114"}}"##
     };
-    let initial = parse_tree(initial).expect("static initial tree is valid JSON");
-    run(
-        NativeUiOptions {
-            title: title.into(),
-            // `MIRIN_METAL_APP_ID=dev.dashi.files` names the app to the compositor.
-            app_id: std::env::var("MIRIN_METAL_APP_ID")
-                .ok()
-                .filter(|id| !id.is_empty()),
-            width,
-            height,
-            surface,
-            title_bar,
-        },
-        initial,
-        update_rx,
-        event_tx,
-    );
+    parse_tree(initial).expect("static initial tree is valid JSON")
 }

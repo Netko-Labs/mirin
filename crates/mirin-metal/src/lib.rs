@@ -38,4 +38,4 @@ pub use titlebar::{Chrome, Controls, TitleBar};
 pub use tree::{
     parse_tree, Align, Direction, InputProps, Justify, NodeSpec, TextProps, ViewProps, Weight,
 };
-pub use window::{run, DriverMessage, NativeUiOptions};
+pub use window::{run, run_deferred, DriverMessage, NativeUiOptions};

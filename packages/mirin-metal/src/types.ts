@@ -322,6 +322,21 @@ export interface NativeHostTransport extends NativeTransport {
    * session locked.
    */
   unlock(): void;
+  /**
+   * Open the window of a host spawned with `deferred: true` (once; later
+   * calls are refused by the host).
+   */
+  open(options: NativeWindowOptions): void;
+}
+
+/** What a window is: what `open()` takes for a host spawned deferred. */
+export interface NativeWindowOptions {
+  title?: string;
+  appId?: string;
+  width?: number;
+  height?: number;
+  surface?: unknown;
+  titleBar?: "standard" | "unified";
 }
 
 export interface NativeTransport {

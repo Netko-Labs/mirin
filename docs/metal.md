@@ -422,7 +422,12 @@ every window over wlr-foreign-toplevel-management on a second Wayland connection
 (`src/toplevels.rs`): it writes `{"type":"toplevel","toplevel":{...}}` and
 `{"type":"toplevel-closed","id":N}` lines, and `{"toplevel":{"id":N,"action":"activate"}}`
 on stdin activates, minimizes, maximizes, or closes a window (`onToplevel` and
-`toplevel()` on the transport). Unknown capabilities fail at startup. A consumer
+`toplevel()` on the transport). Unknown capabilities fail at startup. `MIRIN_METAL_DEFERRED=1`
+(`deferred: true`) starts the host with no window: GPUI, its GPU context, and
+the fonts load at once, and the window opens when a
+`{"open":{"title":…,"appId":…,"width":…,"height":…,"surface":{…},"titleBar":…}}`
+line arrives (`open()` on the transport), so a shell can keep one warm and show
+a menu or sheet without the seconds a new host takes to start. A consumer
 that depends on `@mirinjs/metal` must share one React instance with it: a
 `bun link` keeps the package's own `node_modules` (two Reacts, "Invalid hook
 call"), so until it is published use `"@mirinjs/metal": "file:../path"`.
