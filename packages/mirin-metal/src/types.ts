@@ -39,6 +39,11 @@ export interface ViewStyle {
   flexWrap?: "nowrap" | "wrap";
   /** `absolute` takes the view out of flow, anchored to the nearest `relative` ancestor. */
   position?: "relative" | "absolute";
+  /**
+   * Offsets. An absolute view is placed by them against its anchor; any
+   * other is shifted by them from where the layout put it, its siblings
+   * unmoved (React Native and CSS), as a view rising into place animates.
+   */
   top?: number;
   left?: number;
   right?: number;

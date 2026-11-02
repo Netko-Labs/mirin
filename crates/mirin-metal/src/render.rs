@@ -86,18 +86,21 @@ fn styled_view(props: &ViewProps) -> Div {
     }
     if props.absolute {
         element = element.absolute();
-        if let Some(top) = props.top {
-            element = element.top(px(top));
-        }
-        if let Some(left) = props.left {
-            element = element.left(px(left));
-        }
-        if let Some(right) = props.right {
-            element = element.right(px(right));
-        }
-        if let Some(bottom) = props.bottom {
-            element = element.bottom(px(bottom));
-        }
+    }
+    // Offsets place an absolute view against its anchor and shift any other
+    // from where the layout put it (as React Native and CSS do), which is
+    // what a view sliding or rising in place animates.
+    if let Some(top) = props.top {
+        element = element.top(px(top));
+    }
+    if let Some(left) = props.left {
+        element = element.left(px(left));
+    }
+    if let Some(right) = props.right {
+        element = element.right(px(right));
+    }
+    if let Some(bottom) = props.bottom {
+        element = element.bottom(px(bottom));
     }
     if props.shrink == Some(false) {
         element = element.flex_shrink_0();

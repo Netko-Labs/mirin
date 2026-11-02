@@ -101,6 +101,8 @@ pub struct ViewProps {
     pub absolute: bool,
     /// Anchor for absolute descendants.
     pub relative: bool,
+    /// Offsets: an absolute node's place against its anchor; any other node
+    /// is shifted by them from where the layout put it, its siblings unmoved.
     pub top: Option<f32>,
     pub left: Option<f32>,
     pub right: Option<f32>,
