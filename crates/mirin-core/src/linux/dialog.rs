@@ -11,8 +11,12 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use zbus::blocking::{Connection, Proxy};
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use std::future::poll_fn;
+use std::pin::Pin;
+
+use zbus::export::futures_core::Stream;
+use zbus::proxy::SignalStream;
+use zbus::{Connection, Message, OwnedObjectPath, OwnedVariant, Proxy, Variant};
 
 use crate::engine::dialog::DialogSpec;
 
@@ -28,10 +32,10 @@ static NEXT_TOKEN: AtomicU32 = AtomicU32::new(1);
 
 /// Returns the chosen path(s), or None if cancelled or the portal is missing.
 pub fn open_file(spec: &DialogSpec) -> Option<Vec<String>> {
-    let mut options: HashMap<&str, Value<'_>> = HashMap::new();
-    options.insert("multiple", Value::from(spec.multiple));
-    options.insert("directory", Value::from(spec.directories));
-    options.insert("modal", Value::from(true));
+    let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
+    options.insert("multiple", Variant::from(spec.multiple));
+    options.insert("directory", Variant::from(spec.directories));
+    options.insert("modal", Variant::from(true));
     let title = spec
         .title
         .as_deref()
@@ -47,10 +51,10 @@ pub fn open_file(spec: &DialogSpec) -> Option<Vec<String>> {
 
 /// Returns the chosen path, or None if cancelled or the portal is missing.
 pub fn save_file(spec: &DialogSpec) -> Option<String> {
-    let mut options: HashMap<&str, Value<'_>> = HashMap::new();
-    options.insert("modal", Value::from(true));
+    let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
+    options.insert("modal", Variant::from(true));
     if let Some(name) = spec.default_name.as_deref() {
-        options.insert("current_name", Value::from(name));
+        options.insert("current_name", Variant::from(name));
     }
     let title = spec
         .title
@@ -90,9 +94,17 @@ pub fn message(spec: &DialogSpec) -> i64 {
 fn file_chooser(
     method: &str,
     title: &str,
-    mut options: HashMap<&str, Value<'_>>,
+    options: HashMap<&str, Variant<'_>>,
 ) -> Option<Vec<String>> {
-    let connection = match Connection::session() {
+    zbus::block_on(file_chooser_call(method, title, options))
+}
+
+async fn file_chooser_call(
+    method: &str,
+    title: &str,
+    mut options: HashMap<&str, Variant<'_>>,
+) -> Option<Vec<String>> {
+    let connection = match Connection::session().await {
         Ok(connection) => connection,
         Err(error) => {
             eprintln!("[mirin] dialog: no session bus ({error}); is xdg-desktop-portal running?");
@@ -101,15 +113,14 @@ fn file_chooser(
     };
     let token = format!("mirin{}", NEXT_TOKEN.fetch_add(1, Ordering::Relaxed));
     let expected_path = request_path(connection.unique_name().map(|name| name.as_str()), &token)?;
-    options.insert("handle_token", Value::from(token.clone()));
+    options.insert("handle_token", Variant::from(token.clone()));
 
-    let request = Proxy::new(&connection, PORTAL_BUS, expected_path.as_str(), REQUEST).ok()?;
-    let mut responses = request.receive_signal("Response").ok()?;
+    let mut responses = responses(&connection, &expected_path).await?;
 
-    let chooser = Proxy::new(&connection, PORTAL_BUS, PORTAL_PATH, FILE_CHOOSER).ok()?;
+    let chooser = Proxy::new(&connection, PORTAL_BUS, PORTAL_PATH, FILE_CHOOSER).await.ok()?;
     // `parent_window` is empty: CEF owns the toplevel and exporting an XDG
     // foreign handle for it is a follow-up; `modal` still keeps the picker on top.
-    let handle: OwnedObjectPath = match chooser.call(method, &("", title, options)) {
+    let handle: OwnedObjectPath = match chooser.call(method, &("", title, options)).await {
         Ok(handle) => handle,
         Err(error) => {
             eprintln!("[mirin] dialog: portal {method} failed: {error}");
@@ -120,12 +131,11 @@ fn file_chooser(
     // Portals older than 0.9 ignore `handle_token` and mint their own path;
     // re-subscribe there (the tiny race is the documented trade-off).
     if handle.as_str() != expected_path {
-        let request = Proxy::new(&connection, PORTAL_BUS, handle.as_str(), REQUEST).ok()?;
-        responses = request.receive_signal("Response").ok()?;
+        responses = self::responses(&connection, handle.as_str()).await?;
     }
 
-    let message = responses.next()?;
-    let (code, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize().ok()?;
+    let message = next(&mut responses).await?;
+    let (code, results): (u32, HashMap<String, OwnedVariant>) = message.body().deserialize().ok()?;
     if code != RESPONSE_SUCCESS {
         return None;
     }
@@ -138,6 +148,17 @@ fn file_chooser(
             .filter_map(|uri| file_uri_to_path(uri))
             .collect(),
     )
+}
+
+/// The `Response` signals of the portal request at `path`.
+async fn responses(connection: &Connection, path: &str) -> Option<SignalStream<'static>> {
+    let request = Proxy::new(connection, PORTAL_BUS, path.to_owned(), REQUEST).await.ok()?;
+    request.receive_signal("Response").await.ok()
+}
+
+/// The stream's next message, without pulling in a futures crate for `StreamExt`.
+async fn next(stream: &mut SignalStream<'_>) -> Option<Message> {
+    poll_fn(|cx| Pin::new(&mut *stream).poll_next(cx)).await
 }
 
 /// `/org/freedesktop/portal/desktop/request/<sender>/<token>` where sender is

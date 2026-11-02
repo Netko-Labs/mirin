@@ -22,6 +22,39 @@ export type Router = typeof router;
 Export the type. It is what the renderer imports, and the only thing that
 crosses into the renderer's build.
 
+## Nested routers
+
+A router can hold other routers, to any depth. Use it to keep controllers apart
+and serve them as one router:
+
+```ts
+const windowController = rpc.router({
+  min: rpc.mutation((_: null) => minimize()),
+  close: rpc.mutation((_: null) => close()),
+  focused: rpc.event<{ id: number }>(),
+});
+
+export const router = rpc.router({
+  window: windowController,
+  install: rpc.router({
+    getVersionList: rpc.query((_: null) => versions()),
+  }),
+});
+```
+
+The client and the emitters follow the same shape: `api.window.min(null)`,
+`api.window.focused.on(...)`, `mirin.rpc.window.focused.broadcast(...)`. On the
+wire, and in the event stream, a nested procedure is named by its path:
+`window.min`.
+
+`rpc.router` throws when two procedures end up with the same path, for example a
+flat `"window.min"` next to a nested `window.min`. Inside a nested router, `on`,
+`then`, `emit`, `broadcast`, `apply`, `bind`, `call`, and `toString` are taken
+by the client and the emitters, so a nested router can't use them as names.
+
+`app.serve` takes one router; calling it again replaces the first. Compose your
+controllers into one router instead.
+
 ## Procedures
 
 | Constructor | Shape | For |

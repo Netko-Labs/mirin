@@ -9,6 +9,7 @@ import { devtoolsOptions } from "./devtools/options.ts";
 import { record } from "./devtools/sink.ts";
 import type { Procedure, Router, RpcContext } from "./rpc.ts";
 import { formatArg } from "./shared/format.ts";
+import { procedures, SEPARATOR } from "./shared/rpc-paths.ts";
 
 interface SocketData {
   webview: number;
@@ -44,8 +45,8 @@ export type ControlHandler = (frame: ControlFrame, webview: number) => void;
 export class RpcServer {
   readonly token = crypto.randomUUID();
   #server?: ReturnType<typeof Bun.serve>;
-  // Type-level `any` keeps the server able to store any concrete app router.
-  #router?: Router<any>;
+  /** The served router's procedures by path (`greet`, `window.min`). */
+  #procedures = new Map<string, Procedure>();
   #control?: ControlHandler;
   #sockets = new Set<ServerWebSocket<SocketData>>();
 
@@ -96,16 +97,16 @@ export class RpcServer {
     await server.stop(true);
   }
 
-  /** Type-level `any` keeps the caller's concrete router shape. */
+  /** Serve `router`, replacing the one served before (compose routers to serve
+   *  several). Type-level `any` keeps the caller's concrete router shape. */
   setRouter(router: Router<any>): void {
-    this.#router = router;
+    this.#procedures = procedures(router);
   }
 
-  /** The registered procedures, for the inspector's `/state`: a tool can discover
-   *  the RPC surface without reading source. */
+  /** The registered procedures by path, for the inspector's `/state`: a tool can
+   *  discover the RPC surface without reading source. */
   routes(): { name: string; type: string }[] {
-    const routes: Record<string, Procedure> = this.#router?.routes ?? {};
-    return Object.entries(routes).map(([name, proc]) => ({ name, type: proc.type }));
+    return [...this.#procedures].map(([name, proc]) => ({ name, type: proc.type }));
   }
 
   /** Register the handler for internal `mirin:*` control actions (e.g. window drag). */
@@ -125,6 +126,19 @@ export class RpcServer {
     for (const ws of this.#sockets) {
       if (ws.data.webview === webview) ws.send(frame);
     }
+  }
+
+  /** Why `method` can't be called: unknown, an event, or a router rather than one of its procedures. */
+  #notCallable(method: string, proc: Procedure | undefined): string {
+    if (proc?.type === "event") {
+      return `${method} is an event: the main process emits it and the UI listens with .on()`;
+    }
+    const prefix = `${method}${SEPARATOR}`;
+    const inside = [...this.#procedures.keys()].filter((name) => name.startsWith(prefix));
+    if (inside.length > 0) {
+      return `no such procedure: ${method} is a router; call one of its procedures (${inside.slice(0, 5).join(", ")}${inside.length > 5 ? ", …" : ""})`;
+    }
+    return `no such procedure: ${method}`;
   }
 
   async #onMessage(ws: ServerWebSocket<SocketData>, raw: string | Buffer): Promise<void> {
@@ -148,9 +162,9 @@ export class RpcServer {
     const webview = ws.data.webview;
     traceRequest(frame, webview);
 
-    const proc = this.#router?.routes[frame.method];
+    const proc = this.#procedures.get(frame.method);
     if (!proc || (proc.type !== "query" && proc.type !== "mutation")) {
-      const error = `no such procedure: ${frame.method}`;
+      const error = this.#notCallable(frame.method, proc);
       traceFailure(frame, webview, 0, error, "unknown-procedure");
       reply(false, { error });
       return;

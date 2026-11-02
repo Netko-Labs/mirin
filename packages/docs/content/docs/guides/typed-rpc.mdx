@@ -37,6 +37,30 @@ export type Router = typeof router;
 The second parameter, `ctx`, carries the calling webview's id, which is how you
 tell two windows apart.
 
+### Split it into controllers
+
+As the app grows, group procedures into routers of their own and nest them.
+Each keeps its own names, so two controllers can both have a `close`:
+
+```ts title="main/rpc.ts"
+const windowController = rpc.router({
+  close: rpc.mutation((_: null) => closeWindow()),
+});
+
+const installController = rpc.router({
+  close: rpc.mutation((_: null) => cancelInstall()),
+  getVersionList: rpc.query((_: null) => versions()),
+});
+
+export const router = rpc.router({
+  window: windowController,
+  install: installController,
+});
+```
+
+The renderer calls them by path: `api.window.close(null)`,
+`api.install.getVersionList(null)`.
+
 ## Serve it
 
 ```ts title="main/main.ts"

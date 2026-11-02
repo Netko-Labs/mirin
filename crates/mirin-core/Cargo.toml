@@ -23,7 +23,6 @@ serde.workspace = true
 serde_json.workspace = true
 # Updater codec (delta patches), shared with the standalone release helper.
 mirin-codec = { path = "../mirin-codec" }
-notify-rust = "4.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
@@ -67,6 +66,12 @@ objc2-core-graphics = { workspace = true, features = [
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys.workspace = true
 
+# Notifications on macOS and Windows. Without its default features notify-rust
+# leaves out its Linux backends (zbus 5, whose zvariant crates are unmaintained);
+# Linux speaks to the notification service itself (linux/notification.rs).
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+notify-rust = { version = "4.18", default-features = false }
+
 # Linux runs CEF on X11 (Ozone X11, incl. XWayland — Electrobun's approach). A
 # frameless Views window has no WM move/resize/caption, so mirin drives those with
 # `_NET_WM_MOVERESIZE` / window state via Xlib (x11-dl dlopens libX11 — no build-time
@@ -75,6 +80,6 @@ windows-sys.workspace = true
 x11-dl = "2"
 # Decode the app-icon PNG to ARGB for the window's `_NET_WM_ICON` (taskbar/dock).
 png = "0.17"
-# File dialogs via xdg-desktop-portal on the session bus (blocking API, run on a
-# dialog thread). Same zbus notify-rust already pulls in.
-zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+# D-Bus, pure Rust: desktop notifications (org.freedesktop.Notifications) and
+# file dialogs through xdg-desktop-portal, both blocking on a dialog thread.
+zbus = { version = "6.2", default-features = false, features = ["default-rt", "proxy"] }

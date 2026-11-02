@@ -12,6 +12,7 @@ import type { Updater } from "../updater/index.ts";
 import { updater } from "../updater/index.ts";
 import { Emitter } from "./lib/emitter.ts";
 import { normalizeMaterial } from "./lib/material.ts";
+import { type RpcEmitters, rpcEmitters } from "./lib/rpc-emitters.ts";
 import type {
   AppEvents,
   BroadcastEmitters,
@@ -137,22 +138,6 @@ export class WindowHandle extends Emitter<WindowEvents> {
   _emit<K extends keyof WindowEvents>(type: K, payload: WindowEvents[K]): void {
     this.emit(type, payload);
   }
-}
-
-type RpcEmitters = Record<
-  string,
-  { emit(payload: unknown): void; broadcast(payload: unknown): void }
->;
-
-function rpcEmitters(send: (method: string, payload: unknown) => void): RpcEmitters {
-  return new Proxy({} as RpcEmitters, {
-    get(_t, method: string) {
-      return {
-        emit: (payload: unknown) => send(method, payload),
-        broadcast: (payload: unknown) => send(method, payload),
-      };
-    },
-  });
 }
 
 class Windows {
