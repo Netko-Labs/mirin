@@ -22,7 +22,7 @@ use crate::render::render_node;
 use crate::sim::{self, LayoutMap, SimCommand};
 use crate::surface::Surface;
 use crate::titlebar::{Chrome, Controls, TitleBar};
-use crate::tree::{collect_inputs, collect_scroll_ids, NodeSpec};
+use crate::tree::{collect_inputs, collect_key_ids, collect_scroll_ids, NodeSpec};
 
 /// After a simulated click, how long to wait for the driver's resulting tree
 /// before performing the commands queued behind it.
@@ -129,6 +129,14 @@ pub(crate) struct RootView {
     pub(crate) scroll_activity: HashMap<String, crate::scrollbar::Activity>,
     /// Virtualized long lists, by id (`list.rs`).
     pub(crate) lists: HashMap<String, VirtualList>,
+    /// Views that take raw keys (`onKeyDown`), by id.
+    pub(crate) key_targets: HashMap<String, KeyTarget>,
+}
+
+/// A view with `onKeyDown`: its focus, and whether it still has to take it.
+pub(crate) struct KeyTarget {
+    pub(crate) focus: FocusHandle,
+    pub(crate) wants_focus: bool,
 }
 
 impl RootView {
@@ -143,8 +151,10 @@ impl RootView {
             scrolls: HashMap::new(),
             scroll_activity: HashMap::new(),
             lists: HashMap::new(),
+            key_targets: HashMap::new(),
         };
         view.sync_inputs(cx);
+        view.sync_key_targets(cx);
         crate::list::sync(&mut view.lists, &view.tree);
         view
     }
@@ -153,6 +163,7 @@ impl RootView {
     fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
         self.tree = Rc::new(tree);
         self.sync_inputs(cx);
+        self.sync_key_targets(cx);
         crate::list::sync(&mut self.lists, &self.tree);
         let mut ids = HashSet::new();
         collect_scroll_ids(&self.tree, &mut ids);
@@ -196,6 +207,22 @@ impl RootView {
         self.inputs.retain(|id, _| seen.contains(id));
     }
 
+    /// Focus handles for new `onKeyDown` views (each takes the keyboard once,
+    /// when it appears); drop the ones that left the tree.
+    fn sync_key_targets(&mut self, cx: &mut App) {
+        let mut ids = Vec::new();
+        collect_key_ids(&self.tree, &mut ids);
+        for id in &ids {
+            self.key_targets
+                .entry(id.clone())
+                .or_insert_with(|| KeyTarget {
+                    focus: cx.focus_handle(),
+                    wants_focus: true,
+                });
+        }
+        self.key_targets.retain(|id, _| ids.contains(id));
+    }
+
     /// Move focus from `from` to the next (`+1`) or previous (`-1`) input in
     /// document order, wrapping around. Tab / Shift+Tab.
     pub(crate) fn focus_neighbor(&mut self, from: &str, step: isize, window: &mut Window) {
@@ -217,6 +244,12 @@ impl RootView {
 
     /// Honour pending `autofocus` requests. Runs outside of rendering.
     fn apply_pending_focus(&mut self, window: &mut Window) {
+        for target in self.key_targets.values_mut() {
+            if target.wants_focus {
+                target.wants_focus = false;
+                window.focus(&target.focus);
+            }
+        }
         for state in self.inputs.values_mut() {
             if state.wants_focus {
                 state.wants_focus = false;

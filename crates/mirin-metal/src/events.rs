@@ -42,12 +42,29 @@ pub enum EventKind {
     },
     /// Right-click on a `view` with `onContextMenu`, in window coordinates.
     ContextMenu { x: f32, y: f32 },
+    /// A key went down in a `view` with `onKeyDown`.
+    KeyDown(KeyDown),
+    /// The wheel or touchpad scrolled over a `view` with `onWheel`, in lines.
+    Wheel { dx: f32, dy: f32 },
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
     Resize,
     /// The window's chrome: its effective title bar style and the area the
     /// compositor's window controls cover. Sent when the window opens and on
     /// every change (node id is `"root"`).
     Chrome(Chrome),
+}
+
+/// One key press for a view with `onKeyDown`: GPUI's key name ("a",
+/// "enter", "left", "f5"), the text it types if any, and the modifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyDown {
+    pub key: String,
+    pub text: Option<String>,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub platform: bool,
+    pub repeat: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +96,8 @@ impl EventKind {
             EventKind::Hover { .. } => "hover",
             EventKind::Pointer { .. } => "pointer",
             EventKind::ContextMenu { .. } => "contextmenu",
+            EventKind::KeyDown(_) => "keydown",
+            EventKind::Wheel { .. } => "wheel",
             EventKind::Resize => "resize",
             EventKind::Chrome(_) => "chrome",
         }
@@ -91,6 +110,8 @@ impl EventKind {
             | EventKind::Hover { .. }
             | EventKind::Pointer { .. }
             | EventKind::ContextMenu { .. }
+            | EventKind::KeyDown(_)
+            | EventKind::Wheel { .. }
             | EventKind::Resize
             | EventKind::Chrome(_) => None,
             EventKind::Change { value }
@@ -142,6 +163,14 @@ impl EventSender {
                 value: key.to_string(),
             },
         );
+    }
+
+    pub(crate) fn key_down(&self, node_id: &str, key: KeyDown) {
+        self.send(node_id, EventKind::KeyDown(key));
+    }
+
+    pub(crate) fn wheel(&self, node_id: &str, dx: f32, dy: f32) {
+        self.send(node_id, EventKind::Wheel { dx, dy });
     }
 
     pub(crate) fn hover(&self, node_id: &str, hovered: bool) {

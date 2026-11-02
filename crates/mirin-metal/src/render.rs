@@ -7,7 +7,8 @@ use std::sync::OnceLock;
 
 use gpui::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
-    ElementId, FontWeight, MouseButton, MouseDownEvent, SharedString, Stateful, Window,
+    ElementId, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
+    ScrollWheelEvent, SharedString, Stateful, Window,
 };
 
 use crate::edges::{apply_box_edges, shadow_preset};
@@ -207,6 +208,8 @@ fn render_view(
             || props.on_hover
             || props.on_pointer
             || props.on_context_menu
+            || props.on_key_down
+            || props.on_wheel
             || props.drag_region
             || props.scroll
             || props.scroll_x
@@ -231,7 +234,11 @@ fn render_view(
         element = element.track_scroll(handle);
         if props.scroll {
             let handle = handle.clone();
-            let activity = view.scroll_activity.entry(id.to_string()).or_default().clone();
+            let activity = view
+                .scroll_activity
+                .entry(id.to_string())
+                .or_default()
+                .clone();
             element = element.child(crate::scrollbar::vertical(handle, activity));
         }
     }
@@ -254,6 +261,55 @@ fn render_view(
                 view.dragging = Some(pointer_id.clone());
                 view.emit_pointer(&pointer_id, "down", event.position);
             }),
+        );
+    }
+    if props.on_key_down {
+        if let Some(focus) = view.key_targets.get(id).map(|target| target.focus.clone()) {
+            let key_id = id.to_string();
+            let events = view.events.clone();
+            let press_focus = focus.clone();
+            element = element
+                .track_focus(&focus)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    move |_event: &MouseDownEvent, window: &mut Window, _cx: &mut App| {
+                        window.focus(&press_focus);
+                    },
+                )
+                .on_key_down(
+                    move |event: &KeyDownEvent, _window: &mut Window, cx: &mut App| {
+                        let keystroke = &event.keystroke;
+                        events.key_down(
+                            &key_id,
+                            crate::events::KeyDown {
+                                key: keystroke.key.clone(),
+                                text: keystroke.key_char.clone(),
+                                ctrl: keystroke.modifiers.control,
+                                alt: keystroke.modifiers.alt,
+                                shift: keystroke.modifiers.shift,
+                                platform: keystroke.modifiers.platform,
+                                repeat: event.is_held,
+                            },
+                        );
+                        cx.stop_propagation();
+                    },
+                );
+        }
+    }
+    if props.on_wheel {
+        let wheel_id = id.to_string();
+        let events = view.events.clone();
+        element = element.on_scroll_wheel(
+            move |event: &ScrollWheelEvent, window: &mut Window, _cx: &mut App| {
+                let (dx, dy) = match event.delta {
+                    ScrollDelta::Lines(lines) => (lines.x, lines.y),
+                    ScrollDelta::Pixels(pixels) => {
+                        let line = f32::from(window.line_height()).max(1.0);
+                        (f32::from(pixels.x) / line, f32::from(pixels.y) / line)
+                    }
+                };
+                events.wheel(&wheel_id, dx, dy);
+            },
         );
     }
     if props.on_context_menu {

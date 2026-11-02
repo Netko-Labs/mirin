@@ -321,6 +321,21 @@ fn main() {
                 line["x"] = serde_json::json!(x);
                 line["y"] = serde_json::json!(y);
             }
+            if let EventKind::KeyDown(key) = &event.kind {
+                line["key"] = serde_json::json!(key.key);
+                if let Some(text) = &key.text {
+                    line["text"] = serde_json::json!(text);
+                }
+                line["ctrl"] = serde_json::json!(key.ctrl);
+                line["alt"] = serde_json::json!(key.alt);
+                line["shift"] = serde_json::json!(key.shift);
+                line["meta"] = serde_json::json!(key.platform);
+                line["repeat"] = serde_json::json!(key.repeat);
+            }
+            if let EventKind::Wheel { dx, dy } = &event.kind {
+                line["dx"] = serde_json::json!(dx);
+                line["dy"] = serde_json::json!(dy);
+            }
             if let EventKind::Chrome(chrome) = &event.kind {
                 line["titleBar"] = serde_json::json!(chrome.title_bar.name());
                 line["controls"] = match &chrome.controls {

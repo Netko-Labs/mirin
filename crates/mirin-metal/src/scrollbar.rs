@@ -16,7 +16,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{canvas, fill, point, px, rgba, size, AnyElement, Bounds, IntoElement, ScrollHandle, Styled};
+use gpui::{
+    canvas, fill, point, px, rgba, size, AnyElement, Bounds, IntoElement, ScrollHandle, Styled,
+};
 
 /// How long the thumb stays after the last scroll, and how long it fades.
 const SHOWN: Duration = Duration::from_millis(900);
@@ -87,7 +89,9 @@ pub(crate) fn vertical(handle: ScrollHandle, activity: Activity) -> AnyElement {
             }
             // Shown or fading: look again next frame.
             window.request_animation_frame();
-            let Some((start, length)) = thumb_span(f32::from(viewport.size.height), overflow, scrolled) else {
+            let Some((start, length)) =
+                thumb_span(f32::from(viewport.size.height), overflow, scrolled)
+            else {
                 return;
             };
             let origin = point(
@@ -116,13 +120,25 @@ mod tests {
     fn the_bar_shows_while_scrolling_then_fades() {
         let activity = Activity::default();
         let start = Instant::now();
-        assert_eq!(activity.visibility(0.0, start), 0.0, "a view opens without its bar");
-        assert_eq!(activity.visibility(0.0, start), 0.0, "nor shows it standing still");
+        assert_eq!(
+            activity.visibility(0.0, start),
+            0.0,
+            "a view opens without its bar"
+        );
+        assert_eq!(
+            activity.visibility(0.0, start),
+            0.0,
+            "nor shows it standing still"
+        );
         assert_eq!(activity.visibility(120.0, start), 1.0, "scrolling shows it");
         assert_eq!(fade(SHOWN / 2), 1.0);
         assert!((fade(SHOWN + FADE / 2) - 0.5).abs() < 0.01);
         assert_eq!(fade(SHOWN + FADE + Duration::from_millis(1)), 0.0);
-        assert_eq!(activity.visibility(120.0, start + SHOWN + FADE + Duration::from_secs(1)), 0.0, "then it is gone");
+        assert_eq!(
+            activity.visibility(120.0, start + SHOWN + FADE + Duration::from_secs(1)),
+            0.0,
+            "then it is gone"
+        );
     }
 
     #[test]

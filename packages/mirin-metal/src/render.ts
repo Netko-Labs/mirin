@@ -43,6 +43,8 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     hover: new Map(),
     pointer: new Map(),
     contextMenu: new Map(),
+    keyDown: new Map(),
+    wheel: new Map(),
     layout: new Map(),
     change: new Map(),
     submit: new Map(),
@@ -98,6 +100,14 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "contextmenu":
         handlers.contextMenu.get(event.nodeId)?.({ x: event.x, y: event.y });
+        break;
+      case "keydown": {
+        const { nodeId: _id, type: _type, ...info } = event;
+        handlers.keyDown.get(event.nodeId)?.(info);
+        break;
+      }
+      case "wheel":
+        handlers.wheel.get(event.nodeId)?.({ dx: event.dx, dy: event.dy });
         break;
       case "chrome":
         chrome.set(chromeFromEvent(event));

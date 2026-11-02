@@ -124,6 +124,14 @@ state and describes UI; the renderer is a pure function of the latest tree.
   single-line input; multiline inserts a newline and Ctrl/Cmd+Enter submits.
   Ctrl/Cmd+V pastes from the system clipboard. Tab / Shift+Tab move focus
   between inputs in document order (wrapping).
+- Raw keys and the wheel: a view with `onKeyDown` (and an `id`) takes the
+  keyboard when it first appears and whenever it is pressed, and emits
+  `{"type":"keydown","nodeId","key","text"?,"ctrl","alt","shift","meta",
+  "repeat"}` for every key (GPUI's key name, the text it types, Super as
+  `meta`); the key stops there. `onWheel` emits `{"type":"wheel","nodeId",
+  "dx","dy"}` in lines (pixel deltas divided by the line height). For views
+  that handle input themselves, like Dashi's terminal; such views are never
+  virtualized rows.
 - Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
 - Events: `{"type":"press","nodeId"}`, `{"type":"change","nodeId","value"}`,
   `{"type":"submit","nodeId","value"}`, and `{"type":"layout","nodeId":"root",

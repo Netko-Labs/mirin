@@ -72,6 +72,25 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return typeof record.value === "string"
         ? { type: record.type, nodeId, value: record.value }
         : null;
+    case "keydown": {
+      const { key, text, ctrl, alt, shift, meta, repeat } = record;
+      if (typeof key !== "string") return null;
+      return {
+        type: "keydown",
+        nodeId,
+        key,
+        ...(typeof text === "string" ? { text } : {}),
+        ctrl: ctrl === true,
+        alt: alt === true,
+        shift: shift === true,
+        meta: meta === true,
+        repeat: repeat === true,
+      };
+    }
+    case "wheel":
+      return typeof record.dx === "number" && typeof record.dy === "number"
+        ? { type: "wheel", nodeId, dx: record.dx, dy: record.dy }
+        : null;
     case "key":
       return record.value === "Escape" || record.value === "ArrowUp" || record.value === "ArrowDown"
         ? { type: "key", nodeId, value: record.value }

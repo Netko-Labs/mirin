@@ -160,6 +160,23 @@ export interface PointerInfo {
   bounds?: Bounds;
 }
 
+/** A key on a view with `onKeyDown`: GPUI's key name ("a", "enter", "left", "f5"), the text it types, and the modifiers (`meta` is Super). */
+export interface KeyDownInfo {
+  key: string;
+  text?: string;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+  meta: boolean;
+  repeat: boolean;
+}
+
+/** The wheel or touchpad over a view with `onWheel`, in lines (positive `dy` is toward the content's start). */
+export interface WheelInfo {
+  dx: number;
+  dy: number;
+}
+
 /** Painted bounds of a node in window pixels. */
 export interface Bounds {
   x: number;
@@ -210,6 +227,14 @@ export interface ViewProps {
   onPointer?: (event: PointerInfo) => void;
   /** Right-click, in window pixels. */
   onContextMenu?: (event: { x: number; y: number }) => void;
+  /**
+   * Take the keyboard (when the view appears and when pressed) and receive
+   * every key raw, with its modifiers. For views that handle keys
+   * themselves, like a terminal; text fields don't need it.
+   */
+  onKeyDown?: (event: KeyDownInfo) => void;
+  /** The wheel or touchpad scrolled over this view, in lines. */
+  onWheel?: (event: WheelInfo) => void;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
   children?: ReactNode;
@@ -281,6 +306,8 @@ export type NativeEvent =
   | { type: "hover"; nodeId: string; hovered: boolean; bounds?: Bounds }
   | ({ type: "pointer"; nodeId: string } & PointerInfo)
   | { type: "contextmenu"; nodeId: string; x: number; y: number }
+  | ({ type: "keydown"; nodeId: string } & KeyDownInfo)
+  | ({ type: "wheel"; nodeId: string } & WheelInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] }
   | ({ type: "chrome"; nodeId: "root" } & WindowChrome);

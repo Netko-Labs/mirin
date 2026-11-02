@@ -10,7 +10,9 @@ import type {
   Dimension,
   GridPlacement,
   GridTrack,
+  KeyDownInfo,
   PointerInfo,
+  WheelInfo,
   TextInputStyle,
   TextStyle,
   ViewStyle,
@@ -85,6 +87,8 @@ interface ViewNodeProps {
   onHover?: boolean;
   onPointer?: boolean;
   onContextMenu?: boolean;
+  onKeyDown?: boolean;
+  onWheel?: boolean;
   occlude?: boolean;
   dragRegion?: boolean;
   onLayout?: boolean;
@@ -193,6 +197,8 @@ export interface Handlers {
   hover: Map<string, (hovered: boolean, bounds?: Bounds) => void>;
   pointer: Map<string, (event: PointerInfo) => void>;
   contextMenu: Map<string, (event: { x: number; y: number }) => void>;
+  keyDown: Map<string, (event: KeyDownInfo) => void>;
+  wheel: Map<string, (event: WheelInfo) => void>;
   layout: Map<string, (bounds: Bounds) => void>;
   change: Map<string, (text: string) => void>;
   submit: Map<string, (text: string) => void>;
@@ -241,6 +247,8 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
     hover: new Map(),
     pointer: new Map(),
     contextMenu: new Map(),
+    keyDown: new Map(),
+    wheel: new Map(),
     layout: new Map(),
     change: new Map(),
     submit: new Map(),
@@ -385,6 +393,8 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
     onHoverChange,
     onPointer,
     onContextMenu,
+    onKeyDown,
+    onWheel,
     onLayout,
     occlude,
     dragRegion,
@@ -415,6 +425,14 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (onContextMenu) {
     props.onContextMenu = true;
     handlers.contextMenu.set(String(instance.id), onContextMenu);
+  }
+  if (onKeyDown) {
+    props.onKeyDown = true;
+    handlers.keyDown.set(String(instance.id), onKeyDown);
+  }
+  if (onWheel) {
+    props.onWheel = true;
+    handlers.wheel.set(String(instance.id), onWheel);
   }
   if (onPress) {
     props.onPress = true;

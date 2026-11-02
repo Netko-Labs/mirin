@@ -158,6 +158,13 @@ pub struct ViewProps {
     pub on_pointer: bool,
     /// Emit `contextmenu` on right-click with window coordinates (needs `id`).
     pub on_context_menu: bool,
+    /// Take the keyboard (focused when the node appears and when pressed)
+    /// and emit `keydown` for every key, with its modifiers and the text it
+    /// types (needs `id`). For views that handle raw keys themselves: a
+    /// terminal, a game.
+    pub on_key_down: bool,
+    /// Emit `wheel` with the scroll delta, in lines (needs `id`).
+    pub on_wheel: bool,
     /// Stop pointer events from reaching nodes painted underneath (overlays).
     pub occlude: bool,
     /// A press here moves the window and a double click zooms it, as on a
@@ -403,9 +410,34 @@ pub(crate) fn collect_scroll_ids(node: &NodeSpec, out: &mut std::collections::Ha
     }
 }
 
+/// Ids of views that take raw keys (`onKeyDown`), in document order.
+pub(crate) fn collect_key_ids(node: &NodeSpec, out: &mut Vec<String>) {
+    if let NodeSpec::View { props, children } = node {
+        if props.on_key_down {
+            if let Some(id) = &props.id {
+                out.push(id.clone());
+            }
+        }
+        for child in children {
+            collect_key_ids(child, out);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_views_are_collected() {
+        let tree = parse_tree(
+            r##"{"type":"view","props":{"id":"root"},"children":[{"type":"view","props":{"id":"term","onKeyDown":true,"onWheel":true}}]}"##,
+        )
+        .expect("onKeyDown and onWheel must parse");
+        let mut ids = Vec::new();
+        collect_key_ids(&tree, &mut ids);
+        assert_eq!(ids, vec!["term".to_string()]);
+    }
 
     #[test]
     fn drag_region_is_a_view_prop() {
