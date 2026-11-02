@@ -350,6 +350,11 @@ export interface NativeHostTransport extends NativeTransport {
    */
   unlock(): void;
   /**
+   * Retitle the window: what the compositor's title bar, the window
+   * switcher, and the taskbar show. The title given at spawn is the first.
+   */
+  setTitle(title: string): void;
+  /**
    * Open the window of a host spawned with `deferred: true` (once; later
    * calls are refused by the host).
    */

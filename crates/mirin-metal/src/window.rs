@@ -71,6 +71,9 @@ pub enum DriverMessage {
     /// Unlock the session this lock surface locked, then quit
     /// (`{"unlock": true}`; the only way a lock surface unlocks).
     Unlock,
+    /// Retitle the window (`{"title": "..."}`): what the compositor's title
+    /// bar, the window switcher, and the taskbar show.
+    Title(String),
 }
 
 /// Whether a new driver `value` resets the buffer. A value the renderer sent
@@ -441,12 +444,14 @@ fn open_and_drive(
         let mut pending: VecDeque<SimCommand> = VecDeque::new();
         loop {
             let mut latest_tree = None;
+            let mut latest_title = None;
             let mut unlock = false;
             let mut absorb =
                 |message: DriverMessage, pending: &mut VecDeque<SimCommand>| match message {
                     DriverMessage::Tree(tree) => latest_tree = Some(*tree),
                     DriverMessage::Sim(command) => pending.push_back(command),
                     DriverMessage::Unlock => unlock = true,
+                    DriverMessage::Title(title) => latest_title = Some(title),
                 };
             if pending.is_empty() {
                 match wake_rx.next().await {
@@ -467,6 +472,9 @@ fn open_and_drive(
                 cx.background_executor().timer(UNLOCK_FLUSH).await;
                 let _ = cx.update(|cx| cx.quit());
                 return;
+            }
+            if let Some(title) = latest_title {
+                let _ = window.update(cx, |_view, window, _cx| window.set_window_title(&title));
             }
             let mut sims = Vec::new();
             while let Some(command) = pending.pop_front() {

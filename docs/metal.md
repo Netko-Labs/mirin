@@ -425,6 +425,9 @@ where the tree is, and opening fails on compositors without wlr-layer-shell.
 (`titleBar`) puts the app's toolbar in the title bar on Dashi (section 4,
 "Unified title bar"). `MIRIN_METAL_APP_ID` (`appId`)
 names the app to the compositor, which docks and taskbars group windows by.
+A `{"title":"…"}` stdin line retitles the window afterwards (`setTitle()` on the
+transport): the compositor's title bar, the window switcher, and taskbars show
+the new title (a terminal's running program and grid size).
 `MIRIN_METAL_CAPABILITIES=shell.toplevels` (`capabilities`) makes the host follow
 every window over wlr-foreign-toplevel-management on a second Wayland connection
 (`src/toplevels.rs`): it writes `{"type":"toplevel","toplevel":{...}}` and

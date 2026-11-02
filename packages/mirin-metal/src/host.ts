@@ -292,6 +292,10 @@ export function spawnNativeHost(
       child.stdin.write('{"unlock":true}\n');
       void child.stdin.flush();
     },
+    setTitle(title) {
+      child.stdin.write(`${JSON.stringify({ title })}\n`);
+      void child.stdin.flush();
+    },
     open(window) {
       child.stdin.write(`${JSON.stringify({ open: window })}\n`);
       void child.stdin.flush();

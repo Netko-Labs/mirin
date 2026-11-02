@@ -75,6 +75,15 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
         }
         return Ok(HostLine::Window(DriverMessage::Unlock));
     }
+    if line.trim_start().starts_with("{\"title\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct TitleLine {
+            title: String,
+        }
+        let parsed: TitleLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        return Ok(HostLine::Window(DriverMessage::Title(parsed.title)));
+    }
     #[cfg(target_os = "linux")]
     if line.trim_start().starts_with("{\"toplevel\"") {
         #[derive(serde::Deserialize)]
