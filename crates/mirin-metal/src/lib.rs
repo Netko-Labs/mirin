@@ -22,6 +22,7 @@ mod list;
 mod media;
 mod pointer;
 mod render;
+mod scrollbar;
 mod sim;
 mod surface;
 mod titlebar;

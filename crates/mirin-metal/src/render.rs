@@ -229,6 +229,11 @@ fn render_view(
     if props.scroll || props.scroll_x {
         let handle = view.scrolls.entry(id.to_string()).or_default();
         element = element.track_scroll(handle);
+        if props.scroll {
+            if let Some(thumb) = crate::scrollbar::vertical(handle) {
+                element = element.child(thumb);
+            }
+        }
     }
     if let Some(color) = props.hover_background.as_deref().and_then(parse_color) {
         element = element.hover(move |style| style.bg(rgba(color)));
