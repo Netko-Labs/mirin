@@ -1,9 +1,14 @@
 //! Overlay scroll bars: a thin rounded thumb along a scroll view's right edge
 //! while its content is taller than it, at the scroll position (GPUI draws
-//! none of its own). It sits over the content and takes no input; the content
-//! is what scrolls. Placed from the view's ScrollHandle, as of the last paint.
+//! none of its own). It takes no input; the content is what scrolls.
+//!
+//! The thumb is painted, not laid out: a zero-size canvas that, when it
+//! paints, reads the view's ScrollHandle (already laid out this frame) and
+//! paints a rounded quad over the viewport. A laid-out child would count
+//! toward the content's height and, following the scroll, let it scroll
+//! forever.
 
-use gpui::{div, px, rgba, Div, ParentElement, Pixels, ScrollHandle, Styled};
+use gpui::{canvas, fill, point, px, rgba, size, AnyElement, Bounds, IntoElement, ScrollHandle, Styled};
 
 /// Thumb width, its gap to the edge, and the shortest a thumb gets (px).
 const WIDTH: f32 = 6.0;
@@ -24,26 +29,32 @@ pub(crate) fn thumb_span(viewport: f32, overflow: f32, scrolled: f32) -> Option<
     Some((INSET + progress * (track - length), length))
 }
 
-/// The vertical thumb for a view scrolled by `handle`, or None when nothing overflows.
-pub(crate) fn vertical(handle: &ScrollHandle) -> Option<Div> {
-    let viewport = f32::from(handle.bounds().size.height);
-    let overflow = f32::from(handle.max_offset().height);
-    // The offset is negative as the content moves up.
-    let scrolled = -f32::from(handle.offset().y);
-    let (start, length) = thumb_span(viewport, overflow, scrolled)?;
-    // An absolute child scrolls with the content: put it back by the scroll.
-    let top: Pixels = px(scrolled + start);
-    Some(
-        div()
-            .absolute()
-            .top(top)
-            .right(px(INSET))
-            .w(px(WIDTH))
-            .h(px(length))
-            .rounded(px(WIDTH / 2.0))
-            .bg(rgba(COLOR))
-            .child(div()),
+/// The vertical thumb for a view scrolled by `handle` (painted only while something overflows).
+pub(crate) fn vertical(handle: &ScrollHandle) -> AnyElement {
+    let handle = handle.clone();
+    canvas(
+        |_, _, _| (),
+        move |_, (), window, _cx| {
+            let viewport = handle.bounds();
+            let overflow = f32::from(handle.max_offset().height);
+            // The offset is negative as the content moves up.
+            let scrolled = -f32::from(handle.offset().y);
+            let Some((start, length)) = thumb_span(f32::from(viewport.size.height), overflow, scrolled) else {
+                return;
+            };
+            let origin = point(
+                viewport.origin.x + viewport.size.width - px(INSET + WIDTH),
+                viewport.origin.y + px(start),
+            );
+            let thumb = Bounds::new(origin, size(px(WIDTH), px(length)));
+            window.paint_quad(fill(thumb, rgba(COLOR)).corner_radii(px(WIDTH / 2.0)));
+        },
     )
+    .absolute()
+    .top(px(0.0))
+    .left(px(0.0))
+    .size(px(0.0))
+    .into_any_element()
 }
 
 #[cfg(test)]
