@@ -230,7 +230,9 @@ fn render_view(
         let handle = view.scrolls.entry(id.to_string()).or_default();
         element = element.track_scroll(handle);
         if props.scroll {
-            element = element.child(crate::scrollbar::vertical(handle));
+            let handle = handle.clone();
+            let activity = view.scroll_activity.entry(id.to_string()).or_default().clone();
+            element = element.child(crate::scrollbar::vertical(handle, activity));
         }
     }
     if let Some(color) = props.hover_background.as_deref().and_then(parse_color) {

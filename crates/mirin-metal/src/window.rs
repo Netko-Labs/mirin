@@ -125,6 +125,8 @@ pub(crate) struct RootView {
     pub(crate) press_claimed: bool,
     /// Scroll state of scrollable nodes, by id, for programmatic scrolling.
     pub(crate) scrolls: HashMap<String, ScrollHandle>,
+    /// When each scrollable node last scrolled, for its auto-hiding scroll bar (`scrollbar.rs`).
+    pub(crate) scroll_activity: HashMap<String, crate::scrollbar::Activity>,
     /// Virtualized long lists, by id (`list.rs`).
     pub(crate) lists: HashMap<String, VirtualList>,
 }
@@ -139,6 +141,7 @@ impl RootView {
             dragging: None,
             press_claimed: false,
             scrolls: HashMap::new(),
+            scroll_activity: HashMap::new(),
             lists: HashMap::new(),
         };
         view.sync_inputs(cx);
