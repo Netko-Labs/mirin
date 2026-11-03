@@ -12,6 +12,7 @@
 //! not yet wired into the CEF runtime, the FFI surface, or the TypeScript
 //! packages. See `README.md` for scope and the integration plan.
 
+mod drag;
 mod edges;
 mod events;
 #[cfg(target_os = "linux")]

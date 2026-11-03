@@ -1462,6 +1462,20 @@ impl PlatformWindow for WaylandWindow {
         toplevel._move(&state.globals.seat, serial);
     }
 
+    fn start_file_drag(
+        &self,
+        paths: &[std::path::PathBuf],
+        icon: Option<&std::path::Path>,
+        icon_size: u32,
+    ) -> bool {
+        let state = self.borrow();
+        let surface = state.surface.clone();
+        let scale = state.scale.ceil() as i32;
+        let client = state.client.clone();
+        drop(state);
+        client.start_file_drag(&surface, paths, icon, icon_size, scale)
+    }
+
     fn start_window_resize(&self, edge: crate::ResizeEdge) {
         let state = self.borrow();
         let Some(toplevel) = state.role.toplevel() else {

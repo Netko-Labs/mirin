@@ -48,6 +48,9 @@ pub enum EventKind {
     Wheel { dx: f32, dy: f32 },
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
     Resize,
+    /// Files dragged over a `view` with `onDrop` (enter, over, leave), or
+    /// dropped on it, in window coordinates, with the keyboard's modifiers.
+    Drop(DropEvent),
     /// The window's chrome: its effective title bar style and the area the
     /// compositor's window controls cover. Sent when the window opens and on
     /// every change (node id is `"root"`).
@@ -65,6 +68,37 @@ pub struct KeyDown {
     pub shift: bool,
     pub platform: bool,
     pub repeat: bool,
+}
+
+/// Files over, or dropped on, a view with `onDrop`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropEvent {
+    pub phase: DropPhase,
+    pub x: f32,
+    pub y: f32,
+    pub paths: Vec<String>,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropPhase {
+    Enter,
+    Over,
+    Leave,
+    Drop,
+}
+
+impl DropPhase {
+    pub fn name(self) -> &'static str {
+        match self {
+            DropPhase::Enter => "enter",
+            DropPhase::Over => "over",
+            DropPhase::Leave => "leave",
+            DropPhase::Drop => "drop",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +133,7 @@ impl EventKind {
             EventKind::KeyDown(_) => "keydown",
             EventKind::Wheel { .. } => "wheel",
             EventKind::Resize => "resize",
+            EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
         }
     }
@@ -113,6 +148,7 @@ impl EventKind {
             | EventKind::KeyDown(_)
             | EventKind::Wheel { .. }
             | EventKind::Resize
+            | EventKind::Drop(_)
             | EventKind::Chrome(_) => None,
             EventKind::Change { value }
             | EventKind::Submit { value }
@@ -194,6 +230,10 @@ impl EventSender {
                 bounds,
             },
         );
+    }
+
+    pub(crate) fn drop_event(&self, node_id: &str, event: DropEvent) {
+        self.send(node_id, EventKind::Drop(event));
     }
 
     pub(crate) fn resize(&self, node_id: &str) {

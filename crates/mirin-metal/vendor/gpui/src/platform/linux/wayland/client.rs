@@ -1,7 +1,7 @@
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
-    os::fd::{AsRawFd, BorrowedFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd},
     path::PathBuf,
     rc::{Rc, Weak},
     time::{Duration, Instant},
@@ -264,7 +264,18 @@ pub struct DragState {
     data_offer: Option<wl_data_offer::WlDataOffer>,
     window: Option<WaylandWindowStatePtr>,
     position: Point<Pixels>,
+    /// A drag this client started (mirin: `start_file_drag`): its source,
+    /// and its icon's surface and buffer, kept until the drag ends.
+    out: Option<DragOut>,
 }
+
+pub struct DragOut {
+    source: wl_data_source::WlDataSource,
+    icon: Option<(wl_surface::WlSurface, wl_buffer::WlBuffer)>,
+}
+
+/// A drag source's data: the uri-list it offers.
+pub struct DragSourceData(String);
 
 pub struct ClickState {
     last_mouse_button: Option<MouseButton>,
@@ -303,6 +314,73 @@ impl WaylandClientStatePtr {
 
     pub fn get_serial(&self, kind: SerialKind) -> u32 {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
+    }
+
+    /// Start a drag of `paths` from `origin` (mirin): the compositor takes the
+    /// pointer until the drop. Offers `text/uri-list` for copying; the icon
+    /// (a file, drawn at `icon_size` logical pixels × `scale`) rides under the
+    /// pointer, centered. Must come while the button that pressed is held.
+    pub fn start_file_drag(
+        &self,
+        origin: &wl_surface::WlSurface,
+        paths: &[std::path::PathBuf],
+        icon: Option<&std::path::Path>,
+        icon_size: u32,
+        scale: i32,
+    ) -> bool {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        let (Some(manager), Some(device)) = (
+            state.globals.data_device_manager.clone(),
+            state.data_device.clone(),
+        ) else {
+            return false;
+        };
+        let uris: String = paths
+            .iter()
+            .filter_map(|path| Url::from_file_path(path).ok())
+            .map(|url| format!("{url}\r\n"))
+            .collect();
+        if uris.is_empty() {
+            return false;
+        }
+        if let Some(old) = state.drag.out.take() {
+            old.source.destroy();
+            if let Some((surface, buffer)) = old.icon {
+                surface.destroy();
+                buffer.destroy();
+            }
+        }
+        let qh = state.globals.qh.clone();
+        let source = manager.create_data_source(&qh, DragSourceData(uris));
+        source.offer(FILE_LIST_MIME_TYPE.to_string());
+        source.set_actions(DndAction::Copy);
+        let scale = scale.max(1);
+        let icon = icon.and_then(|path| {
+            let (pixels, width, height) =
+                super::drag_icon::rasterize(path, icon_size * scale as u32)?;
+            let buffer = shm_buffer(&state.globals.shm, &qh, &pixels, width, height)?;
+            let surface = state.globals.compositor.create_surface(&qh, ());
+            Some((surface, buffer, width as i32, height as i32))
+        });
+        let serial = state.serial_tracker.get(SerialKind::MousePress);
+        device.start_drag(Some(&source), origin, icon.as_ref().map(|i| &i.0), serial);
+        let icon = icon.map(|(surface, buffer, width, height)| {
+            // Centered under the pointer.
+            let (dx, dy) = (-width / scale / 2, -height / scale / 2);
+            if surface.version() >= 5 {
+                surface.attach(Some(&buffer), 0, 0);
+                surface.offset(dx, dy);
+            } else {
+                surface.attach(Some(&buffer), dx, dy);
+            }
+            surface.set_buffer_scale(scale);
+            surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
+            surface.commit();
+            (surface, buffer)
+        });
+        state.drag.out = Some(DragOut { source, icon });
+        true
     }
 
     pub fn set_pending_activation(&self, window: ObjectId) {
@@ -603,6 +681,7 @@ impl WaylandClient {
                 data_offer: None,
                 window: None,
                 position: Point::default(),
+                out: None,
             },
             click: ClickState {
                 last_click: Instant::now(),
@@ -2193,6 +2272,77 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
             {
                 offer.add_mime_type(mime_type);
             }
+        }
+    }
+}
+
+/// `pixels` (premultiplied BGRA) in a new shm buffer.
+fn shm_buffer(
+    shm: &wl_shm::WlShm,
+    qh: &QueueHandle<WaylandClientStatePtr>,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<wl_buffer::WlBuffer> {
+    use std::io::Write;
+    // SAFETY: memfd_create takes a NUL-terminated name and flags; it returns a new fd or -1.
+    let fd = unsafe { libc::memfd_create(c"gpui-drag-icon".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return None;
+    }
+    // SAFETY: the fd was just created and nothing else owns it.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    file.write_all(pixels).ok()?;
+    let pool = shm.create_pool(file.as_fd(), pixels.len() as i32, qh, ());
+    let buffer = pool.create_buffer(
+        0,
+        width as i32,
+        height as i32,
+        width as i32 * 4,
+        wl_shm::Format::Argb8888,
+        qh,
+        (),
+    );
+    pool.destroy();
+    Some(buffer)
+}
+
+impl Dispatch<wl_data_source::WlDataSource, DragSourceData> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        data_source: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        data: &DragSourceData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_source::Event::Send { fd, .. } => {
+                use std::io::Write;
+                let mut file = std::fs::File::from(fd);
+                if let Err(error) = file.write_all(data.0.as_bytes()) {
+                    log::warn!("writing a drag's uri-list: {error}");
+                }
+            }
+            wl_data_source::Event::Cancelled | wl_data_source::Event::DndFinished => {
+                let client = this.get_client();
+                let mut state = client.borrow_mut();
+                if state
+                    .drag
+                    .out
+                    .as_ref()
+                    .is_some_and(|out| &out.source == data_source)
+                {
+                    if let Some(out) = state.drag.out.take()
+                        && let Some((surface, buffer)) = out.icon
+                    {
+                        surface.destroy();
+                        buffer.destroy();
+                    }
+                }
+                data_source.destroy();
+            }
+            _ => {}
         }
     }
 }

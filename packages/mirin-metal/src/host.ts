@@ -91,6 +91,25 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return typeof record.dx === "number" && typeof record.dy === "number"
         ? { type: "wheel", nodeId, dx: record.dx, dy: record.dy }
         : null;
+    case "drop": {
+      const { phase, x, y, paths, ctrl, alt, shift } = record;
+      if (phase !== "enter" && phase !== "over" && phase !== "leave" && phase !== "drop")
+        return null;
+      if (typeof x !== "number" || typeof y !== "number") return null;
+      return {
+        type: "drop",
+        nodeId,
+        phase,
+        x,
+        y,
+        paths: Array.isArray(paths)
+          ? paths.filter((path): path is string => typeof path === "string")
+          : [],
+        ctrl: ctrl === true,
+        alt: alt === true,
+        shift: shift === true,
+      };
+    }
     case "key":
       return record.value === "Escape" || record.value === "ArrowUp" || record.value === "ArrowDown"
         ? { type: "key", nodeId, value: record.value }

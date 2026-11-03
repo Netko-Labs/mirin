@@ -176,6 +176,34 @@ export interface KeyDownInfo {
   repeat: boolean;
 }
 
+/** Files a view drags out (`dragFiles`): pressing it and moving a few pixels starts the drag. */
+export interface DragFiles {
+  /** Absolute paths. */
+  paths: string[];
+  /** A PNG, JPEG, or SVG file shown under the pointer while dragging. */
+  icon?: string;
+  /** The icon's size in pixels (default 48). */
+  iconSize?: number;
+}
+
+/**
+ * Files dragged over a view with `onDrop`, or dropped on it, in window
+ * pixels: `enter` and `over` while they move over it (the deepest such view
+ * under the pointer gets them), `leave` when they go elsewhere or the drag
+ * ends, `drop` when the button goes up there (no `leave` follows). The
+ * keyboard's modifiers are as they were at that moment. `paths` is empty
+ * on `leave`.
+ */
+export interface DropInfo {
+  phase: "enter" | "over" | "leave" | "drop";
+  x: number;
+  y: number;
+  paths: string[];
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+}
+
 /** The wheel or touchpad over a view with `onWheel`, in lines (positive `dy` is toward the content's start). */
 export interface WheelInfo {
   dx: number;
@@ -240,6 +268,14 @@ export interface ViewProps {
   onKeyDown?: (event: KeyDownInfo) => void;
   /** The wheel or touchpad scrolled over this view, in lines. */
   onWheel?: (event: WheelInfo) => void;
+  /**
+   * Drag these files out of the window: a press here and a move of a few
+   * pixels starts it, and any app's window that takes files gets them (this
+   * one's `onDrop` views included). A click without moving is still a press.
+   */
+  dragFiles?: DragFiles;
+  /** Files dragged over this view or dropped on it. */
+  onDrop?: (event: DropInfo) => void;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
   children?: ReactNode;
@@ -313,6 +349,7 @@ export type NativeEvent =
   | { type: "contextmenu"; nodeId: string; x: number; y: number }
   | ({ type: "keydown"; nodeId: string } & KeyDownInfo)
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
+  | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] }
   | ({ type: "chrome"; nodeId: "root" } & WindowChrome);

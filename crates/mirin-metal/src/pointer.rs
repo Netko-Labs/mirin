@@ -7,8 +7,8 @@
 //! edge, and left a drag that ended outside it stuck).
 
 use gpui::{
-    canvas, div, prelude::*, AnyElement, Context, DispatchPhase, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    canvas, div, prelude::*, AnyElement, Context, DispatchPhase, DragMoveEvent, ExternalPaths,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
 };
 
 use crate::events::PointerPhase;
@@ -50,7 +50,7 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
                 }
             });
             let moves = view.clone();
-            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
@@ -58,6 +58,11 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
                     if let Some(id) = view.dragging.clone() {
                         view.emit_pointer(&id, "move", event.position);
                     }
+                    view.drag_moved(
+                        event.position,
+                        event.pressed_button == Some(MouseButton::Left),
+                        window,
+                    );
                 });
             });
             let releases = view;
@@ -66,6 +71,7 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
                     return;
                 }
                 let _ = releases.update(cx, |view, _| {
+                    view.drag_released();
                     if let Some(id) = view.dragging.take() {
                         view.emit_pointer(&id, "up", event.position);
                     }
@@ -76,8 +82,18 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
     .absolute()
     .size_0();
     div()
+        .id("mirin-root")
         .size_full()
         .font_family(crate::render::sans_family())
+        .on_drag_move::<ExternalPaths>(cx.listener(
+            |view, event: &DragMoveEvent<ExternalPaths>, window, cx| {
+                let paths = event.drag(cx).clone();
+                view.files_over(event.event.position, &paths, window);
+            },
+        ))
+        .on_drop::<ExternalPaths>(cx.listener(|view, paths: &ExternalPaths, window, _cx| {
+            view.files_dropped(window.mouse_position(), paths, window);
+        }))
         .child(content)
         .child(listeners)
         .into_any_element()

@@ -8,14 +8,15 @@ import type {
   Bounds,
   Color,
   Dimension,
+  DropInfo,
   GridPlacement,
   GridTrack,
   KeyDownInfo,
   PointerInfo,
-  WheelInfo,
   TextInputStyle,
   TextStyle,
   ViewStyle,
+  WheelInfo,
 } from "../types.ts";
 import type {
   HostInstance,
@@ -89,6 +90,8 @@ interface ViewNodeProps {
   onContextMenu?: boolean;
   onKeyDown?: boolean;
   onWheel?: boolean;
+  dragFiles?: { paths: string[]; icon?: string; iconSize?: number };
+  onDrop?: boolean;
   occlude?: boolean;
   dragRegion?: boolean;
   onLayout?: boolean;
@@ -199,6 +202,7 @@ export interface Handlers {
   contextMenu: Map<string, (event: { x: number; y: number }) => void>;
   keyDown: Map<string, (event: KeyDownInfo) => void>;
   wheel: Map<string, (event: WheelInfo) => void>;
+  drop: Map<string, (event: DropInfo) => void>;
   layout: Map<string, (bounds: Bounds) => void>;
   change: Map<string, (text: string) => void>;
   submit: Map<string, (text: string) => void>;
@@ -249,6 +253,7 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
     contextMenu: new Map(),
     keyDown: new Map(),
     wheel: new Map(),
+    drop: new Map(),
     layout: new Map(),
     change: new Map(),
     submit: new Map(),
@@ -395,6 +400,8 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
     onContextMenu,
     onKeyDown,
     onWheel,
+    dragFiles,
+    onDrop,
     onLayout,
     occlude,
     dragRegion,
@@ -433,6 +440,17 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (onWheel) {
     props.onWheel = true;
     handlers.wheel.set(String(instance.id), onWheel);
+  }
+  if (dragFiles && dragFiles.paths.length > 0) {
+    props.dragFiles = {
+      paths: [...dragFiles.paths],
+      ...(dragFiles.icon !== undefined ? { icon: dragFiles.icon } : {}),
+      ...(dragFiles.iconSize !== undefined ? { iconSize: Math.round(dragFiles.iconSize) } : {}),
+    };
+  }
+  if (onDrop) {
+    props.onDrop = true;
+    handlers.drop.set(String(instance.id), onDrop);
   }
   if (onPress) {
     props.onPress = true;

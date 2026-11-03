@@ -45,6 +45,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     contextMenu: new Map(),
     keyDown: new Map(),
     wheel: new Map(),
+    drop: new Map(),
     layout: new Map(),
     change: new Map(),
     submit: new Map(),
@@ -109,6 +110,11 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       case "wheel":
         handlers.wheel.get(event.nodeId)?.({ dx: event.dx, dy: event.dy });
         break;
+      case "drop": {
+        const { nodeId: _id, type: _type, ...info } = event;
+        handlers.drop.get(event.nodeId)?.(info);
+        break;
+      }
       case "chrome":
         chrome.set(chromeFromEvent(event));
         break;

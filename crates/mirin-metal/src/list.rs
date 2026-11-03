@@ -83,6 +83,7 @@ fn find_rows<'a>(props: &ViewProps, children: &'a [NodeSpec]) -> Option<(&'a [No
         || props.on_context_menu
         || props.on_key_down
         || props.on_wheel
+        || props.drag_files.is_some()
         || props.hover_background.is_some()
     {
         return None;

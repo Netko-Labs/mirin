@@ -134,6 +134,11 @@ pub(crate) struct RootView {
     pub(crate) lists: HashMap<String, VirtualList>,
     /// Views that take raw keys (`onKeyDown`), by id.
     pub(crate) key_targets: HashMap<String, KeyTarget>,
+    /// A left press on a view with `dragFiles`, and where: moving far enough
+    /// with the button held starts the drag (`drag.rs`).
+    pub(crate) drag_candidate: Option<(String, gpui::Point<gpui::Pixels>)>,
+    /// The `onDrop` view files are being dragged over.
+    pub(crate) drop_target: Option<String>,
 }
 
 /// A view with `onKeyDown`: its focus, and whether it still has to take it.
@@ -155,6 +160,8 @@ impl RootView {
             scroll_activity: HashMap::new(),
             lists: HashMap::new(),
             key_targets: HashMap::new(),
+            drag_candidate: None,
+            drop_target: None,
         };
         view.sync_inputs(cx);
         view.sync_key_targets(cx);
@@ -268,6 +275,9 @@ impl Render for RootView {
         // be read and listeners attached while walking it.
         let started = std::time::Instant::now();
         self.layout.begin_frame();
+        if self.drop_target.is_some() && !cx.has_active_drag() {
+            self.files_gone(window);
+        }
         let tree = self.tree.clone();
         let content = render_node(&tree, self, window, cx);
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;

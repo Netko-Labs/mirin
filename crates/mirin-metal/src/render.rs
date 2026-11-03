@@ -213,6 +213,8 @@ fn render_view(
             || props.on_context_menu
             || props.on_key_down
             || props.on_wheel
+            || props.on_drop
+            || props.drag_files.is_some()
             || props.drag_region
             || props.scroll
             || props.scroll_x
@@ -254,6 +256,15 @@ fn render_view(
         element = element.on_hover(move |hovered: &bool, _window: &mut Window, _cx: &mut App| {
             events.hover(hover_id.as_ref(), *hovered);
         });
+    }
+    if props.drag_files.is_some() {
+        let drag_id = id.to_string();
+        element = element.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |view, event: &MouseDownEvent, _window, _cx| {
+                view.press_draggable(&drag_id, event.position);
+            }),
+        );
     }
     if props.on_pointer {
         let pointer_id = id.to_string();

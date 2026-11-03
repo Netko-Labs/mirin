@@ -342,3 +342,63 @@ describe("window chrome", () => {
     root.unmount();
   });
 });
+
+describe("file drag and drop", () => {
+  test("dragFiles goes out with the tree; drop events reach onDrop", async () => {
+    const transport = fakeTransport();
+    const heard: unknown[] = [];
+    render(
+      createElement(
+        View,
+        { onDrop: (event: unknown) => heard.push(event) },
+        createElement(View, {
+          dragFiles: { paths: ["/home/me/a.txt"], icon: "/icons/text.svg", iconSize: 40.4 },
+        }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(tree.props.onDrop).toBe(true);
+    expect(tree.children[0].props.dragFiles).toEqual({
+      paths: ["/home/me/a.txt"],
+      icon: "/icons/text.svg",
+      iconSize: 40,
+    });
+    transport.emit({
+      type: "drop",
+      nodeId: tree.props.id,
+      phase: "drop",
+      x: 5,
+      y: 6,
+      paths: ["/tmp/b"],
+      ctrl: true,
+      alt: false,
+      shift: false,
+    });
+    expect(heard).toEqual([
+      { phase: "drop", x: 5, y: 6, paths: ["/tmp/b"], ctrl: true, alt: false, shift: false },
+    ]);
+  });
+
+  test("the host's drop line parses, and nothing malformed does", () => {
+    expect(
+      parseNativeEvent(
+        '{"type":"drop","nodeId":"n1","phase":"enter","x":1,"y":2,"paths":["/a",3],"ctrl":false,"alt":true,"shift":false}',
+      ),
+    ).toEqual({
+      type: "drop",
+      nodeId: "n1",
+      phase: "enter",
+      x: 1,
+      y: 2,
+      paths: ["/a"],
+      ctrl: false,
+      alt: true,
+      shift: false,
+    });
+    expect(
+      parseNativeEvent('{"type":"drop","nodeId":"n1","phase":"fling","x":1,"y":2}'),
+    ).toBeNull();
+  });
+});

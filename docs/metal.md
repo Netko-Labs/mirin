@@ -321,6 +321,27 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   `chrome` event, which arrives at startup; an app that pads by `controls`
   re-lays out once.
 
+### Files: drag and drop (Wayland)
+
+- **Out.** `<View dragFiles={{ paths, icon?, iconSize? }}>`: a left press there
+  and a move of 6 pixels with the button held starts a Wayland drag
+  (`wl_data_device.start_drag`, GPUI's `Window::start_file_drag`, added in
+  the vendored copy). It offers `text/uri-list` for copying; `icon` (PNG,
+  JPEG, or SVG) is drawn into a shm buffer, `iconSize` logical pixels across
+  (48 by default) at the window's scale, centered under the pointer. A
+  click without moving is still a press. `paths` are read when the drag
+  starts, so a view can pass the selection it belongs to.
+- **In.** `<View onDrop={(event) => …}>`: files dragged over the window, from
+  any app (this one too), reach the deepest painted `onDrop` view under the
+  pointer, inside every scrolling or clipping ancestor (`drag.rs`):
+  `enter`, `over` while moving, `leave`, or `drop`, with window coordinates,
+  the paths, and the keyboard's modifiers. Only file lists are accepted
+  (GPUI's external paths); text drags are not.
+- **Not yet.** Other platforms (GPUI's default is to refuse the drag), a
+  drag of anything but files, and choosing move over copy in another app:
+  the drag offers copy only; an app moving files within itself decides on
+  its own.
+
 ### macOS
 
 Renders through Metal (the Apple API) with no extra system deps. Not yet

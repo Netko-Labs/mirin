@@ -549,6 +549,16 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
+    /// Start dragging files out of the window (mirin; Wayland only): see
+    /// [`crate::Window::start_file_drag`]. False where it can't.
+    fn start_file_drag(
+        &self,
+        _paths: &[std::path::PathBuf],
+        _icon: Option<&std::path::Path>,
+        _icon_size: u32,
+    ) -> bool {
+        false
+    }
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn window_decorations(&self) -> Decorations {
         Decorations::Server

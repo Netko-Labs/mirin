@@ -141,6 +141,16 @@ impl LayoutMap {
     }
 
     /// Painted bounds of one node.
+    /// A node's bounds, if it was painted in the current frame.
+    pub(crate) fn bounds(&self, id: &str) -> Option<Bounds<Pixels>> {
+        let state = self.0.borrow();
+        state
+            .nodes
+            .get(id)
+            .filter(|(_, frame)| *frame == state.frame)
+            .map(|(bounds, _)| *bounds)
+    }
+
     pub(crate) fn node(&self, id: &str) -> Option<LayoutNode> {
         let state = self.0.borrow();
         state

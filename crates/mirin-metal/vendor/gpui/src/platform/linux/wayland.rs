@@ -4,6 +4,7 @@ mod cursor;
 mod dashi_chrome;
 mod display;
 mod serial;
+mod drag_icon;
 mod window;
 
 pub(crate) use client::*;

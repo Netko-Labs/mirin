@@ -1829,6 +1829,21 @@ impl Window {
         self.platform_window.show_window_menu(position)
     }
 
+    /// Start dragging `paths` out of the window (mirin; Wayland only), with the
+    /// image at `icon` (PNG, JPEG, or SVG) `icon_size` pixels across under
+    /// the pointer. The compositor takes the pointer until the drop; any
+    /// app's window that takes files, this one included, gets them (as a
+    /// file drop). Call it while the pressed button is still held. False
+    /// where it can't start.
+    pub fn start_file_drag(
+        &self,
+        paths: &[std::path::PathBuf],
+        icon: Option<&std::path::Path>,
+        icon_size: u32,
+    ) -> bool {
+        self.platform_window.start_file_drag(paths, icon, icon_size)
+    }
+
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
@@ -3738,6 +3753,8 @@ impl Window {
                 }
                 FileDropEvent::Exited => {
                     cx.active_drag.take();
+                    // mirin: draw again, so views hear the drag is gone.
+                    self.refresh();
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
             },

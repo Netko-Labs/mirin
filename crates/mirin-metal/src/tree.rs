@@ -167,6 +167,13 @@ pub struct ViewProps {
     pub on_key_down: bool,
     /// Emit `wheel` with the scroll delta, in lines (needs `id`).
     pub on_wheel: bool,
+    /// Pressing here and moving drags these files out (`drag.rs`): to any
+    /// app's window that takes files, this one's included (needs `id`).
+    pub drag_files: Option<DragFiles>,
+    /// Emit `drop` while files are dragged over this node and when they are
+    /// dropped on it (needs `id`): the deepest such node under the pointer
+    /// gets them.
+    pub on_drop: bool,
     /// Stop pointer events from reaching nodes painted underneath (overlays).
     pub occlude: bool,
     /// A press here moves the window and a double click zooms it, as on a
@@ -199,6 +206,18 @@ pub struct ViewProps {
     /// Gap between columns / rows, overriding `gap` on that axis.
     pub gap_x: Option<f32>,
     pub gap_y: Option<f32>,
+}
+
+/// The files a view drags (`dragFiles`), and the image under the pointer.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct DragFiles {
+    /// Absolute paths.
+    pub paths: Vec<String>,
+    /// A PNG, JPEG, or SVG file drawn under the pointer while dragging.
+    pub icon: Option<String>,
+    /// The icon's size in logical pixels (default 48).
+    pub icon_size: Option<u32>,
 }
 
 /// Appearance props for a `text` node.

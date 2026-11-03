@@ -341,6 +341,15 @@ fn main() {
                 line["meta"] = serde_json::json!(key.platform);
                 line["repeat"] = serde_json::json!(key.repeat);
             }
+            if let EventKind::Drop(drop) = &event.kind {
+                line["phase"] = serde_json::json!(drop.phase.name());
+                line["x"] = serde_json::json!(drop.x);
+                line["y"] = serde_json::json!(drop.y);
+                line["paths"] = serde_json::json!(drop.paths);
+                line["ctrl"] = serde_json::json!(drop.ctrl);
+                line["alt"] = serde_json::json!(drop.alt);
+                line["shift"] = serde_json::json!(drop.shift);
+            }
             if let EventKind::Wheel { dx, dy } = &event.kind {
                 line["dx"] = serde_json::json!(dx);
                 line["dy"] = serde_json::json!(dy);
