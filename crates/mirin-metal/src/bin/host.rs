@@ -429,10 +429,13 @@ fn window_options(
         })
         .transpose()?
         .unwrap_or(TitleBar::Standard);
-    // Surfaces may be thin (a 28px menu bar); windows keep a usable minimum.
+    // Surfaces may be thin (a 28px menu bar); windows keep a usable minimum,
+    // and a smaller one is raised to it (an alert asks for under 200 tall),
+    // not thrown out for the 800×600 default.
     let minimum = if surface.is_some() { 1.0 } else { 200.0 };
     let (width, height) = size
-        .filter(|(w, h)| *w >= minimum && *h >= minimum)
+        .filter(|(w, h)| w.is_finite() && h.is_finite() && *w > 0.0 && *h > 0.0)
+        .map(|(w, h)| (w.max(minimum), h.max(minimum)))
         .unwrap_or((
             NativeUiOptions::default().width,
             NativeUiOptions::default().height,
@@ -457,4 +460,17 @@ fn initial_tree(options: &NativeUiOptions) -> mirin_metal::NodeSpec {
         r##"{"type":"view","props":{"fill":true,"background":"#111114"}}"##
     };
     parse_tree(initial).expect("static initial tree is valid JSON")
+}
+
+#[cfg(test)]
+mod window_size_tests {
+    use super::window_options;
+
+    #[test]
+    fn small_windows_are_raised_to_the_minimum() {
+        let options = window_options("t".into(), None, Some((420.0, 186.0)), None, None).unwrap();
+        assert_eq!((options.width, options.height), (420.0, 200.0));
+        let options = window_options("t".into(), None, Some((0.0, 186.0)), None, None).unwrap();
+        assert_eq!((options.width, options.height), (800.0, 600.0));
+    }
 }
