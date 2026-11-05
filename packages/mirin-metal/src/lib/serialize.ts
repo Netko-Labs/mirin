@@ -147,6 +147,7 @@ interface InputNodeProps {
   minHeight?: number;
   flex?: number;
   autofocus?: boolean;
+  revision?: number;
   onChange?: boolean;
   onSubmit?: boolean;
   onKey?: boolean;
@@ -510,6 +511,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (input.multiline) props.multiline = true;
   if (input.secureTextEntry) props.secure = true;
   if (input.autoFocus) props.autofocus = true;
+  if (input.valueRevision !== undefined) props.revision = input.valueRevision;
   if (style.fontFamily === "monospace") props.mono = true;
   if (style.fontSize !== undefined) props.size = style.fontSize;
   if (style.color) props.color = style.color;

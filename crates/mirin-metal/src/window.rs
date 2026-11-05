@@ -93,6 +93,8 @@ pub(crate) struct InputState {
     /// late, not a reset: typing faster than the round trip must not lose
     /// keystrokes.
     pub(crate) echoes: VecDeque<String>,
+    /// The driver's `revision` the buffer was last reset at.
+    pub(crate) revision: u64,
     /// Set by the tree sync when the node is new and asked for `autofocus`.
     pub(crate) wants_focus: bool,
     /// Ctrl/Cmd+A: the next insertion or deletion replaces the whole buffer.
@@ -190,7 +192,13 @@ impl RootView {
             seen.push(spec.id.clone());
             match self.inputs.get_mut(&spec.id) {
                 Some(state) => {
-                    if state.synced_value != spec.value {
+                    if state.revision != spec.revision {
+                        state.revision = spec.revision;
+                        state.buffer = spec.value.clone();
+                        state.cursor = state.buffer.chars().count();
+                        state.synced_value = spec.value.clone();
+                        state.echoes.clear();
+                    } else if state.synced_value != spec.value {
                         if driver_resets(&mut state.echoes, &spec.value) {
                             state.buffer = spec.value.clone();
                             state.cursor = state.buffer.chars().count();
@@ -207,6 +215,7 @@ impl RootView {
                             buffer: spec.value.clone(),
                             synced_value: spec.value.clone(),
                             echoes: VecDeque::new(),
+                            revision: spec.revision,
                             wants_focus: spec.autofocus,
                             select_all: false,
                         },

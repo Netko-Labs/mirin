@@ -299,6 +299,11 @@ export interface TextProps {
 export interface TextInputProps {
   /** Controlled value; a change resets the native buffer. */
   value: string;
+  /**
+   * Bump it to reset the native buffer to `value` even when `value` didn't change: after
+   * refusing an edit (a key the app took for itself), so the field shows `value` again.
+   */
+  valueRevision?: number;
   placeholder?: string;
   multiline?: boolean;
   /** Mask the text (passwords). */

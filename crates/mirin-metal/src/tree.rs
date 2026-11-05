@@ -263,6 +263,10 @@ pub struct InputProps {
     /// Driver-owned value. When it changes between trees the buffer is reset.
     #[serde(default)]
     pub value: String,
+    /// A new number resets the buffer to `value` even when `value` didn't change: the
+    /// driver refused a change it was sent (a key it took for itself) and wants its text back.
+    #[serde(default)]
+    pub revision: u64,
     #[serde(default)]
     pub placeholder: Option<String>,
     /// Enter inserts a newline; Ctrl/Cmd+Enter submits.
@@ -319,6 +323,7 @@ impl Default for InputProps {
         Self {
             id: String::new(),
             value: String::new(),
+            revision: 0,
             placeholder: None,
             multiline: false,
             secure: false,
