@@ -55,6 +55,9 @@ pub enum EventKind {
     /// compositor's window controls cover. Sent when the window opens and on
     /// every change (node id is `"root"`).
     Chrome(Chrome),
+    /// A newly opened window painted its first frame (node id is `"root"`),
+    /// so a driver can time an open; sent once per open.
+    Frame,
 }
 
 /// One key press for a view with `onKeyDown`: GPUI's key name ("a",
@@ -135,6 +138,7 @@ impl EventKind {
             EventKind::Resize => "resize",
             EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
+            EventKind::Frame => "frame",
         }
     }
 
@@ -149,7 +153,8 @@ impl EventKind {
             | EventKind::Wheel { .. }
             | EventKind::Resize
             | EventKind::Drop(_)
-            | EventKind::Chrome(_) => None,
+            | EventKind::Chrome(_)
+            | EventKind::Frame => None,
             EventKind::Change { value }
             | EventKind::Submit { value }
             | EventKind::Key { value } => Some(value),
@@ -246,6 +251,10 @@ impl EventSender {
 
     pub(crate) fn chrome(&self, chrome: Chrome) {
         self.send("root", EventKind::Chrome(chrome));
+    }
+
+    pub(crate) fn frame(&self) {
+        self.send("root", EventKind::Frame);
     }
 
     pub(crate) fn layout(&self, nodes: Vec<LayoutNode>) {

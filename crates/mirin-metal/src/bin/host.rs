@@ -10,8 +10,8 @@ use std::sync::mpsc;
 #[cfg(target_os = "linux")]
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
-    parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind, NativeUiEvent,
-    NativeUiOptions, SimCommand, Surface, TitleBar,
+    parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind, HostMessage,
+    NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar, RESIDENT_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -23,10 +23,49 @@ const CAPABILITIES: &[&str] = &["shell.toplevels"];
 /// `shell.toplevels` capability).
 enum HostLine {
     Window(DriverMessage),
-    /// A deferred host's window, at last (`MIRIN_METAL_DEFERRED=1`).
+    /// A deferred host's window (`MIRIN_METAL_DEFERRED=1`): at last, or again
+    /// after a hide.
     Open(NativeUiOptions),
+    /// `{"hide":true}`: a deferred host's window goes, the host stays.
+    Hide,
     #[cfg(target_os = "linux")]
     Toplevel(ToplevelCommand),
+}
+
+/// Where the reader thread sends what the lines ask of the window: a host
+/// with its window from the start, or a deferred one that opens, hides, and
+/// opens it again.
+enum WindowSink {
+    Shown(mpsc::Sender<DriverMessage>),
+    Deferred(mpsc::Sender<HostMessage>),
+}
+
+impl WindowSink {
+    /// Pass a line on; false once the window side has gone.
+    fn send(&self, line: HostLine) -> bool {
+        match (self, line) {
+            (WindowSink::Shown(tx), HostLine::Window(message)) => tx.send(message).is_ok(),
+            (WindowSink::Shown(_), HostLine::Open(_)) => {
+                eprintln!("[mirin-metal-host] rejected line: the window is already open");
+                true
+            }
+            (WindowSink::Shown(_), HostLine::Hide) => {
+                eprintln!(
+                    "[mirin-metal-host] rejected line: hide needs a deferred host ({RESIDENT_MARKER}, MIRIN_METAL_DEFERRED=1)"
+                );
+                true
+            }
+            (WindowSink::Deferred(tx), HostLine::Window(message)) => {
+                tx.send(HostMessage::Driver(message)).is_ok()
+            }
+            (WindowSink::Deferred(tx), HostLine::Open(options)) => {
+                tx.send(HostMessage::Open(Box::new(options))).is_ok()
+            }
+            (WindowSink::Deferred(tx), HostLine::Hide) => tx.send(HostMessage::Hide).is_ok(),
+            #[cfg(target_os = "linux")]
+            (_, HostLine::Toplevel(_)) => true,
+        }
+    }
 }
 
 /// `{"open": {...}}`: what `MIRIN_METAL_TITLE`, `_APP_ID`, `_SIZE`,
@@ -61,6 +100,19 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
             open.title_bar.as_deref(),
         )
         .map(HostLine::Open);
+    }
+    // A resident host's window goes; the host, its GPU context, and the tree stay.
+    if line.trim_start().starts_with("{\"hide\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct HideLine {
+            hide: bool,
+        }
+        let parsed: HideLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        if !parsed.hide {
+            return Err("\"hide\" must be true".into());
+        }
+        return Ok(HostLine::Hide);
     }
     // A lock surface's way out, after the driver authenticated the person.
     if line.trim_start().starts_with("{\"unlock\"") {
@@ -233,12 +285,17 @@ fn main() {
         mirin_metal::trace::log(format_args!("vulkan drivers limited to {filter}"));
     }
     start_profiler();
-    let (update_tx, update_rx) = mpsc::channel::<DriverMessage>();
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
-    // driver's `{"open": {...}}` line comes (a host kept warm).
+    // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
+    // open it again as often as the driver asks (a resident host).
     let deferred = std::env::var("MIRIN_METAL_DEFERRED").is_ok_and(|v| v == "1");
-    let (opened_tx, opened_rx) = mpsc::channel::<NativeUiOptions>();
-    let mut opened_tx = deferred.then_some(opened_tx);
+    let (update_tx, update_rx) = mpsc::channel::<DriverMessage>();
+    let (host_tx, host_rx) = mpsc::channel::<HostMessage>();
+    let sink = if deferred {
+        WindowSink::Deferred(host_tx)
+    } else {
+        WindowSink::Shown(update_tx)
+    };
     let (event_tx, event_rx) = mpsc::channel::<NativeUiEvent>();
 
     let capabilities = requested_capabilities();
@@ -274,14 +331,8 @@ fn main() {
                 started.elapsed().as_secs_f64() * 1000.0
             ));
             match parsed {
-                Ok(HostLine::Open(options)) => match opened_tx.take() {
-                    Some(tx) => {
-                        let _ = tx.send(options);
-                    }
-                    None => eprintln!("[mirin-metal-host] rejected line: the window is already open"),
-                },
-                Ok(HostLine::Window(message)) => {
-                    if update_tx.send(message).is_err() {
+                Ok(line @ (HostLine::Open(_) | HostLine::Hide | HostLine::Window(_))) => {
+                    if !sink.send(line) {
                         break;
                     }
                 }
@@ -383,7 +434,7 @@ fn main() {
     });
 
     if deferred {
-        run_deferred(opened_rx, initial_tree, update_rx, event_tx);
+        run_deferred(initial_tree, host_rx, event_tx);
         return;
     }
     let size = std::env::var("MIRIN_METAL_SIZE").ok().and_then(|size| {
@@ -460,6 +511,35 @@ fn initial_tree(options: &NativeUiOptions) -> mirin_metal::NodeSpec {
         r##"{"type":"view","props":{"fill":true,"background":"#111114"}}"##
     };
     parse_tree(initial).expect("static initial tree is valid JSON")
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::{parse_host_line, HostLine};
+
+    #[test]
+    fn hide_is_a_line_of_its_own() {
+        assert!(matches!(
+            parse_host_line(r#"{"hide":true}"#),
+            Ok(HostLine::Hide)
+        ));
+        assert!(parse_host_line(r#"{"hide":false}"#).is_err());
+        assert!(parse_host_line(r#"{"hide":true,"now":1}"#).is_err());
+    }
+
+    #[test]
+    fn open_may_come_again() {
+        let line = r#"{"open":{"title":"Launcher","width":620,"height":520}}"#;
+        for _ in 0..2 {
+            match parse_host_line(line) {
+                Ok(HostLine::Open(options)) => {
+                    assert_eq!(options.title.as_ref(), "Launcher");
+                    assert_eq!((options.width, options.height), (620.0, 520.0));
+                }
+                _ => panic!("expected an open line"),
+            }
+        }
+    }
 }
 
 #[cfg(test)]

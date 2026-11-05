@@ -90,6 +90,24 @@ pub fn background_executor() -> BackgroundExecutor {
     current_platform(true).background_executor()
 }
 
+// mirin: a resident host hides its only window and opens one again later, so
+// the event loop must outlive its last window. Linux's clients stop the loop
+// when the last window goes unless this is turned off.
+static QUIT_WHEN_LAST_WINDOW_CLOSES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// mirin: whether the Linux event loop stops when its last window closes
+/// (true by default, as upstream). An app that turns it off quits itself.
+pub fn set_quit_when_last_window_closes(quit: bool) {
+    QUIT_WHEN_LAST_WINDOW_CLOSES.store(quit, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// mirin: see `set_quit_when_last_window_closes`.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+pub(crate) fn quits_when_last_window_closes() -> bool {
+    QUIT_WHEN_LAST_WINDOW_CLOSES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new(headless))

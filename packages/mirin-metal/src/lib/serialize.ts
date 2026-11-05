@@ -58,6 +58,7 @@ interface ViewNodeProps {
   minHeight?: number;
   maxWidth?: number;
   maxHeight?: number;
+  heightTransitionMs?: number;
   widthPercent?: number;
   heightPercent?: number;
   aspectRatio?: number;
@@ -368,6 +369,7 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.minHeight !== undefined) props.minHeight = style.minHeight;
   if (style.maxWidth !== undefined) props.maxWidth = style.maxWidth;
   if (style.maxHeight !== undefined) props.maxHeight = style.maxHeight;
+  if (style.heightTransitionMs !== undefined) props.heightTransitionMs = style.heightTransitionMs;
   if (style.position === "absolute") props.absolute = true;
   if (style.position === "relative") props.relative = true;
   if (style.top !== undefined) props.top = style.top;

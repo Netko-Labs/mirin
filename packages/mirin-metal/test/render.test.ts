@@ -79,6 +79,17 @@ describe("render", () => {
     root.unmount();
   });
 
+  test("a height transition is sent as heightTransitionMs", async () => {
+    const transport = fakeTransport();
+    const root = render(createElement(View, { style: { heightTransitionMs: 120 } }), transport);
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(tree.props.heightTransitionMs).toBe(120);
+    // A frame event is no one's handler's: dispatching it is harmless.
+    transport.emit({ type: "frame", nodeId: "root" });
+    root.unmount();
+  });
+
   test("press events re-render and send an updated tree", async () => {
     const transport = fakeTransport();
     const root = render(createElement(Counter), transport);
@@ -124,6 +135,11 @@ describe("parseNativeEvent", () => {
       value: "Escape",
     });
     expect(parseNativeEvent('{"type":"key","nodeId":"7","value":"F5"}')).toBeNull();
+    expect(parseNativeEvent('{"type":"frame","nodeId":"root"}')).toEqual({
+      type: "frame",
+      nodeId: "root",
+    });
+    expect(parseNativeEvent('{"type":"frame","nodeId":"3"}')).toBeNull();
     expect(parseNativeEvent('{"type":"press"}')).toBeNull();
     expect(parseNativeEvent("not json")).toBeNull();
     expect(parseNativeEvent('"press"')).toBeNull();

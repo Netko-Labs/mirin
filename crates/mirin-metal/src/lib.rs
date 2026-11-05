@@ -13,11 +13,13 @@
 //! packages. See `README.md` for scope and the integration plan.
 
 mod drag;
+mod drive;
 mod edges;
 mod events;
 #[cfg(target_os = "linux")]
 pub mod gpu;
 mod grid;
+mod height;
 mod input;
 mod list;
 mod media;
@@ -33,6 +35,7 @@ pub mod trace;
 mod tree;
 mod window;
 
+pub use drive::{run, run_deferred, HostMessage, RESIDENT_MARKER};
 pub use events::{EventKind, NativeUiEvent, PointerPhase};
 pub use sim::{LayoutNode, SimCommand};
 pub use surface::{parse_surface, Surface};
@@ -40,4 +43,4 @@ pub use titlebar::{Chrome, Controls, TitleBar};
 pub use tree::{
     parse_tree, Align, Direction, InputProps, Justify, NodeSpec, TextProps, ViewProps, Weight,
 };
-pub use window::{run, run_deferred, DriverMessage, NativeUiOptions};
+pub use window::{DriverMessage, NativeUiOptions};

@@ -41,6 +41,9 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
   if (record.type === "chrome") {
     return parseChromeEvent(record);
   }
+  if (record.type === "frame") {
+    return record.nodeId === "root" ? { type: "frame", nodeId: "root" } : null;
+  }
   const nodeId = record.nodeId;
   const bounds = parseBounds(record.bounds);
   const withBounds = bounds ? { bounds } : {};
@@ -317,6 +320,10 @@ export function spawnNativeHost(
     },
     open(window) {
       child.stdin.write(`${JSON.stringify({ open: window })}\n`);
+      void child.stdin.flush();
+    },
+    hide() {
+      child.stdin.write('{"hide":true}\n');
       void child.stdin.flush();
     },
     close() {

@@ -182,6 +182,20 @@ fn render_view(
     window: &mut Window,
     cx: &mut Context<RootView>,
 ) -> AnyElement {
+    let element = render_view_content(props, children, view, window, cx);
+    match (props.id.as_deref(), crate::height::transition_ms(props)) {
+        (Some(id), Some(ms)) => crate::height::clip(element, id, ms, props, &view.heights, window),
+        _ => element,
+    }
+}
+
+fn render_view_content(
+    props: &ViewProps,
+    children: &[NodeSpec],
+    view: &mut RootView,
+    window: &mut Window,
+    cx: &mut Context<RootView>,
+) -> AnyElement {
     let element = styled_view(props);
     if crate::list::virtualizes(props, children) {
         return crate::list::render_list(element, props, view, cx);

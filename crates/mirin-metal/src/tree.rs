@@ -96,6 +96,10 @@ pub struct ViewProps {
     pub min_height: Option<f32>,
     pub max_width: Option<f32>,
     pub max_height: Option<f32>,
+    /// When the view's content height changes, its painted height follows
+    /// over this many ms (ease-out cubic), clipping its content meanwhile;
+    /// needs `id`, capped at 1000; absent or 0 changes at once (`height.rs`).
+    pub height_transition_ms: Option<f32>,
     /// Take the node out of flow and place it against its nearest `relative`
     /// ancestor (or the window) using `top`/`left`/`right`/`bottom`.
     pub absolute: bool,

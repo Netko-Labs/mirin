@@ -483,7 +483,8 @@ impl WaylandClientStatePtr {
         {
             state.keyboard_focused_window = Some(window);
         }
-        if state.windows.is_empty() {
+        // mirin: a resident host keeps its loop with no window (`set_quit_when_last_window_closes`).
+        if state.windows.is_empty() && crate::platform::quits_when_last_window_closes() {
             state.common.signal.stop();
         }
     }

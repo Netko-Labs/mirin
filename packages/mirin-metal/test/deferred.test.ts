@@ -22,3 +22,25 @@ test("a deferred host is started without a window and opened on demand", async (
     open: { title: "Launcher", width: 640, height: 120, surface: { layer: "overlay" } },
   });
 });
+
+// A resident host is hidden and opened again: the lines say so, in order.
+test("a resident host hides its window and opens it again", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mirin-resident-"));
+  const standIn = join(dir, "host");
+  writeFileSync(standIn, `#!/bin/sh\nhead -n 3 > "${dir}/lines"\n`);
+  chmodSync(standIn, 0o755);
+  const host = spawnNativeHost(standIn, { deferred: true });
+  host.open({ title: "Launcher" });
+  host.hide();
+  host.open({ title: "Launcher" });
+  await new Promise<void>((resolve) => host.onClose(resolve));
+  const lines = (await Bun.file(join(dir, "lines")).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(lines).toEqual([
+    { open: { title: "Launcher" } },
+    { hide: true },
+    { open: { title: "Launcher" } },
+  ]);
+});

@@ -132,10 +132,22 @@ state and describes UI; the renderer is a pure function of the latest tree.
   "dx","dy"}` in lines (pixel deltas divided by the line height). For views
   that handle input themselves, like Dashi's terminal; such views are never
   virtualized rows.
+- Height transitions: a view with `heightTransitionMs` (and an `id`) follows
+  its content height over that many ms (ease-out cubic, `1 − (1 − t)³`,
+  capped at 1000) instead of jumping when the content grows or shrinks; its
+  content is clipped meanwhile, and its first frame is drawn at the natural
+  height (appearing doesn't animate). The renderer draws the view inside a
+  block clip whose height it eases, measuring the content after each layout
+  (`src/height.rs`), so the view's own `flex`/`grow` have no effect and a
+  shadow it casts is cut: put it on a content-sized view inside the one with
+  the shadow. Absent or 0 changes at once. A driver that turns motion off
+  (Reduce Motion) leaves it out.
 - Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
 - Events: `{"type":"press","nodeId"}`, `{"type":"change","nodeId","value"}`,
-  `{"type":"submit","nodeId","value"}`, and `{"type":"layout","nodeId":"root",
-  "nodes":[{id,x,y,width,height}]}` in reply to a layout query.
+  `{"type":"submit","nodeId","value"}`, `{"type":"layout","nodeId":"root",
+  "nodes":[{id,x,y,width,height}]}` in reply to a layout query, and
+  `{"type":"frame","nodeId":"root"}` once a newly opened window has painted its
+  first frame (once per open; a driver times an open with it).
 - Simulation (checks and tools): a stdin line `{"sim": ...}` instead of a tree.
   `{"kind":"click","id"}` / `{"kind":"click","x","y"}` focuses an input or
   fires a pressable view's `press` (resolved against the painted bounds;
@@ -459,7 +471,23 @@ on stdin activates, minimizes, maximizes, or closes a window (`onToplevel` and
 the fonts load at once, and the window opens when a
 `{"open":{"title":…,"appId":…,"width":…,"height":…,"surface":{…},"titleBar":…}}`
 line arrives (`open()` on the transport), so a shell can keep one warm and show
-a menu or sheet without the seconds a new host takes to start. A consumer
+a menu or sheet without the seconds a new host takes to start. A deferred host
+is also resident: `{"hide":true}` (`hide()`) closes its window but keeps the
+process, the GPU context, the fonts, and the newest tree (trees sent while it
+is hidden are kept, newest wins; title lines and simulated input are dropped,
+the next open names the window), and the next `open` line opens it again
+drawing that tree on its first frame, as often as the driver likes. A hide is
+not a close: the host doesn't exit and `onClose` doesn't fire; closing the
+window any other way (the person, the compositor) still ends the host. An
+`open` while the window is shown, and a `hide` while it is hidden or on a host
+that isn't deferred, are refused with a log line. GPUI's Linux clients stop
+their event loop with the last window, so mirin's fork turns that off for a
+deferred host (`gpui::set_quit_when_last_window_closes`, vendor/gpui/MIRIN.md)
+and the host quits itself on a real close. A host binary that does all this
+names `MIRIN_METAL_RESIDENT` (the `RESIDENT_MARKER` const), as one that knows
+deferred hosts names `MIRIN_METAL_DEFERRED`; a driver checks for it before it
+hides, opens again, waits for `frame`, or sends `heightTransitionMs`
+(Dashi's launcher stays resident this way). A consumer
 that depends on `@mirinjs/metal` must share one React instance with it: a
 `bun link` keeps the package's own `node_modules` (two Reacts, "Invalid hook
 call"), so until it is published use `"@mirinjs/metal": "file:../path"`.

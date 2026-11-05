@@ -4,31 +4,18 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
-use std::sync::mpsc;
-use std::time::Duration;
 
-use futures::StreamExt;
+use gpui::{prelude::*, App, Context, FocusHandle, ScrollHandle, SharedString, Window};
 
-use gpui::{
-    prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, ScrollHandle,
-    SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions,
-};
-
-use crate::events::{EventSender, NativeUiEvent};
+use crate::events::EventSender;
+use crate::height::Heights;
 use crate::list::VirtualList;
-use crate::media::MetalAssets;
 use crate::pointer::capture_root;
 use crate::render::render_node;
-use crate::sim::{self, LayoutMap, SimCommand};
+use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
-use crate::titlebar::{Chrome, Controls, TitleBar};
+use crate::titlebar::TitleBar;
 use crate::tree::{collect_inputs, collect_key_ids, collect_scroll_ids, NodeSpec};
-
-/// After a simulated click, how long to wait for the driver's resulting tree
-/// before performing the commands queued behind it.
-const SIM_SETTLE_INTERVAL: Duration = Duration::from_millis(16);
-/// How long an unlocking lock surface stays so the unlock reaches the compositor.
-const UNLOCK_FLUSH: Duration = Duration::from_millis(100);
 
 /// Options for the alpha native-UI window. All fields have sensible defaults.
 #[derive(Debug, Clone)]
@@ -139,6 +126,10 @@ pub(crate) struct RootView {
     pub(crate) drag_candidate: Option<(String, gpui::Point<gpui::Pixels>)>,
     /// The `onDrop` view files are being dragged over.
     pub(crate) drop_target: Option<String>,
+    /// Views with `heightTransitionMs`: the height each is painted at (`height.rs`).
+    pub(crate) heights: Heights,
+    /// Until this window's first paint, which is reported (`frame`).
+    first_frame: bool,
 }
 
 /// A view with `onKeyDown`: its focus, and whether it still has to take it.
@@ -148,7 +139,12 @@ pub(crate) struct KeyTarget {
 }
 
 impl RootView {
-    fn new(tree: NodeSpec, events: EventSender, layout: LayoutMap, cx: &mut App) -> Self {
+    pub(crate) fn new(
+        tree: NodeSpec,
+        events: EventSender,
+        layout: LayoutMap,
+        cx: &mut App,
+    ) -> Self {
         let mut view = Self {
             tree: Rc::new(tree),
             events,
@@ -162,19 +158,23 @@ impl RootView {
             key_targets: HashMap::new(),
             drag_candidate: None,
             drop_target: None,
+            heights: Heights::default(),
+            first_frame: true,
         };
         view.sync_inputs(cx);
         view.sync_key_targets(cx);
         crate::list::sync(&mut view.lists, &view.tree);
+        view.heights.sync(&view.tree);
         view
     }
 
     /// Replace the tree and reconcile input state with it.
-    fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
+    pub(crate) fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
         self.tree = Rc::new(tree);
         self.sync_inputs(cx);
         self.sync_key_targets(cx);
         crate::list::sync(&mut self.lists, &self.tree);
+        self.heights.sync(&self.tree);
         let mut ids = HashSet::new();
         collect_scroll_ids(&self.tree, &mut ids);
         self.scrolls.retain(|id, _| ids.contains(id));
@@ -253,7 +253,7 @@ impl RootView {
     }
 
     /// Honour pending `autofocus` requests. Runs outside of rendering.
-    fn apply_pending_focus(&mut self, window: &mut Window) {
+    pub(crate) fn apply_pending_focus(&mut self, window: &mut Window) {
         for target in self.key_targets.values_mut() {
             if target.wants_focus {
                 target.wants_focus = false;
@@ -282,15 +282,21 @@ impl Render for RootView {
         let content = render_node(&tree, self, window, cx);
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
         let root = capture_root(content, cx);
-        if !crate::trace::enabled() {
+        let first = std::mem::take(&mut self.first_frame);
+        if !first && !crate::trace::enabled() {
             return root;
         }
         // Painted last, so its paint callback marks the end of GPUI's layout,
-        // prepaint, and paint for this frame.
+        // prepaint, and paint for this frame: the trace's timing, and a new
+        // window's first frame (`{"type":"frame"}`, for a driver timing an open).
         let size = window.viewport_size();
+        let events = self.events.clone();
         let marker = gpui::canvas(
             |_, _, _| {},
             move |_, (), _, _| {
+                if first {
+                    events.frame();
+                }
                 crate::trace::log(format_args!(
                     "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms",
                     f32::from(size.width),
@@ -307,234 +313,6 @@ impl Render for RootView {
             .child(marker)
             .into_any_element()
     }
-}
-
-/// Open the native window rendering `initial_tree` and hand the calling thread
-/// to GPUI's event loop. Blocks until the app quits; call on the process main
-/// thread. New trees sent on `updates` replace the rendered tree (last write
-/// wins); node interactions are reported on `events`.
-pub fn run(
-    options: NativeUiOptions,
-    initial_tree: NodeSpec,
-    updates: mpsc::Receiver<DriverMessage>,
-    events: mpsc::Sender<NativeUiEvent>,
-) {
-    Application::new()
-        .with_assets(MetalAssets)
-        .run(move |cx: &mut App| open_and_drive(cx, options, initial_tree, updates, events));
-}
-
-/// `run`, with the window opened only once its options arrive on `opened`:
-/// GPUI (the GPU context, the fonts) starts at once, so a host kept warm
-/// shows its window as soon as it is asked to. `initial_for` gives the tree
-/// shown until the driver's first. Quits if `opened` closes first.
-pub fn run_deferred(
-    opened: mpsc::Receiver<NativeUiOptions>,
-    initial_for: fn(&NativeUiOptions) -> NodeSpec,
-    updates: mpsc::Receiver<DriverMessage>,
-    events: mpsc::Sender<NativeUiEvent>,
-) {
-    Application::new()
-        .with_assets(MetalAssets)
-        .run(move |cx: &mut App| {
-            let (options_tx, options_rx) = futures::channel::oneshot::channel();
-            std::thread::spawn(move || {
-                if let Ok(options) = opened.recv() {
-                    let _ = options_tx.send(options);
-                }
-            });
-            cx.spawn(async move |cx| {
-                let Ok(options) = options_rx.await else {
-                    let _ = cx.update(|cx| cx.quit());
-                    return;
-                };
-                let initial = initial_for(&options);
-                let _ = cx.update(move |cx| open_and_drive(cx, options, initial, updates, events));
-            })
-            .detach();
-        });
-}
-
-/// Open the window for `options` and drive it from `updates` until it goes.
-fn open_and_drive(
-    cx: &mut App,
-    options: NativeUiOptions,
-    initial_tree: NodeSpec,
-    updates: mpsc::Receiver<DriverMessage>,
-    events: mpsc::Sender<NativeUiEvent>,
-) {
-    let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
-    // Desktop surfaces (layers, a lock screen) draw over what the
-    // compositor shows behind them; their tree paints its own background.
-    let is_layer = options.surface.is_some();
-    let unified = !is_layer && options.title_bar == TitleBar::Unified;
-    let window_options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        titlebar: Some(TitlebarOptions {
-            title: Some(options.title.clone()),
-            // The unified style: GPUI's Wayland backend asks Dashi
-            // to leave the title bar to the app (vendor/gpui/MIRIN.md).
-            appears_transparent: unified,
-            ..Default::default()
-        }),
-        window_background: if is_layer {
-            WindowBackgroundAppearance::Transparent
-        } else {
-            WindowBackgroundAppearance::Opaque
-        },
-        layer_shell: match &options.surface {
-            Some(Surface::Layer(layer)) => Some(layer.clone()),
-            _ => None,
-        },
-        session_lock: matches!(options.surface, Some(Surface::Lock)),
-        app_id: options.app_id.clone(),
-        ..Default::default()
-    };
-    let layout = LayoutMap::default();
-    let event_sender = EventSender::new(events, layout.clone());
-    let event_sender_for_chrome = event_sender.clone();
-    let opened = cx.open_window(window_options, |_window, cx| {
-        cx.new(|cx| RootView::new(initial_tree, event_sender, layout, cx))
-    });
-    let window = match opened {
-        Ok(window) => window,
-        Err(error) => {
-            eprintln!("[mirin-metal] failed to open window: {error}");
-            cx.quit();
-            return;
-        }
-    };
-    cx.activate(true);
-    // GPUI's Wayland backend ignores `TitlebarOptions::title` at creation
-    // (the window opened untitled); set it explicitly.
-    let title = options.title.clone();
-    let _ = window.update(cx, |view, window, _cx| {
-        window.set_window_title(&title);
-        view.apply_pending_focus(window);
-    });
-    // Report the chrome now and whenever the compositor moves or
-    // drops its window controls (it runs once on registering).
-    let requested = if unified {
-        TitleBar::Unified
-    } else {
-        TitleBar::Standard
-    };
-    let chrome_events = event_sender_for_chrome;
-    let _ = window.update(cx, |_view, window, _cx| {
-        window
-            .observe_window_chrome(move |window, _cx| {
-                let controls = window.chrome_controls().map(|bounds| Controls {
-                    x: f32::from(bounds.origin.x),
-                    y: f32::from(bounds.origin.y),
-                    width: f32::from(bounds.size.width),
-                    height: f32::from(bounds.size.height),
-                });
-                chrome_events.chrome(Chrome::effective(requested, controls));
-            })
-            .detach();
-    });
-
-    // Driver messages arrive on a std channel from another thread; bridge
-    // them into an async channel so the window wakes as soon as one lands
-    // instead of polling on a timer.
-    let (wake_tx, mut wake_rx) = futures::channel::mpsc::unbounded::<DriverMessage>();
-    std::thread::spawn(move || {
-        while let Ok(message) = updates.recv() {
-            if wake_tx.unbounded_send(message).is_err() {
-                break;
-            }
-        }
-    });
-
-    // Apply driver updates, coalescing to the newest tree per wake.
-    cx.spawn(async move |cx| {
-        // Simulated commands waiting for a later turn: a focus or press must
-        // land (and the driver's resulting tree arrive) before the commands
-        // after it, so at most one of those is performed per turn.
-        let mut pending: VecDeque<SimCommand> = VecDeque::new();
-        loop {
-            let mut latest_tree = None;
-            let mut latest_title = None;
-            let mut unlock = false;
-            let mut absorb =
-                |message: DriverMessage, pending: &mut VecDeque<SimCommand>| match message {
-                    DriverMessage::Tree(tree) => latest_tree = Some(*tree),
-                    DriverMessage::Sim(command) => pending.push_back(command),
-                    DriverMessage::Unlock => unlock = true,
-                    DriverMessage::Title(title) => latest_title = Some(title),
-                };
-            if pending.is_empty() {
-                match wake_rx.next().await {
-                    Some(message) => absorb(message, &mut pending),
-                    // The driver went away; the window keeps its last tree.
-                    None => return,
-                }
-            } else {
-                cx.background_executor().timer(SIM_SETTLE_INTERVAL).await;
-            }
-            while let Ok(message) = wake_rx.try_recv() {
-                absorb(message, &mut pending);
-            }
-            if unlock {
-                let _ = window.update(cx, |_view, window, _cx| window.unlock_session());
-                // Give the event loop a moment to send the unlock
-                // before the process goes.
-                cx.background_executor().timer(UNLOCK_FLUSH).await;
-                let _ = cx.update(|cx| cx.quit());
-                return;
-            }
-            if let Some(title) = latest_title {
-                let _ = window.update(cx, |_view, window, _cx| window.set_window_title(&title));
-            }
-            let mut sims = Vec::new();
-            while let Some(command) = pending.pop_front() {
-                let settles = matches!(command, SimCommand::Click { .. });
-                sims.push(command);
-                if settles {
-                    break;
-                }
-            }
-            if latest_tree.is_none() && sims.is_empty() {
-                continue;
-            }
-            // Resolve while the view is leased; dispatch with only the window
-            // leased, because keystrokes re-enter the view's listeners.
-            let resolved = window.update(cx, |view, window, cx| {
-                if let Some(tree) = latest_tree {
-                    let started = std::time::Instant::now();
-                    view.set_tree(tree, cx);
-                    crate::trace::log(format_args!(
-                        "tree applied in {:.2}ms",
-                        started.elapsed().as_secs_f64() * 1000.0
-                    ));
-                    view.apply_pending_focus(window);
-                    cx.notify();
-                }
-                let actions: Vec<_> = sims
-                    .iter()
-                    .filter_map(|command| sim::resolve(command, view))
-                    .collect();
-                (actions, view.events.clone())
-            });
-            let Ok((actions, events)) = resolved else {
-                // Window is gone; nothing left to drive.
-                return;
-            };
-            if actions.is_empty() {
-                continue;
-            }
-            let any_window: gpui::AnyWindowHandle = window.into();
-            let dispatched = any_window.update(cx, |_root, window, cx| {
-                for action in actions {
-                    sim::perform(action, &events, window, cx);
-                }
-            });
-            if dispatched.is_err() {
-                return;
-            }
-        }
-    })
-    .detach();
 }
 
 #[cfg(test)]

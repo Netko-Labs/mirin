@@ -34,6 +34,14 @@ export interface ViewStyle {
   minHeight?: number;
   maxWidth?: number;
   maxHeight?: number;
+  /**
+   * When the view's content height changes, its height follows over this
+   * many ms (ease-out cubic, at most 1000) instead of jumping, its content
+   * clipped meanwhile; appearing doesn't animate. Drawn in a clip, so it cuts
+   * a shadow and ignores `flex`: put it on a content-sized view inside the
+   * one with the shadow. Needs a host that names `MIRIN_METAL_RESIDENT`.
+   */
+  heightTransitionMs?: number;
   /** Width / height, e.g. `16 / 9`. */
   aspectRatio?: number;
   flexWrap?: "nowrap" | "wrap";
@@ -352,7 +360,9 @@ export type NativeEvent =
   | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] }
-  | ({ type: "chrome"; nodeId: "root" } & WindowChrome);
+  | ({ type: "chrome"; nodeId: "root" } & WindowChrome)
+  /** A newly opened window painted its first frame (once per open). */
+  | { type: "frame"; nodeId: "root" };
 
 /**
  * Simulated input for checks: delivered inside the renderer like real input
@@ -397,10 +407,18 @@ export interface NativeHostTransport extends NativeTransport {
    */
   setTitle(title: string): void;
   /**
-   * Open the window of a host spawned with `deferred: true` (once; later
-   * calls are refused by the host).
+   * Open the window of a host spawned with `deferred: true`: once, or again
+   * after `hide()` on a host that names `MIRIN_METAL_RESIDENT` (an open while
+   * the window is shown is refused by the host).
    */
   open(options: NativeWindowOptions): void;
+  /**
+   * Close a deferred host's window but keep the host: its GPU context, fonts,
+   * and the newest tree sent (trees sent meanwhile are kept, newest wins), so
+   * the next `open()` draws at once (a resident host; needs a host that names
+   * `MIRIN_METAL_RESIDENT`). Not a close: `onClose` doesn't fire.
+   */
+  hide(): void;
 }
 
 /** What a window is: what `open()` takes for a host spawned deferred. */

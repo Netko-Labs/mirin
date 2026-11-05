@@ -119,6 +119,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         chrome.set(chromeFromEvent(event));
         break;
       case "layout":
+      case "frame":
         break;
     }
   }
