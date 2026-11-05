@@ -118,6 +118,19 @@ pub(crate) fn render_input(
         element = element.text_color(rgba(color));
     }
     let mut body = div().child(SharedString::from(content));
+    // Empty and focused: the placeholder stays, muted, right after the caret,
+    // until the first character replaces it (as a search field's hint does).
+    let hint = props
+        .placeholder
+        .as_deref()
+        .filter(|hint| focused && state.buffer.is_empty() && !hint.is_empty());
+    if let Some(hint) = hint {
+        let mut placeholder = div().child(SharedString::from(hint.to_owned()));
+        if let Some(color) = props.placeholder_color.as_deref().and_then(parse_color) {
+            placeholder = placeholder.text_color(rgba(color));
+        }
+        body = div().flex().flex_row().child(body).child(placeholder);
+    }
     if props.multiline {
         body = body.size_full().whitespace_normal();
     }
