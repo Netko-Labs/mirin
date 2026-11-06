@@ -15,10 +15,10 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    point, px, size, App, Bounds, Entity, InputHandler, Pixels, Point, TextLayout, UTF16Selection,
-    Window,
+    px, App, Bounds, Entity, InputHandler, Pixels, Point, TextLayout, UTF16Selection, Window,
 };
 
+use crate::caret::caret_bar;
 use crate::field::Field;
 use crate::window::RootView;
 
@@ -35,9 +35,10 @@ pub(crate) struct FieldInput {
     pub(crate) id: String,
     pub(crate) multiline: bool,
     pub(crate) on_change: bool,
-    /// The field as this frame drew it, and its text's layout: where a
-    /// document offset is on screen.
+    /// The field as this frame drew it, its drawn text (the document), and
+    /// that text's layout: where a document offset is on screen.
     pub(crate) drawn: Field,
+    pub(crate) text: String,
     pub(crate) layout: TextLayout,
 }
 
@@ -70,17 +71,18 @@ impl FieldInput {
 
     /// The caret-sized rect at a document offset, in window coordinates.
     pub(crate) fn caret_at(&self, offset_utf16: usize) -> Option<Bounds<Pixels>> {
-        caret_rect(&self.layout, self.drawn.display_byte(offset_utf16))
+        caret_rect(
+            &self.layout,
+            &self.text,
+            self.drawn.display_byte(offset_utf16),
+        )
     }
 }
 
-/// The caret-sized rect at byte `index` of a laid-out text.
-pub(crate) fn caret_rect(layout: &TextLayout, index: usize) -> Option<Bounds<Pixels>> {
-    let origin: Point<Pixels> = layout.position_for_index(index)?;
-    Some(Bounds::new(
-        point(origin.x, origin.y),
-        size(px(CARET_WIDTH), layout.line_height()),
-    ))
+/// The caret-sized rect before byte `index` of a laid-out text: where the
+/// caret is drawn (`caret.rs`).
+pub(crate) fn caret_rect(layout: &TextLayout, text: &str, index: usize) -> Option<Bounds<Pixels>> {
+    caret_bar(layout, text, index, px(CARET_WIDTH))
 }
 
 fn trace_once() {

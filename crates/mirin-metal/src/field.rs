@@ -28,8 +28,6 @@ use std::ops::Range;
 pub(crate) use keys::{Clipboard, KeyEnv, Lines, Vertical};
 pub(crate) use press::Press;
 
-/// Caret glyph drawn at the cursor while the input has focus.
-pub(crate) const CARET: &str = "\u{258F}";
 /// What a secure field draws for each character.
 const BULLET: char = '\u{2022}';
 
@@ -66,19 +64,22 @@ pub(crate) enum Edit {
     FocusPrevious,
 }
 
-/// What a field draws: its text with the caret, which part is the
-/// composition (byte range, underlined), which part is selected, and where
-/// the caret glyph is.
+/// What a field draws: its text (with any composition at the cursor), which
+/// part is the composition (byte range, underlined), which part is
+/// selected, and where the caret is. The caret and the selection are drawn
+/// over the laid-out text (`caret.rs`), never in it: the text lays out the
+/// same wherever the caret is.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Display {
     pub(crate) text: String,
     pub(crate) composition: Option<Range<usize>>,
-    /// Byte index of the caret glyph in `text`, when focused.
+    /// The byte of `text` the caret is drawn before, when focused: the
+    /// cursor, past the composition.
     pub(crate) caret: Option<usize>,
     /// The selected text's bytes in `text`, when focused and something is selected.
     pub(crate) selection: Option<Range<usize>>,
-    /// What `text` has that the buffer does not (the composition and the
-    /// caret glyph, at the cursor), as a char range of `text`.
+    /// What `text` has that the buffer does not (the composition, at the
+    /// cursor), as a char range of `text`.
     inserted: Range<usize>,
 }
 
@@ -92,7 +93,7 @@ impl Display {
     }
 
     /// The buffer's char index at byte `byte` of `text`: what is inserted
-    /// at the cursor (the composition, the caret glyph) is the cursor.
+    /// at the cursor (the composition) is the cursor.
     pub(crate) fn buffer_char(&self, byte: usize) -> usize {
         let byte = floor_char(&self.text, byte.min(self.text.len()));
         let chars = self.text[..byte].chars().count();
@@ -106,7 +107,7 @@ impl Display {
     }
 
     /// The byte of `text` where buffer char `index` is drawn; at the cursor
-    /// that is past what is inserted there (`caret` is the caret's own place).
+    /// that is past the composition (`caret` is the caret's own place).
     pub(crate) fn byte_of(&self, index: usize) -> usize {
         let chars = if index < self.inserted.start {
             index
@@ -136,8 +137,8 @@ impl Field {
         self.anchor = None;
     }
 
-    /// Whether this field, drawn, lays out as `other` would: the same text
-    /// with the caret and any composition in the same place.
+    /// Whether this field, drawn, lays out as `other` would: the same text,
+    /// any composition in the same place, and the caret at the same char.
     pub(crate) fn lays_out_as(&self, other: &Field) -> bool {
         self.cursor == other.cursor && self.preedit == other.preedit && self.buffer == other.buffer
     }
@@ -253,13 +254,13 @@ impl Field {
         self.select(anchor, head);
     }
 
-    /// The text drawn: bullets for a secure field, the caret while focused,
-    /// the composition at the caret (focused and not secure only), and the
-    /// selection (focused only).
+    /// The text drawn: bullets for a secure field, and the composition at
+    /// the caret (focused and not secure only); where the caret is and what
+    /// is selected (focused only; a secure field's selection covers its
+    /// bullets). Neither the caret nor the selection is part of the text.
     pub(crate) fn display(&self, focused: bool, secure: bool) -> Display {
         let preedit = self.preedit.as_deref().filter(|_| focused && !secure);
-        let mut text =
-            String::with_capacity(self.buffer.len() + CARET.len() + preedit.map_or(0, str::len));
+        let mut text = String::with_capacity(self.buffer.len() + preedit.map_or(0, str::len));
         let mut composition = None;
         let mut caret = None;
         let mut inserted = 0..0;
@@ -270,7 +271,6 @@ impl Field {
                 composition = Some(start..text.len());
             }
             caret = Some(text.len());
-            text.push_str(CARET);
             inserted = chars..chars + text[start..].chars().count();
             inserted.end
         };
@@ -307,17 +307,9 @@ impl Field {
     }
 
     /// Where a document offset is in `display(true, false)`'s text, as a
-    /// byte index: the caret glyph sits between the composition and the
-    /// rest, so offsets after it move past the glyph.
+    /// byte index: the drawn text is the document.
     pub(crate) fn display_byte(&self, offset_utf16: usize) -> usize {
-        let document = self.document();
-        let byte = utf16_to_byte(&document, offset_utf16);
-        let caret = self.cursor_byte() + self.preedit.as_deref().map_or(0, str::len);
-        if byte > caret {
-            byte + CARET.len()
-        } else {
-            byte
-        }
+        utf16_to_byte(&self.document(), offset_utf16)
     }
 }
 

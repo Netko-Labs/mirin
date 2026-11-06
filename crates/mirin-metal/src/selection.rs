@@ -4,6 +4,11 @@
 //! lifts, and every change is reported to a driver that listens
 //! (`onSelection`). A driver's `selection` prop sets it, as `value` sets the
 //! text: a selection it echoes late (one the field reported) is not a reset.
+//!
+//! Every drawn field hears every pointer move and release, pressed or not:
+//! a drag can be over before the frame after its press is drawn (a busy or
+//! slow window), so listening only from that frame on would miss it. The
+//! release ends a drag where the button lifted, moves heard or not.
 
 use std::collections::VecDeque;
 
@@ -17,6 +22,9 @@ use crate::events::EventSender;
 use crate::field::{Field, Press};
 use crate::tree::InputProps;
 use crate::window::{driver_resets, RootView};
+
+#[cfg(test)]
+mod tests;
 
 /// In the host binary while its fields have a caret and selection the
 /// pointer and the driver can set (Dashi's check for a patched host).
@@ -98,6 +106,49 @@ impl SelectionState {
         events.selection(id, now);
     }
 
+    /// The pointer moved over char `at` (`None`: the field is not drawn
+    /// yet), the button `held` or not. A press held selects to there; one
+    /// let go of unheard ends. Says whether the selection moved.
+    pub(crate) fn pointer_moved(
+        &mut self,
+        field: &mut Field,
+        at: Option<usize>,
+        held: bool,
+        multiline: bool,
+    ) -> bool {
+        let Some(press) = self.pressing.as_ref() else {
+            return false;
+        };
+        if !held {
+            self.pressing = None;
+            return false;
+        }
+        let before = (field.cursor, field.anchor);
+        if let Some(at) = at {
+            field.drag(press, at, multiline);
+        }
+        (field.cursor, field.anchor) != before
+    }
+
+    /// The button lifted over char `at`: a press ends, selecting to there
+    /// whether or not a move was heard on the way. Says whether the
+    /// selection moved.
+    pub(crate) fn released(
+        &mut self,
+        field: &mut Field,
+        at: Option<usize>,
+        multiline: bool,
+    ) -> bool {
+        let Some(press) = self.pressing.take() else {
+            return false;
+        };
+        let before = (field.cursor, field.anchor);
+        if let Some(at) = at {
+            field.drag(&press, at, multiline);
+        }
+        (field.cursor, field.anchor) != before
+    }
+
     /// The char of `field` under window point `position`, from the field as
     /// last drawn; `None` before it was drawn.
     fn char_at(&self, field: &Field, position: Point<Pixels>) -> Option<usize> {
@@ -145,28 +196,45 @@ impl RootView {
         self.report_selection(id);
     }
 
-    /// The pointer moved with field `id`'s press held (or let go of it).
-    fn drag_field(&mut self, id: &str, position: Point<Pixels>, held: bool, multiline: bool) {
+    /// The pointer moved, the button held or not: field `id`'s press, if it
+    /// has one, follows it. Says whether its selection moved.
+    fn drag_field(
+        &mut self,
+        id: &str,
+        position: Point<Pixels>,
+        held: bool,
+        multiline: bool,
+    ) -> bool {
         let Some(state) = self.inputs.get_mut(id) else {
-            return;
+            return false;
         };
-        if !held {
-            state.selection.pressing = None;
-            return;
+        if state.selection.pressing.is_none() {
+            return false;
         }
-        let Some(press) = state.selection.pressing.clone() else {
-            return;
-        };
-        if let Some(at) = state.selection.char_at(&state.field, position) {
-            state.field.drag(&press, at, multiline);
+        let at = state.selection.char_at(&state.field, position);
+        let moved = state
+            .selection
+            .pointer_moved(&mut state.field, at, held, multiline);
+        if moved {
+            self.report_selection(id);
         }
-        self.report_selection(id);
+        moved
     }
 
-    fn release_field(&mut self, id: &str) {
-        if let Some(state) = self.inputs.get_mut(id) {
-            state.selection.pressing = None;
+    /// The left button lifted: field `id`'s press, if it has one, ends there.
+    fn release_field(&mut self, id: &str, position: Point<Pixels>, multiline: bool) -> bool {
+        let Some(state) = self.inputs.get_mut(id) else {
+            return false;
+        };
+        if state.selection.pressing.is_none() {
+            return false;
         }
+        let at = state.selection.char_at(&state.field, position);
+        let moved = state.selection.released(&mut state.field, at, multiline);
+        if moved {
+            self.report_selection(id);
+        }
+        moved
     }
 }
 
@@ -176,9 +244,10 @@ pub(crate) struct PressProps {
     pub(crate) on_change: bool,
 }
 
-/// While field `id` is being selected with the button held, follow the
-/// pointer anywhere in the window (and past its edge, where the compositor
-/// keeps sending it) until the button lifts. Registered while painting.
+/// Follow the pointer anywhere in the window (and past its edge, where the
+/// compositor keeps sending it) for field `id`: while a press in it is
+/// held, the selection follows, until the button lifts. Registered while
+/// painting every frame the field is drawn in, pressed or not.
 pub(crate) fn follow_drag(
     view: WeakEntity<RootView>,
     id: String,
@@ -192,8 +261,9 @@ pub(crate) fn follow_drag(
         }
         let held = event.pressed_button == Some(MouseButton::Left);
         let _ = moves.0.update(cx, |view, cx| {
-            view.drag_field(&moves.1, event.position, held, multiline);
-            cx.notify();
+            if view.drag_field(&moves.1, event.position, held, multiline) {
+                cx.notify();
+            }
         });
     });
     window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
@@ -201,8 +271,9 @@ pub(crate) fn follow_drag(
             return;
         }
         let _ = view.update(cx, |view, cx| {
-            view.release_field(&id);
-            cx.notify();
+            if view.release_field(&id, event.position, multiline) {
+                cx.notify();
+            }
         });
     });
 }
