@@ -4,13 +4,13 @@
 //! process, GPU context, fonts and the driver's newest tree, so the next open
 //! draws that tree on its first frame.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use futures::channel::mpsc::UnboundedReceiver;
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
 
 use gpui::{
@@ -18,6 +18,7 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions,
 };
 
+use crate::access::Accessibility;
 use crate::events::{EventSender, NativeUiEvent};
 use crate::media::MetalAssets;
 use crate::sim::{self, LayoutMap, SimCommand};
@@ -61,13 +62,16 @@ pub fn run(
     Application::new()
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
-            let Some(window) = open_window(cx, &options, initial_tree, events.clone()) else {
+            let (access, asked) = futures::channel::mpsc::unbounded();
+            let Some(window) =
+                open_window(cx, &options, initial_tree, events.clone(), access.clone())
+            else {
                 cx.quit();
                 return;
             };
             let messages = bridge(updates, HostMessage::Driver);
-            let drive = Drive::new(Some(window), events, None);
-            cx.spawn(async move |cx| drive.run(messages, cx).await)
+            let drive = Drive::new(Some(window), events, None, access);
+            cx.spawn(async move |cx| drive.run(messages, asked, cx).await)
                 .detach();
         });
 }
@@ -98,6 +102,7 @@ pub fn run_deferred(
             .detach();
             crate::trace::log(format_args!("{RESIDENT_MARKER}: deferred host started"));
             let messages = bridge(messages, |message| message);
+            let (access, asked) = futures::channel::mpsc::unbounded();
             let drive = Drive::new(
                 None,
                 events,
@@ -105,8 +110,9 @@ pub fn run_deferred(
                     initial_for,
                     hiding,
                 }),
+                access,
             );
-            cx.spawn(async move |cx| drive.run(messages, cx).await)
+            cx.spawn(async move |cx| drive.run(messages, asked, cx).await)
                 .detach();
         });
 }
@@ -135,6 +141,7 @@ fn open_window(
     options: &NativeUiOptions,
     tree: NodeSpec,
     events: mpsc::Sender<NativeUiEvent>,
+    access: UnboundedSender<SimCommand>,
 ) -> Option<WindowHandle<RootView>> {
     let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
     // Desktop surfaces (layers, a lock screen) draw over what the
@@ -180,8 +187,14 @@ fn open_window(
     // GPUI's Wayland backend ignores `TitlebarOptions::title` at creation
     // (the window opened untitled); set it explicitly.
     let title = options.title.clone();
+    // What a screen reader hears (`access/`); its presses come back as simulated clicks.
+    let tree_access = Accessibility::new(&title, move |command| {
+        let _ = access.unbounded_send(command);
+    })
+    .map(|access| Rc::new(RefCell::new(access)));
     let _ = window.update(cx, |view, window, _cx| {
         window.set_window_title(&title);
+        view.access = tree_access;
         view.apply_pending_focus(window);
     });
     // Report the chrome now and whenever the compositor moves or
@@ -235,6 +248,8 @@ struct Drive {
     /// land (and the driver's resulting tree arrive) before the commands
     /// after it, so at most one of those is performed per turn.
     pending: VecDeque<SimCommand>,
+    /// Where a window's accessibility tree sends a screen reader's presses.
+    access: UnboundedSender<SimCommand>,
 }
 
 impl Drive {
@@ -242,6 +257,7 @@ impl Drive {
         window: Option<WindowHandle<RootView>>,
         events: mpsc::Sender<NativeUiEvent>,
         resident: Option<Resident>,
+        access: UnboundedSender<SimCommand>,
     ) -> Self {
         Self {
             window,
@@ -249,16 +265,33 @@ impl Drive {
             resident,
             held: None,
             pending: VecDeque::new(),
+            access,
         }
     }
 
     /// Apply driver messages, coalescing to the newest tree per wake, until
     /// the driver goes away or the window does.
-    async fn run(mut self, mut messages: UnboundedReceiver<HostMessage>, cx: &mut AsyncApp) {
+    /// A screen reader's presses (`asked`) are simulated clicks; they never
+    /// keep the host up once the driver has gone.
+    async fn run(
+        mut self,
+        mut messages: UnboundedReceiver<HostMessage>,
+        mut asked: UnboundedReceiver<SimCommand>,
+        cx: &mut AsyncApp,
+    ) {
         loop {
             let mut batch = Vec::new();
             if self.pending.is_empty() {
-                match messages.next().await {
+                let next = futures::future::select(messages.next(), asked.next()).await;
+                let message = match next {
+                    futures::future::Either::Left((message, _)) => message,
+                    futures::future::Either::Right((Some(command), _)) => {
+                        Some(HostMessage::Driver(DriverMessage::Sim(command)))
+                    }
+                    // No window can ask any more; the driver's messages go on.
+                    futures::future::Either::Right((None, _)) => messages.next().await,
+                };
+                match message {
                     Some(message) => batch.push(message),
                     None => {
                         // The driver went away: a shown window keeps its last
@@ -274,6 +307,9 @@ impl Drive {
             }
             while let Ok(message) = messages.try_recv() {
                 batch.push(message);
+            }
+            while let Ok(command) = asked.try_recv() {
+                batch.push(HostMessage::Driver(DriverMessage::Sim(command)));
             }
             if !self.turn(batch, cx).await {
                 return;
@@ -344,7 +380,12 @@ impl Drive {
             return true;
         };
         if let Some(title) = turn.title {
-            let _ = window.update(cx, |_view, window, _cx| window.set_window_title(&title));
+            let _ = window.update(cx, |view, window, _cx| {
+                window.set_window_title(&title);
+                if let Some(access) = &view.access {
+                    access.borrow_mut().retitle(&title);
+                }
+            });
         }
         let mut sims = Vec::new();
         while let Some(command) = self.pending.pop_front() {
@@ -410,7 +451,7 @@ impl Drive {
             .unwrap_or_else(|| (resident.initial_for)(&options));
         let events = self.events.clone();
         let opened = cx
-            .update(|cx| open_window(cx, &options, tree, events))
+            .update(|cx| open_window(cx, &options, tree, events, self.access.clone()))
             .ok()
             .flatten();
         match opened {

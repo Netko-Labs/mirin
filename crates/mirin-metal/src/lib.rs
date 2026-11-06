@@ -12,6 +12,7 @@
 //! not yet wired into the CEF runtime, the FFI surface, or the TypeScript
 //! packages. See `README.md` for scope and the integration plan.
 
+mod access;
 mod drag;
 mod drive;
 mod edges;
@@ -35,6 +36,7 @@ pub mod trace;
 mod tree;
 mod window;
 
+pub use access::ACCESSIBLE_MARKER;
 pub use drive::{run, run_deferred, HostMessage, RESIDENT_MARKER};
 pub use events::{EventKind, NativeUiEvent, PointerPhase};
 pub use sim::{LayoutNode, SimCommand};

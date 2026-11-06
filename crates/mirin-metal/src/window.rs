@@ -5,8 +5,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
+use std::cell::RefCell;
+
 use gpui::{prelude::*, App, Context, FocusHandle, ScrollHandle, SharedString, Window};
 
+use crate::access::{Accessibility, Focused};
 use crate::events::EventSender;
 use crate::height::Heights;
 use crate::list::VirtualList;
@@ -132,6 +135,8 @@ pub(crate) struct RootView {
     pub(crate) heights: Heights,
     /// Until this window's first paint, which is reported (`frame`).
     first_frame: bool,
+    /// The accessibility tree, published after each paint (`access/`); none when turned off.
+    pub(crate) access: Option<Rc<RefCell<Accessibility>>>,
 }
 
 /// A view with `onKeyDown`: its focus, and whether it still has to take it.
@@ -162,6 +167,7 @@ impl RootView {
             drop_target: None,
             heights: Heights::default(),
             first_frame: true,
+            access: None,
         };
         view.sync_inputs(cx);
         view.sync_key_targets(cx);
@@ -261,6 +267,50 @@ impl RootView {
         }
     }
 
+    /// The field or key-taking view with the keyboard, and what is typed in a field.
+    fn focused(&self, window: &Window) -> Option<Focused> {
+        let field = self
+            .inputs
+            .iter()
+            .find(|(_, state)| state.focus.is_focused(window));
+        if let Some((id, state)) = field {
+            return Some(Focused {
+                id: id.clone(),
+                text: Some(state.buffer.clone()),
+            });
+        }
+        self.key_targets
+            .iter()
+            .find(|(_, target)| target.focus.is_focused(window))
+            .map(|(id, _)| Focused {
+                id: id.clone(),
+                text: None,
+            })
+    }
+
+    /// Painted last, after everything else: publishes the accessibility tree
+    /// with this frame's bounds (`access/`).
+    fn access_canvas(&self, window: &Window) -> Option<gpui::AnyElement> {
+        let access = Rc::clone(self.access.as_ref()?);
+        let tree = Rc::clone(&self.tree);
+        let layout = self.layout.clone();
+        let focused = self.focused(window);
+        let active = window.is_window_active();
+        Some(
+            gpui::canvas(
+                |_, _, _| {},
+                move |_, (), _, _| {
+                    access
+                        .borrow_mut()
+                        .refresh(&tree, &layout, focused.clone(), active);
+                },
+            )
+            .absolute()
+            .size_0()
+            .into_any_element(),
+        )
+    }
+
     /// Honour pending `autofocus` requests. Runs outside of rendering.
     pub(crate) fn apply_pending_focus(&mut self, window: &mut Window) {
         for target in self.key_targets.values_mut() {
@@ -292,8 +342,16 @@ impl Render for RootView {
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
         let root = capture_root(content, cx);
         let first = std::mem::take(&mut self.first_frame);
+        let access = self.access_canvas(window);
         if !first && !crate::trace::enabled() {
-            return root;
+            return match access {
+                Some(access) => gpui::div()
+                    .size_full()
+                    .child(root)
+                    .child(access)
+                    .into_any_element(),
+                None => root,
+            };
         }
         // Painted last, so its paint callback marks the end of GPUI's layout,
         // prepaint, and paint for this frame: the trace's timing, and a new
@@ -320,6 +378,7 @@ impl Render for RootView {
             .size_full()
             .child(root)
             .child(marker)
+            .children(access)
             .into_any_element()
     }
 }

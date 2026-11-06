@@ -8,6 +8,8 @@ export {
 export { type NativeHostOptions, type SurfaceOptions, spawnNativeHost } from "./host.ts";
 export { createPortal, render } from "./render.ts";
 export type {
+  AccessibilityProps,
+  AccessibilityRole,
   Bounds,
   Color,
   Dimension,

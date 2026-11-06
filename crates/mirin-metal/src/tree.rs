@@ -210,6 +210,26 @@ pub struct ViewProps {
     /// Gap between columns / rows, overriding `gap` on that axis.
     pub gap_x: Option<f32>,
     pub gap_y: Option<f32>,
+    /// What assistive technology hears for this view (`access/`).
+    pub access: Option<AccessProps>,
+}
+
+/// A node's role, name and state for the accessibility tree (`access/`):
+/// React Native's `accessibilityRole`, `accessibilityLabel`,
+/// `accessibilityState`, and `accessibilityLiveRegion`.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessProps {
+    /// `button`, `combobox`, `listbox`, `option`, `group`, `status`, … (`access/tree.rs` `role_of`).
+    pub role: Option<String>,
+    /// What it is called; for a view, it stands for the text inside it.
+    pub label: Option<String>,
+    pub selected: Option<bool>,
+    pub checked: Option<bool>,
+    pub expanded: Option<bool>,
+    pub disabled: Option<bool>,
+    /// `polite` or `assertive`: a change to it is announced.
+    pub live: Option<String>,
 }
 
 /// The files a view drags (`dragFiles`), and the image under the pointer.
@@ -316,6 +336,9 @@ pub struct InputProps {
     /// Report Escape, ArrowUp, and ArrowDown (a launcher's list navigation).
     #[serde(default)]
     pub on_key: bool,
+    /// What assistive technology hears for this field (`access/`); boxed, as most fields have none.
+    #[serde(default)]
+    pub access: Option<Box<AccessProps>>,
 }
 
 impl Default for InputProps {
@@ -346,6 +369,7 @@ impl Default for InputProps {
             on_change: false,
             on_submit: false,
             on_key: false,
+            access: None,
         }
     }
 }

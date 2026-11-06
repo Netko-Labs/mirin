@@ -354,6 +354,39 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   the drag offers copy only; an app moving files within itself decides on
   its own.
 
+### Accessibility (AT-SPI)
+
+- **The tree.** Every window publishes an accessibility tree over AT-SPI
+  through AccessKit's Unix adapter (`src/access/`), so Orca reads Metal's UI.
+  It is built after each paint from the element tree and what only the
+  renderer knows: painted bounds, which field has the keyboard, and what is
+  typed in it (the buffer, not the driver's lagging value; never a password
+  field's). The adapter watches whether assistive technology is on and hands
+  the tree to the accessibility bus only then; the tree is rebuilt only when
+  the element tree, the focus, the typed text, or the window's focus changed.
+- **What it says.** A view with `access` (`accessibilityRole`,
+  `accessibilityLabel`, `accessibilityState`, `accessibilityLiveRegion` in
+  `@mirinjs/metal`, React Native's names) is a node with that role, name and
+  state; a view with `onPress` and no role is a button named by its text; a
+  text is a label; a field is a text input (a password input when secure)
+  named by its placeholder, or an editable combo box when its role says
+  `combobox`. Views that say nothing are only layout: their children join
+  the node above. A labelled option, button, status… stands for its text,
+  which isn't read twice. A focused combo box points at the selected option
+  as its active descendant, so the selection is announced as it moves while
+  the keyboard stays in the field; a live region is announced when it
+  changes. Node ids are hashes of the elements' ids, stable across trees.
+- **Actions.** A screen reader's press or focus is a simulated click on that
+  element (`sim.rs`), the same path the person's click takes.
+- **Drivers.** The host binary names `MIRIN_METAL_ACCESSIBLE`
+  (`ACCESSIBLE_MARKER`); a host without it rejects a tree with `access` props
+  (unknown fields are refused), so a driver greps the binary before it sends
+  them, as it does for `MIRIN_METAL_RESIDENT`. `MIRIN_METAL_ACCESSIBLE=0`
+  turns the tree off.
+- **Not yet.** Text navigation inside a field (caret, selection, words), a
+  tree for macOS and Windows (AccessKit has adapters for both), tables and
+  sliders' values, and scrolling a node into view on request.
+
 ### macOS
 
 Renders through Metal (the Apple API) with no extra system deps. Not yet

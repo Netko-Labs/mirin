@@ -5,6 +5,7 @@
  */
 
 import type {
+  AccessibilityProps,
   Bounds,
   Color,
   Dimension,
@@ -110,6 +111,7 @@ interface ViewNodeProps {
   rowSpan?: number;
   gapX?: number;
   gapY?: number;
+  access?: AccessNodeProps;
 }
 
 interface TextNodeProps {
@@ -124,6 +126,34 @@ interface TextNodeProps {
   underline?: boolean;
   lineThrough?: boolean;
   lineHeight?: number;
+}
+
+/** `access` on a view or an input: what the accessibility tree says of it (crates/mirin-metal/src/tree.rs `AccessProps`). */
+interface AccessNodeProps {
+  role?: string;
+  label?: string;
+  selected?: boolean;
+  checked?: boolean;
+  expanded?: boolean;
+  disabled?: boolean;
+  live?: "polite" | "assertive";
+}
+
+/** The accessibility props as the host takes them; undefined when there are none. */
+function accessOf(props: AccessibilityProps): AccessNodeProps | undefined {
+  const state = props.accessibilityState ?? {};
+  const access: AccessNodeProps = {
+    ...(props.accessibilityRole !== undefined ? { role: props.accessibilityRole } : {}),
+    ...(props.accessibilityLabel !== undefined ? { label: props.accessibilityLabel } : {}),
+    ...(state.selected !== undefined ? { selected: state.selected } : {}),
+    ...(state.checked !== undefined ? { checked: state.checked } : {}),
+    ...(state.expanded !== undefined ? { expanded: state.expanded } : {}),
+    ...(state.disabled !== undefined ? { disabled: state.disabled } : {}),
+    ...(props.accessibilityLiveRegion === "polite" || props.accessibilityLiveRegion === "assertive"
+      ? { live: props.accessibilityLiveRegion }
+      : {}),
+  };
+  return Object.keys(access).length > 0 ? access : undefined;
 }
 
 interface InputNodeProps {
@@ -151,6 +181,7 @@ interface InputNodeProps {
   onChange?: boolean;
   onSubmit?: boolean;
   onKey?: boolean;
+  access?: AccessNodeProps;
 }
 
 interface ViewNode {
@@ -464,6 +495,8 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
     handlers.hover.set(String(instance.id), onHoverChange);
   }
   if (testID) handlers.testIds.set(testID, String(instance.id));
+  const access = accessOf(instance.props);
+  if (access) props.access = access;
 
   // A string directly in a view (a component returned it) renders as text in
   // the view's `textStyle` instead of being dropped.
@@ -539,5 +572,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
     handlers.key.set(id, input.onKeyPress);
   }
   if (input.testID) handlers.testIds.set(input.testID, id);
+  const access = accessOf(input);
+  if (access) props.access = access;
   return { type: "input", props };
 }

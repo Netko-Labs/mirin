@@ -418,3 +418,43 @@ describe("file drag and drop", () => {
     ).toBeNull();
   });
 });
+
+describe("accessibility", () => {
+  test("a view's and a field's accessibility props reach the tree as `access`, only when set", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        { accessibilityRole: "listbox", accessibilityLabel: "Results" },
+        createElement(TextInput, {
+          value: "wi",
+          accessibilityRole: "combobox",
+          accessibilityLabel: "Search",
+          accessibilityState: { expanded: true },
+        }),
+        createElement(View, {
+          accessibilityRole: "option",
+          accessibilityLabel: "Wi-Fi, on, setting, 1 of 1",
+          accessibilityState: { selected: true },
+          accessibilityLiveRegion: "none",
+        }),
+        createElement(View, { accessibilityLiveRegion: "polite" }),
+        createElement(View, {}),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "null");
+    expect(tree.props.access).toEqual({ role: "listbox", label: "Results" });
+    const [field, option, notice, plain] = tree.children;
+    expect(field.props.access).toEqual({ role: "combobox", label: "Search", expanded: true });
+    expect(option.props.access).toEqual({
+      role: "option",
+      label: "Wi-Fi, on, setting, 1 of 1",
+      selected: true,
+    });
+    expect(notice.props.access).toEqual({ live: "polite" });
+    expect(plain.props.access).toBeUndefined();
+    root.unmount();
+  });
+});

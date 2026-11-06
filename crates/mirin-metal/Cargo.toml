@@ -19,6 +19,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async channel that wakes the window when the driver sends (already in gpui's tree).
 futures = "0.3"
+# The accessibility tree (src/access/): AccessKit's tree types, everywhere.
+accesskit = "0.25"
 # Opt-in sampling profiler for the host (`--features profiling`); see
 # `MIRIN_METAL_PROFILE` in src/bin/host.rs. Not part of normal builds.
 pprof = { version = "0.15", optional = true }
@@ -34,6 +36,9 @@ wayland-protocols-wlr = { version = "0.2", features = ["client"] }
 # Probe that the chosen GPU's Vulkan driver has a device (src/gpu.rs); the
 # version blade-graphics already builds.
 ash = "0.38"
+# Publish the accessibility tree over AT-SPI (src/access/linux.rs), so Orca
+# reads Metal's UI; on zbus 5, which gpui's tree already builds.
+accesskit_unix = "0.24"
 
 [features]
 profiling = ["dep:pprof"]

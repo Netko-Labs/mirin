@@ -240,7 +240,56 @@ export interface WindowChrome {
   controls: Bounds | null;
 }
 
-export interface ViewProps {
+/**
+ * What assistive technology hears of a view or a field (React Native's
+ * accessibility props). The host publishes an accessibility tree over
+ * AT-SPI on Linux (`crates/mirin-metal/src/access/`), so a screen reader
+ * such as Orca reads it. Without them a pressable view is a button named by
+ * its text, a text is read as it is, and a field is named by its placeholder.
+ * Only a host binary that names `MIRIN_METAL_ACCESSIBLE` takes them: an
+ * older one rejects a tree that has them, so a driver checks for it first.
+ */
+export interface AccessibilityProps {
+  /** What it is. A `combobox` field over a `listbox` of `option`s reads as a search with results. */
+  accessibilityRole?: AccessibilityRole;
+  /** What it is called; on a view it stands for the text inside it. */
+  accessibilityLabel?: string;
+  /** Selected (the option a combo box's selection is on), checked, expanded, disabled. */
+  accessibilityState?: {
+    selected?: boolean;
+    checked?: boolean;
+    expanded?: boolean;
+    disabled?: boolean;
+  };
+  /** A change to it is announced as it happens (`polite` waits for a pause). */
+  accessibilityLiveRegion?: "polite" | "assertive" | "none";
+}
+
+export type AccessibilityRole =
+  | "button"
+  | "link"
+  | "combobox"
+  | "listbox"
+  | "option"
+  | "list"
+  | "listitem"
+  | "group"
+  | "status"
+  | "alert"
+  | "heading"
+  | "header"
+  | "switch"
+  | "checkbox"
+  | "image"
+  | "text"
+  | "menu"
+  | "menuitem"
+  | "tab"
+  | "tablist"
+  | "dialog"
+  | "search";
+
+export interface ViewProps extends AccessibilityProps {
   /** Receives the mounted host instance (usable as a `createPortal` target). */
   ref?: Ref<unknown>;
   style?: ViewStyle;
@@ -296,7 +345,7 @@ export interface TextProps {
   children?: ReactNode;
 }
 
-export interface TextInputProps {
+export interface TextInputProps extends AccessibilityProps {
   /** Controlled value; a change resets the native buffer. */
   value: string;
   /**
