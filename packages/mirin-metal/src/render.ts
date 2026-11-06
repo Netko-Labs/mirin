@@ -162,6 +162,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       case "frame":
       case "close-request":
       case "visibility":
+      case "typing":
         break;
     }
   }

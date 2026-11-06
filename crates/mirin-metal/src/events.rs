@@ -63,6 +63,10 @@ pub enum EventKind {
     /// The compositor says the window is out of sight (`false`: minimized,
     /// on another desktop) or seen again (`true`); node id is `"root"`.
     Visibility { visible: bool },
+    /// A text field took the keyboard (`true`) or none has it any more
+    /// (`false`); node id is `"root"`. An app whose menus have shortcuts
+    /// hands a field the text keys (Select All, Copy) while one has it.
+    Typing { typing: bool },
     /// The wheel or touchpad scrolled over a `view` with `onWheel`, in lines.
     Wheel { dx: f32, dy: f32 },
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
@@ -180,6 +184,7 @@ impl EventKind {
             EventKind::KeyDown(_) => "keydown",
             EventKind::WindowKey { .. } => "windowkey",
             EventKind::Visibility { .. } => "visibility",
+            EventKind::Typing { .. } => "typing",
             EventKind::Wheel { .. } => "wheel",
             EventKind::Resize => "resize",
             EventKind::Drop(_) => "drop",
@@ -195,6 +200,7 @@ impl EventKind {
             | EventKind::Selection { .. }
             | EventKind::WindowKey { .. }
             | EventKind::Visibility { .. }
+            | EventKind::Typing { .. }
             | EventKind::Layout { .. }
             | EventKind::Hover { .. }
             | EventKind::Pointer { .. }
@@ -236,6 +242,10 @@ impl EventSender {
 
     pub(crate) fn visibility(&self, visible: bool) {
         self.send("root", EventKind::Visibility { visible });
+    }
+
+    pub(crate) fn typing(&self, typing: bool) {
+        self.send("root", EventKind::Typing { typing });
     }
 
     pub(crate) fn change(&self, node_id: &str, value: &str) {

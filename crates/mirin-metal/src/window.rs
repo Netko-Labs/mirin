@@ -365,11 +365,19 @@ impl RootView {
                 window.focus(&target.focus);
             }
         }
+        // Several new fields asking at once: one wins, the same one every time (focus/order.rs).
+        let asking: Vec<&str> = self
+            .inputs
+            .iter()
+            .filter(|(_, state)| state.wants_focus)
+            .map(|(id, _)| id.as_str())
+            .collect();
+        let chosen = self.focus.order.autofocus(&asking).map(str::to_owned);
         for state in self.inputs.values_mut() {
-            if state.wants_focus {
-                state.wants_focus = false;
-                window.focus(&state.focus);
-            }
+            state.wants_focus = false;
+        }
+        if let Some(state) = chosen.and_then(|id| self.inputs.get(&id)) {
+            window.focus(&state.focus);
         }
         self.settle_focus(window);
     }
@@ -388,6 +396,7 @@ impl Render for RootView {
         let content = render_node(&tree, self, window, cx);
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
         let root = crate::focus::key_root(capture_root(content, cx), self, cx);
+        self.report_typing(window);
         let first = std::mem::take(&mut self.first_frame);
         // The first frame with the driver's tree in it: what a person
         // opening the app first sees of it (traced).

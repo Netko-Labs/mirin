@@ -507,6 +507,12 @@ export type NativeEvent =
    * and a window opens seen. Where the compositor can't tell, never sent.
    */
   | { type: "visibility"; nodeId: "root"; visible: boolean }
+  /**
+   * A text field took the keyboard (`typing: true`), or none has it any
+   * more; only changes are sent, and a window opens not typing. A view with
+   * `onKeyDown` is not typing. A host older than this never sends it.
+   */
+  | { type: "typing"; nodeId: "root"; typing: boolean }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
   | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }

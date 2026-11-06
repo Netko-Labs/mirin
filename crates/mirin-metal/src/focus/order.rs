@@ -119,6 +119,19 @@ impl Order {
         self.traps.last().map(String::as_str)
     }
 
+    /// Which of the fields asking for the keyboard as they appear
+    /// (`autofocus`) takes it: one inside the shown trap before one behind
+    /// it, then the first in document order, as in HTML. Never the order a
+    /// map happens to list them in: a sheet's field and another new field
+    /// asking at once used to race.
+    pub(crate) fn autofocus<'a>(&self, asking: &[&'a str]) -> Option<&'a str> {
+        let rank = |id: &str| {
+            let at = self.stops.iter().position(|stop| stop.id == id);
+            (!self.reachable(id), at.unwrap_or(usize::MAX))
+        };
+        asking.iter().copied().min_by_key(|id| rank(id))
+    }
+
     /// The view that hears the keys no control takes.
     pub(crate) fn window_key(&self) -> Option<&str> {
         self.window_keys.last().map(String::as_str)
@@ -245,6 +258,25 @@ mod tests {
         assert_eq!(back(None).as_deref(), Some("ok"));
         assert_eq!(back(Some("ok")).as_deref(), Some("b"));
         assert_eq!(back(Some("a")).as_deref(), Some("name"));
+    }
+
+    #[test]
+    fn autofocus_goes_to_the_first_field_asking_inside_the_trap() {
+        let order = order(
+            r##"{"type":"view","props":{"id":"root"},"children":[
+            {"type":"input","props":{"id":"behind"}},
+            {"type":"view","props":{"id":"sheet","focusTrap":true},"children":[
+                {"type":"input","props":{"id":"first"}},
+                {"type":"input","props":{"id":"second"}}]}]}"##,
+        );
+        // Document order, whichever order they are asked in.
+        assert_eq!(order.autofocus(&["second", "first"]), Some("first"));
+        assert_eq!(order.autofocus(&["first", "second"]), Some("first"));
+        // A field the trap holds wins over one behind it, though that one comes first.
+        assert_eq!(order.autofocus(&["behind", "second"]), Some("second"));
+        // Alone, even behind the trap, it still asks (the settle after takes it back).
+        assert_eq!(order.autofocus(&["behind"]), Some("behind"));
+        assert_eq!(order.autofocus(&[]), None);
     }
 
     #[test]
