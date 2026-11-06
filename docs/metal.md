@@ -597,6 +597,16 @@ names the app to the compositor, which docks and taskbars group windows by;
 A `{"title":"…"}` stdin line retitles the window afterwards (`setTitle()` on the
 transport): the compositor's title bar, the window switcher, and taskbars show
 the new title (a terminal's running program and grid size).
+`MIRIN_METAL_CLOSE=ask` (`askToClose`) lets the app answer a close from outside
+itself: when the compositor asks the window to close (`xdg_toplevel.close`: its
+close control, a shell's close, quit, or logout), the window stays and the host
+writes `{"type":"close-request","nodeId":"root"}`. The app closes by ending the
+host (`close()` on the transport), at once when it has nothing to lose, or
+after it asked (unsaved changes, a running job); keeping the window is not
+answering. The default, `now` (or unset), closes at once as before, and a host
+from before it ignores the variable and closes at once too. Windows only: a
+surface or a deferred host closes as it always has. A hung app stays closable
+by the shell's force path (ending the process), not by the host.
 `MIRIN_METAL_CAPABILITIES=shell.toplevels` (`capabilities`) makes the host follow
 every window over wlr-foreign-toplevel-management on a second Wayland connection
 (`src/toplevels.rs`): it writes `{"type":"toplevel","toplevel":{...}}` and

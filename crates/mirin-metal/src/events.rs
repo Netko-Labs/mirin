@@ -62,6 +62,10 @@ pub enum EventKind {
     /// A newly opened window painted its first frame (node id is `"root"`),
     /// so a driver can time an open; sent once per open.
     Frame,
+    /// Something outside asked the window to close (the close control, a
+    /// shell's close or quit) and the window stayed, because the driver
+    /// asked to answer closes itself (`ask_to_close`; node id is `"root"`).
+    CloseRequest,
 }
 
 /// One key press for a view with `onKeyDown`: GPUI's key name ("a",
@@ -144,6 +148,7 @@ impl EventKind {
             EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
             EventKind::Frame => "frame",
+            EventKind::CloseRequest => "close-request",
         }
     }
 
@@ -160,7 +165,8 @@ impl EventKind {
             | EventKind::Resize
             | EventKind::Drop(_)
             | EventKind::Chrome(_)
-            | EventKind::Frame => None,
+            | EventKind::Frame
+            | EventKind::CloseRequest => None,
             EventKind::Change { value }
             | EventKind::Submit { value }
             | EventKind::Key { value } => Some(value),
@@ -265,6 +271,10 @@ impl EventSender {
 
     pub(crate) fn frame(&self) {
         self.send("root", EventKind::Frame);
+    }
+
+    pub(crate) fn close_request(&self) {
+        self.send("root", EventKind::CloseRequest);
     }
 
     pub(crate) fn layout(&self, nodes: Vec<LayoutNode>) {

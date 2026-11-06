@@ -41,8 +41,8 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
   if (record.type === "chrome") {
     return parseChromeEvent(record);
   }
-  if (record.type === "frame") {
-    return record.nodeId === "root" ? { type: "frame", nodeId: "root" } : null;
+  if (record.type === "frame" || record.type === "close-request") {
+    return record.nodeId === "root" ? { type: record.type, nodeId: "root" } : null;
   }
   const nodeId = record.nodeId;
   const bounds = parseBounds(record.bounds);
@@ -214,6 +214,14 @@ export interface NativeHostOptions {
    * `useWindowChrome()`.
    */
   titleBar?: TitleBarStyle;
+  /**
+   * Answer closes from outside (the compositor's close control, a shell's
+   * close or quit) yourself (`MIRIN_METAL_CLOSE=ask`): the window stays and
+   * a `close-request` event arrives; `close()` closes it, or the app asks
+   * first (unsaved changes, a running job). A host from before it closes at
+   * once. Windows only; ignored for surfaces and deferred hosts.
+   */
+  askToClose?: boolean;
   /** Extra environment for the host process. */
   env?: Record<string, string>;
   /**
@@ -252,6 +260,7 @@ export function spawnNativeHost(
   }
   if (options.surface !== undefined) env.MIRIN_METAL_SURFACE = JSON.stringify(options.surface);
   if (options.titleBar !== undefined) env.MIRIN_METAL_TITLEBAR = options.titleBar;
+  if (options.askToClose) env.MIRIN_METAL_CLOSE = "ask";
   Object.assign(env, options.env);
   const child = Bun.spawn([binaryPath], {
     stdin: "pipe",

@@ -143,6 +143,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "layout":
       case "frame":
+      case "close-request":
         break;
     }
   }

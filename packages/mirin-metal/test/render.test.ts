@@ -147,6 +147,11 @@ describe("parseNativeEvent", () => {
       nodeId: "root",
     });
     expect(parseNativeEvent('{"type":"frame","nodeId":"3"}')).toBeNull();
+    expect(parseNativeEvent('{"type":"close-request","nodeId":"root"}')).toEqual({
+      type: "close-request",
+      nodeId: "root",
+    });
+    expect(parseNativeEvent('{"type":"close-request","nodeId":"3"}')).toBeNull();
     expect(parseNativeEvent('{"type":"press"}')).toBeNull();
     expect(parseNativeEvent("not json")).toBeNull();
     expect(parseNativeEvent('"press"')).toBeNull();

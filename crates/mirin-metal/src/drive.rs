@@ -269,6 +269,7 @@ fn open_window(
     let layout = LayoutMap::default();
     let event_sender = EventSender::new(events, layout.clone());
     let chrome_events = event_sender.clone();
+    let close_events = event_sender.clone();
     let opened = cx.open_window(window_options, |_window, cx| {
         cx.new(|cx| RootView::new(tree, placeholder, event_sender, layout, cx))
     });
@@ -313,6 +314,16 @@ fn open_window(
             })
             .detach();
     });
+    // A driver that answers closes itself: the window stays, and the
+    // driver hears of it (it ends the host to close, or asks first).
+    if options.ask_to_close && !is_layer {
+        let _ = window.update(cx, |_view, window, cx| {
+            window.on_window_should_close(cx, move |_window, _cx| {
+                close_events.close_request();
+                false
+            });
+        });
+    }
     Some(window)
 }
 

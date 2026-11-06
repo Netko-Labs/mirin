@@ -451,7 +451,13 @@ export type NativeEvent =
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] }
   | ({ type: "chrome"; nodeId: "root" } & WindowChrome)
   /** A newly opened window painted its first frame (once per open). */
-  | { type: "frame"; nodeId: "root" };
+  | { type: "frame"; nodeId: "root" }
+  /**
+   * Something outside asked the window to close (the close control, a
+   * shell's close or quit) and it stayed: the host was spawned with
+   * `askToClose`. Answer with `close()` on the transport, or ask first.
+   */
+  | { type: "close-request"; nodeId: "root" };
 
 /**
  * Simulated input for checks: delivered inside the renderer like real input

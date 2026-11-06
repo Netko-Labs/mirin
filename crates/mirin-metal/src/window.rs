@@ -42,6 +42,11 @@ pub struct NativeUiOptions {
     /// `Unified` runs the tree up to the window's top edge where the
     /// compositor supports it (see `titlebar.rs`); ignored for surfaces.
     pub title_bar: TitleBar,
+    /// A close from outside (the compositor's close control, a shell's
+    /// close or quit: `xdg_toplevel.close`) is not carried out but reported
+    /// as `close-request` (`MIRIN_METAL_CLOSE=ask`): the driver answers by
+    /// ending the host, or keeps the window and asks first. Windows only.
+    pub ask_to_close: bool,
 }
 
 impl Default for NativeUiOptions {
@@ -53,6 +58,7 @@ impl Default for NativeUiOptions {
             height: 600.0,
             surface: None,
             title_bar: TitleBar::Standard,
+            ask_to_close: false,
         }
     }
 }

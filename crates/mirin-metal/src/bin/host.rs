@@ -454,12 +454,30 @@ fn main() {
         std::env::var("MIRIN_METAL_SURFACE").ok().as_deref(),
         std::env::var("MIRIN_METAL_TITLEBAR").ok().as_deref(),
     )
+    .and_then(|options| {
+        Ok(NativeUiOptions {
+            ask_to_close: asks_to_close(std::env::var("MIRIN_METAL_CLOSE").ok().as_deref())?,
+            ..options
+        })
+    })
     .unwrap_or_else(|error| {
         eprintln!("[mirin-metal] {error}");
         std::process::exit(2);
     });
     let initial = initial_tree(&options);
     run(options, initial, update_rx, event_tx);
+}
+
+/// `MIRIN_METAL_CLOSE`: `ask` hands a close from outside to the driver
+/// (`close-request`) instead of closing; `now`, or nothing, closes at once.
+fn asks_to_close(value: Option<&str>) -> Result<bool, String> {
+    match value {
+        None | Some("now") => Ok(false),
+        Some("ask") => Ok(true),
+        Some(other) => Err(format!(
+            "MIRIN_METAL_CLOSE: expected `ask` or `now`, got `{other}`"
+        )),
+    }
 }
 
 /// A window's options from what the driver said (environment or `open` line).
@@ -505,6 +523,7 @@ fn window_options(
         height,
         surface,
         title_bar,
+        ask_to_close: false,
     })
 }
 
@@ -545,6 +564,20 @@ mod line_tests {
                 _ => panic!("expected an open line"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod close_tests {
+    use super::asks_to_close;
+
+    #[test]
+    fn only_ask_hands_the_close_to_the_driver() {
+        assert_eq!(asks_to_close(None), Ok(false));
+        assert_eq!(asks_to_close(Some("now")), Ok(false));
+        assert_eq!(asks_to_close(Some("ask")), Ok(true));
+        assert!(asks_to_close(Some("Ask")).is_err());
+        assert!(asks_to_close(Some("")).is_err());
     }
 }
 
