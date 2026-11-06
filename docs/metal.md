@@ -139,7 +139,17 @@ state and describes UI; the renderer is a pure function of the latest tree.
   later tree resets the buffer (controlled-input semantics). Enter submits a
   single-line input; multiline inserts a newline and Ctrl/Cmd+Enter submits.
   Ctrl/Cmd+V pastes from the system clipboard. Tab / Shift+Tab move focus
-  between inputs in document order (wrapping).
+  between inputs in document order (wrapping). Input methods (Fcitx 5, IBus;
+  text-input-v3 on Wayland) work in every field, single-line or multiline,
+  in a window or on a layer surface: the focused field is GPUI's input
+  handler (`src/ime.rs`), its composition shows underlined at the caret and
+  is not part of the value (no `change` until a commit, which inserts at the
+  caret), and the caret's rectangle goes to the compositor so the
+  candidates open under it. Plain typing is unchanged: keys still arrive as
+  keys (`src/field.rs` edits for both). A `secure` field takes no input
+  method: while it (or nothing that takes text) has the keyboard, text input
+  is off, so what is typed there never reaches one. The host names
+  `MIRIN_METAL_IME` (`IME_MARKER`) for a driver checking for this.
 - Raw keys and the wheel: a view with `onKeyDown` (and an `id`) takes the
   keyboard when it first appears and whenever it is pressed, and emits
   `{"type":"keydown","nodeId","key","text"?,"ctrl","alt","shift","meta",

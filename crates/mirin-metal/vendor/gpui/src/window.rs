@@ -890,6 +890,8 @@ pub struct Window {
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
     // mirin: observers of the compositor-drawn controls' area.
     pub(crate) chrome_observers: SubscriberSet<(), AnyObserver>,
+    // mirin: whether the last frame set an input handler (`set_accepts_text`).
+    accepts_text: bool,
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
@@ -1295,6 +1297,7 @@ impl Window {
             appearance,
             appearance_observers: SubscriberSet::new(),
             chrome_observers: SubscriberSet::new(),
+            accepts_text: false,
             active,
             hovered,
             needs_present,
@@ -2024,9 +2027,17 @@ impl Window {
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
-        if let Some(input_handler) = self.next_frame.input_handlers.pop() {
+        let accepts_text = if let Some(input_handler) = self.next_frame.input_handlers.pop() {
             self.platform_window
                 .set_input_handler(input_handler.unwrap());
+            true
+        } else {
+            false
+        };
+        // mirin: the platform hears when a field starts or stops taking text.
+        if accepts_text != self.accepts_text {
+            self.accepts_text = accepts_text;
+            self.platform_window.set_accepts_text(accepts_text);
         }
 
         self.layout_engine.as_mut().unwrap().clear();

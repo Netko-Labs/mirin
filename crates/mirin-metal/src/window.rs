@@ -11,7 +11,9 @@ use gpui::{prelude::*, App, Context, FocusHandle, ScrollHandle, SharedString, Wi
 
 use crate::access::{Accessibility, Focused};
 use crate::events::EventSender;
+use crate::field::Field;
 use crate::height::Heights;
+use crate::ime::CaretReported;
 use crate::list::VirtualList;
 use crate::pointer::capture_root;
 use crate::render::render_node;
@@ -19,6 +21,9 @@ use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
 use crate::titlebar::TitleBar;
 use crate::tree::{collect_inputs, collect_key_ids, collect_scroll_ids, NodeSpec};
+
+/// Unechoed `change` values kept per input (see `InputState::echoes`).
+const MAX_ECHOES: usize = 64;
 
 /// Options for the alpha native-UI window. All fields have sensible defaults.
 #[derive(Debug, Clone)]
@@ -85,9 +90,8 @@ pub(crate) fn driver_resets(echoes: &mut VecDeque<String>, value: &str) -> bool 
 /// Renderer-owned editing state of one `input` node.
 pub(crate) struct InputState {
     pub(crate) focus: FocusHandle,
-    pub(crate) buffer: String,
-    /// Caret position as a char index into `buffer`.
-    pub(crate) cursor: usize,
+    /// Its text, caret, select-all, and an input method's composition.
+    pub(crate) field: Field,
     /// The driver's `value` the buffer was last synced from; a different value
     /// in a new tree resets the buffer (controlled-input semantics).
     pub(crate) synced_value: String,
@@ -100,8 +104,8 @@ pub(crate) struct InputState {
     pub(crate) revision: u64,
     /// Set by the tree sync when the node is new and asked for `autofocus`.
     pub(crate) wants_focus: bool,
-    /// Ctrl/Cmd+A: the next insertion or deletion replaces the whole buffer.
-    pub(crate) select_all: bool,
+    /// Where the caret was last told to an input method (`ime.rs`).
+    pub(crate) caret_reported: CaretReported,
 }
 
 /// The root view: renders whatever tree the driver last sent.
@@ -214,14 +218,12 @@ impl RootView {
                 Some(state) => {
                     if state.revision != spec.revision {
                         state.revision = spec.revision;
-                        state.buffer = spec.value.clone();
-                        state.cursor = state.buffer.chars().count();
+                        state.field.reset(&spec.value);
                         state.synced_value = spec.value.clone();
                         state.echoes.clear();
                     } else if state.synced_value != spec.value {
                         if driver_resets(&mut state.echoes, &spec.value) {
-                            state.buffer = spec.value.clone();
-                            state.cursor = state.buffer.chars().count();
+                            state.field.reset(&spec.value);
                         }
                         state.synced_value = spec.value.clone();
                     }
@@ -231,13 +233,12 @@ impl RootView {
                         spec.id.clone(),
                         InputState {
                             focus: cx.focus_handle(),
-                            cursor: spec.value.chars().count(),
-                            buffer: spec.value.clone(),
+                            field: Field::new(&spec.value),
                             synced_value: spec.value.clone(),
                             echoes: VecDeque::new(),
                             revision: spec.revision,
                             wants_focus: spec.autofocus,
-                            select_all: false,
+                            caret_reported: CaretReported::default(),
                         },
                     );
                 }
@@ -260,6 +261,20 @@ impl RootView {
                 });
         }
         self.key_targets.retain(|id, _| ids.contains(id));
+    }
+
+    /// Tell the driver a field's text changed (`change`), and expect it back.
+    pub(crate) fn report_change(&mut self, id: &str) {
+        let Some(state) = self.inputs.get_mut(id) else {
+            return;
+        };
+        self.events.change(id, &state.field.buffer);
+        // Expect it back; a driver that never echoes (or transforms the
+        // text) only ever keeps a few.
+        if state.echoes.len() >= MAX_ECHOES {
+            state.echoes.pop_front();
+        }
+        state.echoes.push_back(state.field.buffer.clone());
     }
 
     /// Move focus from `from` to the next (`+1`) or previous (`-1`) input in
@@ -290,7 +305,7 @@ impl RootView {
         if let Some((id, state)) = field {
             return Some(Focused {
                 id: id.clone(),
-                text: Some(state.buffer.clone()),
+                text: Some(state.field.buffer.clone()),
             });
         }
         self.key_targets

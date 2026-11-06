@@ -1,20 +1,21 @@
 //! The `input` node: a text field whose editing state (buffer, caret,
-//! focus, select-all) lives in the renderer. The driver sees `change` and
-//! `submit` events and may reset the contents through `value`.
+//! focus, select-all, an input method's composition) lives in the renderer.
+//! The driver sees `change` and `submit` events and may reset the contents
+//! through `value`. The editing itself is `field.rs`; input methods reach
+//! the field through `ime.rs`.
+
+use std::rc::Rc;
 
 use gpui::{
-    div, prelude::*, px, rgba, AnyElement, App, Context, ElementId, KeyDownEvent, MouseButton,
-    MouseDownEvent, SharedString, Window,
+    div, prelude::*, px, rgba, AnyElement, Context, ElementId, HighlightStyle, KeyDownEvent,
+    MouseButton, MouseDownEvent, SharedString, StyledText, UnderlineStyle, Window,
 };
 
+use crate::field::Edit;
+use crate::ime::{caret_rect, CaretReported, FieldInput};
 use crate::render::mono_family;
 use crate::tree::{parse_color, InputProps};
 use crate::window::RootView;
-
-/// Caret glyph drawn at the cursor while the input has focus.
-const CARET: &str = "\u{258F}";
-/// Unechoed `change` values kept per input (see `InputState::echoes`).
-const MAX_ECHOES: usize = 64;
 
 pub(crate) fn render_input(
     props: &InputProps,
@@ -22,11 +23,18 @@ pub(crate) fn render_input(
     window: &mut Window,
     cx: &mut Context<RootView>,
 ) -> AnyElement {
-    let Some(state) = view.inputs.get(&props.id) else {
+    let Some(state) = view.inputs.get_mut(&props.id) else {
         // `sync_inputs` always runs before render; reaching here is a bug.
         return div().into_any_element();
     };
     let focused = state.focus.is_focused(window);
+    if !focused {
+        // A composition belongs to the field with the keyboard; the caret
+        // is told again when it comes back.
+        state.field.preedit = None;
+        state.caret_reported.set(None);
+    }
+    let state = &view.inputs[&props.id];
     let node_id: SharedString = props.id.clone().into();
 
     let mut element = div()
@@ -89,22 +97,15 @@ pub(crate) fn render_input(
         element = element.font_family(mono_family());
     }
 
-    // Content: the buffer with a caret at the cursor, or the placeholder.
-    let showing_placeholder = state.buffer.is_empty() && !focused;
-    let content: String = if showing_placeholder {
-        props.placeholder.clone().unwrap_or_default()
+    // Content: the buffer with a caret at the cursor (and an input method's
+    // composition before it, underlined), or the placeholder.
+    let field = &state.field;
+    let showing_placeholder = field.buffer.is_empty() && !focused;
+    let (content, composition, caret) = if showing_placeholder {
+        (props.placeholder.clone().unwrap_or_default(), None, None)
     } else {
-        let mut text = String::with_capacity(state.buffer.len() + CARET.len());
-        for (index, ch) in state.buffer.chars().enumerate() {
-            if focused && index == state.cursor {
-                text.push_str(CARET);
-            }
-            text.push(if props.secure { '\u{2022}' } else { ch });
-        }
-        if focused && state.cursor >= state.buffer.chars().count() {
-            text.push_str(CARET);
-        }
-        text
+        let display = field.display(focused, props.secure);
+        (display.text, display.composition, display.caret)
     };
     let color = if showing_placeholder {
         props
@@ -117,13 +118,26 @@ pub(crate) fn render_input(
     if let Some(color) = color.and_then(parse_color) {
         element = element.text_color(rgba(color));
     }
-    let mut body = div().child(SharedString::from(content));
+    let text =
+        StyledText::new(SharedString::from(content)).with_highlights(composition.map(|range| {
+            let underline = UnderlineStyle {
+                thickness: px(1.0),
+                color: None,
+                wavy: false,
+            };
+            let style = HighlightStyle {
+                underline: Some(underline),
+                ..HighlightStyle::default()
+            };
+            (range, style)
+        }));
+    let layout = text.layout().clone();
+    let mut body = div().child(text);
     // Empty and focused: the placeholder stays, muted, right after the caret,
     // until the first character replaces it (as a search field's hint does).
-    let hint = props
-        .placeholder
-        .as_deref()
-        .filter(|hint| focused && state.buffer.is_empty() && !hint.is_empty());
+    let hint = props.placeholder.as_deref().filter(|hint| {
+        focused && field.buffer.is_empty() && field.preedit.is_none() && !hint.is_empty()
+    });
     if let Some(hint) = hint {
         let mut placeholder = div().child(SharedString::from(hint.to_owned()));
         if let Some(color) = props.placeholder_color.as_deref().and_then(parse_color) {
@@ -135,6 +149,32 @@ pub(crate) fn render_input(
         body = body.size_full().whitespace_normal();
     }
     element = element.child(body);
+
+    // The focused field takes an input method's text (never a secure one).
+    if focused && !props.secure {
+        let handler = FieldInput {
+            view: cx.entity(),
+            id: props.id.clone(),
+            multiline: props.multiline,
+            on_change: props.on_change,
+            drawn: field.clone(),
+            layout,
+        };
+        let focus = state.focus.clone();
+        let reported = Rc::clone(&state.caret_reported);
+        element = element.child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |_, (), window, cx| {
+                    let at = caret.and_then(|index| caret_rect(&handler.layout, index));
+                    window.handle_input(&focus, handler, cx);
+                    tell_caret(&reported, at, window);
+                },
+            )
+            .absolute()
+            .size_0(),
+        );
+    }
 
     // Click focuses; keys edit the buffer.
     let focus_id = props.id.clone();
@@ -158,30 +198,28 @@ pub(crate) fn render_input(
             let Some(state) = view.inputs.get_mut(&key_id) else {
                 return;
             };
-            edit(state, event, multiline, cx)
+            let paste = || cx.read_from_clipboard().and_then(|item| item.text());
+            state.field.key(&event.keystroke, multiline, paste)
         };
+        // A key the field took stops here: the text it typed must not reach
+        // the input handler as well (GPUI hands an unhandled key's text to it).
+        if !matches!(outcome, Edit::None | Edit::Key(_)) {
+            cx.stop_propagation();
+        }
         match outcome {
             Edit::None => {}
             Edit::FocusNext => view.focus_neighbor(&key_id, 1, window),
             Edit::FocusPrevious => view.focus_neighbor(&key_id, -1, window),
             Edit::Changed => {
                 if on_change {
-                    if let Some(state) = view.inputs.get_mut(&key_id) {
-                        view.events.change(&key_id, &state.buffer);
-                        // Expect it back; a driver that never echoes (or
-                        // transforms the text) only ever keeps a few.
-                        if state.echoes.len() >= MAX_ECHOES {
-                            state.echoes.pop_front();
-                        }
-                        state.echoes.push_back(state.buffer.clone());
-                    }
+                    view.report_change(&key_id);
                 }
                 cx.notify();
             }
             Edit::Submitted => {
                 if on_submit {
                     if let Some(state) = view.inputs.get(&key_id) {
-                        view.events.submit(&key_id, &state.buffer);
+                        view.events.submit(&key_id, &state.field.buffer);
                     }
                 }
             }
@@ -196,155 +234,10 @@ pub(crate) fn render_input(
     element.into_any_element()
 }
 
-enum Edit {
-    None,
-    Changed,
-    Submitted,
-    /// A navigation key the driver may act on (`onKey`).
-    Key(&'static str),
-    FocusNext,
-    FocusPrevious,
-}
-
-/// Apply one keystroke to an input buffer.
-fn edit(
-    state: &mut crate::window::InputState,
-    event: &KeyDownEvent,
-    multiline: bool,
-    cx: &App,
-) -> Edit {
-    let keystroke = &event.keystroke;
-    let modifiers = keystroke.modifiers;
-    let command = modifiers.control || modifiers.platform;
-    let len = state.buffer.chars().count();
-    state.cursor = state.cursor.min(len);
-    if state.select_all {
-        state.select_all = false;
-        match keystroke.key.as_str() {
-            "backspace" | "delete" => {
-                state.buffer.clear();
-                state.cursor = 0;
-                return Edit::Changed;
-            }
-            "left" | "home" => {
-                state.cursor = 0;
-                return Edit::Changed;
-            }
-            "right" | "end" => {
-                state.cursor = len;
-                return Edit::Changed;
-            }
-            "enter" | "tab" | "escape" | "up" | "down" => {}
-            _ if command => {}
-            _ => {
-                // Typing over a selection replaces it.
-                state.buffer.clear();
-                state.cursor = 0;
-            }
-        }
+/// Tell the input method where the caret is when it has moved (or the field
+/// just took the keyboard), for its candidates to go under it.
+fn tell_caret(reported: &CaretReported, at: Option<gpui::Bounds<gpui::Pixels>>, window: &Window) {
+    if at.is_some() && reported.replace(at) != at {
+        window.invalidate_character_coordinates();
     }
-    let len = state.buffer.chars().count();
-    match keystroke.key.as_str() {
-        "backspace" => {
-            if state.cursor == 0 {
-                return Edit::None;
-            }
-            remove_char(state, state.cursor - 1);
-            state.cursor -= 1;
-            Edit::Changed
-        }
-        "delete" => {
-            if state.cursor >= len {
-                return Edit::None;
-            }
-            remove_char(state, state.cursor);
-            Edit::Changed
-        }
-        "left" => {
-            state.cursor = state.cursor.saturating_sub(1);
-            Edit::Changed
-        }
-        "right" => {
-            state.cursor = (state.cursor + 1).min(len);
-            Edit::Changed
-        }
-        "home" => {
-            state.cursor = 0;
-            Edit::Changed
-        }
-        "end" => {
-            state.cursor = len;
-            Edit::Changed
-        }
-        "enter" => {
-            if multiline && !command {
-                insert_str(state, "\n");
-                Edit::Changed
-            } else {
-                Edit::Submitted
-            }
-        }
-        "tab" => {
-            if modifiers.shift {
-                Edit::FocusPrevious
-            } else {
-                Edit::FocusNext
-            }
-        }
-        "escape" => Edit::Key("Escape"),
-        "up" => Edit::Key("ArrowUp"),
-        "down" => Edit::Key("ArrowDown"),
-        "v" if command => match cx.read_from_clipboard().and_then(|item| item.text()) {
-            Some(text) => {
-                let text = if multiline {
-                    text
-                } else {
-                    text.replace('\n', " ")
-                };
-                insert_str(state, &text);
-                Edit::Changed
-            }
-            None => Edit::None,
-        },
-        "a" if command => {
-            state.select_all = true;
-            state.cursor = len;
-            Edit::Changed
-        }
-        "space" => {
-            insert_str(state, " ");
-            Edit::Changed
-        }
-        _ => {
-            if command {
-                return Edit::None;
-            }
-            match keystroke.key_char.as_deref() {
-                Some(text) if !text.is_empty() && !text.chars().any(char::is_control) => {
-                    insert_str(state, text);
-                    Edit::Changed
-                }
-                _ => Edit::None,
-            }
-        }
-    }
-}
-
-fn insert_str(state: &mut crate::window::InputState, text: &str) {
-    let byte_index = char_to_byte(&state.buffer, state.cursor);
-    state.buffer.insert_str(byte_index, text);
-    state.cursor += text.chars().count();
-}
-
-fn remove_char(state: &mut crate::window::InputState, char_index: usize) {
-    let start = char_to_byte(&state.buffer, char_index);
-    let end = char_to_byte(&state.buffer, char_index + 1);
-    state.buffer.replace_range(start..end, "");
-}
-
-fn char_to_byte(text: &str, char_index: usize) -> usize {
-    text.char_indices()
-        .nth(char_index)
-        .map(|(byte, _)| byte)
-        .unwrap_or(text.len())
 }

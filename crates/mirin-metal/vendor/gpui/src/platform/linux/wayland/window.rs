@@ -191,6 +191,8 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
+    // mirin: a field that takes an input method's text has the keyboard.
+    accepts_text: bool,
 }
 
 #[derive(Clone)]
@@ -265,6 +267,7 @@ impl WaylandWindowState {
             appearance,
             handle,
             active: false,
+            accepts_text: false,
             hovered: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
@@ -918,10 +921,24 @@ impl WaylandWindowStatePtr {
             drop(state);
             if let Some(selection) = input_handler.marked_text_range() {
                 bounds = input_handler.bounds_for_range(selection.start..selection.start);
+            } else if let Some(selection) = input_handler.selected_text_range(true) {
+                // mirin: with nothing composed yet the caret is the area, so
+                // text input turned on says where it is from the start.
+                let caret = if selection.reversed {
+                    selection.range.start
+                } else {
+                    selection.range.end
+                };
+                bounds = input_handler.bounds_for_range(caret..caret);
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
         bounds
+    }
+
+    // mirin: see `PlatformWindow::set_accepts_text`.
+    pub fn accepts_text(&self) -> bool {
+        self.state.borrow().accepts_text
     }
 
     pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {
@@ -1522,6 +1539,24 @@ impl PlatformWindow for WaylandWindow {
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
         state.client.update_ime_position(bounds);
+    }
+
+    // mirin: text input is on only while a field takes text and this window
+    // has the keyboard (the client checks `accepts_text` when text input
+    // enters too).
+    fn set_accepts_text(&self, accepts: bool) {
+        let mut state = self.borrow_mut();
+        state.accepts_text = accepts;
+        if !state.active {
+            return;
+        }
+        let client = state.client.clone();
+        drop(state);
+        if accepts {
+            client.enable_ime();
+        } else {
+            client.disable_ime();
+        }
     }
 
     // mirin: session-lock surfaces for a lock screen.

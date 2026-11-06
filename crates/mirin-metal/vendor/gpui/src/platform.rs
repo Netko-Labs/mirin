@@ -597,6 +597,13 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
+    // mirin: an input method only while a field takes its text.
+    /// Whether this frame set an input handler: a field that takes an input
+    /// method's text has the keyboard. Wayland turns text input on and off
+    /// with it, so an input method never sees what is typed anywhere else
+    /// (a password field, a list). Called when it changes. Default: nothing.
+    fn set_accepts_text(&self, _accepts: bool) {}
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None

@@ -391,6 +391,14 @@ impl WaylandClientStatePtr {
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+        // mirin: only for a window whose field takes text (`set_accepts_text`).
+        if !state
+            .keyboard_focused_window
+            .as_ref()
+            .is_some_and(|window| window.accepts_text())
+        {
+            return;
+        }
         let Some(mut text_input) = state.text_input.take() else {
             return;
         };
