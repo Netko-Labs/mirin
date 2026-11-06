@@ -212,7 +212,9 @@ state and describes UI; the renderer is a pure function of the latest tree.
   `{"type":"frame","nodeId":"root"}` once a newly opened window has painted its
   first frame (once per open; a driver times an open with it), and
   `{"type":"visibility","nodeId":"root","visible"}` when the compositor
-  suspends the window or stops (section "Visibility").
+  suspends the window or stops (section "Visibility"), and
+  `{"type":"typing","nodeId":"root","typing"}` when a text field takes the
+  keyboard (`true`) or the last one lets it go (section "Focus").
 - Opening: a host started with its window (not `MIRIN_METAL_DEFERRED`) opens
   it on the driver's first tree, so the first frame the compositor shows is
   the app. It used to open at once on a dark stand-in (`#111114`) and show
@@ -308,6 +310,22 @@ in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
   the keyboard back to the window (a driver remounts it to take the
   keyboard back from a field). A field's or an `onKeyDown` view's keys are
   its own, taken or not: a terminal keeps Tab.
+- Autofocus: fields new in a tree that ask for the keyboard (`autofocus`)
+  don't race. One wins, the same every time: a field inside the shown trap
+  before one behind it, then the first in document order, as in HTML
+  (`Order::autofocus`, `focus/order.rs`). They used to be taken in a map's
+  order, so a sheet's field and another new field asking at once left the
+  caret in either.
+- Typing: the host tells the driver when a text field takes the keyboard
+  and when none has it any more,
+  `{"type":"typing","nodeId":"root","typing":true|false}`; only changes are
+  sent, a window opens not typing, and a view with `onKeyDown` (a
+  terminal's grid) is not typing. An app whose menus show ❖A, ❖C, ❖Z…
+  gives those keys to the field while one types (Dashi's menus channel).
+  A host older than the event never sends it; no marker, no prop.
+  `@mirinjs/metal`'s `NativeEvent` gains `{ type: "typing"; nodeId: "root";
+  typing: boolean }` (`host.ts` parses it; `render.ts` passes it to
+  `transport.onEvent` listeners only).
 - Accessibility: a focusable view is a node (a button when pressable, else
   a group) with the Focus action, and it is the tree's focus while it has
   the keyboard, so Orca follows Tab.
