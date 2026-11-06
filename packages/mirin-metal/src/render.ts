@@ -160,11 +160,8 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "layout":
       case "frame":
-<<<<<<< HEAD
       case "close-request":
-=======
       case "visibility":
->>>>>>> focus-0.5
         break;
     }
   }
