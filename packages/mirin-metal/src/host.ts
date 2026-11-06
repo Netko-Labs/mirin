@@ -57,6 +57,10 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return nodeId === "root" && typeof record.visible === "boolean"
         ? { type: "visibility", nodeId: "root", visible: record.visible }
         : null;
+    case "typing":
+      return nodeId === "root" && typeof record.typing === "boolean"
+        ? { type: "typing", nodeId: "root", typing: record.typing }
+        : null;
     case "hover":
       return typeof record.hovered === "boolean"
         ? { type: "hover", nodeId, hovered: record.hovered, ...withBounds }

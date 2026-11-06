@@ -52,6 +52,22 @@ pub(crate) struct FocusState {
     last: HashMap<String, String>,
     /// An `onWindowKey` view or a trap appeared: the keyboard goes back to the window.
     wants_root: bool,
+    /// What the driver was last told: a field has the keyboard (`typing`).
+    typing: Reported,
+}
+
+/// A yes-or-no the driver hears only when it changes; it starts at no.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Reported(bool);
+
+impl Reported {
+    /// `now`, when the driver hasn't heard it yet.
+    pub(crate) fn change(&mut self, now: bool) -> Option<bool> {
+        (self.0 != now).then(|| {
+            self.0 = now;
+            now
+        })
+    }
 }
 
 impl FocusState {
@@ -63,6 +79,7 @@ impl FocusState {
             visible: false,
             last: HashMap::new(),
             wants_root: false,
+            typing: Reported::default(),
         }
     }
 
@@ -199,6 +216,19 @@ impl RootView {
                 .any(|target| target.focus.is_focused(window))
     }
 
+    /// Tell the driver when a text field takes the keyboard or the last one
+    /// lets it go (`typing`), so its menus' text keys can go to the field.
+    /// A key-taking view (a terminal's grid) is not typing: its keys are raw.
+    pub(crate) fn report_typing(&mut self, window: &Window) {
+        let now = self
+            .inputs
+            .values()
+            .any(|state| state.focus.is_focused(window));
+        if let Some(typing) = self.focus.typing.change(now) {
+            self.events.typing(typing);
+        }
+    }
+
     /// Before a new tree's autofocus: an `onWindowKey` view or a trap
     /// appeared, so the keyboard goes back to the window (a field that asks
     /// for it takes it after).
@@ -295,5 +325,22 @@ impl RootView {
             pasted,
         );
         cx.stop_propagation();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Reported;
+
+    #[test]
+    fn typing_is_reported_only_when_it_changes() {
+        let mut typing = Reported::default();
+        // A window opens with no field typing: nothing to say.
+        assert_eq!(typing.change(false), None);
+        assert_eq!(typing.change(true), Some(true));
+        // Another field taking the keyboard is still typing.
+        assert_eq!(typing.change(true), None);
+        assert_eq!(typing.change(false), Some(false));
+        assert_eq!(typing.change(false), None);
     }
 }

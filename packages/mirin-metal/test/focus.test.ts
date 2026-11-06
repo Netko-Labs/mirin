@@ -143,4 +143,19 @@ describe("parseNativeEvent", () => {
     expect(parseNativeEvent('{"type":"visibility","nodeId":"3","visible":true}')).toBeNull();
     expect(parseNativeEvent('{"type":"visibility","nodeId":"root"}')).toBeNull();
   });
+
+  test("reads whether a field is typing", () => {
+    expect(parseNativeEvent('{"type":"typing","nodeId":"root","typing":true}')).toEqual({
+      type: "typing",
+      nodeId: "root",
+      typing: true,
+    });
+    expect(parseNativeEvent('{"type":"typing","nodeId":"root","typing":false}')).toEqual({
+      type: "typing",
+      nodeId: "root",
+      typing: false,
+    });
+    expect(parseNativeEvent('{"type":"typing","nodeId":"4","typing":true}')).toBeNull();
+    expect(parseNativeEvent('{"type":"typing","nodeId":"root"}')).toBeNull();
+  });
 });

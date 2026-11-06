@@ -420,6 +420,9 @@ fn main() {
             if let EventKind::Visibility { visible } = &event.kind {
                 line["visible"] = serde_json::json!(visible);
             }
+            if let EventKind::Typing { typing } = &event.kind {
+                line["typing"] = serde_json::json!(typing);
+            }
             if let EventKind::Drop(drop) = &event.kind {
                 line["phase"] = serde_json::json!(drop.phase.name());
                 line["x"] = serde_json::json!(drop.x);
