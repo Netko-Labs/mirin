@@ -530,12 +530,17 @@ fn window_options(
         .transpose()?
         .unwrap_or(TitleBar::Standard);
     // Surfaces may be thin (a 28px menu bar); windows keep a usable minimum,
-    // and a smaller one is raised to it (an alert asks for under 200 tall),
-    // not thrown out for the 800×600 default.
-    let minimum = if surface.is_some() { 1.0 } else { 200.0 };
+    // and a smaller one is raised to it, not thrown out for the 800×600
+    // default. An alert sized to its text is short (about 150 tall), so the
+    // height's floor is lower than the width's.
+    let (min_width, min_height) = if surface.is_some() {
+        (1.0, 1.0)
+    } else {
+        (200.0, 100.0)
+    };
     let (width, height) = size
         .filter(|(w, h)| w.is_finite() && h.is_finite() && *w > 0.0 && *h > 0.0)
-        .map(|(w, h)| (w.max(minimum), h.max(minimum)))
+        .map(|(w, h)| (w.max(min_width), h.max(min_height)))
         .unwrap_or((
             NativeUiOptions::default().width,
             NativeUiOptions::default().height,
@@ -612,8 +617,10 @@ mod window_size_tests {
 
     #[test]
     fn small_windows_are_raised_to_the_minimum() {
-        let options = window_options("t".into(), None, Some((420.0, 186.0)), None, None).unwrap();
-        assert_eq!((options.width, options.height), (420.0, 200.0));
+        let options = window_options("t".into(), None, Some((420.0, 146.0)), None, None).unwrap();
+        assert_eq!((options.width, options.height), (420.0, 146.0));
+        let options = window_options("t".into(), None, Some((120.0, 60.0)), None, None).unwrap();
+        assert_eq!((options.width, options.height), (200.0, 100.0));
         let options = window_options("t".into(), None, Some((0.0, 186.0)), None, None).unwrap();
         assert_eq!((options.width, options.height), (800.0, 600.0));
     }
