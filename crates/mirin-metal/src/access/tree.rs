@@ -176,6 +176,7 @@ impl Walk<'_, '_> {
             .and_then(|access| access.role.as_deref())
             .and_then(role_of)
             .or_else(|| props.on_press.then_some(Role::Button))
+            .or_else(|| props.focusable.then_some(Role::Group))
             .or_else(|| {
                 access
                     .and_then(|access| access.label.as_ref())
@@ -199,6 +200,13 @@ impl Walk<'_, '_> {
         if props.on_press {
             node.add_action(Action::Click);
             self.targets.insert(node_id, id.to_owned());
+        }
+        // A focusable view with the keyboard is the focus (`focus/`).
+        if props.focusable {
+            node.add_action(Action::Focus);
+            if self.facts.focused == Some(id) {
+                self.focus = Some(node_id);
+            }
         }
         let labelled = access.is_some_and(|access| access.label.is_some());
         if !(labelled && speaks_for_content(role)) {
@@ -378,6 +386,24 @@ mod tests {
         assert_eq!(password.label(), Some("Password"));
         assert_eq!(built.update.focus, ROOT);
         assert_eq!(find(&built, ROOT).children().len(), 3);
+    }
+
+    #[test]
+    fn a_focusable_view_with_the_keyboard_is_the_focus() {
+        let tree = parse_tree(
+            r#"{"type":"view","props":{"id":"1"},"children":[
+                {"type":"view","props":{"id":"save","onPress":true,"focusable":true},"children":[{"type":"text","children":["Save"]}]},
+                {"type":"view","props":{"id":"group","focusable":true}}
+            ]}"#,
+        )
+        .unwrap();
+        let built = build(&tree, &facts(Some("save")));
+        assert_eq!(built.update.focus, node_id("save"));
+        let save = find(&built, node_id("save"));
+        assert_eq!(save.role(), Role::Button);
+        assert!(save.supports_action(Action::Focus));
+        // Focusable but not pressable: still a node, so the focus has one.
+        assert_eq!(find(&built, node_id("group")).role(), Role::Group);
     }
 
     #[test]

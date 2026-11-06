@@ -14,7 +14,7 @@ use gpui::{
 };
 use serde::Deserialize;
 
-use crate::events::{EventSender, PointerPhase};
+use crate::events::{EventSender, Modifiers as Held, PointerPhase};
 use crate::tree::NodeSpec;
 use crate::window::RootView;
 
@@ -330,7 +330,7 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
 pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Window, cx: &mut App) {
     match action {
         SimAction::Focus(handle) => window.focus(&handle),
-        SimAction::Press(id) => events.press(&id),
+        SimAction::Press(id) => events.press(&id, Held::default()),
         SimAction::Keystrokes(keystrokes) => {
             for keystroke in keystrokes {
                 window.dispatch_keystroke(keystroke, cx);
@@ -342,7 +342,7 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
             events.pointer(&id, PointerPhase::Move, x1, y1, Some(bounds.clone()));
             events.pointer(&id, PointerPhase::Up, x1, y1, Some(bounds));
         }
-        SimAction::ContextMenu(id, x, y) => events.context_menu(&id, x, y),
+        SimAction::ContextMenu(id, x, y) => events.context_menu(&id, x, y, Held::default()),
         SimAction::Hover(id, hovered) => events.hover(&id, hovered),
         SimAction::Zoom => {
             crate::trace::log(format_args!("zoom requested"));

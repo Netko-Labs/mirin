@@ -230,6 +230,8 @@ fn render_view_content(
             || props.on_drop
             || props.drag_files.is_some()
             || props.drag_region
+            || props.focusable
+            || props.on_window_key
             || props.scroll
             || props.scroll_x
             || props.hover_background.is_some()
@@ -242,6 +244,9 @@ fn render_view_content(
     };
     let node_id: SharedString = id.to_string().into();
     let mut element: Stateful<Div> = element.id(ElementId::Name(node_id.clone()));
+    if props.focusable {
+        element = crate::focus::track(element, id, props, view, window);
+    }
     if props.scroll {
         element = element.overflow_y_scroll();
     }
@@ -356,6 +361,7 @@ fn render_view_content(
                         &menu_id,
                         f32::from(event.position.x),
                         f32::from(event.position.y),
+                        event.modifiers.into(),
                     );
                 }
             }),
@@ -372,12 +378,15 @@ fn render_view_content(
                 view.claims.claim_press(&press_id);
             }),
         );
-        // Only the view that took the press fires; a keyboard click (Enter or
-        // Space on a focused view) is the focused view's own.
+        // Only the view that took the press fires, with the modifiers held
+        // (⇧-click, ❖-click). GPUI's own keyboard click (on key up) is
+        // ignored: Space and Enter on a focused view press it on key down
+        // (focus/).
         element = element.cursor_pointer().on_click(cx.listener(
             move |view, event: &ClickEvent, _window, _cx| {
-                if event.is_keyboard() || view.claims.owns_press(node_id.as_ref()) {
-                    view.events.press(node_id.as_ref());
+                if !event.is_keyboard() && view.claims.owns_press(node_id.as_ref()) {
+                    view.events
+                        .press(node_id.as_ref(), event.modifiers().into());
                 }
             },
         ));

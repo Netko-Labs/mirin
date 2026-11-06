@@ -13,11 +13,14 @@ import type {
   GridPlacement,
   GridTrack,
   KeyDownInfo,
+  Modifiers,
   PointerInfo,
+  PressInfo,
   TextInputStyle,
   TextStyle,
   ViewStyle,
   WheelInfo,
+  WindowKeyInfo,
 } from "../types.ts";
 import type {
   HostInstance,
@@ -112,6 +115,12 @@ interface ViewNodeProps {
   gapX?: number;
   gapY?: number;
   access?: AccessNodeProps;
+  focusable?: boolean;
+  focusGroup?: boolean;
+  selectsOnFocus?: boolean;
+  focusTrap?: boolean;
+  focusRingColor?: Color;
+  onWindowKey?: boolean;
 }
 
 interface TextNodeProps {
@@ -229,11 +238,12 @@ interface ImageNode {
 type TreeNode = ViewNode | TextNode | InputNode | SvgNode | ImageNode;
 
 export interface Handlers {
-  press: Map<string, (event: { bounds?: Bounds }) => void>;
+  press: Map<string, (event: PressInfo) => void>;
   hover: Map<string, (hovered: boolean, bounds?: Bounds) => void>;
   pointer: Map<string, (event: PointerInfo) => void>;
-  contextMenu: Map<string, (event: { x: number; y: number }) => void>;
+  contextMenu: Map<string, (event: { x: number; y: number; modifiers: Modifiers }) => void>;
   keyDown: Map<string, (event: KeyDownInfo) => void>;
+  windowKey: Map<string, (event: WindowKeyInfo) => void>;
   wheel: Map<string, (event: WheelInfo) => void>;
   drop: Map<string, (event: DropInfo) => void>;
   layout: Map<string, (bounds: Bounds) => void>;
@@ -285,6 +295,7 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
     pointer: new Map(),
     contextMenu: new Map(),
     keyDown: new Map(),
+    windowKey: new Map(),
     wheel: new Map(),
     drop: new Map(),
     layout: new Map(),
@@ -426,6 +437,7 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.overflow === "scroll-x" || style.overflow === "scroll-both") props.scrollX = true;
   if (style.overflow === "hidden") props.clip = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
+  if (style.focusRingColor) props.focusRingColor = style.focusRingColor;
 
   const {
     onPress,
@@ -439,8 +451,21 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
     onLayout,
     occlude,
     dragRegion,
+    focusable,
+    focusGroup,
+    selectsOnFocus,
+    focusTrap,
+    onWindowKeyDown,
     testID,
   } = instance.props;
+  if (focusable) props.focusable = true;
+  if (focusGroup) props.focusGroup = true;
+  if (focusGroup && selectsOnFocus) props.selectsOnFocus = true;
+  if (focusTrap) props.focusTrap = true;
+  if (onWindowKeyDown) {
+    props.onWindowKey = true;
+    handlers.windowKey.set(String(instance.id), onWindowKeyDown);
+  }
   if (onLayout) {
     props.onLayout = true;
     handlers.layout.set(String(instance.id), onLayout);

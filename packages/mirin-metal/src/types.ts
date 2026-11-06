@@ -109,6 +109,12 @@ export interface ViewStyle {
   /** `overflow: "hidden"` clips; `"scroll"` scrolls vertically, `"scroll-x"` horizontally, `"scroll-both"` both ways. */
   overflow?: "visible" | "hidden" | "scroll" | "scroll-x" | "scroll-both";
   opacity?: number;
+  /**
+   * The focus ring's color for this view and the `focusable` views inside it
+   * (the nearest one set wins; a blue otherwise). The ring is 2 px wide, 2 px
+   * out from the view, rounded to its `borderRadius` plus 4.
+   */
+  focusRingColor?: Color;
 }
 
 /** Appearance for a `<Text>`. */
@@ -173,6 +179,20 @@ export interface PointerInfo {
   bounds?: Bounds;
 }
 
+/** The modifier keys held during a press or a right-click (`super` is the Super, ❖, key). */
+export interface Modifiers {
+  shift: boolean;
+  control: boolean;
+  alt: boolean;
+  super: boolean;
+}
+
+/** A press on a view with `onPress`: its painted bounds and the modifiers held (none for Space or Enter on a focused view). */
+export interface PressInfo {
+  bounds?: Bounds;
+  modifiers: Modifiers;
+}
+
 /** A key on a view with `onKeyDown`: GPUI's key name ("a", "enter", "left", "f5"), the text it types, and the modifiers (`meta` is Super). */
 export interface KeyDownInfo {
   key: string;
@@ -182,6 +202,11 @@ export interface KeyDownInfo {
   shift: boolean;
   meta: boolean;
   repeat: boolean;
+}
+
+/** A key no focused control took, on a view with `onWindowKeyDown`; Ctrl+V carries the clipboard's text in `pasted`. */
+export interface WindowKeyInfo extends KeyDownInfo {
+  pasted?: string;
 }
 
 /** Files a view drags out (`dragFiles`): pressing it and moving a few pixels starts the drag. */
@@ -299,11 +324,40 @@ export interface ViewProps extends AccessibilityProps {
    */
   textStyle?: TextStyle;
   /**
-   * Click/tap. `bounds` is the view's painted rect, for anchoring popups.
-   * Only the innermost `onPress` view under the pointer fires; views around
-   * it (or drawn under it) with their own `onPress` don't.
+   * Click/tap. `bounds` is the view's painted rect, for anchoring popups;
+   * `modifiers` are the keys held (⇧-click extends, ❖-click toggles). Only
+   * the innermost `onPress` view under the pointer fires; views around it
+   * (or drawn under it) with their own `onPress` don't. Space or Enter on a
+   * `focusable` view presses it too, with no modifiers.
    */
-  onPress?: (event: { bounds?: Bounds }) => void;
+  onPress?: (event: PressInfo) => void;
+  /**
+   * Takes the keyboard: Tab and ⇧Tab reach it (with text fields, in
+   * document order), Space and Enter press it, and it shows a focus ring
+   * once the keyboard moved focus there (`:focus-visible`). A press with
+   * the pointer doesn't focus it. Needs a host that names `MIRIN_METAL_FOCUS`.
+   */
+  focusable?: boolean;
+  /**
+   * The `focusable` views inside are one Tab stop, and the arrow keys move
+   * between them (a segmented control, a radio group, a list). Tab enters
+   * at the one that last had the keyboard, else the one whose
+   * `accessibilityState` is selected or checked, else the first.
+   */
+  focusGroup?: boolean;
+  /** In a `focusGroup`: the arrows press the view they reach, so the selection follows the keyboard (a sidebar, a tab list). */
+  selectsOnFocus?: boolean;
+  /** While it is shown, Tab and ⇧Tab stay inside it (a sheet, a dialog); the last one in the tree holds them. */
+  focusTrap?: boolean;
+  /**
+   * The keys no focused control takes: while no field or `onKeyDown` view
+   * has the keyboard (the window has it, or a `focusable` view that doesn't
+   * use the key: not Tab, Space, Enter, or an arrow in a group). Never takes
+   * the keyboard itself; the last such view in the tree hears them, and one
+   * appearing gives the keyboard back to the window. A window with nothing
+   * to type into gets its shortcuts this way.
+   */
+  onWindowKeyDown?: (event: WindowKeyInfo) => void;
   /** Pointer entered (`true`) or left (`false`) the view. */
   onHoverChange?: (hovered: boolean, bounds?: Bounds) => void;
   /** Stop pointer events from reaching views painted underneath (overlays). */
@@ -322,8 +376,8 @@ export interface ViewProps extends AccessibilityProps {
    * lifts. The innermost `onPointer` view under the pointer captures it.
    */
   onPointer?: (event: PointerInfo) => void;
-  /** Right-click, in window pixels. Only the innermost `onContextMenu` view fires. */
-  onContextMenu?: (event: { x: number; y: number }) => void;
+  /** Right-click, in window pixels, with the modifiers held. Only the innermost `onContextMenu` view fires. */
+  onContextMenu?: (event: { x: number; y: number; modifiers: Modifiers }) => void;
   /**
    * Take the keyboard (when the view appears and when pressed) and receive
    * every key raw, with its modifiers. For views that handle keys
@@ -409,14 +463,22 @@ export interface LayoutNode {
 
 /** An interaction event coming back from the native UI. */
 export type NativeEvent =
-  | { type: "press"; nodeId: string; bounds?: Bounds }
+  /** `modifiers` is absent from a host older than `MIRIN_METAL_FOCUS`. */
+  | { type: "press"; nodeId: string; bounds?: Bounds; modifiers?: Modifiers }
   | { type: "change"; nodeId: string; value: string }
   | { type: "submit"; nodeId: string; value: string }
   | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
   | { type: "hover"; nodeId: string; hovered: boolean; bounds?: Bounds }
   | ({ type: "pointer"; nodeId: string } & PointerInfo)
-  | { type: "contextmenu"; nodeId: string; x: number; y: number }
+  | { type: "contextmenu"; nodeId: string; x: number; y: number; modifiers?: Modifiers }
   | ({ type: "keydown"; nodeId: string } & KeyDownInfo)
+  | ({ type: "windowkey"; nodeId: string } & WindowKeyInfo)
+  /**
+   * The compositor says the window is out of sight (`visible: false`:
+   * minimized, on another desktop) or seen again; only changes are sent,
+   * and a window opens seen. Where the compositor can't tell, never sent.
+   */
+  | { type: "visibility"; nodeId: "root"; visible: boolean }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
   | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }

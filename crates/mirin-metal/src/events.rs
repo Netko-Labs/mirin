@@ -19,8 +19,9 @@ pub struct NativeUiEvent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
-    /// A `view` with `onPress` was clicked.
-    Press,
+    /// A `view` with `onPress` was clicked (or pressed from the keyboard),
+    /// with the modifiers held.
+    Press(Modifiers),
     /// An `input`'s buffer changed; carries the full new value.
     Change { value: String },
     /// An `input` was submitted (Enter, or Ctrl/Cmd+Enter when multiline).
@@ -40,10 +41,24 @@ pub enum EventKind {
         y: f32,
         bounds: Option<LayoutNode>,
     },
-    /// Right-click on a `view` with `onContextMenu`, in window coordinates.
-    ContextMenu { x: f32, y: f32 },
+    /// Right-click on a `view` with `onContextMenu`, in window coordinates,
+    /// with the modifiers held.
+    ContextMenu {
+        x: f32,
+        y: f32,
+        modifiers: Modifiers,
+    },
     /// A key went down in a `view` with `onKeyDown`.
     KeyDown(KeyDown),
+    /// A key no focused control took, for the `view` with `onWindowKey`
+    /// (`focus/`); Ctrl+V carries the clipboard's text.
+    WindowKey {
+        key: KeyDown,
+        pasted: Option<String>,
+    },
+    /// The compositor says the window is out of sight (`false`: minimized,
+    /// on another desktop) or seen again (`true`); node id is `"root"`.
+    Visibility { visible: bool },
     /// The wheel or touchpad scrolled over a `view` with `onWheel`, in lines.
     Wheel { dx: f32, dy: f32 },
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
@@ -71,6 +86,26 @@ pub struct KeyDown {
     pub shift: bool,
     pub platform: bool,
     pub repeat: bool,
+}
+
+/// The modifier keys held during a press: Super is `platform`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub platform: bool,
+}
+
+impl From<gpui::Modifiers> for Modifiers {
+    fn from(modifiers: gpui::Modifiers) -> Self {
+        Self {
+            shift: modifiers.shift,
+            ctrl: modifiers.control,
+            alt: modifiers.alt,
+            platform: modifiers.platform,
+        }
+    }
 }
 
 /// Files over, or dropped on, a view with `onDrop`.
@@ -125,7 +160,7 @@ impl EventKind {
     /// Wire name used by the stdio host and the TypeScript side.
     pub fn name(&self) -> &'static str {
         match self {
-            EventKind::Press => "press",
+            EventKind::Press(_) => "press",
             EventKind::Change { .. } => "change",
             EventKind::Submit { .. } => "submit",
             EventKind::Key { .. } => "key",
@@ -134,6 +169,8 @@ impl EventKind {
             EventKind::Pointer { .. } => "pointer",
             EventKind::ContextMenu { .. } => "contextmenu",
             EventKind::KeyDown(_) => "keydown",
+            EventKind::WindowKey { .. } => "windowkey",
+            EventKind::Visibility { .. } => "visibility",
             EventKind::Wheel { .. } => "wheel",
             EventKind::Resize => "resize",
             EventKind::Drop(_) => "drop",
@@ -144,7 +181,9 @@ impl EventKind {
 
     pub fn value(&self) -> Option<&str> {
         match self {
-            EventKind::Press
+            EventKind::Press(_)
+            | EventKind::WindowKey { .. }
+            | EventKind::Visibility { .. }
             | EventKind::Layout { .. }
             | EventKind::Hover { .. }
             | EventKind::Pointer { .. }
@@ -175,8 +214,16 @@ impl EventSender {
         Self { tx, layout }
     }
 
-    pub(crate) fn press(&self, node_id: &str) {
-        self.send(node_id, EventKind::Press);
+    pub(crate) fn press(&self, node_id: &str, modifiers: Modifiers) {
+        self.send(node_id, EventKind::Press(modifiers));
+    }
+
+    pub(crate) fn window_key(&self, node_id: &str, key: KeyDown, pasted: Option<String>) {
+        self.send(node_id, EventKind::WindowKey { key, pasted });
+    }
+
+    pub(crate) fn visibility(&self, visible: bool) {
+        self.send("root", EventKind::Visibility { visible });
     }
 
     pub(crate) fn change(&self, node_id: &str, value: &str) {
@@ -245,8 +292,8 @@ impl EventSender {
         self.send(node_id, EventKind::Resize);
     }
 
-    pub(crate) fn context_menu(&self, node_id: &str, x: f32, y: f32) {
-        self.send(node_id, EventKind::ContextMenu { x, y });
+    pub(crate) fn context_menu(&self, node_id: &str, x: f32, y: f32, modifiers: Modifiers) {
+        self.send(node_id, EventKind::ContextMenu { x, y, modifiers });
     }
 
     pub(crate) fn chrome(&self, chrome: Chrome) {

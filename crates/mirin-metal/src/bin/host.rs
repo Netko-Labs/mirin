@@ -149,6 +149,14 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
     parse_line(line).map(HostLine::Window)
 }
 
+/// The modifiers held during a press or a right-click, named as `keydown` names them.
+fn write_modifiers(line: &mut serde_json::Value, modifiers: &mirin_metal::Modifiers) {
+    line["shift"] = serde_json::json!(modifiers.shift);
+    line["ctrl"] = serde_json::json!(modifiers.ctrl);
+    line["alt"] = serde_json::json!(modifiers.alt);
+    line["meta"] = serde_json::json!(modifiers.platform);
+}
+
 /// Write one JSON line to stdout. Holding the lock for the whole line keeps
 /// the event and toplevel threads from interleaving.
 fn write_line(line: &serde_json::Value) -> bool {
@@ -379,11 +387,15 @@ fn main() {
                     "width": bounds.width, "height": bounds.height,
                 });
             }
-            if let EventKind::ContextMenu { x, y } = &event.kind {
+            if let EventKind::ContextMenu { x, y, modifiers } = &event.kind {
                 line["x"] = serde_json::json!(x);
                 line["y"] = serde_json::json!(y);
+                write_modifiers(&mut line, modifiers);
             }
-            if let EventKind::KeyDown(key) = &event.kind {
+            if let EventKind::Press(modifiers) = &event.kind {
+                write_modifiers(&mut line, modifiers);
+            }
+            if let EventKind::KeyDown(key) | EventKind::WindowKey { key, .. } = &event.kind {
                 line["key"] = serde_json::json!(key.key);
                 if let Some(text) = &key.text {
                     line["text"] = serde_json::json!(text);
@@ -393,6 +405,16 @@ fn main() {
                 line["shift"] = serde_json::json!(key.shift);
                 line["meta"] = serde_json::json!(key.platform);
                 line["repeat"] = serde_json::json!(key.repeat);
+            }
+            if let EventKind::WindowKey {
+                pasted: Some(pasted),
+                ..
+            } = &event.kind
+            {
+                line["pasted"] = serde_json::json!(pasted);
+            }
+            if let EventKind::Visibility { visible } = &event.kind {
+                line["visible"] = serde_json::json!(visible);
             }
             if let EventKind::Drop(drop) = &event.kind {
                 line["phase"] = serde_json::json!(drop.phase.name());

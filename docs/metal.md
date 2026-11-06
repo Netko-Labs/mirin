@@ -139,7 +139,7 @@ state and describes UI; the renderer is a pure function of the latest tree.
   later tree resets the buffer (controlled-input semantics). Enter submits a
   single-line input; multiline inserts a newline and Ctrl/Cmd+Enter submits.
   Ctrl/Cmd+V pastes from the system clipboard. Tab / Shift+Tab move focus
-  between inputs in document order (wrapping). Input methods (Fcitx 5, IBus;
+  to the next or previous input or `focusable` view (section "Focus"). Input methods (Fcitx 5, IBus;
   text-input-v3 on Wayland) work in every field, single-line or multiline,
   in a window or on a layer surface: the focused field is GPUI's input
   handler (`src/ime.rs`), its composition shows underlined at the caret and
@@ -169,11 +169,15 @@ state and describes UI; the renderer is a pure function of the latest tree.
   the shadow. Absent or 0 changes at once. A driver that turns motion off
   (Reduce Motion) leaves it out.
 - Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
-- Events: `{"type":"press","nodeId"}`, `{"type":"change","nodeId","value"}`,
+- Events: `{"type":"press","nodeId","shift","ctrl","alt","meta"}` (the
+  modifiers held, Super as `meta`; all false for Space or Enter on a focused
+  view; `contextmenu` carries them too), `{"type":"change","nodeId","value"}`,
   `{"type":"submit","nodeId","value"}`, `{"type":"layout","nodeId":"root",
   "nodes":[{id,x,y,width,height}]}` in reply to a layout query, and
   `{"type":"frame","nodeId":"root"}` once a newly opened window has painted its
-  first frame (once per open; a driver times an open with it).
+  first frame (once per open; a driver times an open with it), and
+  `{"type":"visibility","nodeId":"root","visible"}` when the compositor
+  suspends the window or stops (section "Visibility").
 - Opening: a host started with its window (not `MIRIN_METAL_DEFERRED`) opens
   it on the driver's first tree, so the first frame the compositor shows is
   the app. It used to open at once on a dark stand-in (`#111114`) and show
@@ -222,6 +226,73 @@ numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
 (`onKeyPress` reports Escape, ArrowUp, and ArrowDown, for list navigation), and
 `<ScrollView>` (a scrolling `<View>`).
+
+### Focus
+
+Which view the keyboard goes to (`src/focus/`; the rules are pure and tested
+in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
+(`FOCUS_MARKER`); one without refuses a tree with these props.
+
+- `focusable` (and an `id`) on a view: Tab and Shift+Tab reach it, in
+  document order together with every `input`, wrapping around; Space or
+  Enter press it (`press`, with no modifiers, as the key goes down and not
+  again while it repeats; GPUI's own key-up click is ignored). A press with the pointer doesn't focus
+  it: GPUI's automatic focus on mouse down is off for the whole window
+  (`pointer.rs` prevents it in the capture phase), fields and `onKeyDown`
+  views focus themselves when pressed, and a press anywhere gives the
+  keyboard back from a focused view to the window.
+- `focusGroup` on a view: the focusable views inside it are one Tab stop,
+  entered at the one that last had the keyboard, else the one whose
+  `access` says `selected` or `checked`, else the first. The arrow keys
+  move between them, stopping at the ends. With `selectsOnFocus` the arrows
+  also press the view they reach (a sidebar, a tab list). Fields never join
+  a group.
+- `focusTrap` on a view: while it is in the tree, Tab stays inside it (the
+  last trap in document order holds it), and a focused view outside it gives
+  the keyboard back to the window. A trap appearing does too, so Enter goes
+  to the sheet's own keys, not to a button behind it.
+- The ring: a focused view shows a ring only after the keyboard moved focus
+  (CSS `:focus-visible`): `RING_WIDTH` 2 px wide, `RING_OFFSET` 2 px out, its
+  corners the view's `cornerRadius` plus 4, drawn as an absolute child (a
+  view that clips cuts it). Its color is the nearest `focusRingColor` on the
+  way up (`#RRGGBB[AA]`), else a blue. Fields keep their
+  `focusBorderColor` instead.
+- The window's keys: when no field, `onKeyDown` view, or focusable view
+  has the keyboard, the window itself does (a focus handle on the outermost
+  element), so keys still arrive. Every key that reaches it and that the
+  focus model doesn't use (Tab; the arrows in a group; Space and Enter on a
+  focused view) goes to the last `onWindowKey` view in document order as
+  `{"type":"windowkey","nodeId","key","text"?,"ctrl","alt","shift","meta",
+  "repeat","pasted"?}`, where Ctrl+V carries the clipboard's text in
+  `pasted`. Such a view never takes the keyboard; a new one appearing gives
+  the keyboard back to the window (a driver remounts it to take the
+  keyboard back from a field). A field's or an `onKeyDown` view's keys are
+  its own, taken or not: a terminal keeps Tab.
+- Accessibility: a focusable view is a node (a button when pressable, else
+  a group) with the Focus action, and it is the tree's focus while it has
+  the keyboard, so Orca follows Tab.
+- `@mirinjs/metal`: `focusable`, `focusGroup`, `selectsOnFocus`,
+  `focusTrap`, `onWindowKeyDown(event: WindowKeyInfo)` on `<View>`,
+  `style.focusRingColor`; `onPress` gets `{ bounds, modifiers }` and
+  `onContextMenu` `{ x, y, modifiers }`, where `modifiers` is
+  `{ shift, control, alt, super }` (all false from an older host).
+- Not yet: focus moved by the driver (a `focus()` call), Home and End in a
+  group, a grid's two-dimensional arrows, rings on views in a virtualized
+  list that clip them.
+
+### Visibility
+
+A window learns when no one can see it. On Wayland the compositor says so
+with xdg_toplevel's `suspended` state (xdg-shell 6; mirin's GPUI fork binds
+`xdg_wm_base` up to 6 and reads it, `vendor/gpui/MIRIN.md`): minimized, on
+a desktop that isn't shown, fully covered where the compositor tracks that.
+The host sends `{"type":"visibility","nodeId":"root","visible":false}` when
+it is suspended and `true` when it is seen again; only changes are sent and
+a window opens seen, so a compositor that never suspends sends nothing.
+Dashi's shell suspends its windows off screen (minimized, hidden, on another
+Space) through its compositor's `suspend` request. An app that polls stops
+meanwhile (Dashi's Activity Monitor); GPUI keeps drawing as before, which
+costs nothing while the compositor sends no frame callbacks.
 
 ## 2b. `@mirinjs/metal-ui`: shadcn/ui on Metal
 

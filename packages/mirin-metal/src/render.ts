@@ -11,7 +11,10 @@ import { ChromeStore, chromeFromEvent, withChrome } from "./chrome.ts";
 import { hostConfig } from "./lib/host-config.ts";
 import type { Container } from "./lib/instances.ts";
 import { type Handlers, serializeRoot } from "./lib/serialize.ts";
-import type { NativeEvent, NativeRoot, NativeTransport } from "./types.ts";
+import type { Modifiers, NativeEvent, NativeRoot, NativeTransport } from "./types.ts";
+
+/** What a host older than `MIRIN_METAL_FOCUS` reports: no keys held. */
+const NO_MODIFIERS: Modifiers = { shift: false, control: false, alt: false, super: false };
 
 const reconciler = ReactReconciler(hostConfig);
 // Type-only cast: @types/react-reconciler 0.32 doesn't declare this 0.33 export.
@@ -24,6 +27,7 @@ const DISCRETE: ReadonlySet<NativeEvent["type"]> = new Set([
   "submit",
   "key",
   "keydown",
+  "windowkey",
   "contextmenu",
   "drop",
 ]);
@@ -57,6 +61,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     pointer: new Map(),
     contextMenu: new Map(),
     keyDown: new Map(),
+    windowKey: new Map(),
     wheel: new Map(),
     drop: new Map(),
     layout: new Map(),
@@ -95,7 +100,10 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
   function dispatch(event: NativeEvent): void {
     switch (event.type) {
       case "press":
-        handlers.press.get(event.nodeId)?.({ bounds: event.bounds });
+        handlers.press.get(event.nodeId)?.({
+          bounds: event.bounds,
+          modifiers: event.modifiers ?? NO_MODIFIERS,
+        });
         break;
       case "change":
         handlers.change.get(event.nodeId)?.(event.value);
@@ -118,11 +126,20 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         handlers.layout.get(event.nodeId)?.(event.bounds);
         break;
       case "contextmenu":
-        handlers.contextMenu.get(event.nodeId)?.({ x: event.x, y: event.y });
+        handlers.contextMenu.get(event.nodeId)?.({
+          x: event.x,
+          y: event.y,
+          modifiers: event.modifiers ?? NO_MODIFIERS,
+        });
         break;
       case "keydown": {
         const { nodeId: _id, type: _type, ...info } = event;
         handlers.keyDown.get(event.nodeId)?.(info);
+        break;
+      }
+      case "windowkey": {
+        const { nodeId: _id, type: _type, ...info } = event;
+        handlers.windowKey.get(event.nodeId)?.(info);
         break;
       }
       case "wheel":
@@ -138,6 +155,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "layout":
       case "frame":
+      case "visibility":
         break;
     }
   }
