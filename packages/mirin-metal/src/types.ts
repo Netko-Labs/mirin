@@ -298,7 +298,11 @@ export interface ViewProps extends AccessibilityProps {
    * child component returns). Without it they render with default styling.
    */
   textStyle?: TextStyle;
-  /** Click/tap. `bounds` is the view's painted rect, for anchoring popups. */
+  /**
+   * Click/tap. `bounds` is the view's painted rect, for anchoring popups.
+   * Only the innermost `onPress` view under the pointer fires; views around
+   * it (or drawn under it) with their own `onPress` don't.
+   */
   onPress?: (event: { bounds?: Bounds }) => void;
   /** Pointer entered (`true`) or left (`false`) the view. */
   onHoverChange?: (hovered: boolean, bounds?: Bounds) => void;
@@ -313,9 +317,12 @@ export interface ViewProps extends AccessibilityProps {
   dragRegion?: boolean;
   /** Called with the view's painted bounds whenever they change. */
   onLayout?: (bounds: Bounds) => void;
-  /** Press on this view, then every move and the release until the button lifts. */
+  /**
+   * Press on this view, then every move and the release until the button
+   * lifts. The innermost `onPointer` view under the pointer captures it.
+   */
   onPointer?: (event: PointerInfo) => void;
-  /** Right-click, in window pixels. */
+  /** Right-click, in window pixels. Only the innermost `onContextMenu` view fires. */
   onContextMenu?: (event: { x: number; y: number }) => void;
   /**
    * Take the keyboard (when the view appears and when pressed) and receive

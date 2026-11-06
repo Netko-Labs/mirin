@@ -118,6 +118,9 @@ pub(crate) struct RootView {
     /// an input), so the region must not start moving the window. Reset on
     /// every press before it dispatches; deeper nodes handle it first.
     pub(crate) press_claimed: bool,
+    /// The views the current presses belong to: the innermost with the
+    /// handler (`press.rs`).
+    pub(crate) claims: crate::press::Claims,
     /// Scroll state of scrollable nodes, by id, for programmatic scrolling.
     pub(crate) scrolls: HashMap<String, ScrollHandle>,
     /// When each scrollable node last scrolled, for its auto-hiding scroll bar (`scrollbar.rs`).
@@ -135,6 +138,10 @@ pub(crate) struct RootView {
     pub(crate) heights: Heights,
     /// Until this window's first paint, which is reported (`frame`).
     first_frame: bool,
+    /// The tree shown is the host's placeholder, not one the driver sent.
+    placeholder: bool,
+    /// A driver's tree has been painted (traced once: an open's time to content).
+    content_painted: bool,
     /// The accessibility tree, published after each paint (`access/`); none when turned off.
     pub(crate) access: Option<Rc<RefCell<Accessibility>>>,
 }
@@ -146,8 +153,11 @@ pub(crate) struct KeyTarget {
 }
 
 impl RootView {
+    /// A view showing `tree`; `placeholder` when it is the host's stand-in
+    /// rather than the driver's.
     pub(crate) fn new(
         tree: NodeSpec,
+        placeholder: bool,
         events: EventSender,
         layout: LayoutMap,
         cx: &mut App,
@@ -159,6 +169,7 @@ impl RootView {
             layout,
             dragging: None,
             press_claimed: false,
+            claims: crate::press::Claims::default(),
             scrolls: HashMap::new(),
             scroll_activity: HashMap::new(),
             lists: HashMap::new(),
@@ -167,6 +178,8 @@ impl RootView {
             drop_target: None,
             heights: Heights::default(),
             first_frame: true,
+            placeholder,
+            content_painted: false,
             access: None,
         };
         view.sync_inputs(cx);
@@ -179,6 +192,7 @@ impl RootView {
     /// Replace the tree and reconcile input state with it.
     pub(crate) fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
         self.tree = Rc::new(tree);
+        self.placeholder = false;
         self.sync_inputs(cx);
         self.sync_key_targets(cx);
         crate::list::sync(&mut self.lists, &self.tree);
@@ -342,6 +356,10 @@ impl Render for RootView {
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
         let root = capture_root(content, cx);
         let first = std::mem::take(&mut self.first_frame);
+        // The first frame with the driver's tree in it: what a person
+        // opening the app first sees of it (traced).
+        let first_content = !self.placeholder && !self.content_painted;
+        self.content_painted |= first_content;
         let access = self.access_canvas(window);
         if !first && !crate::trace::enabled() {
             return match access {
@@ -363,6 +381,17 @@ impl Render for RootView {
             move |_, (), _, _| {
                 if first {
                     events.frame();
+                }
+                if first || first_content {
+                    crate::trace::log(format_args!(
+                        "first {} frame painted, {:.0}ms after the host started",
+                        if first_content {
+                            "content"
+                        } else {
+                            "placeholder"
+                        },
+                        crate::trace::since_start_ms()
+                    ));
                 }
                 crate::trace::log(format_args!(
                     "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms",

@@ -274,6 +274,8 @@ fn start_profiler() {
 fn start_profiler() {}
 
 fn main() {
+    // Traced opens are timed from here (`first content frame painted`).
+    mirin_metal::trace::mark_start();
     // Asked by gpu::prefer_display_gpu, in a child of the host: answer and exit.
     #[cfg(target_os = "linux")]
     if std::env::args().nth(1).as_deref() == Some(mirin_metal::gpu::PROBE_ARG) {

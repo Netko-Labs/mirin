@@ -3,7 +3,19 @@
 //! with the renderer's (see `packages/mirin-metal-ui/bench/native.tsx`).
 
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+static STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// Note when the host started (first thing in `main`); later calls keep the first.
+pub fn mark_start() {
+    STARTED.get_or_init(Instant::now);
+}
+
+/// Milliseconds since `mark_start` (since the first call, if it never ran).
+pub fn since_start_ms() -> f64 {
+    STARTED.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
+}
 
 /// Whether tracing is on for this process.
 pub fn enabled() -> bool {

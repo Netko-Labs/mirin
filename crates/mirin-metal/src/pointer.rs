@@ -40,14 +40,22 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
     let listeners = canvas(
         |_, _, _| {},
         move |_, _, window, _| {
-            // Each left press starts unclaimed; the capture phase runs before
-            // any node's listener (a drag region asks whether a descendant
-            // took the press).
+            // Each press starts unclaimed; the capture phase runs before any
+            // node's listener (a drag region asks whether a descendant took
+            // the press, and only the innermost handler takes it: press.rs).
             let presses = view.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
-                if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
-                    let _ = presses.update(cx, |view, _| view.press_claimed = false);
+                if phase != DispatchPhase::Capture {
+                    return;
                 }
+                let _ = presses.update(cx, |view, _| match event.button {
+                    MouseButton::Left => {
+                        view.press_claimed = false;
+                        view.claims.begin_left();
+                    }
+                    MouseButton::Right => view.claims.begin_right(),
+                    _ => {}
+                });
             });
             let moves = view.clone();
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {

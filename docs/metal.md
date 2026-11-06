@@ -111,6 +111,22 @@ state and describes UI; the renderer is a pure function of the latest tree.
   `onPress`. `id` is required for `onPress`, `hoverBackground`, and `scroll`
   (GPUI keeps per-element state for those); the TypeScript side sends one for
   every node.
+- Presses go to the innermost view that handles them, and stop there: a left
+  click fires `press` on the deepest `onPress` view under the pointer only,
+  a right click fires `contextmenu` on the deepest `onContextMenu` view only,
+  and a press starts a capture (`pointer`) on the deepest `onPointer` view
+  only. Ancestors with the same handler stay quiet, as on the web when every
+  handled press calls `stopPropagation`, and so does a view another is drawn
+  over (an event block over a calendar's time slot). A press, a menu, and a
+  capture are claimed separately (a slider inside a pressable card drags,
+  and a click on the card around it presses). Hover is not claimed: every
+  view under the pointer is hovered (`hover`, `hoverBackground`), as in CSS.
+  Until 2026-11-05 every view under the pointer with the handler fired (a
+  checkbox inside a pressable row toggled and pressed the row); code that
+  relied on that must call the outer action from the inner handler. The
+  renderer decides in `src/press.rs`: GPUI runs listeners in reverse paint
+  order, so the first view to claim a press is the innermost, topmost one,
+  and the claims reset in each press's capture phase.
 - `text`: string children plus `color`, `size`, `weight`
   (`normal|medium|semibold|bold`), `mono` (system monospace via `fc-match`),
   `truncate`, `opacity`.
@@ -148,6 +164,18 @@ state and describes UI; the renderer is a pure function of the latest tree.
   "nodes":[{id,x,y,width,height}]}` in reply to a layout query, and
   `{"type":"frame","nodeId":"root"}` once a newly opened window has painted its
   first frame (once per open; a driver times an open with it).
+- Opening: a host started with its window (not `MIRIN_METAL_DEFERRED`) opens
+  it on the driver's first tree, so the first frame the compositor shows is
+  the app. It used to open at once on a dark stand-in (`#111114`) and show
+  that until the first tree arrived and painted: about a second of a black
+  window for an app slow to render its first tree. A title sent before the
+  tree is the one the window opens with; simulations wait for the window. If
+  no tree comes within 2 s, or the driver goes away first, the window opens
+  on the stand-in. Desktop surfaces (layer shell, the lock screen) still
+  open at once: a lock screen must lock now, and a layer surface's stand-in
+  is transparent. With `MIRIN_METAL_TRACE=1` the host logs how long the
+  window waited and `first content frame painted, N ms after the host
+  started` (or `first placeholder frame …` when it opened on the stand-in).
 - Simulation (checks and tools): a stdin line `{"sim": ...}` instead of a tree.
   `{"kind":"click","id"}` / `{"kind":"click","x","y"}` focuses an input or
   fires a pressable view's `press` (resolved against the painted bounds;
@@ -469,6 +497,15 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   sizes (`crates/mirin-metal/vendor/taffy/MIRIN.md`); flex's zero minimum no
   longer overrides explicit `min-w`/`min-h`; `w-full` on inputs is width,
   not growth; the full Tailwind v4 palette (generated).
+
+- Opening (2026-11-05, release host on a private headless weston): a window
+  opened on the dark stand-in and showed it until the driver's first tree
+  painted. With a driver whose first tree takes 1 s (an app slow to start),
+  the stand-in was on screen from 91 ms to 1044 ms; the window now opens on
+  that tree and its first frame, at 1063 ms, is the app. Apps whose first
+  tree is quick (Dashi's Activity Monitor, Software, Calculator on the
+  laptop: the tree is in by ~60 ms) paint their content first, 76–97 ms
+  after the host starts, where the stand-in painted 14–38 ms before it.
 
 Open: React work per update (the demo re-renders its whole list on select),
 whole-tree JSON per update (the patch protocol, B3), GPUI's full relayout for

@@ -286,6 +286,10 @@ fn render_view_content(
             MouseButton::Left,
             cx.listener(move |view, event: &MouseDownEvent, _window, _cx| {
                 view.press_claimed = true;
+                // A nested `onPointer` view already has it (press.rs).
+                if !view.claims.claim_pointer(&pointer_id) {
+                    return;
+                }
                 view.dragging = Some(pointer_id.clone());
                 view.emit_pointer(&pointer_id, "down", event.position);
             }),
@@ -342,30 +346,41 @@ fn render_view_content(
     }
     if props.on_context_menu {
         let menu_id = id.to_string();
-        let events = view.events.clone();
+        // The innermost `onContextMenu` view under the pointer opens its
+        // menu; the ones around it don't (press.rs).
         element = element.on_mouse_down(
             MouseButton::Right,
-            move |event: &MouseDownEvent, _window: &mut Window, _cx: &mut App| {
-                events.context_menu(
-                    &menu_id,
-                    f32::from(event.position.x),
-                    f32::from(event.position.y),
-                );
-            },
+            cx.listener(move |view, event: &MouseDownEvent, _window, _cx| {
+                if view.claims.claim_menu(&menu_id) {
+                    view.events.context_menu(
+                        &menu_id,
+                        f32::from(event.position.x),
+                        f32::from(event.position.y),
+                    );
+                }
+            }),
         );
     }
     if props.on_press {
-        let events = view.events.clone();
-        // Pressing a button inside a drag region is a click, not a move.
+        let press_id = id.to_string();
+        // Pressing a button inside a drag region is a click, not a move; the
+        // innermost pressable under the pointer takes the press (press.rs).
         element = element.on_mouse_down(
             MouseButton::Left,
-            cx.listener(|view, _event: &MouseDownEvent, _window, _cx| view.press_claimed = true),
+            cx.listener(move |view, _event: &MouseDownEvent, _window, _cx| {
+                view.press_claimed = true;
+                view.claims.claim_press(&press_id);
+            }),
         );
-        element = element.cursor_pointer().on_click(
-            move |_event: &ClickEvent, _window: &mut Window, _cx: &mut App| {
-                events.press(node_id.as_ref());
+        // Only the view that took the press fires; a keyboard click (Enter or
+        // Space on a focused view) is the focused view's own.
+        element = element.cursor_pointer().on_click(cx.listener(
+            move |view, event: &ClickEvent, _window, _cx| {
+                if event.is_keyboard() || view.claims.owns_press(node_id.as_ref()) {
+                    view.events.press(node_id.as_ref());
+                }
             },
-        );
+        ));
     }
     if props.drag_region {
         // Like a title bar: a press starts a compositor-driven move (the

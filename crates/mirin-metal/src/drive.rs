@@ -49,12 +49,14 @@ pub enum HostMessage {
     Hide,
 }
 
-/// Open the native window rendering `initial_tree` and hand the calling thread
-/// to GPUI's event loop. Blocks until the app quits; call on the process main
-/// thread. New trees sent on `updates` replace the rendered tree (last write
-/// wins); node interactions are reported on `events`.
+/// Open the native window and hand the calling thread to GPUI's event loop.
+/// Blocks until the app quits; call on the process main thread. A window
+/// opens on the driver's first tree (`FirstTree`), or on `initial_tree` when
+/// none comes within `FIRST_TREE_WAIT`; a desktop surface opens on
+/// `initial_tree` at once. New trees sent on `updates` replace the rendered
+/// tree (last write wins); node interactions are reported on `events`.
 pub fn run(
-    options: NativeUiOptions,
+    mut options: NativeUiOptions,
     initial_tree: NodeSpec,
     updates: mpsc::Receiver<DriverMessage>,
     events: mpsc::Sender<NativeUiEvent>,
@@ -63,17 +65,109 @@ pub fn run(
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
             let (access, asked) = futures::channel::mpsc::unbounded();
-            let Some(window) =
-                open_window(cx, &options, initial_tree, events.clone(), access.clone())
-            else {
-                cx.quit();
-                return;
-            };
-            let messages = bridge(updates, HostMessage::Driver);
-            let drive = Drive::new(Some(window), events, None, access);
-            cx.spawn(async move |cx| drive.run(messages, asked, cx).await)
-                .detach();
+            let mut messages = bridge(updates, HostMessage::Driver);
+            cx.spawn(async move |cx| {
+                // A lock screen must lock now, and a layer surface's stand-in
+                // is transparent: only windows wait for the app.
+                let mut first = if options.surface.is_none() {
+                    FirstTree::wait(&mut messages, FIRST_TREE_WAIT, cx).await
+                } else {
+                    FirstTree::default()
+                };
+                if let Some(title) = first.title.take() {
+                    options.title = title.into();
+                }
+                let (tree, placeholder) = match first.tree.take() {
+                    Some(tree) => (tree, false),
+                    None => (initial_tree, true),
+                };
+                let opened = cx
+                    .update(|cx| {
+                        open_window(
+                            cx,
+                            &options,
+                            tree,
+                            placeholder,
+                            events.clone(),
+                            access.clone(),
+                        )
+                    })
+                    .ok()
+                    .flatten();
+                let Some(window) = opened else {
+                    let _ = cx.update(|cx| cx.quit());
+                    return;
+                };
+                let mut drive = Drive::new(Some(window), events, None, access);
+                if !first.rest.is_empty() && !drive.turn(first.rest, cx).await {
+                    return;
+                }
+                drive.run(messages, asked, cx).await;
+            })
+            .detach();
         });
+}
+
+/// How long a window waits for the driver's first tree before it opens on
+/// the host's stand-in (a driver that is slow to start, or never draws).
+const FIRST_TREE_WAIT: Duration = Duration::from_millis(2000);
+
+/// What the driver sent before its window opened. A window opens on the
+/// driver's first tree, so the first frame the compositor shows is the app,
+/// not the host's dark stand-in followed by the app a moment later.
+#[derive(Default)]
+struct FirstTree {
+    /// The newest tree, to open on.
+    tree: Option<NodeSpec>,
+    /// The newest title, to open with.
+    title: Option<String>,
+    /// Everything else, in order, for the window once it is open.
+    rest: Vec<HostMessage>,
+}
+
+impl FirstTree {
+    fn take(&mut self, message: HostMessage) {
+        match message {
+            HostMessage::Driver(DriverMessage::Tree(tree)) => self.tree = Some(*tree),
+            HostMessage::Driver(DriverMessage::Title(title)) => self.title = Some(title),
+            other => self.rest.push(other),
+        }
+    }
+
+    /// Wait for the driver's first tree, up to `limit`, and take what came
+    /// with it (the newest tree wins). Gives up early when the driver goes.
+    async fn wait(
+        messages: &mut UnboundedReceiver<HostMessage>,
+        limit: Duration,
+        cx: &mut AsyncApp,
+    ) -> Self {
+        let started = std::time::Instant::now();
+        let mut first = Self::default();
+        let mut timer = std::pin::pin!(cx.background_executor().timer(limit));
+        while first.tree.is_none() {
+            match futures::future::select(messages.next(), timer.as_mut()).await {
+                futures::future::Either::Left((Some(message), _)) => first.take(message),
+                // The driver went away, or is slow: open on the stand-in.
+                futures::future::Either::Left((None, _)) | futures::future::Either::Right(_) => {
+                    break
+                }
+            }
+        }
+        while let Ok(message) = messages.try_recv() {
+            first.take(message);
+        }
+        let waited = started.elapsed().as_secs_f64() * 1000.0;
+        if first.tree.is_some() {
+            crate::trace::log(format_args!(
+                "window opens on the driver's first tree, after waiting {waited:.0}ms"
+            ));
+        } else {
+            crate::trace::log(format_args!(
+                "no tree from the driver in {waited:.0}ms: the window opens on the stand-in"
+            ));
+        }
+        first
+    }
 }
 
 /// `run` for a deferred host: GPUI (the GPU context, the fonts) starts at
@@ -134,12 +228,14 @@ fn bridge<T: Send + 'static, M: Send + 'static>(
     rx
 }
 
-/// Open the window for `options`, drawing `tree` on its first frame; None
+/// Open the window for `options`, drawing `tree` on its first frame
+/// (`placeholder` when it is the host's stand-in, not the driver's); None
 /// (logged) when the platform refused it.
 fn open_window(
     cx: &mut App,
     options: &NativeUiOptions,
     tree: NodeSpec,
+    placeholder: bool,
     events: mpsc::Sender<NativeUiEvent>,
     access: UnboundedSender<SimCommand>,
 ) -> Option<WindowHandle<RootView>> {
@@ -174,7 +270,7 @@ fn open_window(
     let event_sender = EventSender::new(events, layout.clone());
     let chrome_events = event_sender.clone();
     let opened = cx.open_window(window_options, |_window, cx| {
-        cx.new(|cx| RootView::new(tree, event_sender, layout, cx))
+        cx.new(|cx| RootView::new(tree, placeholder, event_sender, layout, cx))
     });
     let window = match opened {
         Ok(window) => window,
@@ -445,13 +541,13 @@ impl Drive {
             eprintln!("[mirin-metal-host] rejected line: the window is already open");
             return true;
         }
-        let tree = self
-            .held
-            .take()
-            .unwrap_or_else(|| (resident.initial_for)(&options));
+        let (tree, placeholder) = match self.held.take() {
+            Some(tree) => (tree, false),
+            None => ((resident.initial_for)(&options), true),
+        };
         let events = self.events.clone();
         let opened = cx
-            .update(|cx| open_window(cx, &options, tree, events, self.access.clone()))
+            .update(|cx| open_window(cx, &options, tree, placeholder, events, self.access.clone()))
             .ok()
             .flatten();
         match opened {
@@ -493,5 +589,49 @@ impl Drive {
             eprintln!("[mirin-metal-host] dropped simulated input: the window was hidden");
             self.pending.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FirstTree, HostMessage};
+    use crate::sim::SimCommand;
+    use crate::tree::parse_tree;
+    use crate::window::DriverMessage;
+
+    fn tree(background: &str) -> HostMessage {
+        let json = format!(r#"{{"type":"view","props":{{"background":"{background}"}}}}"#);
+        HostMessage::Driver(DriverMessage::Tree(Box::new(parse_tree(&json).unwrap())))
+    }
+
+    #[test]
+    fn a_window_opens_on_the_newest_tree_and_title() {
+        let mut first = FirstTree::default();
+        first.take(HostMessage::Driver(DriverMessage::Title("Old".into())));
+        first.take(tree("#000000"));
+        first.take(tree("#ffffff"));
+        first.take(HostMessage::Driver(DriverMessage::Title("Software".into())));
+        assert_eq!(
+            first.tree,
+            parse_tree(r##"{"type":"view","props":{"background":"#ffffff"}}"##).ok()
+        );
+        assert_eq!(first.title.as_deref(), Some("Software"));
+        assert!(first.rest.is_empty());
+    }
+
+    #[test]
+    fn what_needs_a_window_waits_for_it_in_order() {
+        let mut first = FirstTree::default();
+        first.take(HostMessage::Driver(DriverMessage::Sim(SimCommand::Layout)));
+        first.take(tree("#ffffff"));
+        first.take(HostMessage::Driver(DriverMessage::Unlock));
+        assert!(first.tree.is_some());
+        assert!(matches!(
+            first.rest.as_slice(),
+            [
+                HostMessage::Driver(DriverMessage::Sim(SimCommand::Layout)),
+                HostMessage::Driver(DriverMessage::Unlock)
+            ]
+        ));
     }
 }
