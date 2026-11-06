@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createContext, createElement, useContext, useState } from "react";
 import { useWindowChrome } from "../src/chrome.ts";
-import { Text, TextInput, View } from "../src/components.ts";
+import { Text, TextInput, TextInputDefaults, View } from "../src/components.ts";
 import { parseNativeEvent } from "../src/host.ts";
 import { createPortal, render } from "../src/render.ts";
 import type { NativeEvent, NativeTransport } from "../src/types.ts";
@@ -135,6 +135,13 @@ describe("parseNativeEvent", () => {
       value: "Escape",
     });
     expect(parseNativeEvent('{"type":"key","nodeId":"7","value":"F5"}')).toBeNull();
+    expect(parseNativeEvent('{"type":"selection","nodeId":"7","start":1,"end":3}')).toEqual({
+      type: "selection",
+      nodeId: "7",
+      start: 1,
+      end: 3,
+    });
+    expect(parseNativeEvent('{"type":"selection","nodeId":"7","start":3,"end":1}')).toBeNull();
     expect(parseNativeEvent('{"type":"frame","nodeId":"root"}')).toEqual({
       type: "frame",
       nodeId: "root",
@@ -223,6 +230,61 @@ describe("TextInput", () => {
     transport.emit({ type: "change", nodeId: input, value: "sk-123" });
     transport.emit({ type: "press", nodeId: save });
     expect(saved).toEqual(["sk-123"]);
+    root.unmount();
+  });
+
+  test("a controlled selection goes out and its changes come back", async () => {
+    const transport = fakeTransport();
+    const seen: Array<{ start: number; end: number }> = [];
+    function Field() {
+      const [selection, setSelection] = useState({ start: 0, end: 2.6 });
+      return createElement(TextInput, {
+        value: "hello",
+        testID: "field",
+        selection,
+        selectionColor: "#3E8A7224",
+        onSelectionChange: (next: { start: number; end: number }) => {
+          seen.push(next);
+          setSelection(next);
+        },
+      });
+    }
+    const root = render(createElement(Field), transport);
+    await nextCommit();
+    const id = root.nodeId("field") ?? "";
+    const props = JSON.parse(transport.sent.at(-1) ?? "").props;
+    expect(props).toMatchObject({
+      selection: { start: 0, end: 2 },
+      onSelection: true,
+      selectionColor: "#3E8A7224",
+    });
+
+    transport.emit({ type: "selection", nodeId: id, start: 1, end: 4 });
+    await nextCommit();
+    expect(seen).toEqual([{ start: 1, end: 4 }]);
+    expect(JSON.parse(transport.sent.at(-1) ?? "").props.selection).toEqual({ start: 1, end: 4 });
+    root.unmount();
+  });
+
+  test("TextInputDefaults gives fields a selection color they don't set", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        TextInputDefaults.Provider,
+        { value: { selectionColor: "#00ff0033" } },
+        createElement(
+          View,
+          null,
+          createElement(TextInput, { value: "", testID: "plain" }),
+          createElement(TextInput, { value: "", testID: "own", selectionColor: "#ff000033" }),
+        ),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const [plain, own] = JSON.parse(transport.sent.at(-1) ?? "").children;
+    expect(plain.props.selectionColor).toBe("#00ff0033");
+    expect(own.props.selectionColor).toBe("#ff000033");
     root.unmount();
   });
 });

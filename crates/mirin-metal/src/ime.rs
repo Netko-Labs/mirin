@@ -63,6 +63,7 @@ impl FieldInput {
                     view.report_change(&id);
                 }
             }
+            view.report_selection(&id);
             cx.notify();
         });
     }
@@ -98,7 +99,7 @@ impl InputHandler for FieldInput {
     ) -> Option<UTF16Selection> {
         self.read(cx, |field| UTF16Selection {
             range: field.selected_utf16(),
-            reversed: false,
+            reversed: field.preedit.is_none() && field.is_reversed(),
         })
     }
 

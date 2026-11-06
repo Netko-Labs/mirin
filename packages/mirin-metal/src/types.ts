@@ -369,10 +369,37 @@ export interface TextInputProps extends AccessibilityProps {
   onChangeText?: (text: string) => void;
   /** Enter (single line) or Ctrl/Cmd+Enter (multiline). */
   onSubmitEditing?: (text: string) => void;
-  /** Navigation keys the input doesn't use itself (a launcher's list). */
+  /**
+   * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
+   * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
+   */
   onKeyPress?: (key: "Escape" | "ArrowUp" | "ArrowDown") => void;
+  /**
+   * Controlled caret and selection, as React Native's: offsets into `value` (JavaScript
+   * string indices). When it changes, or the native buffer is reset, the field selects
+   * it; `start` is where the selection begins and `end` where the caret is.
+   */
+  selection?: TextSelection;
+  /** The caret moved or the selection changed (by keys, the pointer, or `selection`). */
+  onSelectionChange?: (selection: TextSelection) => void;
+  /** Drawn behind selected text; defaults to the nearest `TextInputDefaults`, else a translucent blue. */
+  selectionColor?: Color;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
+}
+
+/**
+ * A field's caret and selection: offsets into its text (JavaScript string indices).
+ * Equal, it is the caret alone; reported with `start <= end`.
+ */
+export interface TextSelection {
+  start: number;
+  end: number;
+}
+
+/** What every `<TextInput>` below a `TextInputDefaults` provider takes unless it says otherwise. */
+export interface TextInputDefaultProps {
+  selectionColor?: Color;
 }
 
 export interface SvgProps {
@@ -413,6 +440,7 @@ export type NativeEvent =
   | { type: "change"; nodeId: string; value: string }
   | { type: "submit"; nodeId: string; value: string }
   | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
+  | ({ type: "selection"; nodeId: string } & TextSelection)
   | { type: "hover"; nodeId: string; hovered: boolean; bounds?: Bounds }
   | ({ type: "pointer"; nodeId: string } & PointerInfo)
   | { type: "contextmenu"; nodeId: string; x: number; y: number }

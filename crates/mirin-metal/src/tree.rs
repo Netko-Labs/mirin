@@ -26,10 +26,12 @@ pub enum NodeSpec {
         #[serde(default)]
         children: Vec<String>,
     },
-    /// A single- or multi-line text field. Editing state (buffer, caret, focus)
-    /// lives in the renderer; the driver receives `change`/`submit` events and
-    /// may reset the contents through `value`.
-    Input { props: InputProps },
+    /// A single- or multi-line text field. Editing state (buffer, caret,
+    /// selection, focus) lives in the renderer; the driver receives
+    /// `change`/`submit`/`selection` events and may reset the contents
+    /// through `value` and the selection through `selection`. Boxed: a
+    /// field carries more props than the other leaf nodes.
+    Input { props: Box<InputProps> },
     /// A vector icon: inline SVG markup drawn as a mask tinted with `color`.
     Svg { props: SvgProps },
     /// A raster image from a local file path.
@@ -336,9 +338,29 @@ pub struct InputProps {
     /// Report Escape, ArrowUp, and ArrowDown (a launcher's list navigation).
     #[serde(default)]
     pub on_key: bool,
+    /// Driver-owned caret and selection (`selection.rs`): when it changes
+    /// between trees (or the buffer is reset), the field selects it.
+    #[serde(default)]
+    pub selection: Option<SelectionRange>,
+    /// Report the caret and the selection as they change (`selection` events).
+    #[serde(default)]
+    pub on_selection: bool,
+    /// What is drawn behind selected text; a translucent blue without it.
+    #[serde(default)]
+    pub selection_color: Option<String>,
     /// What assistive technology hears for this field (`access/`); boxed, as most fields have none.
     #[serde(default)]
     pub access: Option<Box<AccessProps>>,
+}
+
+/// A field's selection: UTF-16 offsets into its text (JavaScript's string
+/// indices). `start` is where it began, `end` where the caret is; equal, the
+/// caret alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionRange {
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Default for InputProps {
@@ -369,6 +391,9 @@ impl Default for InputProps {
             on_change: false,
             on_submit: false,
             on_key: false,
+            selection: None,
+            on_selection: false,
+            selection_color: None,
             access: None,
         }
     }

@@ -1,19 +1,23 @@
 //! The `input` node: a text field whose editing state (buffer, caret,
-//! focus, select-all, an input method's composition) lives in the renderer.
-//! The driver sees `change` and `submit` events and may reset the contents
-//! through `value`. The editing itself is `field.rs`; input methods reach
-//! the field through `ime.rs`.
+//! selection, focus, an input method's composition) lives in the renderer.
+//! The driver sees `change`, `submit`, and `selection` events and may reset
+//! the contents through `value` and the selection through `selection`. The
+//! editing itself is `field.rs`; the pointer and the driver's selection are
+//! `selection.rs`; input methods reach the field through `ime.rs`.
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    div, prelude::*, px, rgba, AnyElement, Context, ElementId, HighlightStyle, KeyDownEvent,
-    MouseButton, MouseDownEvent, SharedString, StyledText, UnderlineStyle, Window,
+    div, prelude::*, px, rgba, AnyElement, App, ClipboardItem, Context, ElementId, HighlightStyle,
+    KeyDownEvent, MouseButton, MouseDownEvent, SharedString, StyledText, UnderlineStyle, Window,
 };
 
-use crate::field::Edit;
+use crate::caret::Drawn;
+use crate::field::{Clipboard, Display, Edit, KeyEnv, Lines};
 use crate::ime::{caret_rect, CaretReported, FieldInput};
 use crate::render::mono_family;
+use crate::selection::{follow_drag, PressProps};
 use crate::tree::{parse_color, InputProps};
 use crate::window::RootView;
 
@@ -101,12 +105,12 @@ pub(crate) fn render_input(
     // composition before it, underlined), or the placeholder.
     let field = &state.field;
     let showing_placeholder = field.buffer.is_empty() && !focused;
-    let (content, composition, caret) = if showing_placeholder {
-        (props.placeholder.clone().unwrap_or_default(), None, None)
+    let display = if showing_placeholder {
+        Display::plain(props.placeholder.clone().unwrap_or_default())
     } else {
-        let display = field.display(focused, props.secure);
-        (display.text, display.composition, display.caret)
+        field.display(focused, props.secure)
     };
+    let caret = display.caret;
     let color = if showing_placeholder {
         props
             .placeholder_color
@@ -118,19 +122,8 @@ pub(crate) fn render_input(
     if let Some(color) = color.and_then(parse_color) {
         element = element.text_color(rgba(color));
     }
-    let text =
-        StyledText::new(SharedString::from(content)).with_highlights(composition.map(|range| {
-            let underline = UnderlineStyle {
-                thickness: px(1.0),
-                color: None,
-                wavy: false,
-            };
-            let style = HighlightStyle {
-                underline: Some(underline),
-                ..HighlightStyle::default()
-            };
-            (range, style)
-        }));
+    let text = StyledText::new(SharedString::from(display.text.clone()))
+        .with_highlights(highlights(&display, props));
     let layout = text.layout().clone();
     let mut body = div().child(text);
     // Empty and focused: the placeholder stays, muted, right after the caret,
@@ -149,6 +142,34 @@ pub(crate) fn render_input(
         body = body.size_full().whitespace_normal();
     }
     element = element.child(body);
+
+    // What was drawn where, for the pointer and the arrows (`caret.rs`), and
+    // while a press is selecting, the pointer wherever it goes.
+    let drawn = Drawn {
+        field: field.clone(),
+        display,
+        layout: layout.clone(),
+        placeholder: showing_placeholder,
+    };
+    let cell = Rc::clone(&state.selection.drawn);
+    let selecting = state
+        .selection
+        .pressing
+        .is_some()
+        .then(|| (cx.weak_entity(), props.id.clone(), props.multiline));
+    element = element.child(
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, (), window, _| {
+                cell.replace(Some(drawn));
+                if let Some((view, id, multiline)) = selecting {
+                    follow_drag(view, id, multiline, window);
+                }
+            },
+        )
+        .absolute()
+        .size_0(),
+    );
 
     // The focused field takes an input method's text (never a secure one).
     if focused && !props.secure {
@@ -176,20 +197,26 @@ pub(crate) fn render_input(
         );
     }
 
-    // Click focuses; keys edit the buffer.
+    // A press focuses and places the caret (or selects); keys edit the buffer.
     let focus_id = props.id.clone();
+    let press = PressProps {
+        multiline: props.multiline,
+        on_change: props.on_change,
+    };
     element = element.on_mouse_down(
         MouseButton::Left,
-        cx.listener(move |view, _event: &MouseDownEvent, window, cx| {
+        cx.listener(move |view, event: &MouseDownEvent, window, cx| {
             view.press_claimed = true;
             if let Some(state) = view.inputs.get(&focus_id) {
                 window.focus(&state.focus);
             }
+            view.press_field(&focus_id, event, &press);
             cx.notify();
         }),
     );
     let key_id = props.id.clone();
     let multiline = props.multiline;
+    let secure = props.secure;
     let on_change = props.on_change;
     let on_submit = props.on_submit;
     let on_key = props.on_key;
@@ -198,8 +225,20 @@ pub(crate) fn render_input(
             let Some(state) = view.inputs.get_mut(&key_id) else {
                 return;
             };
-            let paste = || cx.read_from_clipboard().and_then(|item| item.text());
-            state.field.key(&event.keystroke, multiline, paste)
+            // The drawn lines, while the field is still the one drawn.
+            let drawn = state.selection.drawn.borrow();
+            let lines = drawn
+                .as_ref()
+                .filter(|drawn| drawn.field.lays_out_as(&state.field))
+                .map(|drawn| drawn as &dyn Lines);
+            let mut clipboard = SystemClipboard(cx);
+            let mut env = KeyEnv {
+                multiline,
+                secure,
+                clipboard: &mut clipboard,
+                lines,
+            };
+            state.field.key(&event.keystroke, &mut env)
         };
         // A key the field took stops here: the text it typed must not reach
         // the input handler as well (GPUI hands an unhandled key's text to it).
@@ -214,8 +253,14 @@ pub(crate) fn render_input(
                 if on_change {
                     view.report_change(&key_id);
                 }
+                view.report_selection(&key_id);
                 cx.notify();
             }
+            Edit::Moved => {
+                view.report_selection(&key_id);
+                cx.notify();
+            }
+            Edit::Handled => {}
             Edit::Submitted => {
                 if on_submit {
                     if let Some(state) = view.inputs.get(&key_id) {
@@ -232,6 +277,54 @@ pub(crate) fn render_input(
     }));
 
     element.into_any_element()
+}
+
+/// What a selection is drawn on without a `selectionColor`: a translucent blue.
+const SELECTION_COLOR: u32 = 0x3584_e44d;
+
+/// The composition, underlined, and the selection, on its color.
+fn highlights(display: &Display, props: &InputProps) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut highlights = Vec::new();
+    if let Some(range) = display.composition.clone() {
+        let underline = UnderlineStyle {
+            thickness: px(1.0),
+            color: None,
+            wavy: false,
+        };
+        let style = HighlightStyle {
+            underline: Some(underline),
+            ..HighlightStyle::default()
+        };
+        highlights.push((range, style));
+    }
+    if let Some(range) = display.selection.clone() {
+        let color = props
+            .selection_color
+            .as_deref()
+            .and_then(parse_color)
+            .unwrap_or(SELECTION_COLOR);
+        let style = HighlightStyle {
+            background_color: Some(rgba(color).into()),
+            ..HighlightStyle::default()
+        };
+        highlights.push((range, style));
+    }
+    highlights.sort_by_key(|(range, _)| range.start);
+    highlights
+}
+
+/// The system clipboard (Cut, Copy, Paste), as a field reads and writes it.
+struct SystemClipboard<'a>(&'a App);
+
+impl Clipboard for SystemClipboard<'_> {
+    fn read(&mut self) -> Option<String> {
+        self.0.read_from_clipboard().and_then(|item| item.text())
+    }
+
+    fn write(&mut self, text: &str) {
+        self.0
+            .write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+    }
 }
 
 /// Tell the input method where the caret is when it has moved (or the field

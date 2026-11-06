@@ -15,6 +15,7 @@ import type {
   KeyDownInfo,
   PointerInfo,
   TextInputStyle,
+  TextSelection,
   TextStyle,
   ViewStyle,
   WheelInfo,
@@ -181,6 +182,9 @@ interface InputNodeProps {
   onChange?: boolean;
   onSubmit?: boolean;
   onKey?: boolean;
+  selection?: TextSelection;
+  onSelection?: boolean;
+  selectionColor?: Color;
   access?: AccessNodeProps;
 }
 
@@ -240,6 +244,7 @@ export interface Handlers {
   change: Map<string, (text: string) => void>;
   submit: Map<string, (text: string) => void>;
   key: Map<string, (key: "Escape" | "ArrowUp" | "ArrowDown") => void>;
+  selection: Map<string, (selection: TextSelection) => void>;
   /** `testID` → native node id, for checks and tools. */
   testIds: Map<string, string>;
 }
@@ -291,6 +296,7 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
     change: new Map(),
     submit: new Map(),
     key: new Map(),
+    selection: new Map(),
     testIds: new Map(),
   };
   const tree = serializeInstance(root, handlers);
@@ -535,6 +541,11 @@ function textNode(
   return { type: "text", props, children };
 }
 
+/** A selection offset as the renderer takes it: a whole number, at least 0. */
+function offset(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
 function serializeInput(instance: InputInstance, handlers: Handlers): InputNode {
   const id = String(instance.id);
   const { props: input } = instance;
@@ -571,6 +582,13 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
     props.onKey = true;
     handlers.key.set(id, input.onKeyPress);
   }
+  if (input.selection)
+    props.selection = { start: offset(input.selection.start), end: offset(input.selection.end) };
+  if (input.onSelectionChange) {
+    props.onSelection = true;
+    handlers.selection.set(id, input.onSelectionChange);
+  }
+  if (input.selectionColor) props.selectionColor = input.selectionColor;
   if (input.testID) handlers.testIds.set(input.testID, id);
   const access = accessOf(input);
   if (access) props.access = access;

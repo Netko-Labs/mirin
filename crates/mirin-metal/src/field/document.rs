@@ -28,11 +28,12 @@ impl Field {
         text
     }
 
-    /// The selection: all of it after Select All, else the caret (after the
-    /// composition, where it is drawn).
+    /// The selection, else the caret (after the composition, where it is
+    /// drawn; a composition replaced the selection when it began).
     pub(crate) fn selected_utf16(&self) -> Range<usize> {
-        if self.select_all {
-            return 0..utf16_len(&self.buffer);
+        if self.preedit.is_none() && self.has_selection() {
+            let (start, end) = self.selection_utf16();
+            return start..end;
         }
         let caret = self.cursor_utf16() + self.preedit_utf16();
         caret..caret
@@ -54,15 +55,15 @@ impl Field {
     }
 
     /// The input method composes `text` at the caret (empty: it took the
-    /// composition back). A composition begun over Select All replaces the
-    /// text, as typing would. Says whether the text itself changed.
+    /// composition back). A composition begun over a selection replaces it,
+    /// as typing would. Says whether the text itself changed.
     pub(crate) fn compose(&mut self, text: &str) -> bool {
         let text = clean(text, false);
         if text.is_empty() {
             self.preedit = None;
             return false;
         }
-        let cleared = self.take_selection();
+        let cleared = self.delete_selection();
         self.preedit = Some(text);
         cleared
     }
@@ -72,7 +73,7 @@ impl Field {
     /// changed.
     pub(crate) fn commit(&mut self, text: &str, multiline: bool) -> bool {
         self.preedit = None;
-        let cleared = self.take_selection();
+        let cleared = self.delete_selection();
         self.cursor = self.cursor.min(self.len());
         let text = clean(text, multiline);
         self.insert_str(&text);
@@ -95,7 +96,7 @@ impl Field {
         let start = self.buffer_char(range.start);
         let end = self.buffer_char(range.end).max(start);
         self.preedit = None;
-        self.select_all = false;
+        self.anchor = None;
         let from = char_to_byte(&self.buffer, start);
         let to = char_to_byte(&self.buffer, end);
         let text = clean(text, multiline);
@@ -125,16 +126,6 @@ impl Field {
         };
         let byte = utf16_to_byte(&self.buffer, offset);
         self.buffer[..byte].chars().count()
-    }
-
-    fn take_selection(&mut self) -> bool {
-        if !std::mem::take(&mut self.select_all) {
-            return false;
-        }
-        let had_text = !self.buffer.is_empty();
-        self.buffer.clear();
-        self.cursor = 0;
-        had_text
     }
 }
 

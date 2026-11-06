@@ -13,6 +13,7 @@
 //! packages. See `README.md` for scope and the integration plan.
 
 mod access;
+mod caret;
 mod drag;
 mod drive;
 mod edges;
@@ -30,6 +31,7 @@ mod pointer;
 mod press;
 mod render;
 mod scrollbar;
+mod selection;
 mod sim;
 mod surface;
 mod titlebar;
@@ -46,6 +48,7 @@ pub use sim::{LayoutNode, SimCommand};
 pub use surface::{parse_surface, Surface};
 pub use titlebar::{Chrome, Controls, TitleBar};
 pub use tree::{
-    parse_tree, Align, Direction, InputProps, Justify, NodeSpec, TextProps, ViewProps, Weight,
+    parse_tree, Align, Direction, InputProps, Justify, NodeSpec, SelectionRange, TextProps,
+    ViewProps, Weight,
 };
 pub use window::{DriverMessage, NativeUiOptions};

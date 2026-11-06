@@ -27,6 +27,10 @@ pub enum EventKind {
     Submit { value: String },
     /// A navigation key in an `input` with `onKey`: Escape, ArrowUp, ArrowDown.
     Key { value: String },
+    /// An `input` with `onSelection` has a new caret or selection: UTF-16
+    /// offsets into its text, `start <= end` (equal: the caret, nothing
+    /// selected).
+    Selection { start: usize, end: usize },
     /// Reply to a `layout` simulation query (node id is `"root"`).
     Layout { nodes: Vec<LayoutNode> },
     /// The pointer entered (`true`) or left (`false`) a `view` with `onHover`.
@@ -129,6 +133,7 @@ impl EventKind {
             EventKind::Change { .. } => "change",
             EventKind::Submit { .. } => "submit",
             EventKind::Key { .. } => "key",
+            EventKind::Selection { .. } => "selection",
             EventKind::Layout { .. } => "layout",
             EventKind::Hover { .. } => "hover",
             EventKind::Pointer { .. } => "pointer",
@@ -145,6 +150,7 @@ impl EventKind {
     pub fn value(&self) -> Option<&str> {
         match self {
             EventKind::Press
+            | EventKind::Selection { .. }
             | EventKind::Layout { .. }
             | EventKind::Hover { .. }
             | EventKind::Pointer { .. }
@@ -204,6 +210,10 @@ impl EventSender {
                 value: key.to_string(),
             },
         );
+    }
+
+    pub(crate) fn selection(&self, node_id: &str, (start, end): (usize, usize)) {
+        self.send(node_id, EventKind::Selection { start, end });
     }
 
     pub(crate) fn key_down(&self, node_id: &str, key: KeyDown) {

@@ -17,6 +17,7 @@ use crate::ime::CaretReported;
 use crate::list::VirtualList;
 use crate::pointer::capture_root;
 use crate::render::render_node;
+use crate::selection::SelectionState;
 use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
 use crate::titlebar::TitleBar;
@@ -74,7 +75,11 @@ pub enum DriverMessage {
 /// Whether a new driver `value` resets the buffer. A value the renderer sent
 /// itself (a late echo, possibly skipping older ones) does not; anything else
 /// does, and forgets the pending echoes.
-pub(crate) fn driver_resets(echoes: &mut VecDeque<String>, value: &str) -> bool {
+pub(crate) fn driver_resets<T, V>(echoes: &mut VecDeque<T>, value: &V) -> bool
+where
+    T: PartialEq<V>,
+    V: ?Sized,
+{
     match echoes.iter().position(|sent| sent == value) {
         Some(echoed) => {
             echoes.drain(..=echoed);
@@ -106,6 +111,8 @@ pub(crate) struct InputState {
     pub(crate) wants_focus: bool,
     /// Where the caret was last told to an input method (`ime.rs`).
     pub(crate) caret_reported: CaretReported,
+    /// The selection: as drawn, being made with the pointer, and as the driver has it.
+    pub(crate) selection: SelectionState,
 }
 
 /// The root view: renders whatever tree the driver last sent.
@@ -216,29 +223,37 @@ impl RootView {
             seen.push(spec.id.clone());
             match self.inputs.get_mut(&spec.id) {
                 Some(state) => {
+                    let mut reset = false;
                     if state.revision != spec.revision {
                         state.revision = spec.revision;
                         state.field.reset(&spec.value);
                         state.synced_value = spec.value.clone();
                         state.echoes.clear();
+                        reset = true;
                     } else if state.synced_value != spec.value {
-                        if driver_resets(&mut state.echoes, &spec.value) {
+                        if driver_resets(&mut state.echoes, spec.value.as_str()) {
                             state.field.reset(&spec.value);
+                            reset = true;
                         }
                         state.synced_value = spec.value.clone();
                     }
+                    let field = &mut state.field;
+                    state.selection.sync(field, spec, reset, &self.events);
                 }
                 None => {
+                    let mut field = Field::new(&spec.value);
+                    let selection = SelectionState::new(&mut field, spec);
                     self.inputs.insert(
                         spec.id.clone(),
                         InputState {
                             focus: cx.focus_handle(),
-                            field: Field::new(&spec.value),
+                            field,
                             synced_value: spec.value.clone(),
                             echoes: VecDeque::new(),
                             revision: spec.revision,
                             wants_focus: spec.autofocus,
                             caret_reported: CaretReported::default(),
+                            selection,
                         },
                     );
                 }

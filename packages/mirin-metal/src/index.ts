@@ -1,5 +1,5 @@
 export { useWindowChrome } from "./chrome.ts";
-export { Image, ScrollView, Svg, Text, TextInput, View } from "./components.ts";
+export { Image, ScrollView, Svg, Text, TextInput, TextInputDefaults, View } from "./components.ts";
 export {
   type HeadlessDisplay,
   type HeadlessDisplayOptions,
@@ -28,9 +28,11 @@ export type {
   PointerInfo,
   SimCommand,
   SvgProps,
+  TextInputDefaultProps,
   TextInputProps,
   TextInputStyle,
   TextProps,
+  TextSelection,
   TextStyle,
   TitleBarStyle,
   Toplevel,

@@ -1,8 +1,12 @@
-use super::{Display, Edit, Field, CARET};
+use std::ops::Range;
+
+use super::{Clipboard, Display, Edit, Field, KeyEnv, Lines, Vertical, CARET};
 use gpui::{Keystroke, Modifiers};
 
+mod selection;
+
 /// A key as GPUI reports it on Linux: its name and the text it types.
-fn key(name: &str, text: Option<&str>) -> Keystroke {
+pub(super) fn key(name: &str, text: Option<&str>) -> Keystroke {
     Keystroke {
         modifiers: Modifiers::default(),
         key: name.to_owned(),
@@ -10,21 +14,96 @@ fn key(name: &str, text: Option<&str>) -> Keystroke {
     }
 }
 
-fn ctrl(name: &str) -> Keystroke {
+pub(super) fn with(modifiers: Modifiers, name: &str) -> Keystroke {
     Keystroke {
-        modifiers: Modifiers {
-            control: true,
-            ..Modifiers::default()
-        },
+        modifiers,
         key: name.to_owned(),
         key_char: None,
     }
 }
 
+pub(super) fn ctrl(name: &str) -> Keystroke {
+    let modifiers = Modifiers {
+        control: true,
+        ..Modifiers::default()
+    };
+    with(modifiers, name)
+}
+
+pub(super) fn shift(name: &str) -> Keystroke {
+    let modifiers = Modifiers {
+        shift: true,
+        ..Modifiers::default()
+    };
+    with(modifiers, name)
+}
+
+/// A clipboard in memory.
+#[derive(Default)]
+pub(super) struct Board(pub(super) Option<String>);
+
+impl Clipboard for Board {
+    fn read(&mut self) -> Option<String> {
+        self.0.clone()
+    }
+
+    fn write(&mut self, text: &str) {
+        self.0 = Some(text.to_owned());
+    }
+}
+
+/// Lines drawn `width` chars wide, every char one pixel: a stand-in for a
+/// laid-out text.
+pub(super) struct Rows {
+    pub(super) width: usize,
+    pub(super) len: usize,
+}
+
+impl Lines for Rows {
+    fn line(&self, index: usize) -> Option<Range<usize>> {
+        let start = index.min(self.len.saturating_sub(1)) / self.width * self.width;
+        Some(start..(start + self.width).min(self.len))
+    }
+
+    fn x_of(&self, index: usize) -> Option<f32> {
+        Some((index % self.width) as f32)
+    }
+
+    fn vertical(&self, index: usize, step: isize, x: f32) -> Option<Vertical> {
+        let row = (index / self.width) as isize + step;
+        if row < 0 || row as usize * self.width > self.len {
+            return Some(Vertical::Past);
+        }
+        let start = row as usize * self.width;
+        Some(Vertical::To((start + x as usize).min(self.len)))
+    }
+}
+
+/// Press `keystroke` in a field, with a clipboard and (maybe) drawn lines.
+pub(super) fn press_in(
+    field: &mut Field,
+    keystroke: &Keystroke,
+    multiline: bool,
+    board: &mut Board,
+    lines: Option<&dyn Lines>,
+) -> Edit {
+    let mut env = KeyEnv {
+        multiline,
+        secure: false,
+        clipboard: board,
+        lines,
+    };
+    field.key(keystroke, &mut env)
+}
+
+pub(super) fn press(field: &mut Field, keystroke: &Keystroke, multiline: bool) -> Edit {
+    press_in(field, keystroke, multiline, &mut Board::default(), None)
+}
+
 fn type_keys(field: &mut Field, text: &str) {
     for ch in text.chars() {
         let name = ch.to_string();
-        let edit = field.key(&key(&name, Some(&name)), false, || None);
+        let edit = press(field, &key(&name, Some(&name)), false);
         assert_eq!(edit, Edit::Changed);
     }
 }
@@ -41,20 +120,17 @@ fn plain_typing_inserts_at_the_caret() {
     type_keys(&mut field, "e");
     assert_eq!(field.buffer, "hello");
     assert_eq!(field.cursor, 2);
-    assert_eq!(
-        field.key(&key("space", None), false, || None),
-        Edit::Changed
-    );
+    assert_eq!(press(&mut field, &key("space", None), false), Edit::Changed);
     assert_eq!(field.buffer, "he llo");
     assert_eq!(
-        field.key(&key("backspace", None), false, || None),
+        press(&mut field, &key("backspace", None), false),
         Edit::Changed
     );
     assert_eq!(field.buffer, "hello");
     // Nothing before the caret: nothing to erase, and nothing reported.
     field.cursor = 0;
     assert_eq!(
-        field.key(&key("backspace", None), false, || None),
+        press(&mut field, &key("backspace", None), false),
         Edit::None
     );
 }
@@ -62,8 +138,10 @@ fn plain_typing_inserts_at_the_caret() {
 #[test]
 fn keys_that_type_nothing_change_nothing() {
     let mut field = Field::new("abc");
-    assert_eq!(field.key(&key("f5", None), false, || None), Edit::None);
-    assert_eq!(field.key(&ctrl("x"), false, || None), Edit::None);
+    assert_eq!(press(&mut field, &key("f5", None), false), Edit::None);
+    // Cut and Copy with nothing selected.
+    assert_eq!(press(&mut field, &ctrl("x"), false), Edit::None);
+    assert_eq!(press(&mut field, &ctrl("c"), false), Edit::None);
     assert_eq!(field.buffer, "abc");
 }
 
@@ -71,27 +149,29 @@ fn keys_that_type_nothing_change_nothing() {
 fn enter_submits_a_line_and_breaks_a_multiline_field() {
     let mut field = Field::new("a");
     assert_eq!(
-        field.key(&key("enter", None), false, || None),
+        press(&mut field, &key("enter", None), false),
         Edit::Submitted
     );
-    assert_eq!(field.key(&key("enter", None), true, || None), Edit::Changed);
+    assert_eq!(press(&mut field, &key("enter", None), true), Edit::Changed);
     assert_eq!(field.buffer, "a\n");
-    assert_eq!(field.key(&ctrl("enter"), true, || None), Edit::Submitted);
+    assert_eq!(press(&mut field, &ctrl("enter"), true), Edit::Submitted);
 }
 
 #[test]
 fn select_all_then_typing_replaces_everything() {
     let mut field = Field::new("old");
-    assert_eq!(field.key(&ctrl("a"), false, || None), Edit::Changed);
+    assert_eq!(press(&mut field, &ctrl("a"), false), Edit::Moved);
+    assert_eq!(field.selection(), 0..3);
     type_keys(&mut field, "n");
     assert_eq!(field.buffer, "n");
-    assert!(!field.select_all);
+    assert!(!field.has_selection());
 }
 
 #[test]
 fn paste_keeps_a_line_on_one_line() {
     let mut field = Field::new("");
-    let edit = field.key(&ctrl("v"), false, || Some("a\nb".to_owned()));
+    let mut board = Board(Some("a\nb".to_owned()));
+    let edit = press_in(&mut field, &ctrl("v"), false, &mut board, None);
     assert_eq!(edit, Edit::Changed);
     assert_eq!(field.buffer, "a b");
 }
@@ -106,6 +186,7 @@ fn a_composition_shows_underlined_at_the_caret_and_is_not_the_text() {
         text,
         composition,
         caret,
+        ..
     } = field.display(true, false);
     assert_eq!(text, format!("ani hao{CARET}b"));
     assert_eq!(composition, Some(1..7));
@@ -165,13 +246,20 @@ fn replacing_another_range_edits_the_text() {
 }
 
 #[test]
-fn a_composition_over_select_all_replaces_the_text() {
+fn a_composition_over_a_selection_replaces_it() {
     let mut field = Field::new("old");
-    field.key(&ctrl("a"), false, || None);
+    press(&mut field, &ctrl("a"), false);
     assert!(field.compose("n"));
     assert_eq!(field.buffer, "");
     assert!(field.commit("你", false));
     assert_eq!(field.buffer, "你");
+    // Over part of the text, only that part goes.
+    let mut field = Field::new("one two");
+    field.select(4, 7);
+    assert_eq!(field.selected_utf16(), 4..7);
+    assert!(field.compose("x"));
+    assert_eq!(field.buffer, "one ");
+    assert_eq!(field.selected_utf16(), 5..5);
 }
 
 #[test]
@@ -180,7 +268,7 @@ fn a_key_that_edits_ends_a_dead_key_composition() {
     let mut field = Field::new("");
     field.compose("´");
     assert_eq!(
-        field.key(&key("dead_acute", None), false, || None),
+        press(&mut field, &key("dead_acute", None), false),
         Edit::None
     );
     assert_eq!(field.preedit.as_deref(), Some("´"));
@@ -226,10 +314,12 @@ fn document_offsets_map_into_the_drawn_text() {
 }
 
 #[test]
-fn a_reset_keeps_the_composition() {
+fn a_reset_keeps_the_composition_and_drops_the_selection() {
     let mut field = Field::new("abc");
+    field.select(0, 2);
     field.compose("n");
     field.reset("");
     assert_eq!(field.cursor, 0);
+    assert!(!field.has_selection());
     assert_eq!(field.preedit.as_deref(), Some("n"));
 }

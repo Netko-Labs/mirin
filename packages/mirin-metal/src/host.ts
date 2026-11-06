@@ -70,6 +70,12 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return Array.isArray(record.nodes)
         ? { type: "layout", nodeId: "root", nodes: record.nodes.flatMap(parseLayoutNode) }
         : null;
+    case "selection": {
+      const { start, end } = record;
+      return typeof start === "number" && typeof end === "number" && start >= 0 && end >= start
+        ? { type: "selection", nodeId, start, end }
+        : null;
+    }
     case "change":
     case "submit":
       return typeof record.value === "string"

@@ -134,18 +134,52 @@ state and describes UI; the renderer is a pure function of the latest tree.
   (bullets instead of text), `mono`, `size`,
   `color`, `placeholderColor`, `background`, `padding`, `cornerRadius`,
   `borderColor`, `focusBorderColor`, `width`, `height`, `minHeight`, `flex`,
-  `fill`, `autofocus`, `onChange`, `onSubmit`. The renderer owns the editing
-  buffer, caret, and focus (`window::InputState`); a different `value` in a
-  later tree resets the buffer (controlled-input semantics). Enter submits a
-  single-line input; multiline inserts a newline and Ctrl/Cmd+Enter submits.
-  Ctrl/Cmd+V pastes from the system clipboard. Tab / Shift+Tab move focus
+  `fill`, `autofocus`, `onChange`, `onSubmit`, `onKey`, `selection`
+  (`{"start","end"}`), `onSelection`, `selectionColor`. The renderer owns the
+  editing buffer, caret, selection, and focus (`window::InputState`); a
+  different `value` in a later tree resets the buffer (controlled-input
+  semantics), and so does a new `revision`: the caret goes to the end, or to
+  `selection` when the tree has one. Enter submits a single-line input;
+  multiline inserts a newline and Ctrl/Cmd+Enter submits.
+  Caret and selection (`src/field.rs`, `src/field/{keys,press,words}.rs`,
+  `src/selection.rs`, `src/caret.rs`): a click puts the caret at the
+  character under it (past a glyph's middle is after it), a drag selects
+  from there wherever the pointer goes until the button lifts, a double
+  click selects a word (or a run of spaces or punctuation) and a drag from
+  it grows by words, a triple click selects the line (the paragraph in a
+  multiline field), and a Shift-click extends the selection. ← → move by
+  character and Ctrl/Alt+← → by word; Home and End go to the line's ends
+  (the drawn, soft-wrapped line in a multiline field) and Ctrl+Home/End to
+  the text's; ↑ ↓ move by drawn line in a multiline field, keeping their x,
+  and past the first or last line go to the start or end. Shift with any of
+  them extends the selection; without it a selection collapses to the end
+  the key moves toward. A single-line field still reports ↑ ↓ to `onKey`
+  (Shift+↑ ↓ select to its start or end). Backspace and Delete remove the
+  selection, Ctrl+Backspace/Delete a word. Ctrl/Cmd+A selects all,
+  Ctrl/Cmd+C copies the selection and Ctrl/Cmd+X cuts it to the system
+  clipboard (never from a `secure` field), and Ctrl/Cmd+V pastes over it;
+  typing and a composition replace it too. A compositor that maps Mac keys
+  (Dashi turns ❖← into Home, ❖↑ into Ctrl+Home, ⌥← into Ctrl+←) gets the
+  Mac's moves from these. The selection is drawn behind the text in
+  `selectionColor` (a translucent blue without it) while the field is
+  focused; the caret glyph stays at the selection's moving end. The driver
+  reads it through `onSelection`, `{"type":"selection","nodeId","start",
+  "end"}` on every change (UTF-16 offsets into the text, JavaScript's string
+  indices, `start <= end`; a composition is not part of them), and sets it
+  through `selection` (`start` where it begins, `end` where the caret goes):
+  a different `selection` in a later tree selects it, except one the field
+  reported itself (a late echo, kept as `change` values are). The host
+  names `MIRIN_METAL_SELECTION` (`SELECTION_MARKER`) for a driver checking
+  for this. Ctrl/Cmd+V pastes from the system clipboard. Tab / Shift+Tab move focus
   between inputs in document order (wrapping). Input methods (Fcitx 5, IBus;
   text-input-v3 on Wayland) work in every field, single-line or multiline,
   in a window or on a layer surface: the focused field is GPUI's input
   handler (`src/ime.rs`), its composition shows underlined at the caret and
   is not part of the value (no `change` until a commit, which inserts at the
-  caret), and the caret's rectangle goes to the compositor so the
-  candidates open under it. Plain typing is unchanged: keys still arrive as
+  caret, in place of a selection), and the caret's rectangle goes to the
+  compositor so the candidates open under it, wherever a click or a key put
+  it. A click while composing makes the composition text where it shows
+  first. Plain typing is unchanged: keys still arrive as
   keys (`src/field.rs` edits for both). A `secure` field takes no input
   method: while it (or nothing that takes text) has the keyboard, text input
   is off, so what is typed there never reaches one. The host names
@@ -170,7 +204,8 @@ state and describes UI; the renderer is a pure function of the latest tree.
   (Reduce Motion) leaves it out.
 - Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
 - Events: `{"type":"press","nodeId"}`, `{"type":"change","nodeId","value"}`,
-  `{"type":"submit","nodeId","value"}`, `{"type":"layout","nodeId":"root",
+  `{"type":"submit","nodeId","value"}`, `{"type":"selection","nodeId","start",
+  "end"}`, `{"type":"layout","nodeId":"root",
   "nodes":[{id,x,y,width,height}]}` in reply to a layout query, and
   `{"type":"frame","nodeId":"root"}` once a newly opened window has painted its
   first frame (once per open; a driver times an open with it).
@@ -187,7 +222,7 @@ state and describes UI; the renderer is a pure function of the latest tree.
   window waited and `first content frame painted, N ms after the host
   started` (or `first placeholder frame …` when it opened on the stand-in).
 - Simulation (checks and tools): a stdin line `{"sim": ...}` instead of a tree.
-  `{"kind":"click","id"}` / `{"kind":"click","x","y"}` focuses an input or
+  `{"kind":"click","id"}` / `{"kind":"click","x","y"}` focuses an input (its caret stays where it was) or
   fires a pressable view's `press` (resolved against the painted bounds;
   GPUI's mouse dispatch is crate-private, so hit-testing is approximated),
   `{"kind":"key","keystroke":"ctrl-enter"}` and `{"kind":"type","text"}` go
@@ -220,7 +255,12 @@ Native-style props: `<View style>` (`flex`, `alignItems`, `justifyContent`,
 `overflow: "scroll" | "hidden"`, `hoverBackgroundColor`, …), `<Text
 numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
-(`onKeyPress` reports Escape, ArrowUp, and ArrowDown, for list navigation), and
+(`onKeyPress` reports Escape, and ArrowUp and ArrowDown in a single-line field,
+for list navigation), React Native's `selection` (`{ start, end }`, controlled),
+`onSelectionChange` (called with `{ start, end }`) and `selectionColor` on it,
+and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
+`<TextInput>` below it takes unless it sets its own (a theme gives fields its
+selection color once), and
 `<ScrollView>` (a scrolling `<View>`).
 
 ## 2b. `@mirinjs/metal-ui`: shadcn/ui on Metal
@@ -461,8 +501,9 @@ Renders through DirectX. Not yet verified.
   caret, focus, paste, change/submit events), scroll views, hover, borders,
   alignment, truncation, and monospace text landed 2026-10-29 and were driven
   with synthetic keyboard input on Fedora/KDE. Still open: press verified only
-  through the fake transport, image nodes, text selection, a tree patch
-  protocol.
+  through the fake transport, image nodes, a tree patch protocol. (Text
+  selection landed 2026-11-06: caret placement, drag and Shift selection,
+  Cut and Copy, a controlled `selection`.)
 - **M2 — in-process transport.** `libmirin_metal` C ABI + polled event queue
   replacing the stdio host; host/Worker boot shared with the CEF runtime;
   `docs/architecture.md` gains the Metal arm.

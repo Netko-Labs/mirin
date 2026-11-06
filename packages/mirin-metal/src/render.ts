@@ -23,6 +23,7 @@ const DISCRETE: ReadonlySet<NativeEvent["type"]> = new Set([
   "change",
   "submit",
   "key",
+  "selection",
   "keydown",
   "contextmenu",
   "drop",
@@ -63,6 +64,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     change: new Map(),
     submit: new Map(),
     key: new Map(),
+    selection: new Map(),
     testIds: new Map(),
   };
   let lastTree: string | null = null;
@@ -105,6 +107,9 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "key":
         handlers.key.get(event.nodeId)?.(event.value);
+        break;
+      case "selection":
+        handlers.selection.get(event.nodeId)?.({ start: event.start, end: event.end });
         break;
       case "hover":
         handlers.hover.get(event.nodeId)?.(event.hovered, event.bounds);
