@@ -43,11 +43,13 @@ accesskit_unix = "0.24"
 [features]
 profiling = ["dep:pprof"]
 
-# mirin's forks: gpui 0.2.2 and the taffy 0.9.0 it pins, vendored with small,
-# documented changes (vendor/*/MIRIN.md). Keep versions in sync with upstream.
+# mirin's forks: gpui 0.2.2 and the taffy 0.9.0 it pins, and AccessKit's
+# Unix adapter, vendored with small, documented changes (vendor/*/MIRIN.md).
+# Keep versions in sync with upstream.
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
 taffy = { path = "vendor/taffy" }
+accesskit_unix = { path = "vendor/accesskit_unix" }
 
 # GPUI, taffy, and the text stack are unusably slow unoptimized; optimize
 # dependencies in dev builds too (this crate itself stays fast to compile).

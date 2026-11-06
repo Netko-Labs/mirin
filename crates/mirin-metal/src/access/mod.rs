@@ -8,6 +8,10 @@
 //! On by default; `MIRIN_METAL_ACCESSIBLE=0` turns it off. A driver checks
 //! the host binary for `ACCESSIBLE_MARKER` before it sends `access` props:
 //! a host without them rejects a tree that has them.
+//!
+//! The application is named by the driver (`MIRIN_METAL_APP_NAME`, the
+//! `appName` option), else by its first window's title: what Orca says for
+//! the app, never the host binary's file name.
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -29,6 +33,18 @@ pub const ACCESSIBLE_MARKER: &str = "MIRIN_METAL_ACCESSIBLE";
 /// Whether this process publishes the tree: unless `MIRIN_METAL_ACCESSIBLE=0`.
 fn wanted() -> bool {
     std::env::var(ACCESSIBLE_MARKER).map_or(true, |value| value != "0")
+}
+
+/// The variable a driver names its app with, for screen readers (`appName`).
+pub const APP_NAME_VAR: &str = "MIRIN_METAL_APP_NAME";
+
+/// What a screen reader calls the app: the driver's name for it, else the
+/// first window's title unless it is the host's own stand-in ("mirin metal").
+fn app_name(given: Option<&str>, title: &str) -> Option<String> {
+    let given = given.map(str::trim).filter(|name| !name.is_empty());
+    let title = title.trim();
+    let titled = (!title.is_empty() && !title.starts_with("mirin metal")).then_some(title);
+    given.or(titled).map(str::to_owned)
 }
 
 /// The field with the keyboard, and what is typed in it.
@@ -92,7 +108,15 @@ impl Accessibility {
         };
         #[cfg(not(target_os = "linux"))]
         let _ = press;
-        crate::trace::log(format_args!("{ACCESSIBLE_MARKER}: publishing {title:?}"));
+        let name = app_name(std::env::var(APP_NAME_VAR).ok().as_deref(), title);
+        // The first window names the app; later ones (a resident host's) keep it.
+        #[cfg(target_os = "linux")]
+        if let Some(name) = &name {
+            linux::name_app(name);
+        }
+        crate::trace::log(format_args!(
+            "{ACCESSIBLE_MARKER}: publishing {title:?} for {name:?}"
+        ));
         Some(Self {
             title: title.to_owned(),
             last: None,
@@ -157,5 +181,31 @@ impl Accessibility {
         #[cfg(not(target_os = "linux"))]
         let _ = built.update;
         self.last = Some(now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::app_name;
+
+    #[test]
+    fn the_driver_names_the_app() {
+        assert_eq!(
+            app_name(Some("Dashi"), "Launcher").as_deref(),
+            Some("Dashi")
+        );
+        assert_eq!(
+            app_name(Some(" Text Editor "), "notes.md").as_deref(),
+            Some("Text Editor")
+        );
+    }
+
+    #[test]
+    fn else_the_window_title_but_never_the_host() {
+        assert_eq!(app_name(None, "Weather").as_deref(), Some("Weather"));
+        assert_eq!(app_name(Some(""), "Weather").as_deref(), Some("Weather"));
+        assert_eq!(app_name(None, "mirin metal"), None);
+        assert_eq!(app_name(None, "mirin metal (alpha)"), None);
+        assert_eq!(app_name(None, "  "), None);
     }
 }

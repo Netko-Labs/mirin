@@ -2,6 +2,10 @@
 //! accessibility bus when a screen reader is running, asks for the tree
 //! then, and turns each update into the events Orca listens for (focus, the
 //! active descendant, names, states). Its handlers run on its own thread.
+//!
+//! A shown window that has the keyboard announces itself (`window:activate`,
+//! then the focused node: the vendored adapter, vendor/accesskit_unix), and
+//! one that goes (closed, or hidden by a resident host) deactivates first.
 
 use std::sync::{Arc, Mutex};
 
@@ -39,9 +43,23 @@ impl DeactivationHandler for Deactivation {
     fn deactivate_accessibility(&mut self) {}
 }
 
+/// Name the application on the accessibility bus; only the first name, given
+/// before the first tree is published, counts.
+pub(crate) fn name_app(name: &str) {
+    accesskit_unix::set_app_name(name);
+}
+
 pub(crate) struct Publisher {
     adapter: Adapter,
     latest: Latest,
+}
+
+impl Drop for Publisher {
+    /// The window goes: Orca hears it deactivate, so the next window shown
+    /// (the same surface opened again) is a new activation, not a stale one.
+    fn drop(&mut self) {
+        self.adapter.update_window_focus_state(false);
+    }
 }
 
 impl Publisher {

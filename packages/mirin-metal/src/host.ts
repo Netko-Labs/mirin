@@ -185,6 +185,12 @@ export interface NativeHostOptions {
    */
   appId?: string;
   /**
+   * The app's name for screen readers: what Orca says for the application
+   * (`MIRIN_METAL_APP_NAME`). Defaults to the first window's title. A host
+   * from before it ignores it.
+   */
+  appName?: string;
+  /**
    * Privileged APIs (`MIRIN_METAL_CAPABILITIES`). `shell.toplevels` follows
    * every window and enables `onToplevel` and `toplevel()` on the transport.
    */
@@ -231,6 +237,7 @@ export function spawnNativeHost(
   if (options.deferred) env.MIRIN_METAL_DEFERRED = "1";
   if (options.title !== undefined && !options.deferred) env.MIRIN_METAL_TITLE = options.title;
   if (options.appId !== undefined) env.MIRIN_METAL_APP_ID = options.appId;
+  if (options.appName !== undefined) env.MIRIN_METAL_APP_NAME = options.appName;
   if (options.capabilities !== undefined) {
     env.MIRIN_METAL_CAPABILITIES = options.capabilities.join(",");
   }

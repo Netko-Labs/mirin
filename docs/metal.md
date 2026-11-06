@@ -406,11 +406,24 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   changes. Node ids are hashes of the elements' ids, stable across trees.
 - **Actions.** A screen reader's press or focus is a simulated click on that
   element (`sim.rs`), the same path the person's click takes.
+- **The application.** The AT-SPI application is named by the driver
+  (`MIRIN_METAL_APP_NAME`, `appName` on `spawnNativeHost`), else by the
+  first window's title, never the host binary's file name (AccessKit's
+  default, which made Orca call every app "mirin-metal-host"). The first
+  window of a host names it for the host's life. The name is set through
+  mirin's fork of AccessKit's Unix adapter (`vendor/accesskit_unix/MIRIN.md`).
+- **Windows shown and gone.** A window that has the keyboard when its tree
+  first reaches the bus announces itself: `window:activate`, then the
+  focused node, so Orca reads a resident launcher's field each time it is
+  shown (AccessKit sent only the focus, from a window Orca never saw
+  activate, and Orca ignored it). A window that closes or is hidden sends
+  `window:deactivate` first.
 - **Drivers.** The host binary names `MIRIN_METAL_ACCESSIBLE`
   (`ACCESSIBLE_MARKER`); a host without it rejects a tree with `access` props
   (unknown fields are refused), so a driver greps the binary before it sends
   them, as it does for `MIRIN_METAL_RESIDENT`. `MIRIN_METAL_ACCESSIBLE=0`
-  turns the tree off.
+  turns the tree off. `MIRIN_METAL_APP_NAME` needs no check: a host from
+  before it ignores the variable.
 - **Not yet.** Text navigation inside a field (caret, selection, words), a
   tree for macOS and Windows (AccessKit has adapters for both), tables and
   sliders' values, and scrolling a node into view on request.
@@ -527,7 +540,9 @@ where the tree is, and opening fails on compositors without wlr-layer-shell.
 `spawnNativeHost(binary, { surface })` sets it. `MIRIN_METAL_TITLEBAR=unified`
 (`titleBar`) puts the app's toolbar in the title bar on Dashi (section 4,
 "Unified title bar"). `MIRIN_METAL_APP_ID` (`appId`)
-names the app to the compositor, which docks and taskbars group windows by.
+names the app to the compositor, which docks and taskbars group windows by;
+`MIRIN_METAL_APP_NAME` (`appName`) names it to screen readers (section 4,
+"Accessibility").
 A `{"title":"…"}` stdin line retitles the window afterwards (`setTitle()` on the
 transport): the compositor's title bar, the window switcher, and taskbars show
 the new title (a terminal's running program and grid size).

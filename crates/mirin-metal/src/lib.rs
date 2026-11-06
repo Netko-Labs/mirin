@@ -37,7 +37,7 @@ pub mod trace;
 mod tree;
 mod window;
 
-pub use access::ACCESSIBLE_MARKER;
+pub use access::{ACCESSIBLE_MARKER, APP_NAME_VAR};
 pub use drive::{run, run_deferred, HostMessage, RESIDENT_MARKER};
 pub use events::{EventKind, NativeUiEvent, PointerPhase};
 pub use sim::{LayoutNode, SimCommand};
