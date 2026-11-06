@@ -340,7 +340,7 @@ impl RootView {
 
 #[cfg(test)]
 mod tests {
-    use super::{Reported, ring_shows};
+    use super::{ring_shows, Reported};
 
     #[test]
     fn typing_is_reported_only_when_it_changes() {
