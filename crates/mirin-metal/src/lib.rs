@@ -19,6 +19,7 @@ mod drive;
 mod edges;
 mod events;
 mod field;
+mod focus;
 #[cfg(target_os = "linux")]
 pub mod gpu;
 mod grid;
@@ -43,7 +44,8 @@ mod window;
 
 pub use access::{ACCESSIBLE_MARKER, APP_NAME_VAR};
 pub use drive::{run, run_deferred, HostMessage, RESIDENT_MARKER};
-pub use events::{EventKind, NativeUiEvent, PointerPhase};
+pub use events::{EventKind, Modifiers, NativeUiEvent, PointerPhase};
+pub use focus::FOCUS_MARKER;
 pub use sim::{LayoutNode, SimCommand};
 pub use surface::{parse_surface, Surface};
 pub use titlebar::{Chrome, Controls, TitleBar};

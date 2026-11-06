@@ -9,6 +9,7 @@ import { parseToplevelEvent, toplevelCommand } from "./lib/toplevels.ts";
 import type {
   Bounds,
   LayoutNode,
+  Modifiers,
   NativeEvent,
   NativeHostTransport,
   TitleBarStyle,
@@ -48,8 +49,14 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
   const bounds = parseBounds(record.bounds);
   const withBounds = bounds ? { bounds } : {};
   switch (record.type) {
-    case "press":
-      return { type: "press", nodeId, ...withBounds };
+    case "press": {
+      const modifiers = parseModifiers(record);
+      return { type: "press", nodeId, ...withBounds, ...(modifiers ? { modifiers } : {}) };
+    }
+    case "visibility":
+      return nodeId === "root" && typeof record.visible === "boolean"
+        ? { type: "visibility", nodeId: "root", visible: record.visible }
+        : null;
     case "hover":
       return typeof record.hovered === "boolean"
         ? { type: "hover", nodeId, hovered: record.hovered, ...withBounds }
@@ -62,10 +69,17 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
     }
     case "resize":
       return bounds ? { type: "resize", nodeId, bounds } : null;
-    case "contextmenu":
-      return typeof record.x === "number" && typeof record.y === "number"
-        ? { type: "contextmenu", nodeId, x: record.x, y: record.y }
-        : null;
+    case "contextmenu": {
+      if (typeof record.x !== "number" || typeof record.y !== "number") return null;
+      const modifiers = parseModifiers(record);
+      return {
+        type: "contextmenu",
+        nodeId,
+        x: record.x,
+        y: record.y,
+        ...(modifiers ? { modifiers } : {}),
+      };
+    }
     case "layout":
       return Array.isArray(record.nodes)
         ? { type: "layout", nodeId: "root", nodes: record.nodes.flatMap(parseLayoutNode) }
@@ -81,12 +95,11 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return typeof record.value === "string"
         ? { type: record.type, nodeId, value: record.value }
         : null;
-    case "keydown": {
-      const { key, text, ctrl, alt, shift, meta, repeat } = record;
+    case "keydown":
+    case "windowkey": {
+      const { key, text, ctrl, alt, shift, meta, repeat, pasted } = record;
       if (typeof key !== "string") return null;
-      return {
-        type: "keydown",
-        nodeId,
+      const info = {
         key,
         ...(typeof text === "string" ? { text } : {}),
         ctrl: ctrl === true,
@@ -95,6 +108,9 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
         meta: meta === true,
         repeat: repeat === true,
       };
+      return record.type === "keydown"
+        ? { type: "keydown", nodeId, ...info }
+        : { type: "windowkey", nodeId, ...info, ...(typeof pasted === "string" ? { pasted } : {}) };
     }
     case "wheel":
       return typeof record.dx === "number" && typeof record.dy === "number"
@@ -126,6 +142,13 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
     default:
       return null;
   }
+}
+
+/** The modifiers a press or a right-click carries (`meta` is Super); undefined from an older host that sends none. */
+function parseModifiers(record: Record<string, unknown>): Modifiers | undefined {
+  const { shift, ctrl, alt, meta } = record;
+  if ([shift, ctrl, alt, meta].every((held) => held === undefined)) return undefined;
+  return { shift: shift === true, control: ctrl === true, alt: alt === true, super: meta === true };
 }
 
 function parseChromeEvent(record: Record<string, unknown>): NativeEvent | null {

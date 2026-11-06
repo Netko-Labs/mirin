@@ -44,17 +44,23 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
             // node's listener (a drag region asks whether a descendant took
             // the press, and only the innermost handler takes it: press.rs).
             let presses = view.clone();
-            window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 if phase != DispatchPhase::Capture {
                     return;
                 }
-                let _ = presses.update(cx, |view, _| match event.button {
-                    MouseButton::Left => {
-                        view.press_claimed = false;
-                        view.claims.begin_left();
+                // No automatic focus on mouse down: fields and key-taking
+                // views focus themselves, a focusable view doesn't (focus/).
+                window.prevent_default();
+                let _ = presses.update(cx, |view, _| {
+                    view.pointer_pressed(window);
+                    match event.button {
+                        MouseButton::Left => {
+                            view.press_claimed = false;
+                            view.claims.begin_left();
+                        }
+                        MouseButton::Right => view.claims.begin_right(),
+                        _ => {}
                     }
-                    MouseButton::Right => view.claims.begin_right(),
-                    _ => {}
                 });
             });
             let moves = view.clone();

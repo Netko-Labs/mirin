@@ -20,6 +20,7 @@ use gpui::{
 
 use crate::access::Accessibility;
 use crate::events::{EventSender, NativeUiEvent};
+use crate::focus::FOCUS_MARKER;
 use crate::media::MetalAssets;
 use crate::sim::{self, LayoutMap, SimCommand};
 use crate::surface::Surface;
@@ -270,6 +271,7 @@ fn open_window(
     let event_sender = EventSender::new(events, layout.clone());
     let chrome_events = event_sender.clone();
     let close_events = event_sender.clone();
+    let visibility_events = event_sender.clone();
     let opened = cx.open_window(window_options, |_window, cx| {
         cx.new(|cx| RootView::new(tree, placeholder, event_sender, layout, cx))
     });
@@ -324,6 +326,23 @@ fn open_window(
             });
         });
     }
+    // Out of sight (minimized, on another desktop) and back, as the
+    // compositor says; only changes are reported, the window opens seen.
+    let _ = window.update(cx, |_view, window, _cx| {
+        crate::trace::log(format_args!(
+            "{FOCUS_MARKER}: focus, press modifiers and visibility"
+        ));
+        let mut visible = true;
+        window
+            .observe_window_suspended(move |window, _cx| {
+                let now = !window.is_window_suspended();
+                if now != visible {
+                    visible = now;
+                    visibility_events.visibility(now);
+                }
+            })
+            .detach();
+    });
     Some(window)
 }
 

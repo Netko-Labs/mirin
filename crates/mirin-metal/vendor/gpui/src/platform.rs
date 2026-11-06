@@ -523,6 +523,14 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     /// mirin: called when `chrome_controls` changes.
     fn on_chrome_changed(&self, _callback: Box<dyn FnMut()>) {}
+    /// mirin: the compositor says the window is out of sight (Wayland:
+    /// xdg_toplevel's `suspended` state: minimized, on another desktop).
+    /// Always false where the platform can't tell.
+    fn is_suspended(&self) -> bool {
+        false
+    }
+    /// mirin: called when `is_suspended` changes.
+    fn on_suspended_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     /// mirin: for platforms that stop asking for frames while nothing changes

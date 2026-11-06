@@ -161,6 +161,8 @@ pub(crate) struct RootView {
     content_painted: bool,
     /// The accessibility tree, published after each paint (`access/`); none when turned off.
     pub(crate) access: Option<Rc<RefCell<Accessibility>>>,
+    /// Which field or view the keyboard goes to with Tab and the arrows (`focus/`).
+    pub(crate) focus: crate::focus::FocusState,
 }
 
 /// A view with `onKeyDown`: its focus, and whether it still has to take it.
@@ -198,7 +200,9 @@ impl RootView {
             placeholder,
             content_painted: false,
             access: None,
+            focus: crate::focus::FocusState::new(cx),
         };
+        view.focus.sync(&view.tree, cx);
         view.sync_inputs(cx);
         view.sync_key_targets(cx);
         crate::list::sync(&mut view.lists, &view.tree);
@@ -210,6 +214,7 @@ impl RootView {
     pub(crate) fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
         self.tree = Rc::new(tree);
         self.placeholder = false;
+        self.focus.sync(&self.tree, cx);
         self.sync_inputs(cx);
         self.sync_key_targets(cx);
         crate::list::sync(&mut self.lists, &self.tree);
@@ -298,23 +303,11 @@ impl RootView {
         state.echoes.push_back(state.field.buffer.clone());
     }
 
-    /// Move focus from `from` to the next (`+1`) or previous (`-1`) input in
-    /// document order, wrapping around. Tab / Shift+Tab.
+    /// Move focus from the field `from` to the next (`+1`) or previous
+    /// (`-1`) field or focusable view in the Tab order (`focus/`), wrapping
+    /// around. Tab / Shift+Tab.
     pub(crate) fn focus_neighbor(&mut self, from: &str, step: isize, window: &mut Window) {
-        let mut specs = Vec::new();
-        collect_inputs(&self.tree, &mut specs);
-        let ids: Vec<&str> = specs.iter().map(|spec| spec.id.as_str()).collect();
-        let Some(index) = ids.iter().position(|id| *id == from) else {
-            return;
-        };
-        if ids.is_empty() {
-            return;
-        }
-        let len = ids.len() as isize;
-        let next = ((index as isize + step) % len + len) % len;
-        if let Some(state) = self.inputs.get(ids[next as usize]) {
-            window.focus(&state.focus);
-        }
+        self.tab_from(Some(from), step < 0, window);
     }
 
     /// The field or key-taking view with the keyboard, and what is typed in a field.
@@ -332,8 +325,10 @@ impl RootView {
         self.key_targets
             .iter()
             .find(|(_, target)| target.focus.is_focused(window))
-            .map(|(id, _)| Focused {
-                id: id.clone(),
+            .map(|(id, _)| id.as_str())
+            .or_else(|| self.focus.focused_view(window))
+            .map(|id| Focused {
+                id: id.to_owned(),
                 text: None,
             })
     }
@@ -363,6 +358,7 @@ impl RootView {
 
     /// Honour pending `autofocus` requests. Runs outside of rendering.
     pub(crate) fn apply_pending_focus(&mut self, window: &mut Window) {
+        self.focus_window_if_asked(window);
         for target in self.key_targets.values_mut() {
             if target.wants_focus {
                 target.wants_focus = false;
@@ -375,6 +371,7 @@ impl RootView {
                 window.focus(&state.focus);
             }
         }
+        self.settle_focus(window);
     }
 }
 
@@ -390,7 +387,7 @@ impl Render for RootView {
         let tree = self.tree.clone();
         let content = render_node(&tree, self, window, cx);
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
-        let root = capture_root(content, cx);
+        let root = crate::focus::key_root(capture_root(content, cx), self, cx);
         let first = std::mem::take(&mut self.first_frame);
         // The first frame with the driver's tree in it: what a person
         // opening the app first sees of it (traced).

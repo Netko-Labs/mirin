@@ -65,6 +65,8 @@ pub(crate) struct Callbacks {
     appearance_changed: Option<Box<dyn FnMut()>>,
     // mirin: the compositor's traffic-light area changed.
     chrome_changed: Option<Box<dyn FnMut()>>,
+    // mirin: the compositor suspended the toplevel, or stopped suspending it.
+    suspended_changed: Option<Box<dyn FnMut()>>,
 }
 
 struct RawWindow {
@@ -165,6 +167,8 @@ pub struct WaylandWindowState {
     // the area the compositor's traffic lights cover (None: no such area).
     chrome: Option<dashi_chrome_v1::DashiChromeV1>,
     chrome_controls: Option<Bounds<Pixels>>,
+    // mirin: the last configure said `suspended` (xdg-shell 6): out of sight.
+    suspended: bool,
     app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
@@ -245,6 +249,7 @@ impl WaylandWindowState {
             decoration,
             chrome,
             chrome_controls: None,
+            suspended: false,
             app_id: None,
             blur: None,
             viewport,
@@ -751,6 +756,7 @@ impl WaylandWindowStatePtr {
                 let mut fullscreen = false;
                 let mut maximized = false;
                 let mut resizing = false;
+                let mut suspended = false;
 
                 for state in states {
                     match state {
@@ -761,6 +767,8 @@ impl WaylandWindowStatePtr {
                             fullscreen = true;
                         }
                         xdg_toplevel::State::Resizing => resizing = true,
+                        // mirin: minimized, on another desktop, or covered.
+                        xdg_toplevel::State::Suspended => suspended = true,
                         xdg_toplevel::State::TiledTop => {
                             tiling.top = true;
                         }
@@ -791,6 +799,13 @@ impl WaylandWindowStatePtr {
                     resizing,
                     tiling,
                 });
+                let changed = std::mem::replace(&mut state.suspended, suspended) != suspended;
+                drop(state);
+                if changed {
+                    if let Some(callback) = self.callbacks.borrow_mut().suspended_changed.as_mut() {
+                        callback();
+                    }
+                }
 
                 false
             }
@@ -1410,6 +1425,15 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_chrome_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().chrome_changed = Some(callback);
+    }
+
+    // mirin: xdg_toplevel's `suspended` state.
+    fn is_suspended(&self) -> bool {
+        self.borrow().suspended
+    }
+
+    fn on_suspended_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().suspended_changed = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {

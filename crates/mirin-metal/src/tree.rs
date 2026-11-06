@@ -214,6 +214,28 @@ pub struct ViewProps {
     pub gap_y: Option<f32>,
     /// What assistive technology hears for this view (`access/`).
     pub access: Option<AccessProps>,
+    /// Takes the keyboard (`focus/`): Tab and Shift+Tab reach it, Space and
+    /// Enter press it, and it shows a focus ring once the keyboard moved
+    /// focus there (needs `id`). A press with the pointer doesn't focus it.
+    pub focusable: bool,
+    /// Its focusable descendants are one Tab stop, and the arrow keys move
+    /// between them (a segmented control, a radio group, a list).
+    pub focus_group: bool,
+    /// In a `focusGroup`: moving with the arrows presses the member reached,
+    /// as a sidebar's or a tab list's selection follows the keyboard.
+    pub selects_on_focus: bool,
+    /// While it is in the tree, Tab and Shift+Tab stay inside it (a sheet);
+    /// the last trap in document order holds them.
+    pub focus_trap: bool,
+    /// The focus ring's color for this view and the focusable views inside
+    /// it (the nearest one set wins).
+    pub focus_ring_color: Option<String>,
+    /// Emit `windowkey` for the keys no focused control takes: while nothing
+    /// has the keyboard, or a `focusable` view has it and doesn't use the key
+    /// (needs `id`). Never takes the keyboard itself; the last such view in
+    /// document order hears them, and one appearing gives the keyboard back
+    /// to the window.
+    pub on_window_key: bool,
 }
 
 /// A node's role, name and state for the accessibility tree (`access/`):

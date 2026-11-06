@@ -890,6 +890,8 @@ pub struct Window {
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
     // mirin: observers of the compositor-drawn controls' area.
     pub(crate) chrome_observers: SubscriberSet<(), AnyObserver>,
+    // mirin: observers of the window going out of sight and back.
+    pub(crate) suspended_observers: SubscriberSet<(), AnyObserver>,
     // mirin: whether the last frame set an input handler (`set_accepts_text`).
     accepts_text: bool,
     active: Rc<Cell<bool>>,
@@ -1143,6 +1145,20 @@ impl Window {
                     .log_err();
             }
         }));
+        // mirin: the compositor suspended the window or showed it again.
+        platform_window.on_suspended_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window
+                            .suspended_observers
+                            .clone()
+                            .retain(&(), |callback| callback(window, cx));
+                    })
+                    .log_err();
+            }
+        }));
         platform_window.on_active_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
@@ -1297,6 +1313,7 @@ impl Window {
             appearance,
             appearance_observers: SubscriberSet::new(),
             chrome_observers: SubscriberSet::new(),
+            suspended_observers: SubscriberSet::new(),
             accepts_text: false,
             active,
             hovered,
@@ -1406,6 +1423,30 @@ impl Window {
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let (subscription, activate) = self.chrome_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    // mirin: whether the compositor says the window is out of sight
+    // (Wayland's xdg_toplevel `suspended`: minimized, on another desktop).
+    /// Whether the compositor has suspended the window: it is not seen.
+    pub fn is_window_suspended(&self) -> bool {
+        self.platform_window.is_suspended()
+    }
+
+    // mirin: see `is_window_suspended`.
+    /// Registers a callback to be invoked when `is_window_suspended` changes.
+    pub fn observe_window_suspended(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.suspended_observers.insert(
             (),
             Box::new(move |window, cx| {
                 callback(window, cx);
