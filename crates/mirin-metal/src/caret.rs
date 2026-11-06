@@ -1,6 +1,12 @@
 //! Where a field's characters are on screen: the text as the last frame
-//! laid it out, what char a point is on (a click, a drag), and its drawn
-//! lines (↑ and ↓, Home and End across soft-wrapped lines).
+//! laid it out, what char a point is on (a click, a drag), its drawn lines
+//! (↑ and ↓, Home and End across soft-wrapped lines), and where the caret
+//! and the selection are drawn over it.
+//!
+//! The caret and the selection are never part of the laid-out text: the
+//! caret is a thin bar at a glyph boundary and the selection a wash behind
+//! the glyphs, so the text never moves when either does. At a soft wrap the
+//! caret is at the start of the next line, where the char after it is.
 //!
 //! A frame's layout is kept once it has been painted (a `TextLayout` can
 //! only be asked after its prepaint), with the field it drew; keys use it
@@ -10,7 +16,143 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui::{point, px, Pixels, Point, TextLayout};
+use gpui::{fill, point, px, size, Bounds, Hsla, Pixels, Point, TextLayout, Window};
+
+#[cfg(test)]
+mod tests;
+
+/// Where a laid-out text's bytes are on screen: GPUI's `TextLayout` (after
+/// its prepaint), or a stand-in in tests.
+pub(crate) trait Laid {
+    /// The top left of byte `index`'s place, in window pixels. At a soft
+    /// wrap, GPUI answers the end of the line above.
+    fn position(&self, index: usize) -> Option<Point<Pixels>>;
+    /// The byte a point is on or nearest, inside the text or not.
+    fn hit(&self, position: Point<Pixels>) -> usize;
+    fn line_height(&self) -> Pixels;
+    fn bounds(&self) -> Bounds<Pixels>;
+}
+
+impl Laid for TextLayout {
+    fn position(&self, index: usize) -> Option<Point<Pixels>> {
+        self.position_for_index(index)
+    }
+
+    fn hit(&self, position: Point<Pixels>) -> usize {
+        match self.index_for_position(position) {
+            Ok(byte) | Err(byte) => byte,
+        }
+    }
+
+    fn line_height(&self) -> Pixels {
+        TextLayout::line_height(self)
+    }
+
+    fn bounds(&self) -> Bounds<Pixels> {
+        TextLayout::bounds(self)
+    }
+}
+
+/// Where the caret before byte `index` of `text` is drawn: its top left. At
+/// a soft wrap that is the start of the next line, beside the char after it.
+pub(crate) fn caret_point(laid: &dyn Laid, text: &str, index: usize) -> Option<Point<Pixels>> {
+    let at = laid.position(index)?;
+    let next = text
+        .get(index..)
+        .and_then(|rest| rest.chars().next())
+        .filter(|&ch| ch != '\n');
+    if let Some(ch) = next {
+        if let Some(after) = laid.position(index + ch.len_utf8()) {
+            if after.y > at.y {
+                return Some(point(laid.bounds().left(), after.y));
+            }
+        }
+    }
+    Some(at)
+}
+
+/// The caret before byte `index`: a bar `width` wide and a line tall, its
+/// left edge on the glyph boundary.
+pub(crate) fn caret_bar(
+    laid: &dyn Laid,
+    text: &str,
+    index: usize,
+    width: Pixels,
+) -> Option<Bounds<Pixels>> {
+    let at = caret_point(laid, text, index)?;
+    Some(Bounds::new(at, size(width, laid.line_height())))
+}
+
+/// The drawn caret's width, before it is rounded to whole device pixels.
+const CARET_WIDTH: f32 = 1.5;
+
+/// Paint the caret before byte `index` of a laid-out text, in the ink the
+/// text is drawn in, on whole device pixels so it stays crisp.
+pub(crate) fn paint_caret(layout: &TextLayout, text: &str, index: usize, window: &mut Window) {
+    let scale = window.scale_factor();
+    let width = px((CARET_WIDTH * scale).round().max(1.0) / scale);
+    let Some(mut bar) = caret_bar(layout, text, index, width) else {
+        return;
+    };
+    bar.origin.x = px((f32::from(bar.origin.x) * scale).round() / scale);
+    let ink = window.text_style().color;
+    window.paint_quad(fill(bar, ink));
+}
+
+/// Paint the wash behind the selected bytes `range` of a laid-out text.
+pub(crate) fn paint_selection(
+    layout: &TextLayout,
+    text: &str,
+    range: Range<usize>,
+    color: Hsla,
+    window: &mut Window,
+) {
+    let newline = layout.line_height() / 3.0;
+    for rect in selection_rects(layout, text, range, newline) {
+        window.paint_quad(fill(rect, color));
+    }
+}
+
+/// The wash behind the selected bytes `range` of `text`: one rect per drawn
+/// line it covers, a line tall, from where it starts on that line to where
+/// it ends. A line break it takes in shows `newline` wide past the line's end.
+pub(crate) fn selection_rects(
+    laid: &dyn Laid,
+    text: &str,
+    range: Range<usize>,
+    newline: Pixels,
+) -> Vec<Bounds<Pixels>> {
+    let mut rects = Vec::new();
+    let line_height = laid.line_height();
+    let far = laid.bounds().right() + px(100_000.0);
+    let end = range.end.min(text.len());
+    let mut from = range.start;
+    while from < end {
+        let Some(start) = caret_point(laid, text, from) else {
+            break;
+        };
+        let line_end = laid
+            .hit(point(far, start.y + line_height / 2.0))
+            .clamp(from, text.len());
+        let (to, past, next) = if end <= line_end {
+            (end, px(0.0), end)
+        } else if text[line_end..].starts_with('\n') {
+            (line_end, newline, line_end + 1)
+        } else {
+            // A soft wrap: the rest is on the next line.
+            (line_end, px(0.0), line_end)
+        };
+        let right = laid.position(to).map_or(start.x, |at| at.x) + past;
+        if right > start.x {
+            rects.push(Bounds::new(start, size(right - start.x, line_height)));
+        }
+        if next <= from {
+            break;
+        }
+        from = next;
+    }
+    rects
+}
 
 use crate::field::{Display, Field, Lines, Vertical};
 
@@ -68,16 +210,23 @@ impl Drawn {
     }
 }
 
+impl Drawn {
+    /// Where the caret before buffer char `index` would be drawn.
+    fn caret_at(&self, index: usize) -> Option<Point<Pixels>> {
+        caret_point(&self.layout, &self.display.text, self.byte_at(index))
+    }
+}
+
 impl Lines for Drawn {
     fn line(&self, index: usize) -> Option<Range<usize>> {
         if self.placeholder {
             return None;
         }
-        let at = self.layout.position_for_index(self.byte_at(index))?;
+        let at = self.caret_at(index)?;
         let bounds = self.layout.bounds();
         let y = at.y + self.layout.line_height() / 2.0;
-        let start = hit(&self.layout, point(bounds.left() - px(1.0), y));
-        let end = hit(&self.layout, point(bounds.right() + px(10_000.0), y));
+        let start = self.layout.hit(point(bounds.left() - px(1.0), y));
+        let end = self.layout.hit(point(bounds.right() + px(10_000.0), y));
         let (start, mut end) = (
             self.display.buffer_char(start),
             self.display.buffer_char(end),
@@ -102,7 +251,7 @@ impl Lines for Drawn {
         if self.placeholder {
             return None;
         }
-        let at = self.layout.position_for_index(self.byte_at(index))?;
+        let at = self.caret_at(index)?;
         Some(f32::from(at.x))
     }
 
@@ -110,7 +259,7 @@ impl Lines for Drawn {
         if self.placeholder {
             return None;
         }
-        let at = self.layout.position_for_index(self.byte_at(index))?;
+        let at = self.caret_at(index)?;
         let bounds = self.layout.bounds();
         let line = self.layout.line_height();
         let y = at.y + line * step as f32 + line / 2.0;
@@ -118,12 +267,5 @@ impl Lines for Drawn {
             return Some(Vertical::Past);
         }
         Some(Vertical::To(self.char_at(point(px(x), y))))
-    }
-}
-
-/// The byte a point is on or nearest, inside the text or not.
-fn hit(layout: &TextLayout, position: Point<Pixels>) -> usize {
-    match layout.index_for_position(position) {
-        Ok(byte) | Err(byte) => byte,
     }
 }

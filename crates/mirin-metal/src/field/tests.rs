@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use super::{Clipboard, Display, Edit, Field, KeyEnv, Lines, Vertical, CARET};
+use super::{Clipboard, Display, Edit, Field, KeyEnv, Lines, Vertical};
 use gpui::{Keystroke, Modifiers};
 
 mod selection;
@@ -188,7 +188,7 @@ fn a_composition_shows_underlined_at_the_caret_and_is_not_the_text() {
         caret,
         ..
     } = field.display(true, false);
-    assert_eq!(text, format!("ani hao{CARET}b"));
+    assert_eq!(text, "ani haob");
     assert_eq!(composition, Some(1..7));
     assert_eq!(caret, Some(7));
     // Unfocused or secure, it is not drawn.
@@ -205,7 +205,7 @@ fn committing_inserts_at_the_caret_and_ends_the_composition() {
     assert_eq!(field.buffer, "a你好b");
     assert_eq!(field.cursor, 3);
     assert_eq!(field.preedit, None);
-    assert_eq!(shown(&field), format!("a你好{CARET}b"));
+    assert_eq!(shown(&field), "a你好b");
 }
 
 #[test]
@@ -302,14 +302,18 @@ fn committed_text_is_cleaned_for_the_field() {
 fn document_offsets_map_into_the_drawn_text() {
     let mut field = Field::new("ab");
     field.cursor = 1;
-    // No composition: the caret glyph is at the cursor; after it, past the glyph.
+    // No composition: the drawn text is the text.
     assert_eq!(field.display_byte(1), 1);
-    assert_eq!(field.display_byte(2), 1 + CARET.len() + 1);
+    assert_eq!(field.display_byte(2), 2);
     field.compose("xy");
     let shown = shown(&field);
-    // The composition starts at the cursor; its end is the caret glyph.
+    // The composition starts at the cursor; the caret is at its end.
     assert_eq!(field.display_byte(1), 1);
-    assert_eq!(&shown[field.display_byte(3)..], format!("{CARET}b"));
+    assert_eq!(&shown[field.display_byte(3)..], "b");
+    assert_eq!(
+        field.display(true, false).caret,
+        Some(field.display_byte(3))
+    );
     assert_eq!(field.display_byte(4), shown.len());
 }
 

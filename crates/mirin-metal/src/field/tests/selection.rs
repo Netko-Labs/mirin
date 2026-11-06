@@ -2,7 +2,7 @@
 //! drawn, and the driver's offsets.
 
 use super::super::words::{paragraph_at, word_at, word_end_after, word_start_before};
-use super::super::{Edit, Field, CARET};
+use super::super::{Edit, Field};
 use super::{ctrl, key, press, press_in, shift, with, Board, Rows};
 use gpui::Modifiers;
 
@@ -240,12 +240,12 @@ fn the_selection_is_drawn_beside_the_caret() {
     let mut field = Field::new("abcd");
     field.select(1, 3);
     let display = field.display(true, false);
-    assert_eq!(display.text, format!("abc{CARET}d"));
+    assert_eq!((display.text.as_str(), display.caret), ("abcd", Some(3)));
     assert_eq!(&display.text[display.selection.clone().unwrap()], "bc");
     // Selected backwards, the caret is before it.
     field.select(3, 1);
     let display = field.display(true, false);
-    assert_eq!(display.text, format!("a{CARET}bcd"));
+    assert_eq!((display.text.as_str(), display.caret), ("abcd", Some(1)));
     assert_eq!(&display.text[display.selection.clone().unwrap()], "bc");
     // Unfocused, nothing is drawn as selected.
     assert_eq!(field.display(false, false).selection, None);
@@ -257,7 +257,7 @@ fn drawn_bytes_map_back_to_the_text() {
     field.place(2);
     field.compose("xy");
     let display = field.display(true, false);
-    // The composition and the caret glyph are the cursor.
+    // The composition is the cursor.
     for byte in 0..display.text.len() {
         let index = display.buffer_char(byte);
         assert!(index <= 4, "{byte} → {index}");

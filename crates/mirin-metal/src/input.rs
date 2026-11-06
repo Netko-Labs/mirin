@@ -13,7 +13,7 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, SharedString, StyledText, UnderlineStyle, Window,
 };
 
-use crate::caret::Drawn;
+use crate::caret::{paint_caret, paint_selection, Drawn};
 use crate::field::{Clipboard, Display, Edit, KeyEnv, Lines};
 use crate::ime::{caret_rect, CaretReported, FieldInput};
 use crate::render::mono_family;
@@ -101,8 +101,9 @@ pub(crate) fn render_input(
         element = element.font_family(mono_family());
     }
 
-    // Content: the buffer with a caret at the cursor (and an input method's
-    // composition before it, underlined), or the placeholder.
+    // Content: the buffer (with an input method's composition at the caret,
+    // underlined), or the placeholder. The selection's wash is painted
+    // behind it and the caret over it, neither taking room in the text.
     let field = &state.field;
     let showing_placeholder = field.buffer.is_empty() && !focused;
     let display = if showing_placeholder {
@@ -123,8 +124,26 @@ pub(crate) fn render_input(
         element = element.text_color(rgba(color));
     }
     let text = StyledText::new(SharedString::from(display.text.clone()))
-        .with_highlights(highlights(&display, props));
+        .with_highlights(highlights(&display));
     let layout = text.layout().clone();
+    if let Some(range) = display.selection.clone() {
+        let color = props
+            .selection_color
+            .as_deref()
+            .and_then(parse_color)
+            .unwrap_or(SELECTION_COLOR);
+        let (layout, shown) = (layout.clone(), display.text.clone());
+        element = element.child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |_, (), window, _| {
+                    paint_selection(&layout, &shown, range, rgba(color).into(), window);
+                },
+            )
+            .absolute()
+            .size_0(),
+        );
+    }
     let mut body = div().child(text);
     // Empty and focused: the placeholder stays, muted, right after the caret,
     // until the first character replaces it (as a search field's hint does).
@@ -142,9 +161,21 @@ pub(crate) fn render_input(
         body = body.size_full().whitespace_normal();
     }
     element = element.child(body);
+    if let Some(index) = caret {
+        let (layout, shown) = (layout.clone(), display.text.clone());
+        element = element.child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |_, (), window, _| paint_caret(&layout, &shown, index, window),
+            )
+            .absolute()
+            .size_0(),
+        );
+    }
 
     // What was drawn where, for the pointer and the arrows (`caret.rs`), and
-    // while a press is selecting, the pointer wherever it goes.
+    // the pointer wherever it goes, for a press that selects (`selection.rs`).
+    let shown = display.text.clone();
     let drawn = Drawn {
         field: field.clone(),
         display,
@@ -152,19 +183,13 @@ pub(crate) fn render_input(
         placeholder: showing_placeholder,
     };
     let cell = Rc::clone(&state.selection.drawn);
-    let selecting = state
-        .selection
-        .pressing
-        .is_some()
-        .then(|| (cx.weak_entity(), props.id.clone(), props.multiline));
+    let (view, id, multiline) = (cx.weak_entity(), props.id.clone(), props.multiline);
     element = element.child(
         gpui::canvas(
             |_, _, _| {},
             move |_, (), window, _| {
                 cell.replace(Some(drawn));
-                if let Some((view, id, multiline)) = selecting {
-                    follow_drag(view, id, multiline, window);
-                }
+                follow_drag(view, id, multiline, window);
             },
         )
         .absolute()
@@ -179,6 +204,7 @@ pub(crate) fn render_input(
             multiline: props.multiline,
             on_change: props.on_change,
             drawn: field.clone(),
+            text: shown,
             layout,
         };
         let focus = state.focus.clone();
@@ -187,7 +213,8 @@ pub(crate) fn render_input(
             gpui::canvas(
                 |_, _, _| {},
                 move |_, (), window, cx| {
-                    let at = caret.and_then(|index| caret_rect(&handler.layout, index));
+                    let at =
+                        caret.and_then(|index| caret_rect(&handler.layout, &handler.text, index));
                     window.handle_input(&focus, handler, cx);
                     tell_caret(&reported, at, window);
                 },
@@ -282,35 +309,24 @@ pub(crate) fn render_input(
 /// What a selection is drawn on without a `selectionColor`: a translucent blue.
 const SELECTION_COLOR: u32 = 0x3584_e44d;
 
-/// The composition, underlined, and the selection, on its color.
-fn highlights(display: &Display, props: &InputProps) -> Vec<(Range<usize>, HighlightStyle)> {
-    let mut highlights = Vec::new();
-    if let Some(range) = display.composition.clone() {
-        let underline = UnderlineStyle {
-            thickness: px(1.0),
-            color: None,
-            wavy: false,
-        };
-        let style = HighlightStyle {
-            underline: Some(underline),
-            ..HighlightStyle::default()
-        };
-        highlights.push((range, style));
-    }
-    if let Some(range) = display.selection.clone() {
-        let color = props
-            .selection_color
-            .as_deref()
-            .and_then(parse_color)
-            .unwrap_or(SELECTION_COLOR);
-        let style = HighlightStyle {
-            background_color: Some(rgba(color).into()),
-            ..HighlightStyle::default()
-        };
-        highlights.push((range, style));
-    }
-    highlights.sort_by_key(|(range, _)| range.start);
-    highlights
+/// The composition, underlined (the selection and the caret are painted
+/// beside the text, `caret.rs`).
+fn highlights(display: &Display) -> Vec<(Range<usize>, HighlightStyle)> {
+    let underline = UnderlineStyle {
+        thickness: px(1.0),
+        color: None,
+        wavy: false,
+    };
+    let style = HighlightStyle {
+        underline: Some(underline),
+        ..HighlightStyle::default()
+    };
+    display
+        .composition
+        .clone()
+        .map(|range| (range, style))
+        .into_iter()
+        .collect()
 }
 
 /// The system clipboard (Cut, Copy, Paste), as a field reads and writes it.
