@@ -4,8 +4,8 @@
 //! `focusGroup`, and Space or Enter press the focused view as the key goes
 //! down. A ring shows on the focused
 //! view only after the keyboard moved focus there, as CSS `:focus-visible`
-//! does; a press with the pointer hides it and gives the keyboard back to
-//! the window.
+//! does, and only while the window is active; a press with the pointer
+//! hides it and gives the keyboard back to the window.
 //!
 //! The window itself takes the keyboard (`root`) when no field, key-taking
 //! view, or focusable view has it, so keys still arrive: the ones nobody
@@ -95,11 +95,21 @@ impl FocusState {
 
     /// The ring's color when `id` is to show one now.
     fn ring_on(&self, id: &str, window: &Window) -> Option<u32> {
-        if !self.visible || !self.handles.get(id)?.is_focused(window) {
+        let focused = self.handles.get(id)?.is_focused(window);
+        if !ring_shows(self.visible, focused, window.is_window_active()) {
             return None;
         }
         self.order.stop(id).map(|stop| stop.ring)
     }
+}
+
+/// Whether a focusable view draws its ring: it has the keyboard, the keyboard
+/// put it there (`:focus-visible`), and its window is the active one. An
+/// inactive window shows no ring, as on the Mac; it comes back with the
+/// window, where it was, while the keyboard had moved focus last (GPUI draws
+/// the window again when it is activated or deactivated).
+fn ring_shows(visible: bool, focused: bool, active: bool) -> bool {
+    visible && focused && active
 }
 
 /// A `focusable` view: it can take the keyboard, and draws the ring when it
@@ -295,5 +305,20 @@ impl RootView {
             pasted,
         );
         cx.stop_propagation();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ring_shows;
+
+    #[test]
+    fn the_ring_shows_only_in_the_active_window_after_the_keyboard_moved_focus() {
+        assert!(ring_shows(true, true, true));
+        // Another window came in front: the ring goes, and comes back with this one.
+        assert!(!ring_shows(true, true, false));
+        // A click hid it (`visible` false), or the view lost the keyboard.
+        assert!(!ring_shows(false, true, true));
+        assert!(!ring_shows(true, false, true));
     }
 }

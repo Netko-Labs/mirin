@@ -292,7 +292,9 @@ in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
   the keyboard back to the window. A trap appearing does too, so Enter goes
   to the sheet's own keys, not to a button behind it.
 - The ring: a focused view shows a ring only after the keyboard moved focus
-  (CSS `:focus-visible`): `RING_WIDTH` 2 px wide, `RING_OFFSET` 2 px out, its
+  (CSS `:focus-visible`), and only while its window is the active one (it
+  has the keyboard): another window in front hides it, and it comes back
+  when this one is active again. `RING_WIDTH` 2 px wide, `RING_OFFSET` 2 px out, its
   corners the view's `cornerRadius` plus 4, drawn as an absolute child (a
   view that clips cuts it). Its color is the nearest `focusRingColor` on the
   way up (`#RRGGBB[AA]`), else a blue. Fields keep their
