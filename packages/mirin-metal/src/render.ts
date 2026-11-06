@@ -14,6 +14,19 @@ import { type Handlers, serializeRoot } from "./lib/serialize.ts";
 import type { NativeEvent, NativeRoot, NativeTransport } from "./types.ts";
 
 const reconciler = ReactReconciler(hostConfig);
+// Type-only cast: @types/react-reconciler 0.32 doesn't declare this 0.33 export.
+const syncReconciler = reconciler as unknown as { flushSyncFromReconciler<R>(fn: () => R): R };
+
+/** Events a person makes one at a time, whose updates must render before the next one (React DOM's discrete events). */
+const DISCRETE: ReadonlySet<NativeEvent["type"]> = new Set([
+  "press",
+  "change",
+  "submit",
+  "key",
+  "keydown",
+  "contextmenu",
+  "drop",
+]);
 
 function reportError(error: unknown): void {
   console.error("[mirin-metal]", error);
@@ -67,9 +80,14 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     },
   };
   // A throwing handler is reported and the app keeps running, as in React DOM.
+  // A discrete event (a press, a keystroke, a change) is handled at discrete
+  // priority and its updates are rendered before the next event is handled,
+  // as React DOM does: a press right after typing then sees the typed text,
+  // not the handlers of a render that hadn't caught up yet.
   transport.onEvent((event) => {
     try {
-      dispatch(event);
+      if (DISCRETE.has(event.type)) syncReconciler.flushSyncFromReconciler(() => dispatch(event));
+      else dispatch(event);
     } catch (error) {
       reportError(error);
     }

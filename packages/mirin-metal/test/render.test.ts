@@ -197,6 +197,34 @@ describe("TextInput", () => {
     expect(seen).toEqual(["select 2"]);
     root.unmount();
   });
+
+  test("a press right after typing sees the typed text (discrete events render before the next)", async () => {
+    const transport = fakeTransport();
+    const saved: string[] = [];
+    function Form() {
+      const [token, setToken] = useState("");
+      return createElement(
+        View,
+        null,
+        createElement(TextInput, { value: token, testID: "token", onChangeText: setToken }),
+        createElement(
+          View,
+          { testID: "save", onPress: () => saved.push(token) },
+          createElement(Text, null, "Save"),
+        ),
+      );
+    }
+    const root = render(createElement(Form), transport);
+    await nextCommit();
+    const input = root.nodeId("token") ?? "";
+    const save = root.nodeId("save") ?? "";
+    // Back to back, with no time for a commit between them: what a fast typist's click does.
+    transport.emit({ type: "change", nodeId: input, value: "sk-12" });
+    transport.emit({ type: "change", nodeId: input, value: "sk-123" });
+    transport.emit({ type: "press", nodeId: save });
+    expect(saved).toEqual(["sk-123"]);
+    root.unmount();
+  });
 });
 
 describe("createPortal", () => {
