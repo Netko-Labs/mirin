@@ -16,6 +16,7 @@ use gpui::{
 use crate::caret::{paint_caret, paint_selection, Drawn};
 use crate::field::{Clipboard, Display, Edit, KeyEnv, Lines};
 use crate::ime::{caret_rect, CaretReported, FieldInput};
+use crate::marks::{highlight_ranges, paint_highlights, paint_line_numbers};
 use crate::render::mono_family;
 use crate::selection::{follow_drag, PressProps};
 use crate::tree::{parse_color, InputProps};
@@ -57,6 +58,15 @@ pub(crate) fn render_input(
     }
     if props.padding > 0.0 {
         element = element.p(px(props.padding));
+    }
+    // Line numbers take room at the text's left (`marks.rs`).
+    let line_numbers = props
+        .line_numbers
+        .as_ref()
+        .filter(|_| props.multiline && !props.secure)
+        .and_then(|numbers| Some((numbers.width.max(0.0), parse_color(&numbers.color)?)));
+    if let Some((width, _)) = line_numbers {
+        element = element.pl(px(props.padding + width));
     }
     // Flex first so an explicit `minHeight` below wins over its zero minimum.
     if props.flex > 0.0 {
@@ -145,6 +155,36 @@ pub(crate) fn render_input(
         text = text.with_paragraph_sizes(styled.sizes);
     }
     let layout = text.layout().clone();
+    // The driver's highlights, behind the text and under the selection.
+    let marked = if showing_placeholder || props.secure {
+        Vec::new()
+    } else {
+        highlight_ranges(&field.buffer, &display, &props.highlights)
+    };
+    if !marked.is_empty() {
+        let (layout, shown) = (layout.clone(), display.text.clone());
+        element = element.child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |_, (), window, _| paint_highlights(&layout, &shown, &marked, window),
+            )
+            .absolute()
+            .size_0(),
+        );
+    }
+    if let Some((_, color)) = line_numbers {
+        let (layout, shown) = (layout.clone(), display.text.clone());
+        element = element.child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |_, (), window, cx| {
+                    paint_line_numbers(&layout, &shown, showing_placeholder, color, window, cx);
+                },
+            )
+            .absolute()
+            .size_0(),
+        );
+    }
     if let Some(range) = display.selection.clone() {
         let color = props
             .selection_color

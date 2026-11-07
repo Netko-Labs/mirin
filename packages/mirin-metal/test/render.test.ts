@@ -336,6 +336,39 @@ describe("TextInput", () => {
     expect(parseNativeEvent('{"type":"runpress","nodeId":"7","run":1.5,"offset":4}')).toBeNull();
   });
 
+  test("highlights and line numbers go out as the renderer takes them", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(TextInput, {
+          value: "one two one",
+          multiline: true,
+          testID: "doc",
+          highlights: [
+            { start: 0, end: 3, color: "#E5B13F40" },
+            { start: 8.4, end: 11, color: "#E5B13F99" },
+          ],
+          lineNumbers: { width: 36, color: "#1d1d1f66" },
+        }),
+        createElement(TextInput, { value: "plain", highlights: [] }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const [doc, plain] = JSON.parse(transport.sent.at(-1) ?? "").children;
+    expect(doc.props.highlights).toEqual([
+      { start: 0, end: 3, color: "#E5B13F40" },
+      { start: 8, end: 11, color: "#E5B13F99" },
+    ]);
+    expect(doc.props.lineNumbers).toEqual({ width: 36, color: "#1d1d1f66" });
+    // None to draw: nothing sent, so a host without them still takes the field.
+    expect(plain.props.highlights).toBeUndefined();
+    expect(plain.props.lineNumbers).toBeUndefined();
+    root.unmount();
+  });
+
   test("TextInputDefaults gives fields a selection color they don't set", async () => {
     const transport = fakeTransport();
     const root = render(

@@ -13,10 +13,12 @@ import type {
   GridPlacement,
   GridTrack,
   KeyDownInfo,
+  LineNumbers,
   Modifiers,
   PointerInfo,
   PressInfo,
   RunPressInfo,
+  TextHighlight,
   TextInputStyle,
   TextRun,
   TextSelection,
@@ -197,6 +199,8 @@ interface InputNodeProps {
   onSelection?: boolean;
   selectionColor?: Color;
   runs?: InputRunProps[];
+  highlights?: TextHighlight[];
+  lineNumbers?: LineNumbers;
   access?: AccessNodeProps;
 }
 
@@ -649,6 +653,9 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (input.selectionColor) props.selectionColor = input.selectionColor;
   if (input.runs && input.runs.length > 0) props.runs = input.runs.map(serializeRun);
   if (input.onRunPress) handlers.runPress.set(id, input.onRunPress);
+  if (input.highlights && input.highlights.length > 0)
+    props.highlights = input.highlights.map(({ start, end, color }) => ({ start: offset(start), end: offset(end), color }));
+  if (input.lineNumbers) props.lineNumbers = { width: Math.max(0, input.lineNumbers.width), color: input.lineNumbers.color };
   if (input.testID) handlers.testIds.set(input.testID, id);
   const access = accessOf(input);
   if (access) props.access = access;

@@ -374,6 +374,13 @@ pub struct InputProps {
     /// underline, strikethrough, a paragraph's size, and runs a press reports.
     #[serde(default)]
     pub runs: Vec<InputRun>,
+    /// Ranges washed behind the text whether or not the field is focused
+    /// (find's matches), under the selection (`marks.rs`).
+    #[serde(default)]
+    pub highlights: Vec<Highlight>,
+    /// A gutter left of the text with each line's number (`marks.rs`).
+    #[serde(default)]
+    pub line_numbers: Option<LineNumbers>,
     /// What assistive technology hears for this field (`access/`); boxed, as most fields have none.
     #[serde(default)]
     pub access: Option<Box<AccessProps>>,
@@ -409,6 +416,26 @@ pub struct SelectionRange {
     pub end: usize,
 }
 
+/// A range washed behind a field's text: UTF-16 offsets into its text, as
+/// a `SelectionRange`'s, and the color it is washed in.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Highlight {
+    pub start: usize,
+    pub end: usize,
+    pub color: String,
+}
+
+/// A multiline field's line numbers: a gutter `width` px wide (added to the
+/// field's left padding), each number drawn in `color` at its line's first
+/// drawn row, its right edge `LINE_NUMBER_GAP` px before the text.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineNumbers {
+    pub width: f32,
+    pub color: String,
+}
+
 impl Default for InputProps {
     fn default() -> Self {
         Self {
@@ -441,6 +468,8 @@ impl Default for InputProps {
             on_selection: false,
             selection_color: None,
             runs: Vec::new(),
+            highlights: Vec::new(),
+            line_numbers: None,
             access: None,
         }
     }

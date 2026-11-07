@@ -135,7 +135,8 @@ state and describes UI; the renderer is a pure function of the latest tree.
   `color`, `placeholderColor`, `background`, `padding`, `cornerRadius`,
   `borderColor`, `focusBorderColor`, `width`, `height`, `minHeight`, `flex`,
   `fill`, `autofocus`, `onChange`, `onSubmit`, `onKey`, `selection`
-  (`{"start","end"}`), `onSelection`, `selectionColor`, `runs`. The renderer owns the
+  (`{"start","end"}`), `onSelection`, `selectionColor`, `runs`, `highlights`
+  (`[{"start","end","color"}]`), `lineNumbers` (`{"width","color"}`). The renderer owns the
   editing buffer, caret, selection, and focus (`window::InputState`); a
   different `value` in a later tree resets the buffer (controlled-input
   semantics), and so does a new `revision`: the caret goes to the end, or to
@@ -170,7 +171,21 @@ state and describes UI; the renderer is a pure function of the latest tree.
   a different `selection` in a later tree selects it, except one the field
   reported itself (a late echo, kept as `change` values are). The host
   names `MIRIN_METAL_SELECTION` (`SELECTION_MARKER`) for a driver checking
-  for this. Ctrl/Cmd+V pastes from the system clipboard. Tab / Shift+Tab move focus
+  for this.
+  Highlights and line numbers (`src/marks.rs`): `highlights` washes each
+  range (UTF-16 offsets into the text, as `selection`'s) in its own color
+  behind the glyphs, under the selection, whether or not the field has the
+  keyboard (find's matches, the current one deeper); an input method's
+  composition at the caret pushes later ones along. `lineNumbers` gives a
+  multiline field (never a `secure` one) a gutter `width` px wide at its
+  left, added to its `padding`: each line (from the start or a line break,
+  not a soft wrap) has its number, counting from 1, in `color` and the
+  field's own font and size, at its first drawn row, its right edge 10 px
+  (`LINE_NUMBER_GAP`) before the text. Neither is part of the laid-out text
+  (it lays out the same with or without them), and both are painted only
+  where the field shows through its clip, so a long document in a scroll
+  view pays only for what is on screen. A press in the gutter places the
+  caret at the start of the line beside it. Ctrl/Cmd+V pastes from the system clipboard. Tab / Shift+Tab move focus
   to the next or previous input or `focusable` view (section "Focus"). Input methods (Fcitx 5, IBus;
   text-input-v3 on Wayland) work in every field, single-line or multiline,
   in a window or on a layer surface: the focused field is GPUI's input
@@ -288,6 +303,8 @@ for list navigation), React Native's `selection` (`{ start, end }`, controlled),
 `runs` (`TextRun`: `start`, `end`, `color`, `backgroundColor`, `fontWeight`,
 `fontStyle`, `textDecorationLine`, `fontSize`, `press`) and `onRunPress`
 (called with `{ run, offset, modifiers }`),
+`highlights` (`TextHighlight[]`, `{ start, end, color }`; an empty list sends
+nothing) and `lineNumbers` (`{ width, color }`),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
 `<TextInput>` below it takes unless it sets its own (a theme gives fields its
 selection color once), and

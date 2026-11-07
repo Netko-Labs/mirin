@@ -447,8 +447,31 @@ export interface TextInputProps extends AccessibilityProps {
   runs?: readonly TextRun[];
   /** A press on a run with `press` (the caret stays where it was): which run, by its index in `runs`. */
   onRunPress?: (event: RunPressInfo) => void;
+  /**
+   * Ranges washed behind the text, each in its own color, whether or not the field has the
+   * keyboard, under the selection (find's matches). Offsets into `value`, as `selection`'s.
+   */
+  highlights?: readonly TextHighlight[];
+  /**
+   * A multiline field's line numbers, in a gutter `width` px wide at the text's left (added
+   * to its padding), each in `color` at its line's first drawn row, 10 px before the text.
+   */
+  lineNumbers?: LineNumbers;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
+}
+
+/** A range of a field's text washed in `color` (`TextInput`'s `highlights`). */
+export interface TextHighlight {
+  start: number;
+  end: number;
+  color: Color;
+}
+
+/** A multiline field's line-number gutter (`TextInput`'s `lineNumbers`). */
+export interface LineNumbers {
+  width: number;
+  color: Color;
 }
 
 /**
