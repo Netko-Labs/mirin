@@ -31,6 +31,7 @@ mod media;
 mod pointer;
 mod press;
 mod render;
+mod runs;
 mod scrollbar;
 mod selection;
 mod sim;
@@ -50,7 +51,7 @@ pub use sim::{LayoutNode, SimCommand};
 pub use surface::{parse_surface, Surface};
 pub use titlebar::{Chrome, Controls, TitleBar};
 pub use tree::{
-    parse_tree, Align, Direction, InputProps, Justify, NodeSpec, SelectionRange, TextProps,
-    ViewProps, Weight,
+    parse_tree, Align, Direction, InputProps, InputRun, Justify, NodeSpec, SelectionRange,
+    TextProps, ViewProps, Weight,
 };
 pub use window::{DriverMessage, NativeUiOptions};

@@ -271,6 +271,71 @@ describe("TextInput", () => {
     root.unmount();
   });
 
+  test("styled runs go out with the field, and a press on one comes back", async () => {
+    const transport = fakeTransport();
+    const pressed: Array<{ run: number; offset: number; shift: boolean }> = [];
+    const root = render(
+      createElement(TextInput, {
+        value: "- [ ] **milk**",
+        testID: "field",
+        multiline: true,
+        runs: [
+          { start: 2, end: 5, color: "#3E8A72", press: true },
+          {
+            start: 6,
+            end: 14.5,
+            fontWeight: "bold",
+            fontStyle: "italic",
+            textDecorationLine: "line-through",
+          },
+          {
+            start: 0,
+            end: 14,
+            fontSize: 20,
+            backgroundColor: "#00000010",
+            textDecorationLine: "underline",
+          },
+        ],
+        onRunPress: (event: { run: number; offset: number; modifiers: { shift: boolean } }) =>
+          pressed.push({ run: event.run, offset: event.offset, shift: event.modifiers.shift }),
+      }),
+      transport,
+    );
+    await nextCommit();
+    const id = root.nodeId("field") ?? "";
+    const props = JSON.parse(transport.sent.at(-1) ?? "").props;
+    expect(props.runs).toEqual([
+      { start: 2, end: 5, color: "#3E8A72", press: true },
+      { start: 6, end: 14, weight: "bold", italic: true, strikethrough: true },
+      { start: 0, end: 14, background: "#00000010", underline: true, size: 20 },
+    ]);
+    transport.emit({
+      type: "runpress",
+      nodeId: id,
+      run: 0,
+      offset: 3,
+      modifiers: { shift: true, control: false, alt: false, super: false },
+    });
+    expect(pressed).toEqual([{ run: 0, offset: 3, shift: true }]);
+    root.unmount();
+  });
+
+  test("a run press is parsed from the host", () => {
+    expect(
+      parseNativeEvent(
+        '{"type":"runpress","nodeId":"7","run":1,"offset":4,"shift":false,"ctrl":true,"alt":false,"meta":false}',
+      ),
+    ).toEqual({
+      type: "runpress",
+      nodeId: "7",
+      run: 1,
+      offset: 4,
+      modifiers: { shift: false, control: true, alt: false, super: false },
+    });
+    expect(parseNativeEvent('{"type":"runpress","nodeId":"7","run":-1,"offset":4}')).toBeNull();
+    expect(parseNativeEvent('{"type":"runpress","nodeId":"7","run":1.5,"offset":4}')).toBeNull();
+  });
+
   test("TextInputDefaults gives fields a selection color they don't set", async () => {
     const transport = fakeTransport();
     const root = render(

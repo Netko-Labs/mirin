@@ -438,8 +438,45 @@ export interface TextInputProps extends AccessibilityProps {
   onSelectionChange?: (selection: TextSelection) => void;
   /** Drawn behind selected text; defaults to the nearest `TextInputDefaults`, else a translucent blue. */
   selectionColor?: Color;
+  /**
+   * How parts of the text are drawn (a Markdown note formatted as it is typed):
+   * the value stays plain text, and the caret, selection and edits work as in
+   * plain text. Later runs win where they overlap. A host without
+   * `MIRIN_METAL_RUNS` refuses a tree with runs.
+   */
+  runs?: readonly TextRun[];
+  /** A press on a run with `press` (the caret stays where it was): which run, by its index in `runs`. */
+  onRunPress?: (event: RunPressInfo) => void;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
+}
+
+/**
+ * A styled run over a field's text: offsets into `value` (JavaScript string
+ * indices), `start <= end`, and how that text is drawn.
+ */
+export interface TextRun {
+  start: number;
+  end: number;
+  color?: Color;
+  /** A wash behind the text (code, a search match). */
+  backgroundColor?: Color;
+  fontWeight?: "normal" | "medium" | "semibold" | "bold";
+  fontStyle?: "normal" | "italic";
+  textDecorationLine?: "none" | "underline" | "line-through";
+  /** Draws every paragraph the run is in at this size (a heading); a line has one size. */
+  fontSize?: number;
+  /** A press on the run is reported (`onRunPress`) instead of placing the caret: a checkbox in the text. */
+  press?: boolean;
+}
+
+/** A press on a field's pressable run. */
+export interface RunPressInfo {
+  /** The run's index in `runs`. */
+  run: number;
+  /** The offset nearest the pointer, where a click would have put the caret. */
+  offset: number;
+  modifiers: Modifiers;
 }
 
 /**
@@ -496,6 +533,7 @@ export type NativeEvent =
   | { type: "submit"; nodeId: string; value: string }
   | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
   | ({ type: "selection"; nodeId: string } & TextSelection)
+  | { type: "runpress"; nodeId: string; run: number; offset: number; modifiers: Modifiers }
   | { type: "hover"; nodeId: string; hovered: boolean; bounds?: Bounds }
   | ({ type: "pointer"; nodeId: string } & PointerInfo)
   | { type: "contextmenu"; nodeId: string; x: number; y: number; modifiers?: Modifiers }

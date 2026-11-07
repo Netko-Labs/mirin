@@ -16,7 +16,9 @@ import type {
   Modifiers,
   PointerInfo,
   PressInfo,
+  RunPressInfo,
   TextInputStyle,
+  TextRun,
   TextSelection,
   TextStyle,
   ViewStyle,
@@ -194,6 +196,7 @@ interface InputNodeProps {
   selection?: TextSelection;
   onSelection?: boolean;
   selectionColor?: Color;
+  runs?: InputRunProps[];
   access?: AccessNodeProps;
 }
 
@@ -255,6 +258,7 @@ export interface Handlers {
   submit: Map<string, (text: string) => void>;
   key: Map<string, (key: "Escape" | "ArrowUp" | "ArrowDown") => void>;
   selection: Map<string, (selection: TextSelection) => void>;
+  runPress: Map<string, (event: RunPressInfo) => void>;
   /** `testID` → native node id, for checks and tools. */
   testIds: Map<string, string>;
 }
@@ -308,6 +312,7 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
     submit: new Map(),
     key: new Map(),
     selection: new Map(),
+    runPress: new Map(),
     testIds: new Map(),
   };
   const tree = serializeInstance(root, handlers);
@@ -566,6 +571,34 @@ function textNode(
   return { type: "text", props, children };
 }
 
+/** A styled run as the renderer takes it (`InputRun`). */
+interface InputRunProps {
+  start: number;
+  end: number;
+  color?: Color;
+  background?: Color;
+  weight?: "normal" | "medium" | "semibold" | "bold";
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  size?: number;
+  press?: boolean;
+}
+
+function serializeRun(run: TextRun): InputRunProps {
+  const start = offset(run.start);
+  const props: InputRunProps = { start, end: Math.max(start, offset(run.end)) };
+  if (run.color) props.color = run.color;
+  if (run.backgroundColor) props.background = run.backgroundColor;
+  if (run.fontWeight) props.weight = run.fontWeight;
+  if (run.fontStyle === "italic") props.italic = true;
+  if (run.textDecorationLine === "underline") props.underline = true;
+  if (run.textDecorationLine === "line-through") props.strikethrough = true;
+  if (run.fontSize !== undefined) props.size = run.fontSize;
+  if (run.press) props.press = true;
+  return props;
+}
+
 /** A selection offset as the renderer takes it: a whole number, at least 0. */
 function offset(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
@@ -614,6 +647,8 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
     handlers.selection.set(id, input.onSelectionChange);
   }
   if (input.selectionColor) props.selectionColor = input.selectionColor;
+  if (input.runs && input.runs.length > 0) props.runs = input.runs.map(serializeRun);
+  if (input.onRunPress) handlers.runPress.set(id, input.onRunPress);
   if (input.testID) handlers.testIds.set(input.testID, id);
   const access = accessOf(input);
   if (access) props.access = access;

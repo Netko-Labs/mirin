@@ -370,9 +370,33 @@ pub struct InputProps {
     /// What is drawn behind selected text; a translucent blue without it.
     #[serde(default)]
     pub selection_color: Option<String>,
+    /// Styled runs over the text (`runs.rs`): color, weight, italic, a wash,
+    /// underline, strikethrough, a paragraph's size, and runs a press reports.
+    #[serde(default)]
+    pub runs: Vec<InputRun>,
     /// What assistive technology hears for this field (`access/`); boxed, as most fields have none.
     #[serde(default)]
     pub access: Option<Box<AccessProps>>,
+}
+
+/// A styled run over an input's text (`runs.rs`): UTF-16 offsets into its
+/// value, `start <= end`, and how that text is drawn. A later run wins where
+/// runs overlap. `size` sizes the whole paragraph (or paragraphs) the run is
+/// in: GPUI lays a line out at one size. `press`: a press on the run doesn't
+/// place the caret; it is reported (`runpress`), as a checkbox in the text is.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct InputRun {
+    pub start: usize,
+    pub end: usize,
+    pub color: Option<String>,
+    pub background: Option<String>,
+    pub weight: Option<Weight>,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+    pub size: Option<f32>,
+    pub press: bool,
 }
 
 /// A field's selection: UTF-16 offsets into its text (JavaScript's string
@@ -416,6 +440,7 @@ impl Default for InputProps {
             selection: None,
             on_selection: false,
             selection_color: None,
+            runs: Vec::new(),
             access: None,
         }
     }

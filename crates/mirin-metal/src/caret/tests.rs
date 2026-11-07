@@ -178,3 +178,61 @@ fn a_secure_fields_selection_is_drawn_over_its_bullets() {
     let bullet = '\u{2022}'.len_utf8();
     assert_eq!(display.selection, Some(2 * bullet..4 * bullet));
 }
+
+/// `Mono` with its first paragraph drawn twice as tall (a heading, `runs.rs`).
+struct Headed(Mono);
+
+const TALL: f32 = 2.0 * LINE;
+
+impl Laid for Headed {
+    fn position(&self, index: usize) -> Option<Point<Pixels>> {
+        let at = self.0.position(index)?;
+        let below = if index > self.0.lines[0].1 { LINE } else { 0.0 };
+        Some(point(at.x, at.y + px(below)))
+    }
+
+    fn hit(&self, position: Point<Pixels>) -> usize {
+        let y = f32::from(position.y);
+        let y = if y < TALL { y / 2.0 } else { y - LINE };
+        self.0.hit(point(position.x, px(y)))
+    }
+
+    fn line_height(&self) -> Pixels {
+        px(LINE)
+    }
+
+    fn line_height_at(&self, index: usize) -> Pixels {
+        px(if index <= self.0.lines[0].1 {
+            TALL
+        } else {
+            LINE
+        })
+    }
+
+    fn bounds(&self) -> Bounds<Pixels> {
+        let mut bounds = self.0.bounds();
+        bounds.size.height += px(LINE);
+        bounds
+    }
+}
+
+#[test]
+fn a_sized_line_draws_its_caret_and_selection_at_its_own_height() {
+    let text = "# Hi\nyes";
+    let laid = Headed(Mono::new(text, 40));
+    assert_eq!(
+        caret_bar(&laid, text, 2, px(1.0)).map(|bar| bar.size.height),
+        Some(px(TALL))
+    );
+    assert_eq!(
+        caret_bar(&laid, text, 6, px(1.0)).map(|bar| (bar.origin.y, bar.size.height)),
+        Some((px(TALL), px(LINE)))
+    );
+    let rects = selection_rects(&laid, text, 2..7, px(5.0));
+    assert_eq!(rects.len(), 2);
+    assert_eq!(rects[0].size.height, px(TALL));
+    assert_eq!(
+        (rects[1].origin.y, rects[1].size.height),
+        (px(TALL), px(LINE))
+    );
+}

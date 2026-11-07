@@ -88,6 +88,24 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return Array.isArray(record.nodes)
         ? { type: "layout", nodeId: "root", nodes: record.nodes.flatMap(parseLayoutNode) }
         : null;
+    case "runpress": {
+      const { run, offset } = record;
+      if (
+        typeof run !== "number" ||
+        typeof offset !== "number" ||
+        !Number.isInteger(run) ||
+        run < 0 ||
+        offset < 0
+      )
+        return null;
+      const modifiers = parseModifiers(record) ?? {
+        shift: false,
+        control: false,
+        alt: false,
+        super: false,
+      };
+      return { type: "runpress", nodeId, run, offset, modifiers };
+    }
     case "selection": {
       const { start, end } = record;
       return typeof start === "number" && typeof end === "number" && start >= 0 && end >= start

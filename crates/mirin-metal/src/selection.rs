@@ -20,7 +20,8 @@ use gpui::{
 use crate::caret::{Drawn, DrawnCell};
 use crate::events::EventSender;
 use crate::field::{Field, Press};
-use crate::tree::InputProps;
+use crate::runs::{pressed, Units};
+use crate::tree::{InputProps, InputRun};
 use crate::window::{driver_resets, RootView};
 
 #[cfg(test)]
@@ -149,6 +150,13 @@ impl SelectionState {
         (field.cursor, field.anchor) != before
     }
 
+    /// The buffer char drawn under window point `position` (not the
+    /// boundary nearest it): `None` off the text, or before it was drawn.
+    fn char_under(&self, position: Point<Pixels>) -> Option<usize> {
+        let drawn = self.drawn.borrow();
+        drawn.as_ref()?.char_under(position)
+    }
+
     /// The char of `field` under window point `position`, from the field as
     /// last drawn; `None` before it was drawn.
     fn char_at(&self, field: &Field, position: Point<Pixels>) -> Option<usize> {
@@ -178,6 +186,21 @@ impl RootView {
         let Some(state) = self.inputs.get_mut(id) else {
             return;
         };
+        // A press on a run that takes presses (a checkbox in the text) is the
+        // run's: the caret stays, and the driver hears which run it was.
+        if let Some(runs) = &props.runs {
+            let under = state.selection.char_under(event.position);
+            if let Some(run) = under.and_then(|at| pressed(runs, &state.field.buffer, at)) {
+                let units = Units::new(&state.field.buffer);
+                let near = state
+                    .selection
+                    .char_at(&state.field, event.position)
+                    .unwrap_or(state.field.cursor);
+                self.events
+                    .run_press(id, run, units.offset_of(near), event.modifiers.into());
+                return;
+            }
+        }
         let at = state
             .selection
             .char_at(&state.field, event.position)
@@ -242,6 +265,8 @@ impl RootView {
 pub(crate) struct PressProps {
     pub(crate) multiline: bool,
     pub(crate) on_change: bool,
+    /// The field's runs, when one takes presses (`runs.rs`).
+    pub(crate) runs: Option<Vec<InputRun>>,
 }
 
 /// Follow the pointer anywhere in the window (and past its edge, where the

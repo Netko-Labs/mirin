@@ -106,6 +106,28 @@ impl Display {
         }
     }
 
+    /// The byte of `text` where each buffer char is drawn, and one past the
+    /// last: `byte_of` for every index at once (`runs.rs` styles by them).
+    pub(crate) fn buffer_bytes(&self) -> Vec<usize> {
+        let starts: Vec<usize> = self
+            .text
+            .char_indices()
+            .map(|(byte, _)| byte)
+            .chain(std::iter::once(self.text.len()))
+            .collect();
+        let chars = starts.len() - 1 - self.inserted.len();
+        (0..=chars)
+            .map(|index| {
+                let shown = if index < self.inserted.start {
+                    index
+                } else {
+                    index + self.inserted.len()
+                };
+                starts[shown.min(starts.len() - 1)]
+            })
+            .collect()
+    }
+
     /// The byte of `text` where buffer char `index` is drawn; at the cursor
     /// that is past the composition (`caret` is the caret's own place).
     pub(crate) fn byte_of(&self, index: usize) -> usize {

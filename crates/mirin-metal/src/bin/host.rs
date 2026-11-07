@@ -399,6 +399,16 @@ fn main() {
             if let EventKind::Press(modifiers) = &event.kind {
                 write_modifiers(&mut line, modifiers);
             }
+            if let EventKind::RunPress {
+                run,
+                offset,
+                modifiers,
+            } = &event.kind
+            {
+                line["run"] = serde_json::json!(run);
+                line["offset"] = serde_json::json!(offset);
+                write_modifiers(&mut line, modifiers);
+            }
             if let EventKind::KeyDown(key) | EventKind::WindowKey { key, .. } = &event.kind {
                 line["key"] = serde_json::json!(key.key);
                 if let Some(text) = &key.text {

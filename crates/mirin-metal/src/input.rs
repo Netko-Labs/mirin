@@ -123,8 +123,27 @@ pub(crate) fn render_input(
     if let Some(color) = color.and_then(parse_color) {
         element = element.text_color(rgba(color));
     }
-    let text = StyledText::new(SharedString::from(display.text.clone()))
-        .with_highlights(highlights(&display));
+    // The driver's runs (`runs.rs`) under the composition's underline; a
+    // placeholder or a secure field's bullets are drawn plain.
+    let styled = if showing_placeholder || props.secure || props.runs.is_empty() {
+        crate::runs::Styled {
+            highlights: highlights(&display),
+            sizes: Vec::new(),
+        }
+    } else {
+        crate::runs::style(
+            &props.runs,
+            &field.buffer,
+            &display.text,
+            &display.buffer_bytes(),
+            highlights(&display).pop(),
+        )
+    };
+    let mut text = StyledText::new(SharedString::from(display.text.clone()))
+        .with_highlights(styled.highlights);
+    if props.multiline && !styled.sizes.is_empty() {
+        text = text.with_paragraph_sizes(styled.sizes);
+    }
     let layout = text.layout().clone();
     if let Some(range) = display.selection.clone() {
         let color = props
@@ -229,6 +248,11 @@ pub(crate) fn render_input(
     let press = PressProps {
         multiline: props.multiline,
         on_change: props.on_change,
+        runs: props
+            .runs
+            .iter()
+            .any(|run| run.press)
+            .then(|| props.runs.clone()),
     };
     element = element.on_mouse_down(
         MouseButton::Left,

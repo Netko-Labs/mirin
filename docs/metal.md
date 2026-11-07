@@ -135,7 +135,7 @@ state and describes UI; the renderer is a pure function of the latest tree.
   `color`, `placeholderColor`, `background`, `padding`, `cornerRadius`,
   `borderColor`, `focusBorderColor`, `width`, `height`, `minHeight`, `flex`,
   `fill`, `autofocus`, `onChange`, `onSubmit`, `onKey`, `selection`
-  (`{"start","end"}`), `onSelection`, `selectionColor`. The renderer owns the
+  (`{"start","end"}`), `onSelection`, `selectionColor`, `runs`. The renderer owns the
   editing buffer, caret, selection, and focus (`window::InputState`); a
   different `value` in a later tree resets the buffer (controlled-input
   semantics), and so does a new `revision`: the caret goes to the end, or to
@@ -180,7 +180,27 @@ state and describes UI; the renderer is a pure function of the latest tree.
   compositor so the candidates open under it, wherever a click or a key put
   it. A click while composing makes the composition text where it shows
   first. Plain typing is unchanged: keys still arrive as
-  keys (`src/field.rs` edits for both). A `secure` field takes no input
+  keys (`src/field.rs` edits for both).
+  Styled runs (`src/runs.rs`): `runs` is a list of `{"start","end"}` (UTF-16
+  offsets into the value, as the selection's) with how that text is drawn:
+  `color`, `background` (a wash behind it), `weight`, `italic`, `underline`,
+  `strikethrough`, `size`, and `press`. The value stays plain text; runs only
+  change how it is drawn, so the caret, the selection and every edit work as
+  in plain text (a Markdown note drawn formatted as it is typed: its
+  `**bold**` bold, its markers faded). Where runs overlap the later one wins,
+  attribute by attribute, and a composition's underline is drawn over them.
+  `size` draws the whole paragraph (or paragraphs) the run is in at that
+  size, in a multiline field: GPUI lays a line out at one size, so mirin's
+  GPUI fork shapes each paragraph at its own (`StyledText::
+  with_paragraph_sizes`), and the caret, the selection's wash, ↑ ↓ and the
+  pointer follow each line's own height. A press on a run with `press` (a
+  checkbox in the text) leaves the caret where it was and is reported:
+  `{"type":"runpress","nodeId","run","offset","shift","ctrl","alt","meta"}`,
+  the run's index in `runs` and the offset nearest the pointer (where a
+  click would have put the caret). A placeholder and a `secure` field draw
+  plain. At most 8192 runs are drawn. The host names `MIRIN_METAL_RUNS`
+  (`RUNS_MARKER`) for a driver checking for this; an older host refuses a
+  tree with `runs`. A `secure` field takes no input
   method: while it (or nothing that takes text) has the keyboard, text input
   is off, so what is typed there never reaches one. The host names
   `MIRIN_METAL_IME` (`IME_MARKER`) for a driver checking for this.
@@ -207,7 +227,8 @@ state and describes UI; the renderer is a pure function of the latest tree.
   modifiers held, Super as `meta`; all false for Space or Enter on a focused
   view; `contextmenu` carries them too), `{"type":"change","nodeId","value"}`,
   `{"type":"submit","nodeId","value"}`, `{"type":"selection","nodeId","start",
-  "end"}`, `{"type":"layout","nodeId":"root",
+  "end"}`, `{"type":"runpress","nodeId","run","offset","shift","ctrl","alt",
+  "meta"}` (styled runs, above), `{"type":"layout","nodeId":"root",
   "nodes":[{id,x,y,width,height}]}` in reply to a layout query, and
   `{"type":"frame","nodeId":"root"}` once a newly opened window has painted its
   first frame (once per open; a driver times an open with it), and
@@ -264,6 +285,9 @@ numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
 (`onKeyPress` reports Escape, and ArrowUp and ArrowDown in a single-line field,
 for list navigation), React Native's `selection` (`{ start, end }`, controlled),
 `onSelectionChange` (called with `{ start, end }`) and `selectionColor` on it,
+`runs` (`TextRun`: `start`, `end`, `color`, `backgroundColor`, `fontWeight`,
+`fontStyle`, `textDecorationLine`, `fontSize`, `press`) and `onRunPress`
+(called with `{ run, offset, modifiers }`),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
 `<TextInput>` below it takes unless it sets its own (a theme gives fields its
 selection color once), and

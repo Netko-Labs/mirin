@@ -32,6 +32,14 @@ pub enum EventKind {
     /// offsets into its text, `start <= end` (equal: the caret, nothing
     /// selected).
     Selection { start: usize, end: usize },
+    /// A press on a styled run of an `input` that takes presses (`runs.rs`):
+    /// the run's index in `runs`, the UTF-16 offset nearest the pointer, and
+    /// the modifiers held. The caret didn't move.
+    RunPress {
+        run: usize,
+        offset: usize,
+        modifiers: Modifiers,
+    },
     /// Reply to a `layout` simulation query (node id is `"root"`).
     Layout { nodes: Vec<LayoutNode> },
     /// The pointer entered (`true`) or left (`false`) a `view` with `onHover`.
@@ -177,6 +185,7 @@ impl EventKind {
             EventKind::Submit { .. } => "submit",
             EventKind::Key { .. } => "key",
             EventKind::Selection { .. } => "selection",
+            EventKind::RunPress { .. } => "runpress",
             EventKind::Layout { .. } => "layout",
             EventKind::Hover { .. } => "hover",
             EventKind::Pointer { .. } => "pointer",
@@ -198,6 +207,7 @@ impl EventKind {
         match self {
             EventKind::Press(_)
             | EventKind::Selection { .. }
+            | EventKind::RunPress { .. }
             | EventKind::WindowKey { .. }
             | EventKind::Visibility { .. }
             | EventKind::Typing { .. }
@@ -277,6 +287,17 @@ impl EventSender {
 
     pub(crate) fn selection(&self, node_id: &str, (start, end): (usize, usize)) {
         self.send(node_id, EventKind::Selection { start, end });
+    }
+
+    pub(crate) fn run_press(&self, node_id: &str, run: usize, offset: usize, modifiers: Modifiers) {
+        self.send(
+            node_id,
+            EventKind::RunPress {
+                run,
+                offset,
+                modifiers,
+            },
+        );
     }
 
     pub(crate) fn key_down(&self, node_id: &str, key: KeyDown) {

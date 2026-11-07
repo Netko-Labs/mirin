@@ -149,6 +149,8 @@ pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+    // mirin: per-paragraph font sizes.
+    paragraph_sizes: Option<Vec<Option<Pixels>>>,
     layout: TextLayout,
 }
 
@@ -159,8 +161,20 @@ impl StyledText {
             text: text.into(),
             runs: None,
             delayed_highlights: None,
+            paragraph_sizes: None,
             layout: TextLayout::default(),
         }
+    }
+
+    // mirin: per-paragraph font sizes.
+    /// Lay out paragraph `i` (the text between its `i`th and `i + 1`th
+    /// newline) at `sizes[i]` instead of the text style's size, each line at
+    /// the line height the style gives that size; `None`, or a paragraph past
+    /// the list, keeps the style's. A heading in an editable field is one
+    /// paragraph drawn larger. Truncated text ignores it.
+    pub fn with_paragraph_sizes(mut self, sizes: Vec<Option<Pixels>>) -> Self {
+        self.paragraph_sizes = sizes.iter().any(Option::is_some).then_some(sizes);
+        self
     }
 
     /// Get the layout for this element. This can be used to map indices to pixels and vice versa.
@@ -269,7 +283,10 @@ impl Element for StyledText {
             })
         });
 
-        let layout_id = self.layout.layout(self.text.clone(), runs, window, cx);
+        let sizes = self.paragraph_sizes.take();
+        let layout_id = self
+            .layout
+            .layout_sized(self.text.clone(), runs, sizes, window, cx);
         (layout_id, ())
     }
 
@@ -315,6 +332,9 @@ struct TextLayoutInner {
     len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
+    // mirin: per-paragraph font sizes. Each line's own line height, beside
+    // `lines`; all `line_height` unless paragraphs were sized.
+    line_heights: SmallVec<[Pixels; 1]>,
     wrap_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
@@ -351,11 +371,44 @@ fn widest_word(
     (widest > Pixels::ZERO).then(|| widest.ceil() + crate::px(1.0))
 }
 
+// mirin: per-paragraph font sizes.
+/// The runs that cover bytes `range` of a text the whole of `runs` covers.
+fn runs_within(runs: &[TextRun], range: Range<usize>) -> Vec<TextRun> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for run in runs {
+        let end = start + run.len;
+        let (from, to) = (start.max(range.start), end.min(range.end));
+        if from < to {
+            out.push(TextRun {
+                len: to - from,
+                ..run.clone()
+            });
+        }
+        start = end;
+        if start >= range.end {
+            break;
+        }
+    }
+    out
+}
+
 impl TextLayout {
     fn layout(
         &self,
         text: SharedString,
         runs: Option<Vec<TextRun>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> LayoutId {
+        self.layout_sized(text, runs, None, window, cx)
+    }
+
+    fn layout_sized(
+        &self,
+        text: SharedString,
+        runs: Option<Vec<TextRun>>,
+        paragraph_sizes: Option<Vec<Option<Pixels>>>,
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
@@ -430,6 +483,54 @@ impl TextLayout {
                 };
                 let len = text.len();
 
+                // mirin: per-paragraph font sizes. Each paragraph is shaped
+                // on its own at its size, one wrapped line each, as
+                // `shape_text` would have split them.
+                if let Some(sizes) = paragraph_sizes.as_ref().filter(|_| truncate_width.is_none()) {
+                    let mut lines = SmallVec::<[WrappedLine; 1]>::new();
+                    let mut line_heights = SmallVec::<[Pixels; 1]>::new();
+                    let mut start = 0;
+                    for (index, paragraph) in text.split('\n').enumerate() {
+                        let range = start..start + paragraph.len();
+                        start = range.end + 1;
+                        let size = sizes.get(index).copied().flatten().unwrap_or(font_size);
+                        let height = text_style
+                            .line_height
+                            .to_pixels(size.into(), window.rem_size());
+                        let shaped = window
+                            .text_system()
+                            .shape_text(
+                                SharedString::from(paragraph.to_string()),
+                                size,
+                                &runs_within(&runs, range),
+                                wrap_width,
+                                None,
+                            )
+                            .log_err()
+                            .unwrap_or_default();
+                        for line in shaped {
+                            lines.push(line);
+                            line_heights.push(height);
+                        }
+                    }
+                    let mut size: Size<Pixels> = Size::default();
+                    for (line, height) in lines.iter().zip(&line_heights) {
+                        let line_size = line.size(*height);
+                        size.height += line_size.height;
+                        size.width = size.width.max(line_size.width).ceil();
+                    }
+                    element_state.0.borrow_mut().replace(TextLayoutInner {
+                        lines,
+                        len,
+                        line_height,
+                        line_heights,
+                        wrap_width,
+                        size: Some(size),
+                        bounds: None,
+                    });
+                    return size;
+                }
+
                 let Some(lines) = window
                     .text_system()
                     .shape_text(
@@ -445,6 +546,7 @@ impl TextLayout {
                         lines: Default::default(),
                         len: 0,
                         line_height,
+                        line_heights: Default::default(),
                         wrap_width,
                         size: Some(Size::default()),
                         bounds: None,
@@ -459,10 +561,12 @@ impl TextLayout {
                     size.width = size.width.max(line_size.width).ceil();
                 }
 
+                let line_heights = lines.iter().map(|_| line_height).collect();
                 element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
                     len,
                     line_height,
+                    line_heights,
                     wrap_width,
                     size: Some(size),
                     bounds: None,
@@ -493,10 +597,9 @@ impl TextLayout {
             .with_context(|| format!("prepaint has not been performed on {text}"))
             .unwrap();
 
-        let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         let text_style = window.text_style();
-        for line in &element_state.lines {
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
             line.paint_background(
                 line_origin,
                 line_height,
@@ -533,10 +636,9 @@ impl TextLayout {
             return Err(0);
         }
 
-        let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
-        for line in &element_state.lines {
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
             let line_bottom = line_origin.y + line.size(line_height).height;
             if position.y > line_bottom {
                 line_origin.y = line_bottom;
@@ -562,12 +664,10 @@ impl TextLayout {
         let bounds = element_state
             .bounds
             .expect("prepaint has not been performed");
-        let line_height = element_state.line_height;
-
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
 
-        for line in &element_state.lines {
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
             let line_end_ix = line_start_ix + line.len();
             if index < line_start_ix {
                 break;
@@ -593,12 +693,10 @@ impl TextLayout {
         let bounds = element_state
             .bounds
             .expect("prepaint has not been performed");
-        let line_height = element_state.line_height;
-
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
 
-        for line in &element_state.lines {
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
             let line_end_ix = line_start_ix + line.len();
             if index < line_start_ix {
                 break;
@@ -622,6 +720,29 @@ impl TextLayout {
     /// The line height for this layout.
     pub fn line_height(&self) -> Pixels {
         self.0.borrow().as_ref().unwrap().line_height
+    }
+
+    // mirin: per-paragraph font sizes.
+    /// The line height of the paragraph that holds byte `index` (past the
+    /// end: the last one's); `line_height` when paragraphs aren't sized.
+    pub fn line_height_for_index(&self, index: usize) -> Pixels {
+        let element_state = self.0.borrow();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+        let mut line_start_ix = 0;
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
+            let line_end_ix = line_start_ix + line.len();
+            if index <= line_end_ix {
+                return line_height;
+            }
+            line_start_ix = line_end_ix + 1;
+        }
+        element_state
+            .line_heights
+            .last()
+            .copied()
+            .unwrap_or(element_state.line_height)
     }
 
     /// The UTF-8 length of the underlying text.

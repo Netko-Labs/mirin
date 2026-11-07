@@ -30,6 +30,11 @@ pub(crate) trait Laid {
     /// The byte a point is on or nearest, inside the text or not.
     fn hit(&self, position: Point<Pixels>) -> usize;
     fn line_height(&self) -> Pixels;
+    /// The height of the line byte `index` is on (paragraphs can be sized:
+    /// `runs.rs`); every line's is `line_height` by default.
+    fn line_height_at(&self, _index: usize) -> Pixels {
+        self.line_height()
+    }
     fn bounds(&self) -> Bounds<Pixels>;
 }
 
@@ -46,6 +51,10 @@ impl Laid for TextLayout {
 
     fn line_height(&self) -> Pixels {
         TextLayout::line_height(self)
+    }
+
+    fn line_height_at(&self, index: usize) -> Pixels {
+        self.line_height_for_index(index)
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
@@ -80,7 +89,7 @@ pub(crate) fn caret_bar(
     width: Pixels,
 ) -> Option<Bounds<Pixels>> {
     let at = caret_point(laid, text, index)?;
-    Some(Bounds::new(at, size(width, laid.line_height())))
+    Some(Bounds::new(at, size(width, laid.line_height_at(index))))
 }
 
 /// The drawn caret's width, before it is rounded to whole device pixels.
@@ -107,7 +116,7 @@ pub(crate) fn paint_selection(
     color: Hsla,
     window: &mut Window,
 ) {
-    let newline = layout.line_height() / 3.0;
+    let newline = layout.line_height_at(range.start) / 3.0;
     for rect in selection_rects(layout, text, range, newline) {
         window.paint_quad(fill(rect, color));
     }
@@ -123,7 +132,6 @@ pub(crate) fn selection_rects(
     newline: Pixels,
 ) -> Vec<Bounds<Pixels>> {
     let mut rects = Vec::new();
-    let line_height = laid.line_height();
     let far = laid.bounds().right() + px(100_000.0);
     let end = range.end.min(text.len());
     let mut from = range.start;
@@ -131,6 +139,7 @@ pub(crate) fn selection_rects(
         let Some(start) = caret_point(laid, text, from) else {
             break;
         };
+        let line_height = laid.line_height_at(from);
         let line_end = laid
             .hit(point(far, start.y + line_height / 2.0))
             .clamp(from, text.len());
@@ -211,6 +220,16 @@ impl Drawn {
 }
 
 impl Drawn {
+    /// The buffer char drawn under window point `position`; `None` off the
+    /// text (past a line's end, a placeholder).
+    pub(crate) fn char_under(&self, position: Point<Pixels>) -> Option<usize> {
+        if self.placeholder {
+            return None;
+        }
+        let byte = self.layout.index_for_position(position).ok()?;
+        (byte < self.display.text.len()).then(|| self.display.buffer_char(byte))
+    }
+
     /// Where the caret before buffer char `index` would be drawn.
     fn caret_at(&self, index: usize) -> Option<Point<Pixels>> {
         caret_point(&self.layout, &self.display.text, self.byte_at(index))
@@ -224,7 +243,7 @@ impl Lines for Drawn {
         }
         let at = self.caret_at(index)?;
         let bounds = self.layout.bounds();
-        let y = at.y + self.layout.line_height() / 2.0;
+        let y = at.y + self.layout.line_height_at(self.byte_at(index)) / 2.0;
         let start = self.layout.hit(point(bounds.left() - px(1.0), y));
         let end = self.layout.hit(point(bounds.right() + px(10_000.0), y));
         let (start, mut end) = (
@@ -261,8 +280,14 @@ impl Lines for Drawn {
         }
         let at = self.caret_at(index)?;
         let bounds = self.layout.bounds();
-        let line = self.layout.line_height();
-        let y = at.y + line * step as f32 + line / 2.0;
+        let line = self.layout.line_height_at(self.byte_at(index));
+        // Lines can differ in height (sized paragraphs): up is just above
+        // this line's top, down just below its bottom, one line at a time.
+        let y = if step < 0 {
+            at.y - px(1.0) + line * (step + 1) as f32
+        } else {
+            at.y + line * step as f32 + px(1.0)
+        };
         if y < bounds.top() || y > bounds.bottom() {
             return Some(Vertical::Past);
         }
