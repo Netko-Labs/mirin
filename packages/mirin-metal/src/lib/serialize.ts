@@ -194,6 +194,7 @@ interface InputNodeProps {
   revision?: number;
   onChange?: boolean;
   onSubmit?: boolean;
+  focusNextOnSubmit?: boolean;
   onKey?: boolean;
   selection?: TextSelection;
   onSelection?: boolean;
@@ -643,6 +644,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
     props.onSubmit = true;
     handlers.submit.set(id, input.onSubmitEditing);
   }
+  if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
   if (input.onKeyPress) {
     props.onKey = true;
     handlers.key.set(id, input.onKeyPress);

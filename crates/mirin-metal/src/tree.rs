@@ -357,6 +357,10 @@ pub struct InputProps {
     pub on_change: bool,
     #[serde(default)]
     pub on_submit: bool,
+    /// Enter also moves the keyboard on, as Tab does, here in the host:
+    /// keys typed right after land in the next field, not this one.
+    #[serde(default)]
+    pub focus_next_on_submit: bool,
     /// Report Escape, ArrowUp, and ArrowDown (a launcher's list navigation).
     #[serde(default)]
     pub on_key: bool,
@@ -463,6 +467,7 @@ impl Default for InputProps {
             autofocus: false,
             on_change: false,
             on_submit: false,
+            focus_next_on_submit: false,
             on_key: false,
             selection: None,
             on_selection: false,
@@ -640,6 +645,18 @@ mod tests {
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].id, "sql");
         assert!(inputs[0].multiline && inputs[0].on_submit);
+        assert!(!inputs[0].focus_next_on_submit);
+    }
+
+    #[test]
+    fn an_input_can_move_the_keyboard_on_at_enter() {
+        let tree = parse_tree(
+            r#"{"type":"input","props":{"id":"title","value":"","onSubmit":true,"focusNextOnSubmit":true}}"#,
+        )
+        .expect("valid tree must parse");
+        let mut inputs = Vec::new();
+        collect_inputs(&tree, &mut inputs);
+        assert!(inputs[0].on_submit && inputs[0].focus_next_on_submit);
     }
 
     #[test]

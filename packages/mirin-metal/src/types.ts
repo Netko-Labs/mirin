@@ -424,6 +424,11 @@ export interface TextInputProps extends AccessibilityProps {
   /** Enter (single line) or Ctrl/Cmd+Enter (multiline). */
   onSubmitEditing?: (text: string) => void;
   /**
+   * Enter also moves the keyboard to the next field or control, as Tab does, in the host:
+   * keys typed right after land there, not here (a note's title, then its body).
+   */
+  focusNextOnSubmit?: boolean;
+  /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
    * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
    */

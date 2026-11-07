@@ -310,6 +310,7 @@ pub(crate) fn render_input(
     let secure = props.secure;
     let on_change = props.on_change;
     let on_submit = props.on_submit;
+    let next_on_submit = props.focus_next_on_submit;
     let on_key = props.on_key;
     element = element.on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
         let outcome = {
@@ -357,6 +358,10 @@ pub(crate) fn render_input(
                     if let Some(state) = view.inputs.get(&key_id) {
                         view.events.submit(&key_id, &state.field.buffer);
                     }
+                }
+                // Before the driver hears of it: the next key already goes there.
+                if next_on_submit {
+                    view.focus_neighbor(&key_id, 1, window);
                 }
             }
             Edit::Key(key) => {

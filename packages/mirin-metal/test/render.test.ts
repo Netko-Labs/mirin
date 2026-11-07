@@ -429,6 +429,29 @@ describe("TextInput", () => {
     root.unmount();
   });
 
+  test("a field that moves the keyboard on at Enter says so; others don't", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(TextInput, {
+          value: "",
+          testID: "title",
+          focusNextOnSubmit: true,
+          onSubmitEditing: () => {},
+        }),
+        createElement(TextInput, { value: "", testID: "body", multiline: true }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(tree.children[0].props).toMatchObject({ onSubmit: true, focusNextOnSubmit: true });
+    expect(tree.children[1].props.focusNextOnSubmit).toBeUndefined();
+    root.unmount();
+  });
+
   test("TextInputDefaults gives fields a selection color they don't set", async () => {
     const transport = fakeTransport();
     const root = render(

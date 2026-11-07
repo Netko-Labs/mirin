@@ -312,7 +312,11 @@ an app's checks) and
 `fontStyle`, `textDecorationLine`, `fontSize`, `press`) and `onRunPress`
 (called with `{ run, offset, modifiers }`),
 `highlights` (`TextHighlight[]`, `{ start, end, color }`; an empty list sends
-nothing) and `lineNumbers` (`{ width, color }`),
+nothing), `lineNumbers` (`{ width, color }`) and `focusNextOnSubmit` (Enter
+also moves the keyboard on, as Tab does, in the host, so keys typed right
+after land in the next field: a title, then its body); a run's `color` may be
+translucent (GPUI blends a highlight's color over the text's, so the host
+sends it opaque with its alpha as a fade),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
 `<TextInput>` below it takes unless it sets its own (a theme gives fields its
 selection color once), and
