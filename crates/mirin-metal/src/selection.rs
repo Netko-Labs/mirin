@@ -104,7 +104,7 @@ impl SelectionState {
             self.echoes.pop_front();
         }
         self.echoes.push_back(now);
-        events.selection(id, now);
+        events.selection(id, now, &field.buffer);
     }
 
     /// The pointer moved over char `at` (`None`: the field is not drawn

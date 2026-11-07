@@ -3,6 +3,7 @@ import { createContext, createElement, useContext, useState } from "react";
 import { useWindowChrome } from "../src/chrome.ts";
 import { Text, TextInput, TextInputDefaults, View } from "../src/components.ts";
 import { parseNativeEvent } from "../src/host.ts";
+import { textHash } from "../src/lib/text-hash.ts";
 import { createPortal, render } from "../src/render.ts";
 import type { NativeEvent, NativeTransport } from "../src/types.ts";
 
@@ -142,6 +143,18 @@ describe("parseNativeEvent", () => {
       end: 3,
     });
     expect(parseNativeEvent('{"type":"selection","nodeId":"7","start":3,"end":1}')).toBeNull();
+    expect(
+      parseNativeEvent('{"type":"selection","nodeId":"7","start":5,"end":5,"textHash":2565100923}'),
+    ).toEqual({
+      type: "selection",
+      nodeId: "7",
+      start: 5,
+      end: 5,
+      textHash: 2565100923,
+    });
+    // The host hashes as the driver does (events::text_hash).
+    expect(textHash("1,250")).toBe(2565100923);
+    expect(textHash("😀")).toBe(3409036472);
     expect(parseNativeEvent('{"type":"frame","nodeId":"root"}')).toEqual({
       type: "frame",
       nodeId: "root",
@@ -268,6 +281,53 @@ describe("TextInput", () => {
     await nextCommit();
     expect(seen).toEqual([{ start: 1, end: 4 }]);
     expect(JSON.parse(transport.sent.at(-1) ?? "").props.selection).toEqual({ start: 1, end: 4 });
+    root.unmount();
+  });
+
+  test("a selection made in a text the app replaced never reaches it", async () => {
+    const transport = fakeTransport();
+    const seen: Array<{ start: number; end: number }> = [];
+    // A field that groups its digits as they are typed, with the caret after the same digit.
+    function Grouped() {
+      const [line, setLine] = useState({ text: "125", caret: 3 });
+      return createElement(TextInput, {
+        value: line.text,
+        testID: "field",
+        selection: { start: line.caret, end: line.caret },
+        onChangeText: (raw: string) => {
+          const digits = raw.replace(/,/g, "");
+          const text = digits.length > 3 ? `${digits.slice(0, -3)},${digits.slice(-3)}` : digits;
+          setLine({ text, caret: text.length });
+        },
+        onSelectionChange: (next: { start: number; end: number }) => {
+          seen.push(next);
+          setLine((old) => ({ ...old, caret: next.end }));
+        },
+      });
+    }
+    const root = render(createElement(Grouped), transport);
+    await nextCommit();
+    const id = root.nodeId("field") ?? "";
+    const props = () => JSON.parse(transport.sent.at(-1) ?? "").props;
+    // "0" typed: the field reports its text, then its caret in that text.
+    transport.emit({ type: "change", nodeId: id, value: "1250" });
+    expect(props()).toMatchObject({ value: "1,250", selection: { start: 5, end: 5 } });
+    transport.emit({ type: "selection", nodeId: id, start: 4, end: 4, textHash: textHash("1250") });
+    expect(seen).toEqual([]);
+    expect(props().selection).toEqual({ start: 5, end: 5 });
+    // The field took the app's text: what it reports now is in it, and gets through.
+    transport.emit({
+      type: "selection",
+      nodeId: id,
+      start: 2,
+      end: 2,
+      textHash: textHash("1,250"),
+    });
+    expect(seen).toEqual([{ start: 2, end: 2 }]);
+    expect(props().selection).toEqual({ start: 2, end: 2 });
+    // A host that doesn't say which text is believed, as before.
+    transport.emit({ type: "selection", nodeId: id, start: 1, end: 1 });
+    expect(seen.at(-1)).toEqual({ start: 1, end: 1 });
     root.unmount();
   });
 

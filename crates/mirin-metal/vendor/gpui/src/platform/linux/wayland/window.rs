@@ -1222,6 +1222,20 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
+        // mirin: a maximized or full-screen toplevel keeps its size; a resize
+        // asked meanwhile moves the size it goes back to by as much (an app
+        // growing to show a sidebar while zoomed). Setting the geometry would
+        // have the compositor take it out of the maximized state.
+        {
+            let mut state = self.borrow_mut();
+            if (state.maximized || state.fullscreen)
+                && matches!(state.role, SurfaceRole::Toplevel { .. })
+            {
+                let restored = restored_size(state.window_bounds.size, state.bounds.size, size);
+                state.window_bounds.size = restored;
+                return;
+            }
+        }
         let state = self.borrow();
         let state_ptr = self.0.clone();
         let dp_size = size.to_device_pixels(self.scale_factor());
@@ -1714,4 +1728,21 @@ fn inset_by_tiling(mut bounds: Bounds<Pixels>, inset: Pixels, tiling: Tiling) ->
     }
 
     bounds
+}
+
+/// mirin: the size a maximized or full-screen window goes back to after a
+/// resize to `asked` while it is `current`: `restored` changed by as much
+/// (never under a pixel).
+fn restored_size(
+    restored: Size<Pixels>,
+    current: Size<Pixels>,
+    asked: Size<Pixels>,
+) -> Size<Pixels> {
+    let by = |restored: Pixels, current: Pixels, asked: Pixels| {
+        (restored + (asked - current)).max(px(1.))
+    };
+    Size {
+        width: by(restored.width, current.width, asked.width),
+        height: by(restored.height, current.height, asked.height),
+    }
 }

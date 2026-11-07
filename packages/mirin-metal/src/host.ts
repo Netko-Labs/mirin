@@ -107,10 +107,12 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return { type: "runpress", nodeId, run, offset, modifiers };
     }
     case "selection": {
-      const { start, end } = record;
-      return typeof start === "number" && typeof end === "number" && start >= 0 && end >= start
-        ? { type: "selection", nodeId, start, end }
-        : null;
+      const { start, end, textHash } = record;
+      if (typeof start !== "number" || typeof end !== "number" || start < 0 || end < start)
+        return null;
+      return typeof textHash === "number"
+        ? { type: "selection", nodeId, start, end, textHash }
+        : { type: "selection", nodeId, start, end };
     }
     case "change":
     case "submit":

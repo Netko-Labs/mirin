@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import ReactReconciler from "react-reconciler";
 import { ConcurrentRoot } from "react-reconciler/constants";
 import { ChromeStore, chromeFromEvent, withChrome } from "./chrome.ts";
+import { FieldTexts } from "./lib/field-texts.ts";
 import { hostConfig } from "./lib/host-config.ts";
 import type { Container } from "./lib/instances.ts";
 import { type Handlers, serializeRoot } from "./lib/serialize.ts";
@@ -72,9 +73,11 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     key: new Map(),
     selection: new Map(),
     runPress: new Map(),
+    fields: new Map(),
     testIds: new Map(),
   };
   let lastTree: string | null = null;
+  const fields = new FieldTexts();
   const chrome = new ChromeStore();
   const container: Container = {
     children: [],
@@ -84,6 +87,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         return;
       }
       handlers = serialized.handlers;
+      fields.follow(serialized.handlers.fields);
       lastTree = serialized.treeJson;
       transport.send(serialized.treeJson);
     },
@@ -110,6 +114,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         });
         break;
       case "change":
+        fields.typed(event.nodeId, event.value);
         handlers.change.get(event.nodeId)?.(event.value);
         break;
       case "submit":
@@ -119,6 +124,8 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         handlers.key.get(event.nodeId)?.(event.value);
         break;
       case "selection":
+        // A selection in a text the app has since replaced is late: its offsets are not into the value.
+        if (!fields.holds(event.nodeId, event.textHash)) break;
         handlers.selection.get(event.nodeId)?.({ start: event.start, end: event.end });
         break;
       case "runpress":

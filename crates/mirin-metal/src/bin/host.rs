@@ -393,9 +393,15 @@ fn main() {
             if let Some(value) = event.kind.value() {
                 line["value"] = serde_json::Value::String(value.to_string());
             }
-            if let EventKind::Selection { start, end } = &event.kind {
+            if let EventKind::Selection {
+                start,
+                end,
+                text_hash,
+            } = &event.kind
+            {
                 line["start"] = serde_json::json!(start);
                 line["end"] = serde_json::json!(end);
+                line["textHash"] = serde_json::json!(text_hash);
             }
             if let EventKind::Hover { hovered } = &event.kind {
                 line["hovered"] = serde_json::Value::Bool(*hovered);

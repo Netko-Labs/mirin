@@ -555,7 +555,8 @@ export type NativeEvent =
   | { type: "change"; nodeId: string; value: string }
   | { type: "submit"; nodeId: string; value: string }
   | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
-  | ({ type: "selection"; nodeId: string } & TextSelection)
+  /** `textHash` names the text the offsets are into (lib/text-hash.ts); an older host leaves it out. */
+  | ({ type: "selection"; nodeId: string; textHash?: number } & TextSelection)
   | { type: "runpress"; nodeId: string; run: number; offset: number; modifiers: Modifiers }
   | { type: "hover"; nodeId: string; hovered: boolean; bounds?: Bounds }
   | ({ type: "pointer"; nodeId: string } & PointerInfo)
@@ -633,7 +634,8 @@ export interface NativeHostTransport extends NativeTransport {
   /**
    * Resize the window, in px: an app growing to show a sidebar, and
    * shrinking when it goes. The compositor has the last word (a zoomed or
-   * tiled window keeps its size; the window reports its size as ever,
+   * tiled window keeps its size, and a zoomed one's size to go back to moves by
+   * as much as asked; the window reports its size as ever,
    * through the root's layout). A host from before it refuses the line (on stderr).
    */
   setSize(width: number, height: number): void;

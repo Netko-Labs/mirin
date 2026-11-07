@@ -165,8 +165,10 @@ state and describes UI; the renderer is a pure function of the latest tree.
   `selectionColor` (a translucent blue without it) while the field is
   focused; the caret glyph stays at the selection's moving end. The driver
   reads it through `onSelection`, `{"type":"selection","nodeId","start",
-  "end"}` on every change (UTF-16 offsets into the text, JavaScript's string
-  indices, `start <= end`; a composition is not part of them), and sets it
+  "end","textHash"}` on every change (UTF-16 offsets into the text,
+  JavaScript's string indices, `start <= end`; a composition is not part of
+  them; `textHash` is the text they are into, 32-bit FNV-1a over its UTF-16
+  code units, `events::text_hash`), and sets it
   through `selection` (`start` where it begins, `end` where the caret goes):
   a different `selection` in a later tree selects it, except one the field
   reported itself (a late echo, kept as `change` values are). The host
@@ -242,7 +244,7 @@ state and describes UI; the renderer is a pure function of the latest tree.
   modifiers held, Super as `meta`; all false for Space or Enter on a focused
   view; `contextmenu` carries them too), `{"type":"change","nodeId","value"}`,
   `{"type":"submit","nodeId","value"}`, `{"type":"selection","nodeId","start",
-  "end"}`, `{"type":"runpress","nodeId","run","offset","shift","ctrl","alt",
+  "end","textHash"}`, `{"type":"runpress","nodeId","run","offset","shift","ctrl","alt",
   "meta"}` (styled runs, above), `{"type":"layout","nodeId":"root",
   "nodes":[{id,x,y,width,height}]}` in reply to a layout query, and
   `{"type":"frame","nodeId":"root"}` once a newly opened window has painted its
@@ -299,7 +301,13 @@ numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
 (`onKeyPress` reports Escape, and ArrowUp and ArrowDown in a single-line field,
 for list navigation), React Native's `selection` (`{ start, end }`, controlled),
-`onSelectionChange` (called with `{ start, end }`) and `selectionColor` on it,
+`onSelectionChange` (called with `{ start, end }`; a selection the field made
+in a text the app has since replaced, which arrives late, is not passed on:
+`lib/field-texts.ts` follows what each field holds, from its `change` events
+and the values the app sets, and checks the event's `textHash` against it;
+the exported `textHash(text)` hashes as the host does, for a stand-in host in
+an app's checks) and
+`selectionColor` on it,
 `runs` (`TextRun`: `start`, `end`, `color`, `backgroundColor`, `fontWeight`,
 `fontStyle`, `textDecorationLine`, `fontSize`, `press`) and `onRunPress`
 (called with `{ run, offset, modifiers }`),
@@ -738,7 +746,10 @@ surface ignores it. A `{"size":{"width":W,"height":H}}` stdin line resizes the
 window afterwards (`setSize()` on the transport), in logical px: an app
 growing to show a sidebar and shrinking when it goes. The compositor has the
 last word (a zoomed, tiled, or full-screen window keeps its size, and a later
-configure may restore the size it chose); the app learns the size it got from
+configure may restore the size it chose). A maximized or full-screen window
+is not resized at all: the size it goes back to moves by as much as the
+request differs from its size now, so a sidebar shown while zoomed still has
+its room once the window is restored (`vendor/gpui`, `MIRIN.md`); the app learns the size it got from
 the root's layout, as ever. A host from before either refuses the line on
 stderr and ignores the variable.
 `MIRIN_METAL_CLOSE=ask` (`askToClose`) lets the app answer a close from outside

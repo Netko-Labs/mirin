@@ -6,6 +6,7 @@ export {
   startHeadlessDisplay,
 } from "./headless.ts";
 export { type NativeHostOptions, type SurfaceOptions, spawnNativeHost } from "./host.ts";
+export { textHash } from "./lib/text-hash.ts";
 export { createPortal, render } from "./render.ts";
 export type {
   AccessibilityProps,

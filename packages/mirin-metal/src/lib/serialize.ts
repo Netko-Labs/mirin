@@ -263,6 +263,8 @@ export interface Handlers {
   key: Map<string, (key: "Escape" | "ArrowUp" | "ArrowDown") => void>;
   selection: Map<string, (selection: TextSelection) => void>;
   runPress: Map<string, (event: RunPressInfo) => void>;
+  /** The value and revision of each field with `onSelectionChange`, by node id (render.ts keeps what its host holds). */
+  fields: Map<string, { value: string; revision: number | undefined }>;
   /** `testID` → native node id, for checks and tools. */
   testIds: Map<string, string>;
 }
@@ -317,6 +319,7 @@ export function serializeRoot(children: HostNode[]): SerializedUi | null {
     key: new Map(),
     selection: new Map(),
     runPress: new Map(),
+    fields: new Map(),
     testIds: new Map(),
   };
   const tree = serializeInstance(root, handlers);
@@ -649,6 +652,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (input.onSelectionChange) {
     props.onSelection = true;
     handlers.selection.set(id, input.onSelectionChange);
+    handlers.fields.set(id, { value: input.value, revision: input.valueRevision });
   }
   if (input.selectionColor) props.selectionColor = input.selectionColor;
   if (input.runs && input.runs.length > 0) props.runs = input.runs.map(serializeRun);

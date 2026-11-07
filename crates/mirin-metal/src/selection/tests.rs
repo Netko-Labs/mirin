@@ -61,3 +61,42 @@ fn a_move_with_the_button_up_ends_a_press_whose_release_was_lost() {
     assert!(selection.pressing.is_none());
     assert_eq!((field.cursor, field.has_selection()), (1, false));
 }
+
+#[test]
+fn a_reported_selection_names_the_text_it_is_in() {
+    // A driver that replaced the text ("1250" tidied to "1,250") tells a
+    // late report for the old text from one for its own by the hash.
+    use crate::events::{text_hash, EventKind, EventSender};
+    use crate::sim::LayoutMap;
+    use crate::tree::InputProps;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let events = EventSender::new(tx, LayoutMap::default());
+    let mut field = Field::new("1250");
+    let props: InputProps =
+        serde_json::from_value(serde_json::json!({ "id": "line", "onSelection": true }))
+            .expect("input props");
+    let mut selection = SelectionState::new(&mut field, &props);
+    field.place(2);
+    selection.report("line", &field, &events);
+    let event = rx.try_recv().expect("a report");
+    assert_eq!(
+        event.kind,
+        EventKind::Selection {
+            start: 2,
+            end: 2,
+            text_hash: text_hash("1250"),
+        }
+    );
+    field.reset("1,250");
+    selection.report("line", &field, &events);
+    let event = rx.try_recv().expect("a report");
+    assert_eq!(
+        event.kind,
+        EventKind::Selection {
+            start: 5,
+            end: 5,
+            text_hash: text_hash("1,250"),
+        }
+    );
+}

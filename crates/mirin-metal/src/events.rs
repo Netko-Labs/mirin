@@ -30,8 +30,13 @@ pub enum EventKind {
     Key { value: String },
     /// An `input` with `onSelection` has a new caret or selection: UTF-16
     /// offsets into its text, `start <= end` (equal: the caret, nothing
-    /// selected).
-    Selection { start: usize, end: usize },
+    /// selected), and which text that is (`text_hash` of it): a driver that
+    /// has since replaced the text knows the offsets are not into its value.
+    Selection {
+        start: usize,
+        end: usize,
+        text_hash: u32,
+    },
     /// A press on a styled run of an `input` that takes presses (`runs.rs`):
     /// the run's index in `runs`, the UTF-16 offset nearest the pointer, and
     /// the modifiers held. The caret didn't move.
@@ -229,6 +234,15 @@ impl EventKind {
     }
 }
 
+/// A text's fingerprint, as a `selection` event carries it: 32-bit FNV-1a
+/// over its UTF-16 code units, so a JavaScript driver hashes its strings the
+/// same way (`charCodeAt`).
+pub(crate) fn text_hash(text: &str) -> u32 {
+    text.encode_utf16().fold(0x811c_9dc5, |hash: u32, unit| {
+        (hash ^ u32::from(unit)).wrapping_mul(0x0100_0193)
+    })
+}
+
 /// Cloneable sender handed into render closures; dropped receivers are fine
 /// (the UI outliving its driver just stops reporting).
 #[derive(Clone)]
@@ -285,8 +299,15 @@ impl EventSender {
         );
     }
 
-    pub(crate) fn selection(&self, node_id: &str, (start, end): (usize, usize)) {
-        self.send(node_id, EventKind::Selection { start, end });
+    pub(crate) fn selection(&self, node_id: &str, (start, end): (usize, usize), text: &str) {
+        self.send(
+            node_id,
+            EventKind::Selection {
+                start,
+                end,
+                text_hash: text_hash(text),
+            },
+        );
     }
 
     pub(crate) fn run_press(&self, node_id: &str, run: usize, offset: usize, modifiers: Modifiers) {
@@ -365,5 +386,22 @@ impl EventSender {
             bounds: self.layout.node(node_id),
             kind,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::text_hash;
+
+    #[test]
+    fn a_text_hashes_as_a_javascript_driver_hashes_its_string() {
+        // FNV-1a over UTF-16 code units: the same numbers as `charCodeAt` gives.
+        assert_eq!(text_hash(""), 2_166_136_261);
+        assert_eq!(text_hash("a"), 3_826_002_220);
+        assert_eq!(text_hash("1250"), 4_258_475_399);
+        assert_eq!(text_hash("1,250"), 2_565_100_923);
+        assert_eq!(text_hash("1 ÷ 0"), 260_320_369);
+        // A character past the BMP is two code units, as in JavaScript.
+        assert_eq!(text_hash("😀"), 3_409_036_472);
     }
 }
