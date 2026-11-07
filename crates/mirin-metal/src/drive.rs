@@ -265,6 +265,12 @@ fn open_window(
         },
         session_lock: matches!(options.surface, Some(Surface::Lock)),
         app_id: options.app_id.clone(),
+        // The app's own floor (`MIRIN_METAL_MIN_SIZE`): the compositor keeps
+        // the window from being made smaller.
+        window_min_size: options
+            .min_size
+            .filter(|_| !is_layer)
+            .map(|(width, height)| size(px(width), px(height))),
         ..Default::default()
     };
     let layout = LayoutMap::default();
@@ -354,11 +360,12 @@ struct Resident {
     hiding: Rc<Cell<bool>>,
 }
 
-/// The newest tree, title and unlock of one turn of messages.
+/// The newest tree, title, size and unlock of one turn of messages.
 #[derive(Default)]
 struct Turn {
     tree: Option<NodeSpec>,
     title: Option<String>,
+    size: Option<(f32, f32)>,
     unlock: bool,
 }
 
@@ -452,6 +459,9 @@ impl Drive {
                 HostMessage::Driver(DriverMessage::Sim(command)) => self.pending.push_back(command),
                 HostMessage::Driver(DriverMessage::Unlock) => turn.unlock = true,
                 HostMessage::Driver(DriverMessage::Title(title)) => turn.title = Some(title),
+                HostMessage::Driver(DriverMessage::Size(width, height)) => {
+                    turn.size = Some((width, height));
+                }
                 HostMessage::Open(options) => {
                     // What came before the open is what it shows.
                     self.hold(&mut turn);
@@ -492,6 +502,7 @@ impl Drive {
             self.held = Some(tree);
         }
         turn.title = None;
+        turn.size = None;
         if !self.pending.is_empty() {
             eprintln!("[mirin-metal-host] dropped simulated input: no window is shown");
             self.pending.clear();
@@ -511,6 +522,11 @@ impl Drive {
                 if let Some(access) = &view.access {
                     access.borrow_mut().retitle(&title);
                 }
+            });
+        }
+        if let Some((width, height)) = turn.size {
+            let _ = window.update(cx, |_view, window, _cx| {
+                window.resize(size(px(width), px(height)));
             });
         }
         let mut sims = Vec::new();

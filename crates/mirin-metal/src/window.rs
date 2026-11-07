@@ -47,6 +47,11 @@ pub struct NativeUiOptions {
     /// as `close-request` (`MIRIN_METAL_CLOSE=ask`): the driver answers by
     /// ending the host, or keeps the window and asks first. Windows only.
     pub ask_to_close: bool,
+    /// The smallest size the person can make the window
+    /// (`MIRIN_METAL_MIN_SIZE`, `xdg_toplevel.set_min_size`): an app whose
+    /// layout stops working below it. None leaves it to the compositor.
+    /// Windows only.
+    pub min_size: Option<(f32, f32)>,
 }
 
 impl Default for NativeUiOptions {
@@ -59,6 +64,7 @@ impl Default for NativeUiOptions {
             surface: None,
             title_bar: TitleBar::Standard,
             ask_to_close: false,
+            min_size: None,
         }
     }
 }
@@ -76,6 +82,10 @@ pub enum DriverMessage {
     /// Retitle the window (`{"title": "..."}`): what the compositor's title
     /// bar, the window switcher, and the taskbar show.
     Title(String),
+    /// Resize the window (`{"size": {"width": W, "height": H}}`, logical
+    /// px): an app growing to show a sidebar. The compositor may still
+    /// decide otherwise (a zoomed or tiled window keeps its size).
+    Size(f32, f32),
 }
 
 /// Whether a new driver `value` resets the buffer. A value the renderer sent

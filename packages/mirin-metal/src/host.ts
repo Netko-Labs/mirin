@@ -249,6 +249,14 @@ export interface NativeHostOptions {
   /** Initial window size in px (`MIRIN_METAL_SIZE`). */
   width?: number;
   height?: number;
+  /**
+   * The smallest the person can make the window, in px
+   * (`MIRIN_METAL_MIN_SIZE`, `xdg_toplevel.set_min_size`): an app whose layout
+   * stops working below it. Both or neither. Windows only; a host from before
+   * it ignores it.
+   */
+  minWidth?: number;
+  minHeight?: number;
   /** Open a layer-shell surface instead of a window (`MIRIN_METAL_SURFACE`). */
   surface?: SurfaceOptions;
   /**
@@ -302,6 +310,9 @@ export function spawnNativeHost(
   }
   if (options.width !== undefined && options.height !== undefined) {
     env.MIRIN_METAL_SIZE = `${Math.round(options.width)}x${Math.round(options.height)}`;
+  }
+  if (options.minWidth !== undefined && options.minHeight !== undefined) {
+    env.MIRIN_METAL_MIN_SIZE = `${Math.max(1, Math.round(options.minWidth))}x${Math.max(1, Math.round(options.minHeight))}`;
   }
   if (options.surface !== undefined) env.MIRIN_METAL_SURFACE = JSON.stringify(options.surface);
   if (options.titleBar !== undefined) env.MIRIN_METAL_TITLEBAR = options.titleBar;
@@ -383,6 +394,14 @@ export function spawnNativeHost(
     },
     setTitle(title) {
       child.stdin.write(`${JSON.stringify({ title })}\n`);
+      void child.stdin.flush();
+    },
+    setSize(width, height) {
+      const size = {
+        width: Math.max(1, Math.round(width)),
+        height: Math.max(1, Math.round(height)),
+      };
+      child.stdin.write(`${JSON.stringify({ size })}\n`);
       void child.stdin.flush();
     },
     open(window) {

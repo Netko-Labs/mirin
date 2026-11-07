@@ -136,6 +136,26 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
         let parsed: TitleLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
         return Ok(HostLine::Window(DriverMessage::Title(parsed.title)));
     }
+    // The app resizes its own window (a sidebar shown or hidden).
+    if line.trim_start().starts_with("{\"size\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SizeLine {
+            size: SizeRequest,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SizeRequest {
+            width: f32,
+            height: f32,
+        }
+        let parsed: SizeLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let SizeRequest { width, height } = parsed.size;
+        if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
+            return Err("\"size\" needs a width and a height of at least 1".into());
+        }
+        return Ok(HostLine::Window(DriverMessage::Size(width, height)));
+    }
     #[cfg(target_os = "linux")]
     if line.trim_start().starts_with("{\"toplevel\"") {
         #[derive(serde::Deserialize)]
@@ -478,10 +498,10 @@ fn main() {
         run_deferred(initial_tree, host_rx, event_tx);
         return;
     }
-    let size = std::env::var("MIRIN_METAL_SIZE").ok().and_then(|size| {
-        let (w, h) = size.split_once('x')?;
-        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
-    });
+    let size = std::env::var("MIRIN_METAL_SIZE")
+        .ok()
+        .as_deref()
+        .and_then(parse_size);
     let options = window_options(
         std::env::var("MIRIN_METAL_TITLE").unwrap_or_else(|_| "mirin metal".into()),
         std::env::var("MIRIN_METAL_APP_ID").ok(),
@@ -492,6 +512,7 @@ fn main() {
     .and_then(|options| {
         Ok(NativeUiOptions {
             ask_to_close: asks_to_close(std::env::var("MIRIN_METAL_CLOSE").ok().as_deref())?,
+            min_size: min_size(std::env::var("MIRIN_METAL_MIN_SIZE").ok().as_deref())?,
             ..options
         })
     })
@@ -501,6 +522,25 @@ fn main() {
     });
     let initial = initial_tree(&options);
     run(options, initial, update_rx, event_tx);
+}
+
+/// `WxH` in logical px (`MIRIN_METAL_SIZE`, `MIRIN_METAL_MIN_SIZE`).
+fn parse_size(text: &str) -> Option<(f32, f32)> {
+    let (w, h) = text.split_once('x')?;
+    Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+}
+
+/// `MIRIN_METAL_MIN_SIZE=WxH`: the smallest the window may be made; unset
+/// leaves it to the compositor. Anything but two sizes of at least 1 is an
+/// error.
+fn min_size(value: Option<&str>) -> Result<Option<(f32, f32)>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    parse_size(value)
+        .filter(|(w, h)| w.is_finite() && h.is_finite() && *w >= 1.0 && *h >= 1.0)
+        .map(Some)
+        .ok_or_else(|| format!("MIRIN_METAL_MIN_SIZE: expected WxH, got `{value}`"))
 }
 
 /// `MIRIN_METAL_CLOSE`: `ask` hands a close from outside to the driver
@@ -564,6 +604,7 @@ fn window_options(
         surface,
         title_bar,
         ask_to_close: false,
+        min_size: None,
     })
 }
 
@@ -623,7 +664,27 @@ mod close_tests {
 
 #[cfg(test)]
 mod window_size_tests {
-    use super::window_options;
+    use super::{min_size, parse_host_line, window_options, HostLine};
+    use mirin_metal::DriverMessage;
+
+    #[test]
+    fn a_minimum_size_is_two_sizes_or_nothing() {
+        assert_eq!(min_size(None), Ok(None));
+        assert_eq!(min_size(Some("274x436")), Ok(Some((274.0, 436.0))));
+        assert!(min_size(Some("274")).is_err());
+        assert!(min_size(Some("0x436")).is_err());
+        assert!(min_size(Some("wide")).is_err());
+    }
+
+    #[test]
+    fn the_app_can_resize_its_window() {
+        assert!(matches!(
+            parse_host_line(r#"{"size":{"width":520,"height":436}}"#),
+            Ok(HostLine::Window(DriverMessage::Size(w, h))) if (w, h) == (520.0, 436.0)
+        ));
+        assert!(parse_host_line(r#"{"size":{"width":0,"height":436}}"#).is_err());
+        assert!(parse_host_line(r#"{"size":{"width":520}}"#).is_err());
+    }
 
     #[test]
     fn small_windows_are_raised_to_the_minimum() {

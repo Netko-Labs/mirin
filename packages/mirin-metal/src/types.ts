@@ -631,6 +631,13 @@ export interface NativeHostTransport extends NativeTransport {
    */
   setTitle(title: string): void;
   /**
+   * Resize the window, in px: an app growing to show a sidebar, and
+   * shrinking when it goes. The compositor has the last word (a zoomed or
+   * tiled window keeps its size; the window reports its size as ever,
+   * through the root's layout). A host from before it refuses the line (on stderr).
+   */
+  setSize(width: number, height: number): void;
+  /**
    * Open the window of a host spawned with `deferred: true`: once, or again
    * after `hide()` on a host that names `MIRIN_METAL_RESIDENT` (an open while
    * the window is shown is refused by the host).

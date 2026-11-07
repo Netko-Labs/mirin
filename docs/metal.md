@@ -729,6 +729,18 @@ names the app to the compositor, which docks and taskbars group windows by;
 A `{"title":"…"}` stdin line retitles the window afterwards (`setTitle()` on the
 transport): the compositor's title bar, the window switcher, and taskbars show
 the new title (a terminal's running program and grid size).
+`MIRIN_METAL_MIN_SIZE=274x436` (`minWidth` and `minHeight`, both or neither)
+is the smallest the person can make the window: GPUI's `window_min_size`,
+which Wayland sends as `xdg_toplevel.set_min_size`, so the compositor stops a
+resize there. For an app whose layout stops working below a size (Dashi's
+Calculator); anything but `WxH` with both at least 1 is an error, and a
+surface ignores it. A `{"size":{"width":W,"height":H}}` stdin line resizes the
+window afterwards (`setSize()` on the transport), in logical px: an app
+growing to show a sidebar and shrinking when it goes. The compositor has the
+last word (a zoomed, tiled, or full-screen window keeps its size, and a later
+configure may restore the size it chose); the app learns the size it got from
+the root's layout, as ever. A host from before either refuses the line on
+stderr and ignores the variable.
 `MIRIN_METAL_CLOSE=ask` (`askToClose`) lets the app answer a close from outside
 itself: when the compositor asks the window to close (`xdg_toplevel.close`: its
 close control, a shell's close, quit, or logout), the window stays and the host
