@@ -13,7 +13,8 @@
 use std::ops::Range;
 
 use gpui::{
-    px, rgba, FontStyle, FontWeight, HighlightStyle, Pixels, StrikethroughStyle, UnderlineStyle,
+    px, rgba, FontStyle, FontWeight, HighlightStyle, Hsla, Pixels, StrikethroughStyle,
+    UnderlineStyle,
 };
 
 use crate::tree::{parse_color, InputRun, Weight};
@@ -122,16 +123,23 @@ pub(crate) fn pressed(runs: &[InputRun], buffer: &str, index: usize) -> Option<u
         .map(|(at, _)| at)
 }
 
+/// A run's text color as GPUI takes it: opaque, with its alpha as a fade.
+/// GPUI blends a highlight's color over the field's text color, so a
+/// translucent run (a Markdown marker at `#1d1d1f55` over `#1d1d1f` text)
+/// would come out at the text's full ink; a fade multiplies the alpha in
+/// after the blend instead.
+fn ink(color: u32) -> (Hsla, Option<f32>) {
+    let alpha = (color & 0xff) as f32 / 255.0;
+    let opaque = rgba(color | 0xff).into();
+    (opaque, (alpha < 1.0).then_some(1.0 - alpha))
+}
+
 fn highlight(run: &InputRun) -> HighlightStyle {
-    let color = |value: &Option<String>| {
-        value
-            .as_deref()
-            .and_then(parse_color)
-            .map(|color| rgba(color).into())
-    };
+    let parsed = |value: &Option<String>| value.as_deref().and_then(parse_color);
+    let (color, fade_out) = parsed(&run.color).map(ink).unzip();
     HighlightStyle {
-        color: color(&run.color),
-        background_color: color(&run.background),
+        color,
+        background_color: parsed(&run.background).map(|color| rgba(color).into()),
         font_weight: run.weight.map(|weight| match weight {
             Weight::Normal => FontWeight::NORMAL,
             Weight::Medium => FontWeight::MEDIUM,
@@ -148,20 +156,26 @@ fn highlight(run: &InputRun) -> HighlightStyle {
             thickness: px(1.0),
             color: None,
         }),
-        fade_out: None,
+        fade_out: fade_out.flatten(),
     }
 }
 
-/// `top` over `base`, attribute by attribute.
+/// `top` over `base`, attribute by attribute; a color and its fade (`ink`)
+/// travel together.
 fn merge(base: HighlightStyle, top: HighlightStyle) -> HighlightStyle {
+    let (color, fade_out) = if top.color.is_some() {
+        (top.color, top.fade_out)
+    } else {
+        (base.color, top.fade_out.or(base.fade_out))
+    };
     HighlightStyle {
-        color: top.color.or(base.color),
+        color,
+        fade_out,
         font_weight: top.font_weight.or(base.font_weight),
         font_style: top.font_style.or(base.font_style),
         background_color: top.background_color.or(base.background_color),
         underline: top.underline.or(base.underline),
         strikethrough: top.strikethrough.or(base.strikethrough),
-        fade_out: top.fade_out.or(base.fade_out),
     }
 }
 
