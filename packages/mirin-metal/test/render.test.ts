@@ -429,6 +429,31 @@ describe("TextInput", () => {
     root.unmount();
   });
 
+  test("a one-line field can sit at the right; a multiline one never does", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(TextInput, { value: "1,250 × 12", style: { textAlign: "right" } }),
+        createElement(TextInput, {
+          value: "notes",
+          multiline: true,
+          style: { textAlign: "right" },
+        }),
+        createElement(TextInput, { value: "plain", style: { textAlign: "left" } }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const [line, notes, plain] = JSON.parse(transport.sent.at(-1) ?? "").children;
+    expect(line.props.align).toBe("right");
+    expect(notes.props.align).toBeUndefined();
+    // Left is the default: nothing sent, so a host without it still takes the field.
+    expect(plain.props.align).toBeUndefined();
+    root.unmount();
+  });
+
   test("a field that moves the keyboard on at Enter says so; others don't", async () => {
     const transport = fakeTransport();
     const root = render(
@@ -449,6 +474,26 @@ describe("TextInput", () => {
     const tree = JSON.parse(transport.sent.at(-1) ?? "");
     expect(tree.children[0].props).toMatchObject({ onSubmit: true, focusNextOnSubmit: true });
     expect(tree.children[1].props.focusNextOnSubmit).toBeUndefined();
+    root.unmount();
+  });
+
+  test("a multiline field that submits at Enter says so; a one-line field needn't", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(TextInput, { value: "", testID: "title", multiline: true, submitBehavior: "submit" }),
+        createElement(TextInput, { value: "", testID: "body", multiline: true, submitBehavior: "newline" }),
+        createElement(TextInput, { value: "", testID: "line", submitBehavior: "submit" }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(tree.children[0].props.submitOnEnter).toBe(true);
+    expect(tree.children[1].props.submitOnEnter).toBeUndefined();
+    expect(tree.children[2].props.submitOnEnter).toBeUndefined();
     root.unmount();
   });
 

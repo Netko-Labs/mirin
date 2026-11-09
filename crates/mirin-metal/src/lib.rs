@@ -20,6 +20,7 @@ mod edges;
 mod events;
 mod field;
 mod focus;
+mod follow;
 #[cfg(target_os = "linux")]
 pub mod gpu;
 mod grid;

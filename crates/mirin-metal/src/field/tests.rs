@@ -89,6 +89,7 @@ pub(super) fn press_in(
 ) -> Edit {
     let mut env = KeyEnv {
         multiline,
+        submit_on_enter: false,
         secure: false,
         clipboard: board,
         lines,
@@ -155,6 +156,22 @@ fn enter_submits_a_line_and_breaks_a_multiline_field() {
     assert_eq!(press(&mut field, &key("enter", None), true), Edit::Changed);
     assert_eq!(field.buffer, "a\n");
     assert_eq!(press(&mut field, &ctrl("enter"), true), Edit::Submitted);
+}
+
+#[test]
+fn enter_submits_a_multiline_field_that_submits_on_enter() {
+    let mut field = Field::new("A long title");
+    let mut board = Board::default();
+    let mut env = KeyEnv {
+        multiline: true,
+        submit_on_enter: true,
+        secure: false,
+        clipboard: &mut board,
+        lines: None,
+    };
+    assert_eq!(field.key(&key("enter", None), &mut env), Edit::Submitted);
+    assert_eq!(field.key(&ctrl("enter"), &mut env), Edit::Submitted);
+    assert_eq!(field.buffer, "A long title");
 }
 
 #[test]

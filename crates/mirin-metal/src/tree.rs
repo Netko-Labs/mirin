@@ -180,7 +180,8 @@ pub struct ViewProps {
     /// dropped on it (needs `id`): the deepest such node under the pointer
     /// gets them.
     pub on_drop: bool,
-    /// Stop pointer events from reaching nodes painted underneath (overlays).
+    /// Stop pointer events from reaching nodes painted underneath (overlays),
+    /// the wheel included (render.rs `hitbox_behavior`).
     pub occlude: bool,
     /// A press here moves the window and a double click zooms it, as on a
     /// title bar (needs `id`). Descendants with their own `onPress`,
@@ -361,6 +362,10 @@ pub struct InputProps {
     /// keys typed right after land in the next field, not this one.
     #[serde(default)]
     pub focus_next_on_submit: bool,
+    /// Enter submits a multiline field instead of breaking its line (it
+    /// wraps, but holds one paragraph); Ctrl/Cmd+Enter always submits.
+    #[serde(default)]
+    pub submit_on_enter: bool,
     /// Report Escape, ArrowUp, and ArrowDown (a launcher's list navigation).
     #[serde(default)]
     pub on_key: bool,
@@ -388,6 +393,11 @@ pub struct InputProps {
     /// What assistive technology hears for this field (`access/`); boxed, as most fields have none.
     #[serde(default)]
     pub access: Option<Box<AccessProps>>,
+    /// A one-line field's text at its right edge (`right`; a calculator's
+    /// line), with room for the caret after it. Either way, a line longer
+    /// than the field scrolls to keep the caret in view (`follow.rs`).
+    #[serde(default)]
+    pub align: Option<TextAlign>,
 }
 
 /// A styled run over an input's text (`runs.rs`): UTF-16 offsets into its
@@ -468,6 +478,7 @@ impl Default for InputProps {
             on_change: false,
             on_submit: false,
             focus_next_on_submit: false,
+            submit_on_enter: false,
             on_key: false,
             selection: None,
             on_selection: false,
@@ -476,6 +487,7 @@ impl Default for InputProps {
             highlights: Vec::new(),
             line_numbers: None,
             access: None,
+            align: None,
         }
     }
 }
@@ -657,6 +669,18 @@ mod tests {
         let mut inputs = Vec::new();
         collect_inputs(&tree, &mut inputs);
         assert!(inputs[0].on_submit && inputs[0].focus_next_on_submit);
+        assert!(!inputs[0].submit_on_enter);
+    }
+
+    #[test]
+    fn a_multiline_input_can_submit_at_enter() {
+        let tree = parse_tree(
+            r#"{"type":"input","props":{"id":"title","value":"","multiline":true,"submitOnEnter":true}}"#,
+        )
+        .expect("valid tree must parse");
+        let mut inputs = Vec::new();
+        collect_inputs(&tree, &mut inputs);
+        assert!(inputs[0].multiline && inputs[0].submit_on_enter);
     }
 
     #[test]

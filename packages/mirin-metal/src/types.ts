@@ -148,6 +148,12 @@ export interface TextInputStyle {
   height?: number;
   minHeight?: number;
   flex?: number;
+  /**
+   * A one-line field's text at its right edge (a calculator's line), with
+   * room for the caret after it. Either way, a line longer than the field
+   * scrolls to keep the caret in view.
+   */
+  textAlign?: "left" | "right";
 }
 
 /**
@@ -360,7 +366,11 @@ export interface ViewProps extends AccessibilityProps {
   onWindowKeyDown?: (event: WindowKeyInfo) => void;
   /** Pointer entered (`true`) or left (`false`) the view. */
   onHoverChange?: (hovered: boolean, bounds?: Bounds) => void;
-  /** Stop pointer events from reaching views painted underneath (overlays). */
+  /**
+   * Stop pointer events from reaching views painted underneath (overlays),
+   * the wheel included: a wheel over an open menu or a sheet never scrolls
+   * the page beneath. Views inside it are drawn over it and still get them.
+   */
   occlude?: boolean;
   /**
    * Behaves like a title bar: pressing here moves the window, double-clicking
@@ -428,6 +438,12 @@ export interface TextInputProps extends AccessibilityProps {
    * keys typed right after land there, not here (a note's title, then its body).
    */
   focusNextOnSubmit?: boolean;
+  /**
+   * What Enter does in a multiline field, as React Native's: "newline" (the default) breaks
+   * the line; "submit" submits instead, for a field that wraps but holds one paragraph (a
+   * note's title). Ctrl/Cmd+Enter always submits. A single-line field always submits.
+   */
+  submitBehavior?: "submit" | "newline";
   /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
    * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
@@ -644,6 +660,14 @@ export interface NativeHostTransport extends NativeTransport {
    * through the root's layout). A host from before it refuses the line (on stderr).
    */
   setSize(width: number, height: number): void;
+  /**
+   * Change the smallest the person can make the window, in px (the spawn's
+   * `minWidth`/`minHeight` is the first): an app whose layout needs more
+   * room while it shows more (a sidebar beside a fixed column). It doesn't
+   * resize the window; ask with `setSize` too. A host from before it refuses
+   * the line (on stderr) and keeps the first.
+   */
+  setMinSize(width: number, height: number): void;
   /**
    * Open the window of a host spawned with `deferred: true`: once, or again
    * after `hide()` on a host that names `MIRIN_METAL_RESIDENT` (an open while

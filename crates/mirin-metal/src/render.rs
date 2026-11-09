@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use gpui::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
-    ElementId, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
+    ElementId, FontWeight, HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
     ScrollWheelEvent, SharedString, Stateful, Window,
 };
 
@@ -18,6 +18,20 @@ use crate::tree::{
     parse_color, Align, Direction, Justify, NodeSpec, TextAlign, TextProps, ViewProps, Weight,
 };
 use crate::window::RootView;
+
+/// What a view's hitbox does to the views painted under it. An `occlude`
+/// view takes every pointer event over it, the wheel included: a wheel over
+/// an open menu, a sheet, or a popover scrolls that (or nothing), never the
+/// page beneath, which GPUI's `block_mouse_except_scroll` would still let
+/// scroll. Views inside it are painted over it, so a list in the menu still
+/// scrolls.
+pub(crate) fn hitbox_behavior(props: &ViewProps) -> HitboxBehavior {
+    if props.occlude {
+        HitboxBehavior::BlockMouse
+    } else {
+        HitboxBehavior::Normal
+    }
+}
 
 /// Render one node (and its subtree) into a GPUI element.
 pub(crate) fn render_node(
@@ -125,8 +139,8 @@ fn styled_view(props: &ViewProps) -> Div {
             Align::Stretch => AlignItems::Stretch,
         });
     }
-    if props.occlude {
-        element = element.block_mouse_except_scroll();
+    if hitbox_behavior(props) == HitboxBehavior::BlockMouse {
+        element = element.occlude();
     }
     if props.fill {
         element = element.size_full();
@@ -439,6 +453,21 @@ pub(crate) fn record_child_bounds(
     }
 }
 
+/// Record the tree's root, which no parent lays out: it fills the window, so
+/// its bounds are the window's `size`. Without it a root `onLayout` never
+/// heard the window resized (a tile, an edge dragged, a zoom).
+pub(crate) fn record_root_bounds(
+    layout: &crate::sim::LayoutMap,
+    events: &crate::events::EventSender,
+    root: &NodeSpec,
+    size: gpui::Size<gpui::Pixels>,
+) {
+    if let Some(id) = node_id(root) {
+        let bounds = gpui::Bounds::new(gpui::Point::default(), size);
+        record_child_bounds(layout, events, &id, watches_layout(root), bounds);
+    }
+}
+
 /// Whether a node asked for `layout` events when its bounds change.
 pub(crate) fn watches_layout(node: &NodeSpec) -> bool {
     matches!(node, NodeSpec::View { props, .. } if props.on_layout && props.id.is_some())
@@ -471,11 +500,7 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
         element = element.font_family(mono_family());
     }
     if props.truncate {
-        element = element
-            .w_full()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis();
+        element = one_line(element);
     }
     if let Some(opacity) = props.opacity {
         element = element.opacity(opacity);
@@ -498,6 +523,20 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
         element = element.line_height(px(height));
     }
     element.into_any_element()
+}
+
+// A one-line text (and a centered box) laid out by GPUI itself, on its test platform.
+#[cfg(test)]
+mod one_line_tests;
+
+/// A text cut to one line (`numberOfLines={1}`): as wide as its box, the
+/// rest of the line given to an ellipsis.
+pub(crate) fn one_line<E: Styled>(element: E) -> E {
+    element
+        .w_full()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
 }
 
 /// The system UI sans family (Tailwind's `font-sans` is the system stack),
@@ -566,7 +605,95 @@ pub(crate) fn mono_family() -> SharedString {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{px, reuses_layout};
+    use gpui::HitboxBehavior;
+
+    use super::hitbox_behavior;
+    use crate::tree::ViewProps;
+
+    #[test]
+    fn an_occluding_view_takes_the_wheel_too() {
+        let ground = ViewProps {
+            occlude: true,
+            ..ViewProps::default()
+        };
+        // Not `BlockMouseExceptScroll`: the wheel over a menu's ground must not reach the page.
+        assert_eq!(hitbox_behavior(&ground), HitboxBehavior::BlockMouse);
+        assert_eq!(
+            hitbox_behavior(&ViewProps::default()),
+            HitboxBehavior::Normal
+        );
+    }
+
+    use super::record_root_bounds;
+    use crate::events::{EventKind, EventSender};
+    use crate::sim::LayoutMap;
+    use crate::tree::parse_tree;
+    use gpui::{px, size};
+
+    #[test]
+    fn a_root_that_watches_its_layout_hears_the_window_resized() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let layout = LayoutMap::default();
+        let events = EventSender::new(tx, layout.clone());
+        let root =
+            parse_tree(r#"{"type":"view","props":{"id":"1","onLayout":true},"children":[]}"#)
+                .expect("test tree must parse");
+        let frame = |width: f32, height: f32| {
+            layout.begin_frame();
+            record_root_bounds(&layout, &events, &root, size(px(width), px(height)));
+        };
+        frame(274.0, 440.0);
+        let opened = rx.try_recv().expect("the first frame reports the root");
+        assert_eq!(opened.node_id, "1");
+        assert_eq!(opened.kind, EventKind::Resize);
+        let bounds = opened.bounds.expect("a resize carries the bounds");
+        assert_eq!(
+            (bounds.x, bounds.y, bounds.width, bounds.height),
+            (0.0, 0.0, 274.0, 440.0)
+        );
+        // The same size again says nothing.
+        frame(274.0, 440.0);
+        assert!(rx.try_recv().is_err());
+        // Tiled: the window grew, and the root hears it.
+        frame(1097.0, 658.0);
+        let tiled = rx.try_recv().expect("a new size reports the root");
+        let bounds = tiled.bounds.expect("a resize carries the bounds");
+        assert_eq!((bounds.width, bounds.height), (1097.0, 658.0));
+    }
+
+    #[test]
+    fn a_root_that_does_not_watch_its_layout_stays_quiet() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let layout = LayoutMap::default();
+        let events = EventSender::new(tx, layout.clone());
+        let root = parse_tree(r#"{"type":"view","props":{"id":"1"},"children":[]}"#)
+            .expect("test tree must parse");
+        layout.begin_frame();
+        record_root_bounds(&layout, &events, &root, size(px(274.0), px(440.0)));
+        assert!(rx.try_recv().is_err());
+        // Still recorded, for a driver's layout query.
+        assert_eq!(layout.node("1").map(|node| node.width), Some(274.0));
+    }
+
+    /// GPUI paints a wrapped right-aligned line from where its ink ends,
+    /// not after the space it broke at (vendor/gpui `ink_end_x`).
+    #[test]
+    fn a_wrapped_line_ends_before_the_space_it_broke_at() {
+        // "4,420 + 316" 10 px a glyph, wrapped before "+": the line ends after "0".
+        let text = "4,420 + 316";
+        let before = (0..6).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(60.0), before, text), px(50.0));
+        // Two spaces, both dropped.
+        let text = "ab  cd";
+        let before = (0..4).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(40.0), before, text), px(20.0));
+        // No space at the break: the line ends where the next starts.
+        let text = "abcd";
+        let before = (0..2).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(20.0), before, text), px(20.0));
+    }
+
+    use gpui::reuses_layout;
 
     // `numberOfLines: 1` (`render_text`'s `truncate`) is cut with an ellipsis at
     // the width layout finds. Taffy asks a flex item's text for its whole line

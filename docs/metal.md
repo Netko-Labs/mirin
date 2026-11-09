@@ -136,7 +136,13 @@ state and describes UI; the renderer is a pure function of the latest tree.
   `borderColor`, `focusBorderColor`, `width`, `height`, `minHeight`, `flex`,
   `fill`, `autofocus`, `onChange`, `onSubmit`, `onKey`, `selection`
   (`{"start","end"}`), `onSelection`, `selectionColor`, `runs`, `highlights`
-  (`[{"start","end","color"}]`), `lineNumbers` (`{"width","color"}`). The renderer owns the
+  (`[{"start","end","color"}]`), `lineNumbers` (`{"width","color"}`), `align`
+  (`"right"`: a one-line field's text at its right edge, 2 px in for the
+  caret; `textAlign` on the TextInput). A one-line text longer than its field
+  is drawn shifted to keep the caret in view, the least move, never past
+  either end of the text (`src/follow.rs`); one that fits is never shifted. The
+  shift is checked after each paint, so a caret that leaves the view comes
+  back one frame later. The renderer owns the
   editing buffer, caret, selection, and focus (`window::InputState`); a
   different `value` in a later tree resets the buffer (controlled-input
   semantics), and so does a new `revision`: the caret goes to the end, or to
@@ -314,7 +320,9 @@ an app's checks) and
 `highlights` (`TextHighlight[]`, `{ start, end, color }`; an empty list sends
 nothing), `lineNumbers` (`{ width, color }`) and `focusNextOnSubmit` (Enter
 also moves the keyboard on, as Tab does, in the host, so keys typed right
-after land in the next field: a title, then its body); a run's `color` may be
+after land in the next field: a title, then its body), `submitBehavior`
+(`"submit"` makes Enter submit a multiline field instead of breaking its line:
+a title that wraps but is one paragraph; Ctrl/Cmd+Enter always submits); a run's `color` may be
 translucent (GPUI blends a highlight's color over the text's, so the host
 sends it opaque with its alpha as a fade),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
@@ -754,8 +762,14 @@ configure may restore the size it chose). A maximized or full-screen window
 is not resized at all: the size it goes back to moves by as much as the
 request differs from its size now, so a sidebar shown while zoomed still has
 its room once the window is restored (`vendor/gpui`, `MIRIN.md`); the app learns the size it got from
-the root's layout, as ever. A host from before either refuses the line on
-stderr and ignores the variable.
+the root's layout, as ever (the root fills the window, so its `onLayout`
+reports the window's size on every change: a tile, an edge dragged, a zoom).
+A `{"minSize":{"width":W,"height":H}}` line changes the least size afterwards
+(`setMinSize()` on the transport; GPUI's `Window::set_window_min_size`,
+`vendor/gpui`, `MIRIN.md`): an app that needs more room while it shows more
+(Calculator's tape beside its keypad). It doesn't resize the window; send a
+size too (the host applies the least size first). A host from before either
+refuses the line on stderr and ignores the variable.
 `MIRIN_METAL_CLOSE=ask` (`askToClose`) lets the app answer a close from outside
 itself: when the compositor asks the window to close (`xdg_toplevel.close`: its
 close control, a shell's close, quit, or logout), the window stays and the host

@@ -500,6 +500,11 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);
+    /// mirin: change the smallest the window may be made after it opened
+    /// (`WindowOptions::window_min_size` is the first): an app whose layout
+    /// needs more room while it shows more (a sidebar). Applied with the next
+    /// frame; platforms without it keep the first.
+    fn set_min_size(&mut self, _size: Size<Pixels>) {}
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
     fn zoom(&self);

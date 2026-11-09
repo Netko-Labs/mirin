@@ -225,6 +225,7 @@ fn a_secure_field_never_gives_its_text_away() {
     field.select_all();
     let mut env = super::super::KeyEnv {
         multiline: false,
+        submit_on_enter: false,
         secure: true,
         clipboard: &mut board,
         lines: None,

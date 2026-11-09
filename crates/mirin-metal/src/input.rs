@@ -13,13 +13,13 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, SharedString, StyledText, UnderlineStyle, Window,
 };
 
-use crate::caret::{paint_caret, paint_selection, Drawn};
+use crate::caret::{paint_caret, paint_selection, placeholder_inset, Drawn};
 use crate::field::{Clipboard, Display, Edit, KeyEnv, Lines};
 use crate::ime::{caret_rect, CaretReported, FieldInput};
 use crate::marks::{highlight_ranges, paint_highlights, paint_line_numbers};
 use crate::render::mono_family;
 use crate::selection::{follow_drag, PressProps};
-use crate::tree::{parse_color, InputProps};
+use crate::tree::{parse_color, InputProps, TextAlign};
 use crate::window::RootView;
 
 pub(crate) fn render_input(
@@ -48,6 +48,9 @@ pub(crate) fn render_input(
         .cursor_text()
         .flex()
         .flex_col();
+    // One line at the right edge sits there by layout; a longer one is
+    // shifted to keep its caret in view (`follow.rs`).
+    let at_right = !props.multiline && props.align == Some(TextAlign::Right);
     if props.multiline {
         element = element.items_start().justify_start();
     } else {
@@ -178,7 +181,20 @@ pub(crate) fn render_input(
             gpui::canvas(
                 |_, _, _| {},
                 move |_, (), window, cx| {
-                    paint_line_numbers(&layout, &shown, showing_placeholder, color, window, cx);
+                    let inset = if showing_placeholder {
+                        placeholder_inset(window.scale_factor())
+                    } else {
+                        px(0.0)
+                    };
+                    paint_line_numbers(
+                        &layout,
+                        &shown,
+                        showing_placeholder,
+                        inset,
+                        color,
+                        window,
+                        cx,
+                    );
                 },
             )
             .absolute()
@@ -203,14 +219,20 @@ pub(crate) fn render_input(
             .size_0(),
         );
     }
+    // A placeholder starts past the caret's place, focused or not, so the
+    // caret never covers its first letter and focus doesn't move it.
+    let inset = placeholder_inset(window.scale_factor());
     let mut body = div().child(text);
+    if showing_placeholder {
+        body = body.pl(inset);
+    }
     // Empty and focused: the placeholder stays, muted, right after the caret,
     // until the first character replaces it (as a search field's hint does).
     let hint = props.placeholder.as_deref().filter(|hint| {
         focused && field.buffer.is_empty() && field.preedit.is_none() && !hint.is_empty()
     });
     if let Some(hint) = hint {
-        let mut placeholder = div().child(SharedString::from(hint.to_owned()));
+        let mut placeholder = div().ml(inset).child(SharedString::from(hint.to_owned()));
         if let Some(color) = props.placeholder_color.as_deref().and_then(parse_color) {
             placeholder = placeholder.text_color(rgba(color));
         }
@@ -218,8 +240,30 @@ pub(crate) fn render_input(
     }
     if props.multiline {
         body = body.size_full().whitespace_normal();
+    } else {
+        let shift = state.scroll.get();
+        body = body.flex_none().relative().left(px(-shift));
+        if at_right {
+            body = body.mr(px(crate::follow::CARET_ROOM));
+        }
     }
-    element = element.child(body);
+    if props.multiline {
+        element = element.child(body);
+    } else {
+        // The line is cut at the content box, not the border: a text longer
+        // than its box (scrolled to its caret, or not) keeps the field's
+        // padding clear at both ends, as the shown room `follow.rs` uses.
+        let mut clip = div()
+            .flex()
+            .flex_col()
+            .justify_center()
+            .w_full()
+            .overflow_hidden();
+        if at_right {
+            clip = clip.items_end();
+        }
+        element = element.child(clip.child(body));
+    }
     if let Some(index) = caret {
         let (layout, shown) = (layout.clone(), display.text.clone());
         element = element.child(
@@ -229,6 +273,27 @@ pub(crate) fn render_input(
             )
             .absolute()
             .size_0(),
+        );
+    }
+
+    if !props.multiline {
+        let (layout, shown, scroll) = (
+            layout.clone(),
+            display.text.clone(),
+            Rc::clone(&state.scroll),
+        );
+        let padding = props.padding;
+        element = element.child(
+            gpui::canvas(
+                |bounds, _, _| bounds,
+                move |_, field, window, _| {
+                    crate::follow::follow_after_paint(
+                        &scroll, &layout, &shown, caret, field, padding, window,
+                    );
+                },
+            )
+            .absolute()
+            .inset_0(),
         );
     }
 
@@ -307,6 +372,7 @@ pub(crate) fn render_input(
     );
     let key_id = props.id.clone();
     let multiline = props.multiline;
+    let submit_on_enter = props.submit_on_enter;
     let secure = props.secure;
     let on_change = props.on_change;
     let on_submit = props.on_submit;
@@ -326,6 +392,7 @@ pub(crate) fn render_input(
             let mut clipboard = SystemClipboard(cx);
             let mut env = KeyEnv {
                 multiline,
+                submit_on_enter,
                 secure,
                 clipboard: &mut clipboard,
                 lines,
