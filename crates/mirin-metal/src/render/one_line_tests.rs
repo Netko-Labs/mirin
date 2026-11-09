@@ -10,6 +10,11 @@ const NAME: &str = "Quarterly planning notes for the design review with Alex Kim
 /// Lay `text` out, one line, in a box at most 120 px wide that is sized by
 /// its content (as a window's title is in its toolbar), in a 400 px row.
 fn cut_in_content_sized_box(cx: &mut TestAppContext, text: StyledText) {
+    cut_in_box_at_most(cx, text, 120.0);
+}
+
+/// The same, in a box at most `max` px wide.
+fn cut_in_box_at_most(cx: &mut TestAppContext, text: StyledText, max: f32) {
     let cx = cx.add_empty_window();
     cx.draw(
         point(px(0.0), px(0.0)),
@@ -17,11 +22,11 @@ fn cut_in_content_sized_box(cx: &mut TestAppContext, text: StyledText) {
             AvailableSpace::Definite(px(400.0)),
             AvailableSpace::Definite(px(40.0)),
         ),
-        |_, _| {
+        move |_, _| {
             div().flex().flex_row().w(px(400.0)).child(
                 div()
                     .flex_shrink_0()
-                    .max_w(px(120.0))
+                    .max_w(px(max))
                     .child(one_line(div()).child(text)),
             )
         },
@@ -99,4 +104,13 @@ fn a_centered_box_is_never_wider_than_its_column(cx: &mut TestAppContext) {
 fn a_short_centered_box_keeps_its_content_width(cx: &mut TestAppContext) {
     let width = centered_width(cx, "Saved.".into(), Some(560.0));
     assert!(width < px(448.0) && width >= px(120.0), "{width:?}");
+}
+
+#[gpui::test]
+fn a_box_narrower_than_the_ellipsis_shows_nothing(cx: &mut TestAppContext) {
+    // Not a sliver of "…" clipped at its edge (a title's detail with a few px left).
+    let text = StyledText::new(NAME);
+    let layout = text.layout().clone();
+    cut_in_box_at_most(cx, text, 3.0);
+    assert_eq!(layout.text(), "");
 }
