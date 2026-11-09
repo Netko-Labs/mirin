@@ -219,7 +219,23 @@ pub fn compute_flexbox_layout(
     debug_log!("FLEX:", dbg:style.flex_direction());
     drop(style);
 
-    compute_preliminary(tree, node, LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs })
+    let output = compute_preliminary(tree, node, LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs });
+
+    // mirin: a width the container's min-width or max-width set, not its content. Its children were laid out
+    // for the content's width (under a min-content constraint, each line wrapped at its widest word), so the
+    // height that came back belongs to another width. The cache then hands that height to a parent asking for
+    // this very width (`Cache::get` reuses an entry whose size equals the known one): a row of words with
+    // `min-width: 120`, laid out at exactly 120, came out as tall as its text wrapped word by word. Lay the
+    // children out again at the width the container took.
+    if styled_based_known_dimensions.width.is_none() {
+        let width = output.size.width;
+        let at_bound = |bound: Option<f32>| bound.is_some_and(|bound| (f32_max(bound, padding_border_sum.width) - width).abs() < 0.001);
+        if at_bound(min_size.width) || at_bound(max_size.width) {
+            let known_dimensions = Size { width: Some(width), height: styled_based_known_dimensions.height };
+            return compute_preliminary(tree, node, LayoutInput { known_dimensions, ..inputs });
+        }
+    }
+    output
 }
 
 /// Compute a preliminary size for an item
@@ -2414,6 +2430,70 @@ mod mirin_tests {
             .unwrap();
         tree.compute_layout(root, Size::MAX_CONTENT).unwrap();
         tree.layout(column).unwrap().size.height
+    }
+
+    /// Text as a measure function sees it: eight 30-wide words, 6 apart, 14 a line, wrapped greedily at
+    /// the known or definite width, at the widest word for min-content, on one line for max-content.
+    fn text(known: Size<Option<f32>>, available: Size<AvailableSpace>) -> Size<f32> {
+        let wrap = known.width.or(match available.width {
+            AvailableSpace::Definite(width) => Some(width),
+            AvailableSpace::MinContent => Some(30.0),
+            AvailableSpace::MaxContent => None,
+        });
+        let per_line = wrap.map_or(8, |wrap| (((wrap + 6.0) / 36.0).floor() as usize).max(1));
+        let lines = 8_usize.div_ceil(per_line);
+        Size { width: (per_line.min(8) as f32) * 36.0 - 6.0, height: lines as f32 * 14.0 }
+    }
+
+    /// A settings row: a 40 knob, words that grow from nothing but keep 120 (`min-width`), and a
+    /// 260 slider, 12 apart, in a row `width` wide. The words' height, and the row's.
+    fn words_height(width: f32) -> (f32, f32) {
+        let mut tree: TaffyTree<bool> = TaffyTree::new();
+        let fixed = |width: f32| Style {
+            size: Size { width: length(width), height: length(40.0_f32) },
+            flex_shrink: 0.0,
+            ..Default::default()
+        };
+        let knob = tree.new_leaf(fixed(40.0)).unwrap();
+        let slider = tree.new_leaf(fixed(260.0)).unwrap();
+        let label = tree.new_leaf_with_context(Style::default(), true).unwrap();
+        let words = tree
+            .new_with_children(
+                Style {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    flex_basis: percent(0.0_f32),
+                    min_size: Size { width: length(120.0_f32), height: length(0.0_f32) },
+                    ..Default::default()
+                },
+                &[label],
+            )
+            .unwrap();
+        let row = tree
+            .new_with_children(
+                Style { align_items: Some(AlignItems::Center), gap: Size { width: length(12.0_f32), height: zero() }, ..Default::default() },
+                &[knob, words, slider],
+            )
+            .unwrap();
+        let root = tree
+            .new_with_children(Style { flex_direction: FlexDirection::Column, size: Size { width: length(width), height: length(600.0_f32) }, ..Default::default() }, &[row])
+            .unwrap();
+        tree.compute_layout_with_measure(root, Size::MAX_CONTENT, |known, available, _, context, _| match context {
+            Some(true) => text(known, available),
+            _ => Size::ZERO,
+        })
+        .unwrap();
+        (tree.layout(words).unwrap().size.height, tree.layout(row).unwrap().size.height)
+    }
+
+    #[test]
+    fn words_held_at_their_min_width_wrap_at_that_width_not_word_by_word() {
+        // 120 wide: three words a line, three lines. Word by word it would be eight.
+        assert_eq!(words_height(444.0), (42.0, 42.0), "exactly at the words' least width");
+        assert_eq!(words_height(443.5), (42.0, 42.0), "half a point short of it");
+        assert_eq!(words_height(444.5), (42.0, 42.0), "half a point past it");
+        assert_eq!(words_height(600.0), (28.0, 40.0), "wider: two lines");
     }
 
     #[test]
