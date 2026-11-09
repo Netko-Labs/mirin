@@ -186,7 +186,10 @@ impl LineWrapper {
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
-        matches!(c, '⋯')
+        matches!(c, '⋯') ||
+        // mirin: a no-break space joins the words beside it, so a line never
+        // breaks there (`your\u{a0}password.` keeps a last word company).
+        c == '\u{a0}'
     }
 
     #[inline(always)]
@@ -648,6 +651,8 @@ mod tests {
         assert_word("a=1");
         assert_word("Self::is_word_char");
         assert_word("more⋯");
+        // mirin: a no-break space is never a break.
+        assert_word("your\u{a0}password.");
 
         // Space
         assert_not_word("foo bar");
