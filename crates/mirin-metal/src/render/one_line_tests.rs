@@ -49,3 +49,54 @@ fn a_one_line_text_that_fits_is_drawn_whole(cx: &mut TestAppContext) {
     cut_in_content_sized_box(cx, text);
     assert_eq!(layout.text(), "notes.txt");
 }
+
+/// The width a box centered in a 448 px column takes for `text` (as Dashi's
+/// notice is over a window's content): `max` its widest, if any.
+fn centered_width(cx: &mut TestAppContext, text: String, max: Option<f32>) -> gpui::Pixels {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let seen = Rc::new(Cell::new(None));
+    let drawn = Rc::clone(&seen);
+    let cx = cx.add_empty_window();
+    cx.draw(
+        point(px(0.0), px(0.0)),
+        size(
+            AvailableSpace::Definite(px(448.0)),
+            AvailableSpace::Definite(px(200.0)),
+        ),
+        move |_, _| {
+            let mut boxed = div().flex().flex_col().min_w(px(120.0));
+            if let Some(max) = max {
+                boxed = boxed.max_w(px(max));
+            }
+            let row = div()
+                .flex()
+                .flex_row()
+                .child(crate::render::flex_from_zero(div(), 1.0).child(StyledText::new(text)));
+            div().flex().flex_col().items_center().w(px(448.0)).child(
+                boxed.child(row).child(
+                    gpui::canvas(
+                        |_, _, _| {},
+                        move |bounds, (), _, _| drawn.set(Some(bounds)),
+                    )
+                    .absolute()
+                    .size_full(),
+                ),
+            )
+        },
+    );
+    seen.get().expect("drawn").size.width
+}
+
+#[gpui::test]
+fn a_centered_box_is_never_wider_than_its_column(cx: &mut TestAppContext) {
+    // Its text is longer than the column: it takes the column's width and wraps (fit-content).
+    assert_eq!(centered_width(cx, NAME.repeat(2), Some(560.0)), px(448.0));
+    assert_eq!(centered_width(cx, NAME.repeat(2), None), px(448.0));
+}
+
+#[gpui::test]
+fn a_short_centered_box_keeps_its_content_width(cx: &mut TestAppContext) {
+    let width = centered_width(cx, "Saved.".into(), Some(560.0));
+    assert!(width < px(448.0) && width >= px(120.0), "{width:?}");
+}
