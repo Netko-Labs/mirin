@@ -126,7 +126,7 @@ fn styled_view(props: &ViewProps) -> Div {
         });
     }
     if props.occlude {
-        element = element.block_mouse_except_scroll();
+        element = occluding(element);
     }
     if props.fill {
         element = element.size_full();
@@ -514,6 +514,17 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
 // A one-line text (and a centered box) laid out by GPUI itself, on its test platform.
 #[cfg(test)]
 mod one_line_tests;
+// The wheel over an `occlude` view, on GPUI's test platform.
+#[cfg(test)]
+mod occlude_tests;
+
+/// An overlay (`occlude`): the views it covers hear none of the pointer,
+/// the wheel included. A list over a scrolling view (a find's results over a
+/// calendar's hours) scrolls alone, and a sheet's scrim stops the window's
+/// content scrolling under it. Its own views still take everything.
+pub(crate) fn occluding<E: InteractiveElement>(element: E) -> E {
+    element.occlude()
+}
 
 /// A text cut to one line (`numberOfLines={1}`): as wide as its box, the
 /// rest of the line given to an ellipsis.

@@ -366,7 +366,7 @@ export interface ViewProps extends AccessibilityProps {
   onWindowKeyDown?: (event: WindowKeyInfo) => void;
   /** Pointer entered (`true`) or left (`false`) the view. */
   onHoverChange?: (hovered: boolean, bounds?: Bounds) => void;
-  /** Stop pointer events from reaching views painted underneath (overlays). */
+  /** Stop pointer events, the wheel included, from reaching views painted underneath (overlays). */
   occlude?: boolean;
   /**
    * Behaves like a title bar: pressing here moves the window, double-clicking
