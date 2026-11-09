@@ -45,6 +45,9 @@ pub(crate) trait Lines {
 /// What a keystroke is applied with.
 pub(crate) struct KeyEnv<'a> {
     pub(crate) multiline: bool,
+    /// Enter submits a multiline field too (it wraps, but is one paragraph:
+    /// a note's title); Ctrl/Cmd+Enter always does.
+    pub(crate) submit_on_enter: bool,
     /// A secure field never gives its text to the clipboard.
     pub(crate) secure: bool,
     pub(crate) clipboard: &'a mut dyn Clipboard,
@@ -160,7 +163,7 @@ impl Field {
                 }
             }
             "enter" => {
-                if env.multiline && !command {
+                if env.multiline && !command && !env.submit_on_enter {
                     self.insert_str("\n");
                     Edit::Changed
                 } else {
