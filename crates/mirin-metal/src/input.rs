@@ -58,9 +58,6 @@ pub(crate) fn render_input(
             .justify_center()
             .whitespace_nowrap()
             .overflow_hidden();
-        if at_right {
-            element = element.items_end();
-        }
     }
     if props.padding > 0.0 {
         element = element.p(px(props.padding));
@@ -231,7 +228,23 @@ pub(crate) fn render_input(
             body = body.mr(px(crate::follow::CARET_ROOM));
         }
     }
-    element = element.child(body);
+    if props.multiline {
+        element = element.child(body);
+    } else {
+        // The line is cut at the content box, not the border: a text longer
+        // than its box (scrolled to its caret, or not) keeps the field's
+        // padding clear at both ends, as the shown room `follow.rs` uses.
+        let mut clip = div()
+            .flex()
+            .flex_col()
+            .justify_center()
+            .w_full()
+            .overflow_hidden();
+        if at_right {
+            clip = clip.items_end();
+        }
+        element = element.child(clip.child(body));
+    }
     if let Some(index) = caret {
         let (layout, shown) = (layout.clone(), display.text.clone());
         element = element.child(
