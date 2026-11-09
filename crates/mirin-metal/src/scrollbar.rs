@@ -59,10 +59,15 @@ pub(crate) enum Axis {
     Horizontal,
 }
 
-/// What a bar scrolls: a scroll view, by its handle, or a virtualized list.
+/// What a bar scrolls: a scroll view, by its handle, and the ways it
+/// scrolls (across, down); or a virtualized list, which scrolls down.
 #[derive(Clone)]
 pub(crate) enum Scrolled {
-    View(ScrollHandle),
+    View {
+        handle: ScrollHandle,
+        across: bool,
+        down: bool,
+    },
     List(ListState),
 }
 
@@ -76,16 +81,28 @@ pub(crate) struct Geometry {
 }
 
 impl Scrolled {
-    fn geometry(&self) -> Geometry {
+    pub(crate) fn geometry(&self) -> Geometry {
         match self {
-            Scrolled::View(handle) => {
+            Scrolled::View {
+                handle,
+                across,
+                down,
+            } => {
                 let max = handle.max_offset();
                 // GPUI's offsets are negative as the content moves up and left.
                 let offset = handle.offset();
+                // Content wider than a view that scrolls only down has no bar across.
+                let only = |scrolls: bool, value: f32| if scrolls { value } else { 0.0 };
                 Geometry {
                     viewport: handle.bounds(),
-                    overflow: (f32::from(max.width), f32::from(max.height)),
-                    scrolled: (-f32::from(offset.x), -f32::from(offset.y)),
+                    overflow: (
+                        only(*across, f32::from(max.width)),
+                        only(*down, f32::from(max.height)),
+                    ),
+                    scrolled: (
+                        only(*across, -f32::from(offset.x)),
+                        only(*down, -f32::from(offset.y)),
+                    ),
                 }
             }
             Scrolled::List(state) => Geometry {
@@ -105,7 +122,7 @@ impl Scrolled {
         };
         let value = value.clamp(0.0, max.max(0.0));
         match self {
-            Scrolled::View(handle) => {
+            Scrolled::View { handle, .. } => {
                 let offset = handle.offset();
                 handle.set_offset(match axis {
                     Axis::Vertical => point(offset.x, px(-value)),

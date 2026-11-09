@@ -282,7 +282,11 @@ fn render_view_content(
             .clone();
         // Last, so its hit area is over the content's.
         element = element.child(crate::scrollbar::bars_for(
-            crate::scrollbar::Scrolled::View(handle),
+            crate::scrollbar::Scrolled::View {
+                handle,
+                across: props.scroll_x,
+                down: props.scroll,
+            },
             activity,
         ));
     }

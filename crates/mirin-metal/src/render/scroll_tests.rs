@@ -53,6 +53,15 @@ struct Page {
     activity: Activity,
 }
 
+/// A view that scrolls down.
+fn down(handle: &ScrollHandle) -> Scrolled {
+    Scrolled::View {
+        handle: handle.clone(),
+        across: false,
+        down: true,
+    }
+}
+
 fn scroll_view(id: &'static str, handle: &ScrollHandle, activity: Activity) -> Stateful<Div> {
     div()
         .id(id)
@@ -60,7 +69,7 @@ fn scroll_view(id: &'static str, handle: &ScrollHandle, activity: Activity) -> S
         .flex_col()
         .overflow_y_scroll()
         .track_scroll(handle)
-        .child(bars_for(Scrolled::View(handle.clone()), activity))
+        .child(bars_for(down(handle), activity))
 }
 
 impl Render for Page {
@@ -78,10 +87,7 @@ impl Render for Page {
                         .overflow_y_scroll()
                         .track_scroll(&self.inner)
                         .children((0..rows).map(|_| div().flex_shrink_0().h(px(50.0))))
-                        .child(bars_for(
-                            Scrolled::View(self.inner.clone()),
-                            Activity::default(),
-                        ));
+                        .child(bars_for(down(&self.inner), Activity::default()));
                     return inner.into_any_element();
                 }
             }
@@ -113,10 +119,7 @@ impl Render for Page {
             .gap(px(spec.gap))
             .p(px(spec.padding))
             .children(rows)
-            .child(bars_for(
-                Scrolled::View(self.outer.clone()),
-                self.activity.clone(),
-            ));
+            .child(bars_for(down(&self.outer), self.activity.clone()));
         if spec.border {
             page = page.border_1();
         }
@@ -448,4 +451,29 @@ fn a_scroll_views_children_keep_their_length_unless_they_ask() {
     ] {
         assert!(!keeps_length_in_scroll(&asks));
     }
+}
+
+#[gpui::test]
+fn content_wider_than_a_view_that_scrolls_down_has_no_bar_across(cx: &mut TestAppContext) {
+    struct Wide(ScrollHandle);
+    impl Render for Wide {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            scroll_view("page", &self.0, Activity::default())
+                .size_full()
+                .child(div().flex_shrink_0().w(px(900.0)).h(px(900.0)))
+        }
+    }
+    let handle = ScrollHandle::new();
+    let (_, cx) = cx.add_window_view({
+        let handle = handle.clone();
+        move |_, _| Wide(handle)
+    });
+    resize(cx, 400.0, 300.0);
+    assert!(
+        f32::from(handle.max_offset().width) > 0.0,
+        "GPUI measures it"
+    );
+    let geometry = down(&handle).geometry();
+    assert_eq!(geometry.overflow, (0.0, 600.0));
+    assert_eq!(crate::scrollbar::bars(&geometry).len(), 1);
 }
