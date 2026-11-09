@@ -1349,6 +1349,13 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    // mirin: xdg_toplevel's least size is double-buffered; the next frame's commit applies it.
+    fn set_min_size(&mut self, size: Size<Pixels>) {
+        if let Some(toplevel) = self.borrow().role.toplevel() {
+            toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
+        }
+    }
+
     fn set_app_id(&mut self, app_id: &str) {
         let mut state = self.borrow_mut();
         if let Some(toplevel) = state.role.toplevel() {

@@ -148,6 +148,12 @@ export interface TextInputStyle {
   height?: number;
   minHeight?: number;
   flex?: number;
+  /**
+   * A one-line field's text at its right edge (a calculator's line), with
+   * room for the caret after it. Either way, a line longer than the field
+   * scrolls to keep the caret in view.
+   */
+  textAlign?: "left" | "right";
 }
 
 /**
@@ -644,6 +650,14 @@ export interface NativeHostTransport extends NativeTransport {
    * through the root's layout). A host from before it refuses the line (on stderr).
    */
   setSize(width: number, height: number): void;
+  /**
+   * Change the smallest the person can make the window, in px (the spawn's
+   * `minWidth`/`minHeight` is the first): an app whose layout needs more
+   * room while it shows more (a sidebar beside a fixed column). It doesn't
+   * resize the window; ask with `setSize` too. A host from before it refuses
+   * the line (on stderr) and keeps the first.
+   */
+  setMinSize(width: number, height: number): void;
   /**
    * Open the window of a host spawned with `deferred: true`: once, or again
    * after `hide()` on a host that names `MIRIN_METAL_RESIDENT` (an open while
