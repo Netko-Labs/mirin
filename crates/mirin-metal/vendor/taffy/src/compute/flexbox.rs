@@ -1442,6 +1442,35 @@ fn determine_hypothetical_cross_size(
             .maybe_clamp(child.min_size.cross(constants.dir), child.max_size.cross(constants.dir))
             .maybe_max(padding_border_sum);
 
+        // mirin: spec 9.4.7 treats an auto cross size as fit-content. In a column, a
+        // non-stretched item (`align-items: center`) measured against the available
+        // width came back at its max-content width, wider than the column (a notice
+        // centered over a window narrower than its one-line text overflowed both
+        // edges). Its fit-content width is used instead, as for its base size above.
+        let child_cross = child_cross.or_else(|| {
+            if !constants.dir.is_column() || child.align_self == AlignSelf::Stretch {
+                return None;
+            }
+            let available = constants.node_inner_size.cross(constants.dir).or(match available_space.cross(constants.dir) {
+                AvailableSpace::Definite(available) => Some(available),
+                _ => None,
+            })?;
+            let available = (available - child.margin.cross_axis_sum(constants.dir)).max(0.0);
+            let known = Size { width: None, height: Some(child.target_size.height) };
+            let parent = constants.node_inner_size;
+            let max_content = tree_measure_cross(tree, child.node, known, parent, Size::MAX_CONTENT, constants.dir);
+            if max_content <= available {
+                return None;
+            }
+            let min_content = tree_measure_cross(tree, child.node, known, parent, Size::MIN_CONTENT, constants.dir);
+            Some(
+                min_content
+                    .max(available)
+                    .maybe_clamp(child.min_size.cross(constants.dir), child.max_size.cross(constants.dir))
+                    .max(padding_border_sum),
+            )
+        });
+
         let child_inner_cross = child_cross.unwrap_or_else(|| {
             tree.measure_child_size(
                 child.node,

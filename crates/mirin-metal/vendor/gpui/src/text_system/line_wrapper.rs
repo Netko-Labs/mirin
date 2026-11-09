@@ -152,6 +152,15 @@ impl LineWrapper {
             width += char_width;
 
             if width.floor() > truncate_width {
+                // mirin: a box narrower than the suffix itself shows nothing, not a
+                // sliver of the ellipsis clipped at its edge.
+                if suffix_width > truncate_width && !truncation_suffix.is_empty() {
+                    runs.truncate(1);
+                    if let Some(run) = runs.first_mut() {
+                        run.len = 0;
+                    }
+                    return SharedString::default();
+                }
                 let result =
                     SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
                 update_runs_after_truncation(&result, truncation_suffix, runs);
