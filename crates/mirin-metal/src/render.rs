@@ -19,8 +19,9 @@ use crate::tree::{
 };
 use crate::window::RootView;
 
+// A one-line text laid out in a row by GPUI itself, on its test platform.
 #[cfg(test)]
-mod tests;
+mod one_line_tests;
 
 /// Render one node (and its subtree) into a GPUI element.
 pub(crate) fn render_node(
