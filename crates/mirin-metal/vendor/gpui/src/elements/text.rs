@@ -358,6 +358,25 @@ pub fn reuses_layout(
     cached == wanted
 }
 
+// mirin: a line cut to `width` (when there is one) with its suffix, and the
+// runs for the line as cut, made from a copy: `runs` stays as it was for the
+// next measure. Public and hidden so mirin-metal can test it. Upstreamable.
+#[doc(hidden)]
+pub fn cut_line(
+    line_wrapper: &mut crate::LineWrapper,
+    text: &SharedString,
+    width: Option<Pixels>,
+    suffix: &str,
+    runs: &[TextRun],
+) -> (SharedString, Vec<TextRun>) {
+    let mut runs = runs.to_vec();
+    let text = match width {
+        Some(width) => line_wrapper.truncate_line(text.clone(), width, suffix, &mut runs),
+        None => text.clone(),
+    };
+    (text, runs)
+}
+
 // mirin: min-content width of text.
 /// The widest word of single-style text, plus a pixel of slack so wrapping at
 /// exactly this width never breaks inside it. `None` for multi-style runs.
@@ -436,7 +455,7 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
+        let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
@@ -492,16 +511,19 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let text = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
-                        text.clone(),
-                        truncate_width,
-                        &truncation_suffix,
-                        &mut runs,
-                    )
-                } else {
-                    text.clone()
-                };
+                // mirin: cut a copy of the runs. Taffy measures a text more
+                // than once (its whole line, then at its width) now that a
+                // layout is reused only for the same cut, and a cut made in
+                // place left the next measure the runs of the shorter line:
+                // the rest of the line lost its color (white chip titles
+                // came out in the default ink).
+                let (text, runs) = cut_line(
+                    &mut line_wrapper,
+                    &text,
+                    truncate_width,
+                    &truncation_suffix,
+                    &runs,
+                );
                 let len = text.len();
 
                 // mirin: per-paragraph font sizes. Each paragraph is shaped

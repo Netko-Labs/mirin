@@ -114,3 +114,35 @@ fn a_box_narrower_than_the_ellipsis_shows_nothing(cx: &mut TestAppContext) {
     cut_in_box_at_most(cx, text, 3.0);
     assert_eq!(layout.text(), "");
 }
+
+#[gpui::test]
+fn a_line_cut_twice_keeps_its_runs_whole(cx: &mut TestAppContext) {
+    // Taffy measures a one-line text at its whole width and then at its box's:
+    // each cut starts from the runs as given, so the second one still covers
+    // its line (it used to get the first cut's, and the rest lost its color).
+    use gpui::{cut_line, font, hsla, SharedString, TextRun};
+    let text = SharedString::from(NAME);
+    let red = TextRun {
+        len: NAME.len(),
+        font: font("Helvetica"),
+        color: hsla(0.0, 1.0, 0.5, 1.0),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let runs = vec![red];
+    cx.update(|cx| {
+        let mut wrapper = cx.text_system().line_wrapper(font("Helvetica"), px(10.0));
+        for width in [px(120.0), px(300.0), px(80.0)] {
+            let (cut, cut_runs) = cut_line(&mut wrapper, &text, Some(width), "…", &runs);
+            assert!(cut.ends_with('…'), "cut {cut:?}");
+            assert_eq!(cut_runs.iter().map(|run| run.len).sum::<usize>(), cut.len());
+            assert!(cut_runs.iter().all(|run| run.color == runs[0].color));
+        }
+        assert_eq!(
+            runs[0].len,
+            NAME.len(),
+            "the runs given are left as they were"
+        );
+    });
+}
