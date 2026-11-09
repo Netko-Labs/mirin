@@ -670,6 +670,7 @@ mod tests {
         assert_word("10\u{202F}GB");
         assert_word("you’re");
         assert_word("“Notes.txt”");
+        assert_word("your\u{a0}password.");
 
         // Space
         assert_not_word("foo bar");

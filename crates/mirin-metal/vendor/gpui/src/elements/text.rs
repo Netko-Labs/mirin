@@ -1,8 +1,8 @@
 use crate::{
-    ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+    ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, Font, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
+    TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout, px,
     register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
@@ -46,9 +46,11 @@ impl Element for &'static str {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
+        // mirin: a truncated line is cut where it is drawn.
+        text_layout.fit_to(bounds, window, cx);
         text_layout.prepaint(bounds, self)
     }
 
@@ -112,9 +114,11 @@ impl Element for SharedString {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
+        // mirin: a truncated line is cut where it is drawn.
+        text_layout.fit_to(bounds, window, cx);
         text_layout.prepaint(bounds, self.as_ref())
     }
 
@@ -296,9 +300,11 @@ impl Element for StyledText {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
+        // mirin: a truncated line is cut where it is drawn.
+        self.layout.fit_to(bounds, window, cx);
         self.layout.prepaint(bounds, &self.text)
     }
 
@@ -336,11 +342,24 @@ struct TextLayoutInner {
     // `lines`; all `line_height` unless paragraphs were sized.
     line_heights: SmallVec<[Pixels; 1]>,
     wrap_width: Option<Pixels>,
-    // mirin: the width the line was cut to with its ellipsis, part of what a
-    // reused layout must match (see `reuses_layout`).
+    // mirin: the width a truncated line was cut at (`None`: not cut), and
+    // what cutting it again takes; `fit` is set only for truncated text.
     truncate_width: Option<Pixels>,
+    fit: Option<Rc<Fit>>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
+}
+
+// mirin: a truncated line is cut where it is drawn.
+/// What a line with `text-overflow` needs to be cut again at another width:
+/// its whole text and runs, as they were before any cut.
+struct Fit {
+    text: SharedString,
+    runs: Vec<TextRun>,
+    font: Font,
+    font_size: Pixels,
+    suffix: SharedString,
+    line_clamp: Option<usize>,
 }
 
 // mirin: whether a layout made for one query answers another. Both the wrap
@@ -356,6 +375,18 @@ pub fn reuses_layout(
     wanted: (Option<Pixels>, Option<Pixels>),
 ) -> bool {
     cached == wanted
+}
+
+// mirin: a truncated line is cut where it is drawn.
+/// Whether a truncatable line measured `measured` wide (cut at `cut_at`, or
+/// not at all) must be cut again for `drawn`: taffy may measure a leaf last
+/// at another width than the one it is placed at.
+fn needs_refit(cut_at: Option<Pixels>, measured: Pixels, drawn: Pixels) -> bool {
+    const SLACK: f32 = 0.5;
+    match cut_at {
+        Some(at) => (at - drawn).abs() > px(SLACK),
+        None => measured > drawn + px(SLACK),
+    }
 }
 
 // mirin: min-content width of text.
@@ -436,11 +467,25 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
+        let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
         };
+        // mirin: what cutting the line again at its drawn width takes.
+        let fit = text_style
+            .text_overflow
+            .clone()
+            .map(|TextOverflow::Truncate(suffix)| {
+                Rc::new(Fit {
+                    text: text.clone(),
+                    runs: runs.clone(),
+                    font: text_style.font(),
+                    font_size,
+                    suffix,
+                    line_clamp: text_style.line_clamp,
+                })
+            });
 
         window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
@@ -481,6 +526,8 @@ impl TextLayout {
                 // mirin: reuse a layout only for the same wrap width. Min-content
                 // now wraps at the widest word, so an unwrapped (max-content)
                 // query must not get that wrapped size back.
+                // mirin: and for the same cut: a nowrap line measured whole
+                // (max-content) is not the answer for a definite width.
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && text_layout.size.is_some()
                     && reuses_layout(
@@ -492,6 +539,8 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+                // mirin: cut a copy of the runs; the closure measures again.
+                let mut runs = runs.clone();
                 let text = if let Some(truncate_width) = truncate_width {
                     line_wrapper.truncate_line(
                         text.clone(),
@@ -547,6 +596,7 @@ impl TextLayout {
                         line_heights,
                         wrap_width,
                         truncate_width,
+                        fit: fit.clone(),
                         size: Some(size),
                         bounds: None,
                     });
@@ -571,6 +621,7 @@ impl TextLayout {
                         line_heights: Default::default(),
                         wrap_width,
                         truncate_width,
+                        fit: fit.clone(),
                         size: Some(Size::default()),
                         bounds: None,
                     });
@@ -592,6 +643,7 @@ impl TextLayout {
                     line_heights,
                     wrap_width,
                     truncate_width,
+                    fit: fit.clone(),
                     size: Some(size),
                     bounds: None,
                 });
@@ -599,6 +651,43 @@ impl TextLayout {
                 size
             }
         })
+    }
+
+    // mirin: a truncated line is cut where it is drawn.
+    /// Cuts a truncated line again when it is placed at another width than
+    /// the one it was last measured at.
+    fn fit_to(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+        let mut state = self.0.borrow_mut();
+        let Some(inner) = state.as_mut() else { return };
+        let Some(fit) = inner.fit.clone() else { return };
+        let lines = fit.line_clamp.unwrap_or(1).max(1) as f32;
+        let drawn = bounds.size.width * lines;
+        let measured = inner.size.map_or(px(0.), |size| size.width);
+        if !needs_refit(inner.truncate_width, measured, drawn) {
+            return;
+        }
+        let mut runs = fit.runs.clone();
+        let text = cx
+            .text_system()
+            .line_wrapper(fit.font.clone(), fit.font_size)
+            .truncate_line(fit.text.clone(), drawn, &fit.suffix, &mut runs);
+        let Some(shaped) = window
+            .text_system()
+            .shape_text(
+                text.clone(),
+                fit.font_size,
+                &runs,
+                inner.wrap_width,
+                fit.line_clamp,
+            )
+            .log_err()
+        else {
+            return;
+        };
+        inner.len = text.len();
+        inner.line_heights = shaped.iter().map(|_| inner.line_height).collect();
+        inner.lines = shaped;
+        inner.truncate_width = Some(drawn);
     }
 
     fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
@@ -1098,3 +1187,30 @@ impl IntoElement for InteractiveText {
     }
 }
 
+// mirin: a truncated line is cut where it is drawn.
+#[cfg(test)]
+mod mirin_truncate_tests {
+    use super::{needs_refit, reuses_layout};
+    use crate::px;
+
+    #[test]
+    fn a_line_measured_whole_is_not_reused_for_a_definite_width() {
+        assert!(reuses_layout((None, None), (None, None)));
+        assert!(reuses_layout((None, Some(px(120.))), (None, Some(px(120.)))));
+        assert!(!reuses_layout((None, None), (None, Some(px(120.)))));
+        assert!(!reuses_layout((None, Some(px(120.))), (None, Some(px(90.)))));
+        assert!(!reuses_layout((Some(px(200.)), None), (None, None)));
+    }
+
+    #[test]
+    fn a_line_is_cut_again_only_when_it_is_drawn_at_another_width() {
+        // Measured whole at 180, drawn in 120: cut it.
+        assert!(needs_refit(None, px(180.), px(120.)));
+        // Measured whole and it fits: nothing to do.
+        assert!(!needs_refit(None, px(100.), px(120.)));
+        // Cut at 120, drawn at 120 (within half a pixel): keep it.
+        assert!(!needs_refit(Some(px(120.)), px(118.), px(120.3)));
+        // Cut at 90, drawn at 120: more of it shows.
+        assert!(needs_refit(Some(px(90.)), px(88.), px(120.)));
+    }
+}
