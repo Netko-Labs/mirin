@@ -336,8 +336,26 @@ struct TextLayoutInner {
     // `lines`; all `line_height` unless paragraphs were sized.
     line_heights: SmallVec<[Pixels; 1]>,
     wrap_width: Option<Pixels>,
+    // mirin: the width the line was cut to with its ellipsis, part of what a
+    // reused layout must match (see `reuses_layout`).
+    truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
+}
+
+// mirin: whether a layout made for one query answers another. Both the wrap
+// width and the truncation width must match: a one-line text that ends in an
+// ellipsis has no wrap width, so taffy's first (unbounded) query cached the
+// whole line, and the later query at the real width got it back uncut. The
+// line was then clipped mid-glyph with no ellipsis wherever a flex item's
+// width was found from its content (`flexShrink: 1`, `maxWidth`). Public so
+// mirin-metal can test it (a vendored crate's own tests can't run). Upstreamable.
+#[doc(hidden)]
+pub fn reuses_layout(
+    cached: (Option<Pixels>, Option<Pixels>),
+    wanted: (Option<Pixels>, Option<Pixels>),
+) -> bool {
+    cached == wanted
 }
 
 // mirin: min-content width of text.
@@ -465,7 +483,10 @@ impl TextLayout {
                 // query must not get that wrapped size back.
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && text_layout.size.is_some()
-                    && wrap_width == text_layout.wrap_width
+                    && reuses_layout(
+                        (text_layout.wrap_width, text_layout.truncate_width),
+                        (wrap_width, truncate_width),
+                    )
                 {
                     return text_layout.size.unwrap();
                 }
@@ -525,6 +546,7 @@ impl TextLayout {
                         line_height,
                         line_heights,
                         wrap_width,
+                        truncate_width,
                         size: Some(size),
                         bounds: None,
                     });
@@ -548,6 +570,7 @@ impl TextLayout {
                         line_height,
                         line_heights: Default::default(),
                         wrap_width,
+                        truncate_width,
                         size: Some(Size::default()),
                         bounds: None,
                     });
@@ -568,6 +591,7 @@ impl TextLayout {
                     line_height,
                     line_heights,
                     wrap_width,
+                    truncate_width,
                     size: Some(size),
                     bounds: None,
                 });
@@ -1073,3 +1097,4 @@ impl IntoElement for InteractiveText {
         self
     }
 }
+
