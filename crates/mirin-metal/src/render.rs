@@ -682,4 +682,35 @@ mod tests {
         let before = (0..2).rev().map(|index| (px(index as f32 * 10.0), index));
         assert_eq!(gpui::ink_end_x(px(20.0), before, text), px(20.0));
     }
+
+    use gpui::reuses_layout;
+
+    // `numberOfLines: 1` (`render_text`'s `truncate`) is cut with an ellipsis at
+    // the width layout finds. Taffy asks a flex item's text for its whole line
+    // first, then at its width: the second answer must not be the first one.
+    #[test]
+    fn a_line_cut_to_its_width_is_not_the_whole_line_kept() {
+        assert!(!reuses_layout((None, None), (None, Some(px(120.)))));
+        assert!(!reuses_layout((None, Some(px(120.))), (None, None)));
+        assert!(!reuses_layout(
+            (None, Some(px(120.))),
+            (None, Some(px(90.)))
+        ));
+    }
+
+    #[test]
+    fn the_same_query_keeps_its_layout() {
+        assert!(reuses_layout(
+            (None, Some(px(120.))),
+            (None, Some(px(120.)))
+        ));
+        assert!(reuses_layout(
+            (Some(px(200.)), None),
+            (Some(px(200.)), None)
+        ));
+        assert!(!reuses_layout(
+            (Some(px(200.)), None),
+            (Some(px(180.)), None)
+        ));
+    }
 }
