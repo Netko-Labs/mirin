@@ -23,8 +23,8 @@ use std::{
 
 use gpui::{
     canvas, fill, point, px, rgba, size, AnyElement, App, Bounds, DispatchPhase, Hitbox,
-    HitboxBehavior, IntoElement, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, ScrollHandle, Styled, Window,
+    HitboxBehavior, IntoElement, ListState, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, Styled, Window,
 };
 
 /// How long a bar stays after the last scroll (or after the pointer left
@@ -224,7 +224,7 @@ impl Activity {
     }
 
     /// Whether the bar along `axis` is under the pointer or held.
-    fn active(&self, axis: Axis) -> bool {
+    pub(crate) fn active(&self, axis: Axis) -> bool {
         let state = self.0.borrow();
         state.near == Some(axis) || state.held.is_some_and(|held| held.axis == axis)
     }
@@ -571,6 +571,18 @@ fn listen(
             }
             window.refresh();
             cx.stop_propagation();
+        });
+    }
+    {
+        // The pointer left the window: nothing is near (no move says so).
+        let activity = activity.clone();
+        window.on_mouse_event(move |_: &MouseExitEvent, phase, window, _cx: &mut App| {
+            if phase == DispatchPhase::Capture
+                && activity.held().is_none()
+                && activity.set_near(None, Instant::now())
+            {
+                window.refresh();
+            }
         });
     }
     {

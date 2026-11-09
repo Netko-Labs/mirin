@@ -477,3 +477,36 @@ fn content_wider_than_a_view_that_scrolls_down_has_no_bar_across(cx: &mut TestAp
     assert_eq!(geometry.overflow, (0.0, 600.0));
     assert_eq!(crate::scrollbar::bars(&geometry).len(), 1);
 }
+
+#[gpui::test]
+fn the_pointer_near_the_edge_shows_the_bar_until_it_leaves_the_window(cx: &mut TestAppContext) {
+    use crate::scrollbar::Axis;
+    struct Near(ScrollHandle, Activity);
+    impl Render for Near {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            scroll_view("page", &self.0, self.1.clone())
+                .size_full()
+                .child(div().flex_shrink_0().h(px(900.0)))
+        }
+    }
+    let activity = Activity::default();
+    let (_, cx) = cx.add_window_view({
+        let activity = activity.clone();
+        move |_, _| Near(ScrollHandle::new(), activity)
+    });
+    resize(cx, 400.0, 300.0);
+    let none = Modifiers::none();
+    cx.simulate_mouse_move(point(px(200.0), px(100.0)), None, none);
+    draw(cx);
+    assert!(!activity.active(Axis::Vertical), "away from the edge");
+    cx.simulate_mouse_move(point(px(392.0), px(100.0)), None, none);
+    draw(cx);
+    assert!(activity.active(Axis::Vertical), "in the band");
+    cx.simulate_event(gpui::MouseExitEvent {
+        position: point(px(399.0), px(100.0)),
+        pressed_button: None,
+        modifiers: none,
+    });
+    draw(cx);
+    assert!(!activity.active(Axis::Vertical), "out of the window");
+}
