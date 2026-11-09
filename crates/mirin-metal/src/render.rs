@@ -19,10 +19,6 @@ use crate::tree::{
 };
 use crate::window::RootView;
 
-// A one-line text laid out in a row by GPUI itself, on its test platform.
-#[cfg(test)]
-mod one_line_tests;
-
 /// Render one node (and its subtree) into a GPUI element.
 pub(crate) fn render_node(
     node: &NodeSpec,
@@ -499,6 +495,10 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
     }
     element.into_any_element()
 }
+
+// A one-line text (and a centered box) laid out by GPUI itself, on its test platform.
+#[cfg(test)]
+mod one_line_tests;
 
 /// A text cut to one line (`numberOfLines={1}`): as wide as its box, the
 /// rest of the line given to an ellipsis.
