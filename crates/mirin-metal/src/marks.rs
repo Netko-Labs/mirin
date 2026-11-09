@@ -164,12 +164,14 @@ pub(crate) fn paint_highlights(
 
 /// Paint each line's number in `color` at its first drawn row, its right
 /// edge `LINE_NUMBER_GAP` before the text, where the window's clip shows
-/// it; a field showing its placeholder has line 1 alone. In the field's own
-/// font and size.
+/// it; a field showing its placeholder has line 1 alone, `inset` (the
+/// placeholder's own, past the caret) further left. In the field's own font
+/// and size.
 pub(crate) fn paint_line_numbers(
     layout: &TextLayout,
     text: &str,
     placeholder: bool,
+    inset: Pixels,
     color: u32,
     window: &mut Window,
     cx: &mut App,
@@ -190,7 +192,7 @@ pub(crate) fn paint_line_numbers(
     let style = window.text_style();
     let size = style.font_size.to_pixels(window.rem_size());
     let line_height = layout.line_height();
-    let right = bounds.left() - px(LINE_NUMBER_GAP);
+    let right = bounds.left() - inset - px(LINE_NUMBER_GAP);
     for (y, number) in rows {
         let label = SharedString::from(number.to_string());
         let mut run = style.to_run(label.len());

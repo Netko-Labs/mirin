@@ -236,3 +236,21 @@ fn a_sized_line_draws_its_caret_and_selection_at_its_own_height() {
         (px(TALL), px(LINE))
     );
 }
+
+#[test]
+fn a_placeholder_starts_past_the_caret_at_every_scale() {
+    use super::{caret_width, placeholder_inset};
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 3.0] {
+        let caret = caret_width(scale);
+        let inset = placeholder_inset(scale);
+        // The caret's bar is drawn from the field's start; the first letter starts a gap past it.
+        assert!(
+            inset >= caret + px(1.5),
+            "scale {scale}: caret {caret:?}, inset {inset:?}"
+        );
+        assert!(
+            inset <= px(5.0),
+            "scale {scale}: inset {inset:?} is a gap, not an indent"
+        );
+    }
+}

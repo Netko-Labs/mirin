@@ -33,6 +33,10 @@ pub(crate) fn hitbox_behavior(props: &ViewProps) -> HitboxBehavior {
     }
 }
 
+// A one-line text laid out in a row by GPUI itself, on its test platform.
+#[cfg(test)]
+mod one_line_tests;
+
 /// Render one node (and its subtree) into a GPUI element.
 pub(crate) fn render_node(
     node: &NodeSpec,
@@ -500,11 +504,7 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
         element = element.font_family(mono_family());
     }
     if props.truncate {
-        element = element
-            .w_full()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis();
+        element = one_line(element);
     }
     if let Some(opacity) = props.opacity {
         element = element.opacity(opacity);
@@ -527,6 +527,16 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
         element = element.line_height(px(height));
     }
     element.into_any_element()
+}
+
+/// A text cut to one line (`numberOfLines={1}`): as wide as its box, the
+/// rest of the line given to an ellipsis.
+pub(crate) fn one_line<E: Styled>(element: E) -> E {
+    element
+        .w_full()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
 }
 
 /// The system UI sans family (Tailwind's `font-sans` is the system stack),
