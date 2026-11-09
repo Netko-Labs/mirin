@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use gpui::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
-    ElementId, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
+    ElementId, FontWeight, HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
     ScrollWheelEvent, SharedString, Stateful, Window,
 };
 
@@ -18,6 +18,20 @@ use crate::tree::{
     parse_color, Align, Direction, Justify, NodeSpec, TextAlign, TextProps, ViewProps, Weight,
 };
 use crate::window::RootView;
+
+/// What a view's hitbox does to the views painted under it. An `occlude`
+/// view takes every pointer event over it, the wheel included: a wheel over
+/// an open menu, a sheet, or a popover scrolls that (or nothing), never the
+/// page beneath, which GPUI's `block_mouse_except_scroll` would still let
+/// scroll. Views inside it are painted over it, so a list in the menu still
+/// scrolls.
+pub(crate) fn hitbox_behavior(props: &ViewProps) -> HitboxBehavior {
+    if props.occlude {
+        HitboxBehavior::BlockMouse
+    } else {
+        HitboxBehavior::Normal
+    }
+}
 
 /// Render one node (and its subtree) into a GPUI element.
 pub(crate) fn render_node(
@@ -125,8 +139,8 @@ fn styled_view(props: &ViewProps) -> Div {
             Align::Stretch => AlignItems::Stretch,
         });
     }
-    if props.occlude {
-        element = element.block_mouse_except_scroll();
+    if hitbox_behavior(props) == HitboxBehavior::BlockMouse {
+        element = element.occlude();
     }
     if props.fill {
         element = element.size_full();
@@ -562,4 +576,26 @@ pub(crate) fn mono_family() -> SharedString {
             detected.unwrap_or_else(|| "monospace".to_string()).into()
         })
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::HitboxBehavior;
+
+    use super::hitbox_behavior;
+    use crate::tree::ViewProps;
+
+    #[test]
+    fn an_occluding_view_takes_the_wheel_too() {
+        let ground = ViewProps {
+            occlude: true,
+            ..ViewProps::default()
+        };
+        // Not `BlockMouseExceptScroll`: the wheel over a menu's ground must not reach the page.
+        assert_eq!(hitbox_behavior(&ground), HitboxBehavior::BlockMouse);
+        assert_eq!(
+            hitbox_behavior(&ViewProps::default()),
+            HitboxBehavior::Normal
+        );
+    }
 }

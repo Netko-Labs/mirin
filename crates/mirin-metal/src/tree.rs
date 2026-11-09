@@ -180,7 +180,8 @@ pub struct ViewProps {
     /// dropped on it (needs `id`): the deepest such node under the pointer
     /// gets them.
     pub on_drop: bool,
-    /// Stop pointer events from reaching nodes painted underneath (overlays).
+    /// Stop pointer events from reaching nodes painted underneath (overlays),
+    /// the wheel included (render.rs `hitbox_behavior`).
     pub occlude: bool,
     /// A press here moves the window and a double click zooms it, as on a
     /// title bar (needs `id`). Descendants with their own `onPress`,
