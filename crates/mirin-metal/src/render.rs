@@ -210,17 +210,22 @@ fn render_view_content(
     window: &mut Window,
     cx: &mut Context<RootView>,
 ) -> AnyElement {
-    let element = styled_view(props);
+    let mut element = styled_view(props);
+    if std::mem::take(&mut view.keeps_length) && keeps_length_in_scroll(props) {
+        element = element.flex_shrink_0();
+    }
     if crate::list::virtualizes(props, children) {
         return crate::list::render_list(element, props, view, cx);
     }
     let child_ids: Vec<Option<String>> = children.iter().map(node_id).collect();
     let child_watch: Vec<bool> = children.iter().map(watches_layout).collect();
-    let mut element = element.children(
-        children
-            .iter()
-            .map(|child| render_node(child, view, window, cx)),
-    );
+    let scrolls_along = scrolls_along_its_direction(props);
+    let mut element = element.children(children.iter().map(|child| {
+        view.keeps_length = scrolls_along;
+        let element = render_node(child, view, window, cx);
+        view.keeps_length = false;
+        element
+    }));
     if child_ids.iter().any(Option::is_some) {
         let layout = view.layout.clone();
         let events = view.events.clone();
@@ -268,17 +273,22 @@ fn render_view_content(
         element = element.overflow_x_scroll();
     }
     if props.scroll || props.scroll_x {
-        let handle = view.scrolls.entry(id.to_string()).or_default();
-        element = element.track_scroll(handle);
-        if props.scroll {
-            let handle = handle.clone();
-            let activity = view
-                .scroll_activity
-                .entry(id.to_string())
-                .or_default()
-                .clone();
-            element = element.child(crate::scrollbar::vertical(handle, activity));
-        }
+        let handle = view.scrolls.entry(id.to_string()).or_default().clone();
+        element = element.track_scroll(&handle);
+        let activity = view
+            .scroll_activity
+            .entry(id.to_string())
+            .or_default()
+            .clone();
+        // Last, so its hit area is over the content's.
+        element = element.child(crate::scrollbar::bars_for(
+            crate::scrollbar::Scrolled::View {
+                handle,
+                across: props.scroll_x,
+                down: props.scroll,
+            },
+            activity,
+        ));
     }
     if let Some(color) = props.hover_background.as_deref().and_then(parse_color) {
         element = element.hover(move |style| style.bg(rgba(color)));
@@ -427,6 +437,26 @@ fn render_view_content(
     element.into_any_element()
 }
 
+/// Whether a view scrolls along the way it lays its children out (a column
+/// that scrolls down, a row that scrolls across).
+fn scrolls_along_its_direction(props: &ViewProps) -> bool {
+    match props.direction {
+        Direction::Column => props.scroll,
+        Direction::Row => props.scroll_x,
+    }
+}
+
+/// Whether a view laid out along the way its parent scrolls keeps its
+/// length there. A scroll view's content scrolls instead of squeezing to fit
+/// it, as React Native lays a ScrollView's content out: with CSS's default
+/// `flex-shrink: 1`, a child whose least length taffy underestimated (a row
+/// of wrapping pills in a narrow window) was squeezed, its last lines out of
+/// reach and the next child drawn over them. A view that asks to (`flex`,
+/// `flexGrow`, `flexShrink`) still does as it says.
+fn keeps_length_in_scroll(props: &ViewProps) -> bool {
+    props.shrink.is_none() && props.flex <= 0.0 && props.grow <= 0.0
+}
+
 /// CSS `flex: N 1 0%` / React Native `flex: N`: grow from a zero basis. The 0%
 /// basis lets taffy skip measuring the subtree for its base size (each nested
 /// content-based grow costs another full layout of the subtree); against an
@@ -528,6 +558,10 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
 // A one-line text (and a centered box) laid out by GPUI itself, on its test platform.
 #[cfg(test)]
 mod one_line_tests;
+
+// Scroll views laid out and driven by GPUI, on its test platform.
+#[cfg(test)]
+mod scroll_tests;
 
 /// A text cut to one line (`numberOfLines={1}`): as wide as its box, the
 /// rest of the line given to an ellipsis.

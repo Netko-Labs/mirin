@@ -276,11 +276,19 @@ pub(crate) fn render_list(
         row.into_any_element()
     });
     container.style().padding = Default::default();
-    let rows_element = list(entry.state.clone(), render_row)
+    let state = entry.state.clone();
+    let rows_element = list(state.clone(), render_row)
         .size_full()
         .pt(px(spacing.top))
         .pb(px(spacing.bottom));
-    container.child(rows_element).into_any_element()
+    let activity = view
+        .scroll_activity
+        .entry(id.to_string())
+        .or_default()
+        .clone();
+    // After the list, so the list has laid out its viewport when the bar reads it.
+    let bar = crate::scrollbar::bars_for(crate::scrollbar::Scrolled::List(state), activity);
+    container.child(rows_element).child(bar).into_any_element()
 }
 
 #[cfg(test)]

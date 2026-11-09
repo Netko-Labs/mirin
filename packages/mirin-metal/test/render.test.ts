@@ -577,6 +577,26 @@ describe("flex", () => {
     expect(tree.children[1]?.props.flex).toBeUndefined();
     root.unmount();
   });
+
+  test("flexShrink is sent when it is said, so a scroll view's child can still shrink", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        { style: { flex: 1, overflow: "scroll" } },
+        createElement(View, { style: { flexShrink: 0 } }),
+        createElement(View, { style: { flexShrink: 1 } }),
+        createElement(View, { style: {} }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "{}") as {
+      children: Array<{ props: Record<string, unknown> }>;
+    };
+    expect(tree.children.map((child) => child.props.shrink)).toEqual([false, true, undefined]);
+    root.unmount();
+  });
 });
 
 describe("raw strings in views", () => {

@@ -443,6 +443,8 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.flex !== undefined) props.flex = style.flex;
   if (style.flexGrow !== undefined) props.grow = style.flexGrow;
   if (style.flexShrink === 0) props.shrink = false;
+  // Said outright, so a scroll view's child that asks to shrink still does (it keeps its length by default).
+  else if (typeof style.flexShrink === "number" && style.flexShrink > 0) props.shrink = true;
   if (style.alignItems === "center" && style.justifyContent === "center") {
     props.center = true;
   } else {

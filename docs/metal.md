@@ -296,6 +296,35 @@ state and describes UI; the renderer is a pure function of the latest tree.
   heights are cached across frames, and a new tree invalidates only the rows
   that changed. Horizontal padding moves onto each row, vertical padding
   scrolls with the rows.
+- Scroll views (`scroll`, `scrollX`, and virtualized lists):
+  - **Range.** A view scrolls exactly to the end of its content: taffy's
+    content size for the view (its children's margin boxes and what overflows
+    them visibly, then its end padding), plus its end border, less its size
+    (`Window::layout_scroll_extent` in the GPUI fork). GPUI measured the span
+    between its children's border boxes, which dropped the last child's end
+    margin and the border, and counted the top padding twice once the bar's
+    canvas sat at the view's corner (Software's pages scrolled 22 past their
+    end). The offset is clamped to the range every frame, so a window that
+    grows (maximized, full screen, tiled) or content that shrinks leaves the
+    view at its new end, never past it.
+  - **Content keeps its length.** A child of a view that scrolls along its
+    direction keeps its length there and the view scrolls, as React Native
+    lays a ScrollView's content out: CSS's `flex-shrink: 1` squeezed any
+    child whose least length is small (one that clips, `overflow: hidden`,
+    has none) or that taffy underestimated (wrapped pills), cutting its end
+    off. A child that says `flex`, `flexGrow` or `flexShrink` (sent as
+    `shrink: true`) still does as it says.
+  - **The wheel** scrolls the innermost view under the pointer that can still
+    move that way; at its end the turn goes on to the view around it. Every
+    view used to take every turn, so a list scrolled with its page.
+  - **The scroll bar** (`scrollbar.rs`) is an overlay, as on macOS: a thumb 6
+    wide along the right edge (and the bottom, for `scrollX`), drawn over the
+    content, with no room kept for it. It shows while the view scrolls and
+    while the pointer is in the 14 px band at the edge, then fades. Shown, it
+    takes the pointer (not the wheel) from the content under it: the thumb
+    drags, a press on the track pages (the view less 24). Hidden, it takes
+    nothing. It is a zero-size canvas child that reads the view's geometry at
+    prepaint, so it never counts toward the content.
   `@mirinjs/metal` exposes this as `testID` props, `transport.simulate()`,
   `root.nodeId(testID)`, and `root.lastTree()`; Anko's `apps/metal/check.ts`
   is the worked example.
