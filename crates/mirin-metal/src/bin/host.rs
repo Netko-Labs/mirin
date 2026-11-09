@@ -11,7 +11,8 @@ use std::sync::mpsc;
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind, HostMessage,
-    NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar, RESIDENT_MARKER,
+    NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar, OPEN_MIN_SIZE_MARKER,
+    RESIDENT_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -92,7 +93,9 @@ fn open_min_size(width: Option<f32>, height: Option<f32>) -> Result<Option<(f32,
         (Some(w), Some(h)) if w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0 => {
             Ok(Some((w, h)))
         }
-        _ => Err("open: minWidth and minHeight go together, each at least 1".into()),
+        _ => Err(format!(
+            "open ({OPEN_MIN_SIZE_MARKER}): minWidth and minHeight go together, each at least 1"
+        )),
     }
 }
 
@@ -671,7 +674,11 @@ mod line_tests {
             Ok(HostLine::Open(options)) => assert_eq!(options.min_size, None),
             _ => panic!("expected an open line"),
         }
-        assert!(parse_host_line(r#"{"open":{"minWidth":748}}"#).is_err());
+        // The refusal names the marker, so the binary carries it for a driver to find.
+        assert!(matches!(
+            parse_host_line(r#"{"open":{"minWidth":748}}"#),
+            Err(error) if error.contains(super::OPEN_MIN_SIZE_MARKER)
+        ));
         assert!(parse_host_line(r#"{"open":{"minWidth":0,"minHeight":300}}"#).is_err());
     }
 

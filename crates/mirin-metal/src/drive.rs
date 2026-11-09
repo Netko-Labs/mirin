@@ -39,6 +39,11 @@ const UNLOCK_FLUSH: Duration = Duration::from_millis(100);
 /// driver looks for it in the binary before relying on them.
 pub const RESIDENT_MARKER: &str = "MIRIN_METAL_RESIDENT";
 
+/// Named by a host binary whose `{"open":…}` takes `minWidth` and
+/// `minHeight`. A host from before refuses an open line with fields it
+/// doesn't know, so a driver looks for this in the binary before sending them.
+pub const OPEN_MIN_SIZE_MARKER: &str = "MIRIN_METAL_OPEN_MIN_SIZE";
+
 /// What reaches a deferred host's window: a driver message, or a request to
 /// open or hide the window.
 #[derive(Debug, Clone)]

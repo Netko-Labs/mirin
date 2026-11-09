@@ -669,7 +669,7 @@ export interface NativeWindowOptions {
    * The smallest the person can make the window, in px, as
    * `NativeHostOptions.minWidth`/`minHeight`: both or neither. A host from
    * before it refuses the whole open line (its fields are checked), so a
-   * driver sends them only to a host that knows them.
+   * driver sends them only to a host that names `MIRIN_METAL_OPEN_MIN_SIZE`.
    */
   minWidth?: number;
   minHeight?: number;
