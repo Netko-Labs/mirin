@@ -1167,7 +1167,11 @@ fn determine_container_main_size(
                             let flex_contribution = if item.content_flex_fraction > 0.0 {
                                 f32_max(1.0, item.flex_grow) * flex_fraction
                             } else if item.content_flex_fraction < 0.0 {
-                                let scaled_shrink_factor = f32_max(1.0, item.flex_shrink) * item.inner_flex_basis;
+                                // mirin: the same scaled shrink factor the fraction was divided by above. Upstream
+                                // multiplies by `max(1, flex_shrink) * inner_flex_basis`, which differs when
+                                // `flex_shrink` is 0: a negative margin then shrinks the container by the margin
+                                // times the item's basis instead of by the margin.
+                                let scaled_shrink_factor = f32_max(1.0, item.flex_shrink * item.inner_flex_basis);
                                 scaled_shrink_factor * flex_fraction
                             } else {
                                 0.0
@@ -2383,5 +2387,40 @@ fn sum_axis_gaps(gap: f32, num_items: usize) -> f32 {
     } else {
         // ...otherwise there are (num_items - 1) gaps
         gap * (num_items - 1) as f32
+    }
+}
+
+// mirin: a column's intrinsic height with a negative margin on an item that doesn't shrink.
+#[cfg(all(test, feature = "taffy_tree"))]
+mod mirin_tests {
+    use crate::prelude::*;
+
+    /// A column holding a 100-tall item and a 20-tall one pulled 4 up (`margin-top: -4`), both
+    /// `flex-shrink: 0`, laid out with no height of its own: 100 + 20 - 4 tall, as in browsers.
+    fn column_height(margin_top: f32, flex_shrink: f32) -> f32 {
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let first = tree.new_leaf(Style { size: Size { width: auto(), height: length(100.0_f32) }, flex_shrink: 0.0, ..Default::default() }).unwrap();
+        let pulled = tree
+            .new_leaf(Style {
+                size: Size { width: auto(), height: length(20.0_f32) },
+                flex_shrink,
+                margin: Rect { left: zero(), right: zero(), top: length(margin_top), bottom: zero() },
+                ..Default::default()
+            })
+            .unwrap();
+        let column = tree.new_with_children(Style { flex_direction: FlexDirection::Column, flex_shrink: 0.0, ..Default::default() }, &[first, pulled]).unwrap();
+        let root = tree
+            .new_with_children(Style { flex_direction: FlexDirection::Column, size: Size { width: length(300.0_f32), height: length(50.0_f32) }, ..Default::default() }, &[column])
+            .unwrap();
+        tree.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        tree.layout(column).unwrap().size.height
+    }
+
+    #[test]
+    fn a_negative_margin_on_an_item_that_does_not_shrink_takes_off_only_the_margin() {
+        assert_eq!(column_height(-4.0, 0.0), 116.0);
+        assert_eq!(column_height(-4.0, 1.0), 116.0);
+        assert_eq!(column_height(4.0, 0.0), 124.0);
+        assert_eq!(column_height(0.0, 0.0), 120.0);
     }
 }

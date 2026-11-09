@@ -69,7 +69,8 @@ impl WindowSink {
 }
 
 /// `{"open": {...}}`: what `MIRIN_METAL_TITLE`, `_APP_ID`, `_SIZE`,
-/// `_SURFACE`, and `_TITLEBAR` say for a host started without a window.
+/// `_MIN_SIZE` (`minWidth` and `minHeight`), `_SURFACE`, and `_TITLEBAR` say
+/// for a host started without a window.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct OpenRequest {
@@ -77,8 +78,22 @@ struct OpenRequest {
     app_id: Option<String>,
     width: Option<f32>,
     height: Option<f32>,
+    min_width: Option<f32>,
+    min_height: Option<f32>,
     surface: Option<serde_json::Value>,
     title_bar: Option<String>,
+}
+
+/// A deferred window's least size: both sizes, at least 1 and finite, or
+/// neither (as `MIRIN_METAL_MIN_SIZE`).
+fn open_min_size(width: Option<f32>, height: Option<f32>) -> Result<Option<(f32, f32)>, String> {
+    match (width, height) {
+        (None, None) => Ok(None),
+        (Some(w), Some(h)) if w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0 => {
+            Ok(Some((w, h)))
+        }
+        _ => Err("open: minWidth and minHeight go together, each at least 1".into()),
+    }
 }
 
 fn parse_host_line(line: &str) -> Result<HostLine, String> {
@@ -91,6 +106,7 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
         let parsed: OpenLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
         let open = parsed.open;
         let size = open.width.zip(open.height);
+        let min_size = open_min_size(open.min_width, open.min_height)?;
         let surface = open.surface.map(|surface| surface.to_string());
         return window_options(
             open.title.unwrap_or_else(|| "mirin metal".into()),
@@ -99,7 +115,12 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
             surface.as_deref(),
             open.title_bar.as_deref(),
         )
-        .map(HostLine::Open);
+        .map(|options| {
+            HostLine::Open(NativeUiOptions {
+                min_size,
+                ..options
+            })
+        });
     }
     // A resident host's window goes; the host, its GPU context, and the tree stay.
     if line.trim_start().starts_with("{\"hide\"") {
@@ -637,6 +658,21 @@ mod line_tests {
         ));
         assert!(parse_host_line(r#"{"hide":false}"#).is_err());
         assert!(parse_host_line(r#"{"hide":true,"now":1}"#).is_err());
+    }
+
+    #[test]
+    fn a_deferred_window_takes_its_least_size_from_the_open_line() {
+        let line = r#"{"open":{"title":"System Settings","width":920,"height":640,"minWidth":748,"minHeight":300}}"#;
+        match parse_host_line(line) {
+            Ok(HostLine::Open(options)) => assert_eq!(options.min_size, Some((748.0, 300.0))),
+            _ => panic!("expected an open line"),
+        }
+        match parse_host_line(r#"{"open":{"title":"Menu"}}"#) {
+            Ok(HostLine::Open(options)) => assert_eq!(options.min_size, None),
+            _ => panic!("expected an open line"),
+        }
+        assert!(parse_host_line(r#"{"open":{"minWidth":748}}"#).is_err());
+        assert!(parse_host_line(r#"{"open":{"minWidth":0,"minHeight":300}}"#).is_err());
     }
 
     #[test]
