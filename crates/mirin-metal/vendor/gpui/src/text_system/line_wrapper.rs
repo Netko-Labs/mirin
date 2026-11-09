@@ -186,7 +186,12 @@ impl LineWrapper {
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
-        matches!(c, '⋯')
+        matches!(c, '⋯') ||
+        // mirin: a no-break space (U+00A0, the narrow U+202F) and the word joiner
+        // (U+2060) hold the words on either side together, as their names say, and
+        // typographic quotes and apostrophes belong to their word: "you’re" and
+        // "“Notes.txt”" never break inside.
+        matches!(c, '\u{00A0}' | '\u{202F}' | '\u{2060}' | '’' | '‘' | '“' | '”')
     }
 
     #[inline(always)]
@@ -346,6 +351,18 @@ mod tests {
                 strikethrough: None,
             })
             .collect()
+    }
+
+    // mirin: a no-break space holds its words together; the line breaks before the pair.
+    #[test]
+    fn test_wrap_line_keeps_a_no_break_space() {
+        let mut wrapper = build_wrapper();
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aa bbb\u{a0}cc dd")], px(72.))
+                .next(),
+            Some(Boundary::new(3, 0)),
+        );
     }
 
     #[test]
@@ -648,6 +665,11 @@ mod tests {
         assert_word("a=1");
         assert_word("Self::is_word_char");
         assert_word("more⋯");
+        // mirin: no-break spaces and typographic quotes keep their words whole.
+        assert_word("the\u{00A0}Trash.");
+        assert_word("10\u{202F}GB");
+        assert_word("you’re");
+        assert_word("“Notes.txt”");
 
         // Space
         assert_not_word("foo bar");
