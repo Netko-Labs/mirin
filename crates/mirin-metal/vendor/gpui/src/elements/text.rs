@@ -336,6 +336,9 @@ struct TextLayoutInner {
     // `lines`; all `line_height` unless paragraphs were sized.
     line_heights: SmallVec<[Pixels; 1]>,
     wrap_width: Option<Pixels>,
+    // mirin: the width the line was cut to with its ellipsis (None: not cut),
+    // part of the measure cache's key beside `wrap_width`.
+    truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
 }
@@ -460,12 +463,17 @@ impl TextLayout {
                         (None, "".into())
                     };
 
-                // mirin: reuse a layout only for the same wrap width. Min-content
-                // now wraps at the widest word, so an unwrapped (max-content)
-                // query must not get that wrapped size back.
+                // mirin: reuse a layout only for the same wrap width and the
+                // same truncation width. Min-content now wraps at the widest
+                // word, so an unwrapped (max-content) query must not get that
+                // wrapped size back; and a one-line text first measured at its
+                // full width (inside a box sized by its content) must be cut
+                // with its ellipsis once the box gives it a width, not keep
+                // the uncut line and be clipped mid-word.
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && text_layout.size.is_some()
                     && wrap_width == text_layout.wrap_width
+                    && truncate_width == text_layout.truncate_width
                 {
                     return text_layout.size.unwrap();
                 }
@@ -525,6 +533,7 @@ impl TextLayout {
                         line_height,
                         line_heights,
                         wrap_width,
+                        truncate_width,
                         size: Some(size),
                         bounds: None,
                     });
@@ -548,6 +557,7 @@ impl TextLayout {
                         line_height,
                         line_heights: Default::default(),
                         wrap_width,
+                        truncate_width,
                         size: Some(Size::default()),
                         bounds: None,
                     });
@@ -568,6 +578,7 @@ impl TextLayout {
                     line_height,
                     line_heights,
                     wrap_width,
+                    truncate_width,
                     size: Some(size),
                     bounds: None,
                 });

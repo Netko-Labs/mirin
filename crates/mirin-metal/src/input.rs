@@ -13,7 +13,7 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, SharedString, StyledText, UnderlineStyle, Window,
 };
 
-use crate::caret::{paint_caret, paint_selection, Drawn};
+use crate::caret::{paint_caret, paint_selection, placeholder_inset, Drawn};
 use crate::field::{Clipboard, Display, Edit, KeyEnv, Lines};
 use crate::ime::{caret_rect, CaretReported, FieldInput};
 use crate::marks::{highlight_ranges, paint_highlights, paint_line_numbers};
@@ -178,7 +178,20 @@ pub(crate) fn render_input(
             gpui::canvas(
                 |_, _, _| {},
                 move |_, (), window, cx| {
-                    paint_line_numbers(&layout, &shown, showing_placeholder, color, window, cx);
+                    let inset = if showing_placeholder {
+                        placeholder_inset(window.scale_factor())
+                    } else {
+                        px(0.0)
+                    };
+                    paint_line_numbers(
+                        &layout,
+                        &shown,
+                        showing_placeholder,
+                        inset,
+                        color,
+                        window,
+                        cx,
+                    );
                 },
             )
             .absolute()
@@ -203,14 +216,20 @@ pub(crate) fn render_input(
             .size_0(),
         );
     }
+    // A placeholder starts past the caret's place, focused or not, so the
+    // caret never covers its first letter and focus doesn't move it.
+    let inset = placeholder_inset(window.scale_factor());
     let mut body = div().child(text);
+    if showing_placeholder {
+        body = body.pl(inset);
+    }
     // Empty and focused: the placeholder stays, muted, right after the caret,
     // until the first character replaces it (as a search field's hint does).
     let hint = props.placeholder.as_deref().filter(|hint| {
         focused && field.buffer.is_empty() && field.preedit.is_none() && !hint.is_empty()
     });
     if let Some(hint) = hint {
-        let mut placeholder = div().child(SharedString::from(hint.to_owned()));
+        let mut placeholder = div().ml(inset).child(SharedString::from(hint.to_owned()));
         if let Some(color) = props.placeholder_color.as_deref().and_then(parse_color) {
             placeholder = placeholder.text_color(rgba(color));
         }

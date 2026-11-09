@@ -40,6 +40,11 @@ ash = "0.38"
 # reads Metal's UI; on zbus 5, which gpui's tree already builds.
 accesskit_unix = "0.24"
 
+# GPUI's test platform (a window with no GPU, a monospace stand-in for the
+# text system), for tests that lay elements out (src/render/tests.rs).
+[dev-dependencies]
+gpui = { version = "0.2", features = ["test-support"] }
+
 [features]
 profiling = ["dep:pprof"]
 

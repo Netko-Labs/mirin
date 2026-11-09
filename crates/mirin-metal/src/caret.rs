@@ -95,11 +95,26 @@ pub(crate) fn caret_bar(
 /// The drawn caret's width, before it is rounded to whole device pixels.
 const CARET_WIDTH: f32 = 1.5;
 
+/// The room between the caret and a placeholder's first letter.
+const PLACEHOLDER_GAP: f32 = 2.0;
+
+/// The caret's width at `scale`: whole device pixels, at least one.
+pub(crate) fn caret_width(scale: f32) -> Pixels {
+    px((CARET_WIDTH * scale).round().max(1.0) / scale)
+}
+
+/// Where a placeholder starts, from the caret's place at the field's start:
+/// past the caret and a gap, so the caret never covers its first letter. A
+/// field with no keyboard draws it there too, so it stays put when focused.
+pub(crate) fn placeholder_inset(scale: f32) -> Pixels {
+    caret_width(scale) + px(PLACEHOLDER_GAP)
+}
+
 /// Paint the caret before byte `index` of a laid-out text, in the ink the
 /// text is drawn in, on whole device pixels so it stays crisp.
 pub(crate) fn paint_caret(layout: &TextLayout, text: &str, index: usize, window: &mut Window) {
     let scale = window.scale_factor();
-    let width = px((CARET_WIDTH * scale).round().max(1.0) / scale);
+    let width = caret_width(scale);
     let Some(mut bar) = caret_bar(layout, text, index, width) else {
         return;
     };
