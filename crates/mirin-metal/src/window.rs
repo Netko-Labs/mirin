@@ -16,7 +16,7 @@ use crate::height::Heights;
 use crate::ime::CaretReported;
 use crate::list::VirtualList;
 use crate::pointer::capture_root;
-use crate::render::render_node;
+use crate::render::{record_root_bounds, render_node};
 use crate::selection::SelectionState;
 use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
@@ -86,6 +86,11 @@ pub enum DriverMessage {
     /// px): an app growing to show a sidebar. The compositor may still
     /// decide otherwise (a zoomed or tiled window keeps its size).
     Size(f32, f32),
+    /// Change the smallest the window may be made (`{"minSize": {"width":
+    /// W, "height": H}}`, logical px; `MIRIN_METAL_MIN_SIZE` is the first):
+    /// an app that needs more room while it shows more (a sidebar). It does
+    /// not resize the window; send a size too.
+    MinSize(f32, f32),
 }
 
 /// Whether a new driver `value` resets the buffer. A value the renderer sent
@@ -129,6 +134,8 @@ pub(crate) struct InputState {
     pub(crate) caret_reported: CaretReported,
     /// The selection: as drawn, being made with the pointer, and as the driver has it.
     pub(crate) selection: SelectionState,
+    /// How far a one-line text is drawn shifted to keep the caret in view (`follow.rs`).
+    pub(crate) scroll: Rc<std::cell::Cell<f32>>,
 }
 
 /// The root view: renders whatever tree the driver last sent.
@@ -275,6 +282,7 @@ impl RootView {
                             wants_focus: spec.autofocus,
                             caret_reported: CaretReported::default(),
                             selection,
+                            scroll: Rc::default(),
                         },
                     );
                 }
@@ -404,6 +412,7 @@ impl Render for RootView {
         }
         let tree = self.tree.clone();
         let content = render_node(&tree, self, window, cx);
+        record_root_bounds(&self.layout, &self.events, &tree, window.viewport_size());
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
         let root = crate::focus::key_root(capture_root(content, cx), self, cx);
         self.report_typing(window);
