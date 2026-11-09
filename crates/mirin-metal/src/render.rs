@@ -439,6 +439,21 @@ pub(crate) fn record_child_bounds(
     }
 }
 
+/// Record the tree's root, which no parent lays out: it fills the window, so
+/// its bounds are the window's `size`. Without it a root `onLayout` never
+/// heard the window resized (a tile, an edge dragged, a zoom).
+pub(crate) fn record_root_bounds(
+    layout: &crate::sim::LayoutMap,
+    events: &crate::events::EventSender,
+    root: &NodeSpec,
+    size: gpui::Size<gpui::Pixels>,
+) {
+    if let Some(id) = node_id(root) {
+        let bounds = gpui::Bounds::new(gpui::Point::default(), size);
+        record_child_bounds(layout, events, &id, watches_layout(root), bounds);
+    }
+}
+
 /// Whether a node asked for `layout` events when its bounds change.
 pub(crate) fn watches_layout(node: &NodeSpec) -> bool {
     matches!(node, NodeSpec::View { props, .. } if props.on_layout && props.id.is_some())
@@ -572,4 +587,105 @@ pub(crate) fn mono_family() -> SharedString {
             detected.unwrap_or_else(|| "monospace".to_string()).into()
         })
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_root_bounds;
+    use crate::events::{EventKind, EventSender};
+    use crate::sim::LayoutMap;
+    use crate::tree::parse_tree;
+    use gpui::{px, reuses_layout, size};
+
+    #[test]
+    fn a_root_that_watches_its_layout_hears_the_window_resized() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let layout = LayoutMap::default();
+        let events = EventSender::new(tx, layout.clone());
+        let root =
+            parse_tree(r#"{"type":"view","props":{"id":"1","onLayout":true},"children":[]}"#)
+                .expect("test tree must parse");
+        let frame = |width: f32, height: f32| {
+            layout.begin_frame();
+            record_root_bounds(&layout, &events, &root, size(px(width), px(height)));
+        };
+        frame(274.0, 440.0);
+        let opened = rx.try_recv().expect("the first frame reports the root");
+        assert_eq!(opened.node_id, "1");
+        assert_eq!(opened.kind, EventKind::Resize);
+        let bounds = opened.bounds.expect("a resize carries the bounds");
+        assert_eq!(
+            (bounds.x, bounds.y, bounds.width, bounds.height),
+            (0.0, 0.0, 274.0, 440.0)
+        );
+        // The same size again says nothing.
+        frame(274.0, 440.0);
+        assert!(rx.try_recv().is_err());
+        // Tiled: the window grew, and the root hears it.
+        frame(1097.0, 658.0);
+        let tiled = rx.try_recv().expect("a new size reports the root");
+        let bounds = tiled.bounds.expect("a resize carries the bounds");
+        assert_eq!((bounds.width, bounds.height), (1097.0, 658.0));
+    }
+
+    #[test]
+    fn a_root_that_does_not_watch_its_layout_stays_quiet() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let layout = LayoutMap::default();
+        let events = EventSender::new(tx, layout.clone());
+        let root = parse_tree(r#"{"type":"view","props":{"id":"1"},"children":[]}"#)
+            .expect("test tree must parse");
+        layout.begin_frame();
+        record_root_bounds(&layout, &events, &root, size(px(274.0), px(440.0)));
+        assert!(rx.try_recv().is_err());
+        // Still recorded, for a driver's layout query.
+        assert_eq!(layout.node("1").map(|node| node.width), Some(274.0));
+    }
+
+    /// GPUI paints a wrapped right-aligned line from where its ink ends,
+    /// not after the space it broke at (vendor/gpui `ink_end_x`).
+    #[test]
+    fn a_wrapped_line_ends_before_the_space_it_broke_at() {
+        // "4,420 + 316" 10 px a glyph, wrapped before "+": the line ends after "0".
+        let text = "4,420 + 316";
+        let before = (0..6).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(60.0), before, text), px(50.0));
+        // Two spaces, both dropped.
+        let text = "ab  cd";
+        let before = (0..4).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(40.0), before, text), px(20.0));
+        // No space at the break: the line ends where the next starts.
+        let text = "abcd";
+        let before = (0..2).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(20.0), before, text), px(20.0));
+    }
+
+    // `numberOfLines: 1` (`render_text`'s `truncate`) is cut with an ellipsis at
+    // the width layout finds. Taffy asks a flex item's text for its whole line
+    // first, then at its width: the second answer must not be the first one.
+    #[test]
+    fn a_line_cut_to_its_width_is_not_the_whole_line_kept() {
+        assert!(!reuses_layout((None, None), (None, Some(px(120.)))));
+        assert!(!reuses_layout((None, Some(px(120.))), (None, None)));
+        assert!(!reuses_layout(
+            (None, Some(px(120.))),
+            (None, Some(px(90.)))
+        ));
+    }
+
+    #[test]
+    fn the_same_query_keeps_its_layout() {
+        assert!(reuses_layout(
+            (None, Some(px(120.))),
+            (None, Some(px(120.)))
+        ));
+        assert!(reuses_layout(
+            (Some(px(200.)), None),
+            (Some(px(200.)), None)
+        ));
+        assert!(!reuses_layout(
+            (Some(px(200.)), None),
+            (Some(px(180.)), None)
+        ));
+    }
 }

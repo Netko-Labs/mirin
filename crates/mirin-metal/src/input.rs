@@ -19,7 +19,7 @@ use crate::ime::{caret_rect, CaretReported, FieldInput};
 use crate::marks::{highlight_ranges, paint_highlights, paint_line_numbers};
 use crate::render::mono_family;
 use crate::selection::{follow_drag, PressProps};
-use crate::tree::{parse_color, InputProps};
+use crate::tree::{parse_color, InputProps, TextAlign};
 use crate::window::RootView;
 
 pub(crate) fn render_input(
@@ -48,6 +48,9 @@ pub(crate) fn render_input(
         .cursor_text()
         .flex()
         .flex_col();
+    // One line at the right edge sits there by layout; a longer one is
+    // shifted to keep its caret in view (`follow.rs`).
+    let at_right = !props.multiline && props.align == Some(TextAlign::Right);
     if props.multiline {
         element = element.items_start().justify_start();
     } else {
@@ -55,6 +58,9 @@ pub(crate) fn render_input(
             .justify_center()
             .whitespace_nowrap()
             .overflow_hidden();
+        if at_right {
+            element = element.items_end();
+        }
     }
     if props.padding > 0.0 {
         element = element.p(px(props.padding));
@@ -237,6 +243,12 @@ pub(crate) fn render_input(
     }
     if props.multiline {
         body = body.size_full().whitespace_normal();
+    } else {
+        let shift = state.scroll.get();
+        body = body.flex_none().relative().left(px(-shift));
+        if at_right {
+            body = body.mr(px(crate::follow::CARET_ROOM));
+        }
     }
     element = element.child(body);
     if let Some(index) = caret {
@@ -248,6 +260,27 @@ pub(crate) fn render_input(
             )
             .absolute()
             .size_0(),
+        );
+    }
+
+    if !props.multiline {
+        let (layout, shown, scroll) = (
+            layout.clone(),
+            display.text.clone(),
+            Rc::clone(&state.scroll),
+        );
+        let padding = props.padding;
+        element = element.child(
+            gpui::canvas(
+                |bounds, _, _| bounds,
+                move |_, field, window, _| {
+                    crate::follow::follow_after_paint(
+                        &scroll, &layout, &shown, caret, field, padding, window,
+                    );
+                },
+            )
+            .absolute()
+            .inset_0(),
         );
     }
 

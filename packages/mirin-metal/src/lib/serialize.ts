@@ -173,6 +173,7 @@ function accessOf(props: AccessibilityProps): AccessNodeProps | undefined {
 interface InputNodeProps {
   id: string;
   value: string;
+  align?: "right";
   placeholder?: string;
   multiline?: boolean;
   secure?: boolean;
@@ -636,6 +637,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (style.height !== undefined) props.height = style.height;
   if (style.minHeight !== undefined) props.minHeight = style.minHeight;
   if (style.flex !== undefined) props.flex = style.flex;
+  if (style.textAlign === "right" && !input.multiline) props.align = "right";
   if (input.onChangeText) {
     props.onChange = true;
     handlers.change.set(id, input.onChangeText);
@@ -660,8 +662,16 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (input.runs && input.runs.length > 0) props.runs = input.runs.map(serializeRun);
   if (input.onRunPress) handlers.runPress.set(id, input.onRunPress);
   if (input.highlights && input.highlights.length > 0)
-    props.highlights = input.highlights.map(({ start, end, color }) => ({ start: offset(start), end: offset(end), color }));
-  if (input.lineNumbers) props.lineNumbers = { width: Math.max(0, input.lineNumbers.width), color: input.lineNumbers.color };
+    props.highlights = input.highlights.map(({ start, end, color }) => ({
+      start: offset(start),
+      end: offset(end),
+      color,
+    }));
+  if (input.lineNumbers)
+    props.lineNumbers = {
+      width: Math.max(0, input.lineNumbers.width),
+      color: input.lineNumbers.color,
+    };
   if (input.testID) handlers.testIds.set(input.testID, id);
   const access = accessOf(input);
   if (access) props.access = access;

@@ -388,6 +388,11 @@ pub struct InputProps {
     /// What assistive technology hears for this field (`access/`); boxed, as most fields have none.
     #[serde(default)]
     pub access: Option<Box<AccessProps>>,
+    /// A one-line field's text at its right edge (`right`; a calculator's
+    /// line), with room for the caret after it. Either way, a line longer
+    /// than the field scrolls to keep the caret in view (`follow.rs`).
+    #[serde(default)]
+    pub align: Option<TextAlign>,
 }
 
 /// A styled run over an input's text (`runs.rs`): UTF-16 offsets into its
@@ -476,6 +481,7 @@ impl Default for InputProps {
             highlights: Vec::new(),
             line_numbers: None,
             access: None,
+            align: None,
         }
     }
 }
