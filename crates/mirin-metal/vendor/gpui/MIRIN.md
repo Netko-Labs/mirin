@@ -24,7 +24,13 @@ Upstreaming candidates are marked as such.
 | A resize asked of a maximized or full-screen window keeps its size and moves the size it goes back to by as much | `src/platform/linux/wayland/window.rs` | An app that widens its window to show a sidebar (`setSize`) while zoomed set the window's geometry, and the compositor took it out of the maximized state at the new size. Now the window keeps the compositor's size and the sidebar's room is added to the size it is restored to. Upstreamable. |
 | The least size can change after the window opened (`PlatformWindow::set_min_size`, `Window::set_window_min_size`) | `src/platform.rs`, `src/window.rs`, `src/platform/linux/{wayland,x11}/window.rs` | An app that needs more room while it shows more (a sidebar beside a fixed column) raises its least size, and lowers it when the sidebar goes; GPUI took one only at open. Wayland sends `xdg_toplevel.set_min_size` (applied with the next frame, which it asks for), X11 updates `WM_NORMAL_HINTS`; other platforms keep the first. Upstreamable. |
 | A wrapped line is aligned by where its ink ends (`ink_end_x`) | `src/text_system/line.rs` | A right-aligned or centered text that wrapped at a space kept that space at the end of the line, so the line ended a space short of the lines under it (a wrapped sum in Dashi's Calculator tape). The space stays in the text; it takes no room when the line is aligned. `ink_end_x` is public (hidden) so mirin-metal tests it. Upstreamable. |
+| A no-break space, the word joiner and typographic quotes keep their words together | `src/text_system/line_wrapper.rs` (`is_word_char`, tests `test_is_word_char`, `test_wrap_line_keeps_a_no_break_space`) | U+00A0 and U+202F were break opportunities, so "the\u{00A0}Trash." still left "Trash." alone on a line; and "you’re" or "“Notes.txt”" could break at the curly quote. Upstreamable. |
 
 To update: copy the new release over this directory (minus `examples/`,
 `Cargo.lock`, `Cargo.toml.orig`, and the `[[example]]` entries in
 `Cargo.toml`), then re-apply the changes above.
+
+To run the fork's own tests (the `mirin` ones among them): it isn't a
+workspace member, so build it alone with mirin-metal's lockfile:
+`cp ../../Cargo.lock . && CARGO_TARGET_DIR=../../target/gpui-alone cargo test --lib --features test-support`,
+then remove the copied `Cargo.lock`.
