@@ -1263,6 +1263,8 @@ impl Div {
 /// bounds of the children after the layout phase is complete.
 pub struct DivFrameState {
     child_layout_ids: SmallVec<[LayoutId; 2]>,
+    // mirin: the div's own node, whose content size a scroll view scrolls by.
+    layout_id: LayoutId,
 }
 
 /// Interactivity state displayed an manipulated in the inspector.
@@ -1296,6 +1298,27 @@ impl ParentElement for Div {
         self.children
             .extend(elements.into_iter().map(StackSafe::new))
     }
+}
+
+/// mirin: where a wheel turn of `delta` moves a view scrolled to `offset`
+/// (negative as its content moves up or left) that scrolls at most `max`:
+/// never past either end. An offset already past an end (the content got
+/// shorter since) is not pulled back by a turn that points further out.
+pub fn wheel_scroll(offset: Point<Pixels>, delta: Point<Pixels>, max: Size<Pixels>) -> Point<Pixels> {
+    fn axis(offset: Pixels, delta: Pixels, max: Pixels) -> Pixels {
+        if delta.is_zero() {
+            return offset;
+        }
+        let low = -max.max(Pixels::ZERO);
+        let moved = (offset + delta).clamp(low, Pixels::ZERO);
+        // Turning further out of range than it already is moves nothing.
+        if (delta < Pixels::ZERO && moved > offset) || (delta > Pixels::ZERO && moved < offset) {
+            offset
+        } else {
+            moved
+        }
+    }
+    point(axis(offset.x, delta.x, max.width), axis(offset.y, delta.y, max.height))
 }
 
 impl Element for Div {
@@ -1343,7 +1366,13 @@ impl Element for Div {
             )
         });
 
-        (layout_id, DivFrameState { child_layout_ids })
+        (
+            layout_id,
+            DivFrameState {
+                child_layout_ids,
+                layout_id,
+            },
+        )
     }
 
     #[stacksafe]
@@ -1396,6 +1425,18 @@ impl Element for Div {
         if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
             scroll_handle.scroll_to_active_item();
         }
+
+        // mirin: a scroll view scrolls as far as taffy found its content
+        // reaches (CSS's scrollable overflow), not over the span between its
+        // children's border boxes: that span left out its last child's end
+        // margin and its border, and an absolutely placed child at its
+        // corner (a scroll bar) added its start padding to the range a second
+        // time, so the view scrolled past its end.
+        self.interactivity.scroll_extent = self
+            .interactivity
+            .scroll_offset
+            .is_some()
+            .then(|| window.layout_scroll_extent(request_layout.layout_id));
 
         self.interactivity.prepaint(
             global_id,
@@ -1485,6 +1526,10 @@ pub struct Interactivity {
     pub hovered: Option<bool>,
     pub(crate) tooltip_id: Option<TooltipId>,
     pub(crate) content_size: Size<Pixels>,
+    // mirin: how far a scroll view's content reaches from its top left, and
+    // how far it scrolls (set in prepaint, read by the wheel).
+    pub(crate) scroll_extent: Option<Size<Pixels>>,
+    pub(crate) scroll_max: std::cell::Cell<Size<Pixels>>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
@@ -1744,7 +1789,7 @@ impl Interactivity {
             // high for the maximum scroll, we round the scroll max to 2 decimal
             // places here.
             let padded_content_size = self.content_size + padding_size;
-            let scroll_max = (padded_content_size - bounds.size)
+            let scroll_max = (self.scroll_extent.unwrap_or(padded_content_size) - bounds.size)
                 .map(round_to_two_decimals)
                 .max(&Default::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
@@ -1762,6 +1807,7 @@ impl Interactivity {
                 scroll_handle_state.max_offset = scroll_max;
                 scroll_handle_state.bounds = bounds;
             }
+            self.scroll_max.set(scroll_max);
 
             *scroll_offset
         } else {
@@ -2414,6 +2460,7 @@ impl Interactivity {
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
+            let scroll_max = self.scroll_max.get();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
@@ -2443,10 +2490,15 @@ impl Interactivity {
                             delta_x = Pixels::ZERO;
                         }
                     }
-                    scroll_offset.y += delta_y;
-                    scroll_offset.x += delta_x;
-                    if *scroll_offset != old_scroll_offset {
+                    // mirin: the innermost view that can still move takes the
+                    // wheel; at its end the wheel goes on to the view around it.
+                    // Each view used to take every turn, so a list scrolled
+                    // with the page it sits in.
+                    let moved = wheel_scroll(old_scroll_offset, point(delta_x, delta_y), scroll_max);
+                    *scroll_offset = moved;
+                    if moved != old_scroll_offset {
                         cx.notify(current_view);
+                        cx.stop_propagation();
                     }
                 }
             });

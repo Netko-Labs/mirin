@@ -159,6 +159,9 @@ pub(crate) struct RootView {
     pub(crate) scrolls: HashMap<String, ScrollHandle>,
     /// When each scrollable node last scrolled, for its auto-hiding scroll bar (`scrollbar.rs`).
     pub(crate) scroll_activity: HashMap<String, crate::scrollbar::Activity>,
+    /// Set while rendering a child of a view that scrolls along its
+    /// direction: the child keeps its length there (render.rs).
+    pub(crate) keeps_length: bool,
     /// Virtualized long lists, by id (`list.rs`).
     pub(crate) lists: HashMap<String, VirtualList>,
     /// Views that take raw keys (`onKeyDown`), by id.
@@ -208,6 +211,7 @@ impl RootView {
             claims: crate::press::Claims::default(),
             scrolls: HashMap::new(),
             scroll_activity: HashMap::new(),
+            keeps_length: false,
             lists: HashMap::new(),
             key_targets: HashMap::new(),
             drag_candidate: None,
@@ -239,6 +243,7 @@ impl RootView {
         let mut ids = HashSet::new();
         collect_scroll_ids(&self.tree, &mut ids);
         self.scrolls.retain(|id, _| ids.contains(id));
+        self.scroll_activity.retain(|id, _| ids.contains(id));
     }
 
     /// Create state for new inputs, reset buffers whose driver value changed,

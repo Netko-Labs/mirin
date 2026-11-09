@@ -2040,8 +2040,19 @@ fn calculate_flex_item(
 
     #[cfg(feature = "content_size")]
     {
-        *total_content_size =
-            total_content_size.f32_max(compute_content_size_contribution(location, size, content_size, item.overflow));
+        // mirin: an in-flow item's margin box counts toward its container's
+        // scrollable overflow (CSS Overflow 3, 2.2), so a scroll view reaches
+        // past its last item's end margin, as in browsers.
+        let contribution = compute_content_size_contribution(location, size, content_size, item.overflow);
+        let contribution = if contribution == Size::ZERO {
+            contribution
+        } else {
+            Size {
+                width: f32_max(contribution.width, location.x + size.width + item.margin.right),
+                height: f32_max(contribution.height, location.y + size.height + item.margin.bottom),
+            }
+        };
+        *total_content_size = total_content_size.f32_max(contribution);
     }
 }
 
@@ -2439,6 +2450,7 @@ fn sum_axis_gaps(gap: f32, num_items: usize) -> f32 {
 #[cfg(all(test, feature = "taffy_tree"))]
 mod mirin_tests {
     use crate::prelude::*;
+    use crate::{Overflow, Point};
 
     /// A column holding a 100-tall item and a 20-tall one pulled 4 up (`margin-top: -4`), both
     /// `flex-shrink: 0`, laid out with no height of its own: 100 + 20 - 4 tall, as in browsers.
@@ -2523,6 +2535,43 @@ mod mirin_tests {
         assert_eq!(words_height(443.5), (42.0, 42.0), "half a point short of it");
         assert_eq!(words_height(444.5), (42.0, 42.0), "half a point past it");
         assert_eq!(words_height(600.0), (28.0, 40.0), "wider: two lines");
+    }
+
+    /// A 100-tall scroll column, padded 10, holding three 50-tall items 8 apart; the last one with
+    /// `margin_bottom`. How far its content reaches (its scrollable overflow), from its top.
+    fn scrolled_content_height(margin_bottom: f32) -> f32 {
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let item = |bottom: f32| Style {
+            size: Size { width: auto(), height: length(50.0_f32) },
+            flex_shrink: 0.0,
+            margin: Rect { left: zero(), right: zero(), top: zero(), bottom: length(bottom) },
+            ..Default::default()
+        };
+        let items = [item(0.0), item(0.0), item(margin_bottom)].map(|style| tree.new_leaf(style).unwrap());
+        let scroll = tree
+            .new_with_children(
+                Style {
+                    flex_direction: FlexDirection::Column,
+                    overflow: Point { x: Overflow::Visible, y: Overflow::Scroll },
+                    scrollbar_width: 0.0,
+                    padding: length(10.0_f32),
+                    gap: length(8.0_f32),
+                    size: Size { width: length(200.0_f32), height: length(100.0_f32) },
+                    ..Default::default()
+                },
+                &items,
+            )
+            .unwrap();
+        tree.compute_layout(scroll, Size::MAX_CONTENT).unwrap();
+        tree.layout(scroll).unwrap().content_size.height
+    }
+
+    #[test]
+    fn a_scroll_view_reaches_past_its_last_items_end_margin() {
+        // 10 + 3 × 50 + 2 × 8 + 10.
+        assert_eq!(scrolled_content_height(0.0), 186.0);
+        assert_eq!(scrolled_content_height(20.0), 206.0, "the margin counts");
+        assert_eq!(scrolled_content_height(-20.0), 186.0, "a negative one takes nothing off the item");
     }
 
     #[test]

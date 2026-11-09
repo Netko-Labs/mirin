@@ -127,7 +127,9 @@ pub struct ViewProps {
     /// `grow > 0` grows from the content size (CSS `flex-grow` with
     /// `flex-basis: auto`).
     pub grow: f32,
-    /// `false` keeps the node from shrinking below its content.
+    /// `false` keeps the node from shrinking below its content; `true` lets
+    /// it shrink even inside a scroll view, whose children otherwise keep
+    /// their length along it (render.rs).
     pub shrink: Option<bool>,
     /// Fill the parent on both axes (root views typically set this).
     pub fill: bool,
