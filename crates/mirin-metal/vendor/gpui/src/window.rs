@@ -1921,6 +1921,14 @@ impl Window {
         self.platform_window.set_title(title);
     }
 
+    /// mirin: change the smallest the window may be made, after it opened
+    /// (`WindowOptions::window_min_size` is the first). Applied with the next
+    /// frame; platforms without it keep the first.
+    pub fn set_window_min_size(&mut self, size: Size<Pixels>) {
+        self.platform_window.set_min_size(size);
+        self.refresh();
+    }
+
     /// Sets the application identifier.
     pub fn set_app_id(&mut self, app_id: &str) {
         self.platform_window.set_app_id(app_id);

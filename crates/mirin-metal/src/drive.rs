@@ -371,6 +371,7 @@ struct Turn {
     tree: Option<NodeSpec>,
     title: Option<String>,
     size: Option<(f32, f32)>,
+    min_size: Option<(f32, f32)>,
     unlock: bool,
 }
 
@@ -467,6 +468,9 @@ impl Drive {
                 HostMessage::Driver(DriverMessage::Size(width, height)) => {
                     turn.size = Some((width, height));
                 }
+                HostMessage::Driver(DriverMessage::MinSize(width, height)) => {
+                    turn.min_size = Some((width, height));
+                }
                 HostMessage::Open(options) => {
                     // What came before the open is what it shows.
                     self.hold(&mut turn);
@@ -508,6 +512,7 @@ impl Drive {
         }
         turn.title = None;
         turn.size = None;
+        turn.min_size = None;
         if !self.pending.is_empty() {
             eprintln!("[mirin-metal-host] dropped simulated input: no window is shown");
             self.pending.clear();
@@ -527,6 +532,12 @@ impl Drive {
                 if let Some(access) = &view.access {
                     access.borrow_mut().retitle(&title);
                 }
+            });
+        }
+        // The least size first: a window grown to show a sidebar is never under it.
+        if let Some((width, height)) = turn.min_size {
+            let _ = window.update(cx, |_view, window, _cx| {
+                window.set_window_min_size(size(px(width), px(height)));
             });
         }
         if let Some((width, height)) = turn.size {

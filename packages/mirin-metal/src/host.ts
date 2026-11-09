@@ -406,6 +406,14 @@ export function spawnNativeHost(
       child.stdin.write(`${JSON.stringify({ size })}\n`);
       void child.stdin.flush();
     },
+    setMinSize(width, height) {
+      const minSize = {
+        width: Math.max(1, Math.round(width)),
+        height: Math.max(1, Math.round(height)),
+      };
+      child.stdin.write(`${JSON.stringify({ minSize })}\n`);
+      void child.stdin.flush();
+    },
     open(window) {
       child.stdin.write(`${JSON.stringify({ open: window })}\n`);
       void child.stdin.flush();

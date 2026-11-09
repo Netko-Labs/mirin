@@ -99,6 +99,14 @@ fn open_min_size(width: Option<f32>, height: Option<f32>) -> Result<Option<(f32,
     }
 }
 
+/// A window size a line asks for (`size`, `minSize`), in logical px.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SizeRequest {
+    width: f32,
+    height: f32,
+}
+
 fn parse_host_line(line: &str) -> Result<HostLine, String> {
     if line.trim_start().starts_with("{\"open\"") {
         #[derive(serde::Deserialize)]
@@ -167,18 +175,26 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
         struct SizeLine {
             size: SizeRequest,
         }
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct SizeRequest {
-            width: f32,
-            height: f32,
-        }
         let parsed: SizeLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
         let SizeRequest { width, height } = parsed.size;
         if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
             return Err("\"size\" needs a width and a height of at least 1".into());
         }
         return Ok(HostLine::Window(DriverMessage::Size(width, height)));
+    }
+    // The app's least size changes (a sidebar shown or hidden).
+    if line.trim_start().starts_with("{\"minSize\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct MinSizeLine {
+            min_size: SizeRequest,
+        }
+        let parsed: MinSizeLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let SizeRequest { width, height } = parsed.min_size;
+        if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
+            return Err("\"minSize\" needs a width and a height of at least 1".into());
+        }
+        return Ok(HostLine::Window(DriverMessage::MinSize(width, height)));
     }
     #[cfg(target_os = "linux")]
     if line.trim_start().starts_with("{\"toplevel\"") {
@@ -733,6 +749,17 @@ mod window_size_tests {
         ));
         assert!(parse_host_line(r#"{"size":{"width":0,"height":436}}"#).is_err());
         assert!(parse_host_line(r#"{"size":{"width":520}}"#).is_err());
+    }
+
+    #[test]
+    fn the_app_can_change_its_least_size() {
+        assert!(matches!(
+            parse_host_line(r#"{"minSize":{"width":498,"height":440}}"#),
+            Ok(HostLine::Window(DriverMessage::MinSize(w, h))) if (w, h) == (498.0, 440.0)
+        ));
+        assert!(parse_host_line(r#"{"minSize":{"width":498,"height":0}}"#).is_err());
+        assert!(parse_host_line(r#"{"minSize":{"width":498}}"#).is_err());
+        assert!(parse_host_line(r#"{"minSize":{"width":498,"height":440,"depth":1}}"#).is_err());
     }
 
     #[test]
