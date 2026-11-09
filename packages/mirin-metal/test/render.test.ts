@@ -477,6 +477,26 @@ describe("TextInput", () => {
     root.unmount();
   });
 
+  test("a multiline field that submits at Enter says so; a one-line field needn't", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(TextInput, { value: "", testID: "title", multiline: true, submitBehavior: "submit" }),
+        createElement(TextInput, { value: "", testID: "body", multiline: true, submitBehavior: "newline" }),
+        createElement(TextInput, { value: "", testID: "line", submitBehavior: "submit" }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(tree.children[0].props.submitOnEnter).toBe(true);
+    expect(tree.children[1].props.submitOnEnter).toBeUndefined();
+    expect(tree.children[2].props.submitOnEnter).toBeUndefined();
+    root.unmount();
+  });
+
   test("TextInputDefaults gives fields a selection color they don't set", async () => {
     const transport = fakeTransport();
     const root = render(

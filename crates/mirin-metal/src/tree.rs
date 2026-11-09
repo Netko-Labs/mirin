@@ -362,6 +362,10 @@ pub struct InputProps {
     /// keys typed right after land in the next field, not this one.
     #[serde(default)]
     pub focus_next_on_submit: bool,
+    /// Enter submits a multiline field instead of breaking its line (it
+    /// wraps, but holds one paragraph); Ctrl/Cmd+Enter always submits.
+    #[serde(default)]
+    pub submit_on_enter: bool,
     /// Report Escape, ArrowUp, and ArrowDown (a launcher's list navigation).
     #[serde(default)]
     pub on_key: bool,
@@ -474,6 +478,7 @@ impl Default for InputProps {
             on_change: false,
             on_submit: false,
             focus_next_on_submit: false,
+            submit_on_enter: false,
             on_key: false,
             selection: None,
             on_selection: false,
@@ -664,6 +669,18 @@ mod tests {
         let mut inputs = Vec::new();
         collect_inputs(&tree, &mut inputs);
         assert!(inputs[0].on_submit && inputs[0].focus_next_on_submit);
+        assert!(!inputs[0].submit_on_enter);
+    }
+
+    #[test]
+    fn a_multiline_input_can_submit_at_enter() {
+        let tree = parse_tree(
+            r#"{"type":"input","props":{"id":"title","value":"","multiline":true,"submitOnEnter":true}}"#,
+        )
+        .expect("valid tree must parse");
+        let mut inputs = Vec::new();
+        collect_inputs(&tree, &mut inputs);
+        assert!(inputs[0].multiline && inputs[0].submit_on_enter);
     }
 
     #[test]

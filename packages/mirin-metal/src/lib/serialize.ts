@@ -196,6 +196,7 @@ interface InputNodeProps {
   onChange?: boolean;
   onSubmit?: boolean;
   focusNextOnSubmit?: boolean;
+  submitOnEnter?: boolean;
   onKey?: boolean;
   selection?: TextSelection;
   onSelection?: boolean;
@@ -647,6 +648,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
     handlers.submit.set(id, input.onSubmitEditing);
   }
   if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
+  if (input.multiline && input.submitBehavior === "submit") props.submitOnEnter = true;
   if (input.onKeyPress) {
     props.onKey = true;
     handlers.key.set(id, input.onKeyPress);

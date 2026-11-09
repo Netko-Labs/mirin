@@ -439,6 +439,12 @@ export interface TextInputProps extends AccessibilityProps {
    */
   focusNextOnSubmit?: boolean;
   /**
+   * What Enter does in a multiline field, as React Native's: "newline" (the default) breaks
+   * the line; "submit" submits instead, for a field that wraps but holds one paragraph (a
+   * note's title). Ctrl/Cmd+Enter always submits. A single-line field always submits.
+   */
+  submitBehavior?: "submit" | "newline";
+  /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
    * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
    */
