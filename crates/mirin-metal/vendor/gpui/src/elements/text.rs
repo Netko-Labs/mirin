@@ -336,8 +336,26 @@ struct TextLayoutInner {
     // `lines`; all `line_height` unless paragraphs were sized.
     line_heights: SmallVec<[Pixels; 1]>,
     wrap_width: Option<Pixels>,
+    // mirin: the width a truncated line was cut to, beside `wrap_width`, so a
+    // later measure at another width cuts it again (see `reuses_measure`).
+    truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
+}
+
+// mirin: a measure reuses the last one only when it would lay the text out the
+// same way: the same wrap width and the same truncation width. Upstream compared
+// only the wrap width, which is `None` for a line that doesn't wrap, so a
+// truncated line measured first at its max-content width (a flex item's basis)
+// kept that whole line when taffy measured it again at the width it was given,
+// and was clipped mid-glyph with no ellipsis.
+fn reuses_measure(
+    cached_wrap: Option<Pixels>,
+    cached_truncate: Option<Pixels>,
+    wrap: Option<Pixels>,
+    truncate: Option<Pixels>,
+) -> bool {
+    cached_wrap == wrap && cached_truncate == truncate
 }
 
 // mirin: min-content width of text.
@@ -465,7 +483,12 @@ impl TextLayout {
                 // query must not get that wrapped size back.
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && text_layout.size.is_some()
-                    && wrap_width == text_layout.wrap_width
+                    && reuses_measure(
+                        text_layout.wrap_width,
+                        text_layout.truncate_width,
+                        wrap_width,
+                        truncate_width,
+                    )
                 {
                     return text_layout.size.unwrap();
                 }
@@ -525,6 +548,7 @@ impl TextLayout {
                         line_height,
                         line_heights,
                         wrap_width,
+                        truncate_width,
                         size: Some(size),
                         bounds: None,
                     });
@@ -548,6 +572,7 @@ impl TextLayout {
                         line_height,
                         line_heights: Default::default(),
                         wrap_width,
+                        truncate_width,
                         size: Some(Size::default()),
                         bounds: None,
                     });
@@ -568,6 +593,7 @@ impl TextLayout {
                     line_height,
                     line_heights,
                     wrap_width,
+                    truncate_width,
                     size: Some(size),
                     bounds: None,
                 });
@@ -1071,5 +1097,23 @@ impl IntoElement for InteractiveText {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+// mirin: a truncated line is measured again at each width it is offered.
+#[cfg(test)]
+mod mirin_tests {
+    use super::reuses_measure;
+    use crate::px;
+
+    #[test]
+    fn a_truncated_line_is_cut_again_at_a_new_width() {
+        // A flex item's line, measured first at max-content (no cut), then at its column's width.
+        assert!(!reuses_measure(None, None, None, Some(px(120.))));
+        assert!(!reuses_measure(None, Some(px(200.)), None, Some(px(120.))));
+        assert!(reuses_measure(None, Some(px(120.)), None, Some(px(120.))));
+        // Wrapped text keeps upstream's rule: the same wrap width reuses the layout.
+        assert!(reuses_measure(Some(px(300.)), None, Some(px(300.)), None));
+        assert!(!reuses_measure(Some(px(300.)), None, Some(px(240.)), None));
     }
 }

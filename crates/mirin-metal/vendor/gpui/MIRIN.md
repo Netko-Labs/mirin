@@ -21,7 +21,14 @@ Upstreaming candidates are marked as such.
 | Toplevel suspended state (`xdg_wm_base` bound up to version 6; `Window::is_window_suspended`, `Window::observe_window_suspended`; `PlatformWindow::is_suspended` / `on_suspended_changed`) | `src/platform.rs`, `src/window.rs`, `src/platform/linux/wayland/{client,window}.rs` | A window out of sight (minimized, on another desktop) should stop polling and drawing; the compositor says so with xdg_toplevel's `suspended` state (xdg-shell 6), which GPUI never bound or read. A configure's states now set the flag, and a change runs the observers. Other platforms report false. Upstreamable. |
 | Per-paragraph font sizes (`StyledText::with_paragraph_sizes`, `TextLayout::line_height_for_index`) | `src/elements/text.rs` | An editable field that formats as it is typed (a note's headings) draws one paragraph larger than the rest: each paragraph is shaped at its own size and each line keeps its own line height, which painting, hit-testing and `position_for_index` follow. GPUI shaped a text at one size. Upstreamable in spirit. |
 | A resize asked of a maximized or full-screen window keeps its size and moves the size it goes back to by as much | `src/platform/linux/wayland/window.rs` | An app that widens its window to show a sidebar (`setSize`) while zoomed set the window's geometry, and the compositor took it out of the maximized state at the new size. Now the window keeps the compositor's size and the sidebar's room is added to the size it is restored to. Upstreamable. |
+| A truncated line is cut again at each width it is measured at | `src/elements/text.rs` (`reuses_measure`, test `mirin_tests`) | The measure cache compared only the wrap width, which is `None` for a line that doesn't wrap, so a one-line text measured first at max-content (a flex item's basis) kept its whole line when taffy measured it again at its real width: it was clipped mid-glyph with no ellipsis (Files' list names, its path crumbs). The truncation width is now part of the key. Upstreamable. |
+| A no-break space, the word joiner and typographic quotes keep their words together | `src/text_system/line_wrapper.rs` (`is_word_char`, tests `test_is_word_char`, `test_wrap_line_keeps_a_no_break_space`) | U+00A0 and U+202F were break opportunities, so "the\u{00A0}Trash." still left "Trash." alone on a line; and "you’re" or "“Notes.txt”" could break at the curly quote. Upstreamable. |
 
 To update: copy the new release over this directory (minus `examples/`,
 `Cargo.lock`, `Cargo.toml.orig`, and the `[[example]]` entries in
 `Cargo.toml`), then re-apply the changes above.
+
+To run the fork's own tests (the `mirin` ones among them): it isn't a
+workspace member, so build it alone with mirin-metal's lockfile:
+`cp ../../Cargo.lock . && CARGO_TARGET_DIR=../../target/gpui-alone cargo test --lib --features test-support`,
+then remove the copied `Cargo.lock`.
