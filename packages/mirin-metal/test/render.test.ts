@@ -483,8 +483,18 @@ describe("TextInput", () => {
       createElement(
         View,
         null,
-        createElement(TextInput, { value: "", testID: "title", multiline: true, submitBehavior: "submit" }),
-        createElement(TextInput, { value: "", testID: "body", multiline: true, submitBehavior: "newline" }),
+        createElement(TextInput, {
+          value: "",
+          testID: "title",
+          multiline: true,
+          submitBehavior: "submit",
+        }),
+        createElement(TextInput, {
+          value: "",
+          testID: "body",
+          multiline: true,
+          submitBehavior: "newline",
+        }),
         createElement(TextInput, { value: "", testID: "line", submitBehavior: "submit" }),
       ),
       transport,

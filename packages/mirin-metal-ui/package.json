@@ -31,6 +31,9 @@
     "src",
     "README.md"
   ],
+  "scripts": {
+    "test": "bun test"
+  },
   "engines": {
     "bun": ">=1.2.0"
   },
