@@ -117,7 +117,9 @@ async fn file_chooser_call(
 
     let mut responses = responses(&connection, &expected_path).await?;
 
-    let chooser = Proxy::new(&connection, PORTAL_BUS, PORTAL_PATH, FILE_CHOOSER).await.ok()?;
+    let chooser = Proxy::new(&connection, PORTAL_BUS, PORTAL_PATH, FILE_CHOOSER)
+        .await
+        .ok()?;
     // `parent_window` is empty: CEF owns the toplevel and exporting an XDG
     // foreign handle for it is a follow-up; `modal` still keeps the picker on top.
     let handle: OwnedObjectPath = match chooser.call(method, &("", title, options)).await {
@@ -135,7 +137,8 @@ async fn file_chooser_call(
     }
 
     let message = next(&mut responses).await?;
-    let (code, results): (u32, HashMap<String, OwnedVariant>) = message.body().deserialize().ok()?;
+    let (code, results): (u32, HashMap<String, OwnedVariant>) =
+        message.body().deserialize().ok()?;
     if code != RESPONSE_SUCCESS {
         return None;
     }
@@ -152,7 +155,9 @@ async fn file_chooser_call(
 
 /// The `Response` signals of the portal request at `path`.
 async fn responses(connection: &Connection, path: &str) -> Option<SignalStream<'static>> {
-    let request = Proxy::new(connection, PORTAL_BUS, path.to_owned(), REQUEST).await.ok()?;
+    let request = Proxy::new(connection, PORTAL_BUS, path.to_owned(), REQUEST)
+        .await
+        .ok()?;
     request.receive_signal("Response").await.ok()
 }
 
