@@ -4,7 +4,8 @@ use crate::style::AvailableSpace;
 use crate::tree::{LayoutOutput, RunMode};
 
 /// The number of cache entries for each node in the tree
-const CACHE_SIZE: usize = 9;
+// mirin: two more (slots 9 and 10), for one known dimension under a definite constraint on the other.
+const CACHE_SIZE: usize = 11;
 
 /// Cached intermediate layout results
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -83,14 +84,24 @@ impl Cache {
 
         // Slot 1: width but not height known_dimension was set and the other dimension was either a MaxContent or Definite available space constraint
         // Slot 2: width but not height known_dimension was set and the other dimension was a MinContent constraint
+        // mirin: slot 9 when that was a Definite constraint (`CACHE_SIZE`).
         if has_known_width && !has_known_height {
-            return 1 + (available_space.height == MinContent) as usize;
+            return match available_space.height {
+                MaxContent => 1,
+                MinContent => 2,
+                Definite(_) => 9,
+            };
         }
 
         // Slot 3: height but not width known_dimension was set and the other dimension was either a MaxContent or Definite available space constraint
         // Slot 4: height but not width known_dimension was set and the other dimension was a MinContent constraint
+        // mirin: slot 10 when that was a Definite constraint (`CACHE_SIZE`).
         if has_known_height && !has_known_width {
-            return 3 + (available_space.width == MinContent) as usize;
+            return match available_space.width {
+                MaxContent => 3,
+                MinContent => 4,
+                Definite(_) => 10,
+            };
         }
 
         // Slots 5-8: Neither known_dimensions were set and:

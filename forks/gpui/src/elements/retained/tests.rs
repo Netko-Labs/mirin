@@ -590,4 +590,5 @@ fn rows_that_may_not_move_are_drawn_where_they_land(cx: &mut TestAppContext) {
 }
 
 mod parked;
+mod resized;
 mod scaled;

@@ -124,6 +124,9 @@ struct NodeData {
     // mirin: the layout (`TaffyTree::layout_epoch`) that last changed
     // something inside it (`TaffyTree::inner_changed_since`).
     pub(crate) inner_changed_at: u32,
+    // mirin: the layout that last changed the box or place of a node below
+    // it (`TaffyTree::below_changed_since`).
+    pub(crate) below_changed_at: u32,
     /// A measured leaf: the layout that last asked its function again, not
     /// counting the layout it was made in (`TaffyTree::asked_since`).
     pub(crate) asked_at: u32,
@@ -146,6 +149,7 @@ impl NodeData {
             ran: true,
             rounded_at: None,
             inner_changed_at: 0,
+            below_changed_at: 0,
             asked_at: 0,
             near_half: true,
             #[cfg(feature = "detailed_layout_info")]
@@ -1102,6 +1106,11 @@ impl<NodeContext> TaffyTree<NodeContext> {
         } else if after.location != before.location {
             self.mark_inner_changed(self.parents[node.into()]);
         }
+        // mirin: and below whom (`below_changed_since`): every node around
+        // one whose box or place changed.
+        if after != before {
+            self.mark_below_changed(self.parents[node.into()]);
+        }
         let mut near_half = near_half_pixel(&unrounded, x, y);
         for index in 0..self.children[node.into()].len() {
             let child = self.children[node.into()][index];
@@ -1124,6 +1133,19 @@ impl<NodeContext> TaffyTree<NodeContext> {
         }
     }
 
+    // mirin: this layout changed the box or place of a node below `node`,
+    // and so below every node around it.
+    fn mark_below_changed(&mut self, mut node: Option<NodeId>) {
+        while let Some(id) = node {
+            let data = &mut self.nodes[id.into()];
+            if data.below_changed_at == self.epoch {
+                break;
+            }
+            data.below_changed_at = self.epoch;
+            node = self.parents[id.into()];
+        }
+    }
+
     /// mirin: how many layouts this tree has computed. With
     /// [`Self::inner_changed_since`], what a kept subtree's drawing checks
     /// before it is reused.
@@ -1138,6 +1160,15 @@ impl<NodeContext> TaffyTree<NodeContext> {
     /// nothing.
     pub fn inner_changed_since(&self, node: NodeId, epoch: u32) -> bool {
         !matches!(self.nodes.get(node.into()), Some(data) if data.inner_changed_at <= epoch)
+    }
+
+    /// mirin: whether a layout after `epoch` changed the rounded layout of a
+    /// node below `node` (its box or where it sits). Unlike
+    /// [`Self::inner_changed_since`], `node`'s own box does not count: a
+    /// node that was only resized, everything in it laid out as it was,
+    /// changed nothing below it.
+    pub fn below_changed_since(&self, node: NodeId, epoch: u32) -> bool {
+        !matches!(self.nodes.get(node.into()), Some(data) if data.below_changed_at <= epoch)
     }
 
     /// mirin: whether a layout after `epoch` asked the measured leaf `node`
@@ -1800,6 +1831,55 @@ mod mirin_tests {
 
     fn spacer(height: f32) -> Style {
         Style { size: Size { width: auto(), height: length(height) }, ..Default::default() }
+    }
+
+    // A column `width` wide with a row of three cells, 20 px wide or growing.
+    fn resized_row(taffy: &mut TaffyTree<()>, grow: bool) -> (NodeId, NodeId) {
+        let cells: Vec<NodeId> = (0..3)
+            .map(|_| match grow {
+                true => cell(taffy, 1.0),
+                false => taffy
+                    .new_leaf(Style { size: Size { width: length(20.0), height: length(10.0) }, ..Default::default() })
+                    .unwrap(),
+            })
+            .collect();
+        let row = taffy.new_with_children(Style::default(), &cells).unwrap();
+        let root = taffy.new_with_children(column(100.0), &[row]).unwrap();
+        (root, row)
+    }
+
+    fn column(width: f32) -> Style {
+        Style {
+            flex_direction: FlexDirection::Column,
+            size: Size { width: length(width), height: auto() },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_node_only_resized_changed_nothing_below_it() {
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let (root, row) = resized_row(&mut taffy, false);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        let drawn = taffy.layout_epoch();
+        assert!(!taffy.below_changed_since(row, drawn));
+
+        // The row stretches to the column's new width; its cells stay as they are.
+        taffy.set_style(root, column(140.0)).unwrap();
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert_eq!(taffy.layout(row).unwrap().size.width, 140.0);
+        assert!(taffy.inner_changed_since(row, drawn), "its own box changed");
+        assert!(!taffy.below_changed_since(row, drawn));
+        assert!(taffy.below_changed_since(root, drawn), "the row changed below the root");
+
+        // Cells that grow with it are laid out anew: that is below it.
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let (root, row) = resized_row(&mut taffy, true);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        let drawn = taffy.layout_epoch();
+        taffy.set_style(root, column(140.0)).unwrap();
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert!(taffy.below_changed_since(row, drawn));
     }
 
     #[test]

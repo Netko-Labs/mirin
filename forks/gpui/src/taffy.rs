@@ -195,6 +195,13 @@ impl TaffyLayoutEngine {
         self.taffy.inner_changed_since(id.into(), epoch)
     }
 
+    /// mirin: whether a layout after `epoch` changed the box or place of a
+    /// node below `id` (taffy's `below_changed_since`): unlike
+    /// `inner_changed_since`, `id`'s own box does not count.
+    pub fn below_changed_since(&self, id: LayoutId, epoch: u32) -> bool {
+        self.taffy.below_changed_since(id.into(), epoch)
+    }
+
     /// mirin: whether a layout after `epoch` measured one of `nodes` again
     /// (taffy's `asked_since`: texts of a retained subtree, since the layout
     /// they were made in). What a text holds then depends on which of its
