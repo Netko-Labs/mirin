@@ -19,8 +19,8 @@ import {
   useMemo,
 } from "react";
 import { cn } from "../lib/cn.ts";
-import { useTheme } from "../theme.ts";
-import { type TwStyle, translate } from "../tw/index.ts";
+import { useStyleTheme } from "../theme.ts";
+import { styleFor, type TwStyle } from "../tw/index.ts";
 import type { Attrs } from "../tw/variants.ts";
 import {
   FormContext,
@@ -145,7 +145,8 @@ export interface BoxProps {
 /** `data-*`, `aria-*`, and the boolean states variants test. */
 export function collectAttrs(props: Record<string, unknown>): Attrs {
   const attrs: Attrs = {};
-  for (const [key, value] of Object.entries(props)) {
+  // A plain loop: this runs for every element of every render.
+  for (const key in props) {
     if (
       key.startsWith("data-") ||
       key.startsWith("aria-") ||
@@ -154,16 +155,18 @@ export function collectAttrs(props: Record<string, unknown>): Attrs {
       key === "open" ||
       key === "role"
     ) {
-      attrs[key] = value;
+      attrs[key] = props[key];
     }
   }
   return attrs;
 }
 
 function attrsKey(attrs: Attrs): string {
-  return Object.entries(attrs)
-    .map(([key, value]) => `${key}=${String(value)}`)
-    .join("|");
+  let key = "";
+  for (const name in attrs) {
+    key = `${key}${key === "" ? "" : "|"}${name}=${String(attrs[name])}`;
+  }
+  return key;
 }
 
 /** `Children.toArray`, with fragments spread in place (`<>{label}</>` is its text). */
@@ -293,7 +296,7 @@ export function Box(props: BoxProps): ReactNode {
     onPointerUp,
     onSubmit,
   } = props;
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const inherited = useInherited();
   const groups = useContext(GroupContext);
   const form = useContext(FormContext);
@@ -318,7 +321,7 @@ export function Box(props: BoxProps): ReactNode {
   // biome-ignore lint/correctness/useExhaustiveDependencies: stateKey summarizes attrs
   const tw = useMemo(
     () =>
-      translate(cn(TAG_CLASSES[tag], classes), theme.colors, theme.radius, {
+      styleFor(cn(TAG_CLASSES[tag], classes), theme.colors, theme.radius, {
         attrs,
         groups,
         dark: theme.mode === "dark",

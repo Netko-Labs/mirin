@@ -9,8 +9,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Image, Svg } from "@mirinjs/metal";
 import { isValidElement, type ReactNode, useEffect, useMemo, useState } from "react";
-import { useTheme } from "../theme.ts";
-import { translate } from "../tw/index.ts";
+import { useStyleTheme } from "../theme.ts";
+import { styleFor } from "../tw/index.ts";
 import { Box, collectAttrs } from "./box.tsx";
 import { useInherited } from "./context.ts";
 import { useHasRegistration } from "./has.ts";
@@ -65,14 +65,14 @@ export function useImage(src: string | undefined): string | null {
 }
 
 export function HtmlImage(props: Record<string, unknown>) {
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const inherited = useInherited();
   const src = typeof props.src === "string" ? props.src : undefined;
   const className = typeof props.className === "string" ? props.className : undefined;
   const path = useImage(src);
   const tw = useMemo(
     () =>
-      translate(className, theme.colors, theme.radius, {
+      styleFor(className, theme.colors, theme.radius, {
         attrs: collectAttrs(props),
         groups: {},
         dark: theme.mode === "dark",
@@ -162,12 +162,12 @@ const NO_ATTRS = {};
 
 export function HtmlSvg(props: Record<string, unknown>) {
   useHasRegistration("svg", NO_ATTRS, "");
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const inherited = useInherited();
   const className = typeof props.className === "string" ? props.className : undefined;
   const tw = useMemo(
     () =>
-      translate(className, theme.colors, theme.radius, {
+      styleFor(className, theme.colors, theme.radius, {
         attrs: {},
         groups: {},
         dark: theme.mode === "dark",

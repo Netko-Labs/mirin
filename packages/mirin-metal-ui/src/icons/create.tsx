@@ -12,8 +12,8 @@ import { Svg, View } from "@mirinjs/metal";
 import { type ReactNode, useMemo } from "react";
 import { useInherited } from "../runtime/context.ts";
 import { useHasRegistration } from "../runtime/has.ts";
-import { useTheme } from "../theme.ts";
-import { translate } from "../tw/index.ts";
+import { useStyleTheme } from "../theme.ts";
+import { styleFor } from "../tw/index.ts";
 
 export type IconNode = ReadonlyArray<
   readonly [string, Readonly<Record<string, string | number | undefined>>]
@@ -60,11 +60,11 @@ export function createLucideIcon(name: string, source: IconSource): LucideIcon {
   function Icon({ size, color, strokeWidth = 2, className }: LucideProps): ReactNode {
     // Icons render as <svg> on the web, so `has-[>svg]` matches them.
     useHasRegistration("svg", NO_ATTRS, "");
-    const theme = useTheme();
+    const theme = useStyleTheme();
     const inherited = useInherited();
     const tw = useMemo(
       () =>
-        translate(className, theme.colors, theme.radius, {
+        styleFor(className, theme.colors, theme.radius, {
           attrs: {},
           groups: {},
           dark: theme.mode === "dark",

@@ -12,6 +12,8 @@ import { openBrowser, type Session } from "./session.tsx";
 interface Sample {
   /** Event in → the handler's own commit sent (discrete events render before they return). */
   syncMs: number;
+  /** Event in → the driver's next free turn (a render the event only scheduled has run by then). */
+  turnMs: number;
   /** Event in → last line sent (effects, the example's import, later commits). */
   lastMs: number;
   cpuMs: number;
@@ -46,6 +48,10 @@ const INTERACTIONS: Interaction[] = [
     name: "toggle theme",
     event: (session) => session.pressOf("toggle-theme"),
   },
+  {
+    name: "window resized by a pixel (no breakpoint crossed)",
+    event: (session, index) => session.resizeOf(1290 + (index % 9)),
+  },
 ];
 
 const cpuNow = (): number => {
@@ -62,9 +68,13 @@ async function measure(session: Session, interaction: Interaction, index: number
   const from = Bun.nanoseconds();
   host.emit(event);
   const syncMs = (Bun.nanoseconds() - from) / 1e6;
+  // React's own task was queued by the event, so it runs before this one.
+  await new Promise((done) => setImmediate(done));
+  const turnMs = (Bun.nanoseconds() - from) / 1e6;
   await session.settle();
   return {
     syncMs,
+    turnMs,
     lastMs: host.sends > sends ? (host.lastSendAt - from) / 1e6 : 0,
     cpuMs: cpuNow() - cpu,
     sends: host.sends - sends,
@@ -89,6 +99,7 @@ export async function interact(rounds: number, withProfile: boolean, json: boole
     }
     const row = {
       syncMs: median(samples.map((sample) => sample.syncMs)),
+      turnMs: median(samples.map((sample) => sample.turnMs)),
       lastMs: median(samples.map((sample) => sample.lastMs)),
       cpuMs: median(samples.map((sample) => sample.cpuMs)),
       sends: median(samples.map((sample) => sample.sends)),
@@ -97,7 +108,7 @@ export async function interact(rounds: number, withProfile: boolean, json: boole
     report[interaction.name] = row;
     if (!json) {
       console.log(
-        `${interaction.name}\n  event → own commit sent ${row.syncMs.toFixed(2)} ms, → last line sent ${row.lastMs.toFixed(2)} ms, process CPU ${row.cpuMs.toFixed(2)} ms, ${row.sends} lines, ${row.kb.toFixed(1)} KB`,
+        `${interaction.name}\n  event → own commit sent ${row.syncMs.toFixed(2)} ms, → next free turn ${row.turnMs.toFixed(2)} ms, → last line sent ${row.lastMs.toFixed(2)} ms, process CPU ${row.cpuMs.toFixed(2)} ms, ${row.sends} lines, ${row.kb.toFixed(1)} KB`,
       );
     }
     if (withProfile) {

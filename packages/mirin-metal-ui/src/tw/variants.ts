@@ -47,6 +47,17 @@ const BREAKPOINTS: Record<string, number> = {
   "2xl": 1536,
 };
 
+/**
+ * The widest breakpoint a window `width` px wide has reached (0 below `sm`).
+ * Every breakpoint variant answers the same for it as for the width itself,
+ * so styling keyed by it changes only when a breakpoint is crossed.
+ */
+export function breakpointFloor(width: number): number {
+  let floor = 0;
+  for (const at of Object.values(BREAKPOINTS)) if (width >= at && at > floor) floor = at;
+  return floor;
+}
+
 /** Split `a:b:[&_x:y]:util` on top-level colons (brackets protect inner colons). */
 export function splitVariants(token: string): string[] {
   const parts: string[] = [];

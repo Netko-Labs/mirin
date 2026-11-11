@@ -21,6 +21,8 @@ export interface Session {
   host: StandIn;
   root: NativeRoot;
   examples: string[];
+  /** The window resized to `width` px: the layout event of the view that fills it. */
+  resizeOf(width: number): NativeEvent;
   /** A press on the node with `testID`; throws when nothing has it. */
   pressOf(testID: string): NativeEvent;
   /** The field with `testID` typed in (the whole new value). */
@@ -63,10 +65,15 @@ export async function openBrowser(options: SessionOptions = {}): Promise<Session
     host.transport,
   );
   let first = true;
+  let windowId: string | undefined;
   const session: Session = {
     host,
     root,
     examples: listExamples(),
+    resizeOf(width) {
+      if (!windowId) throw new Error("no view asked for the window's layout");
+      return { type: "resize", nodeId: windowId, bounds: { ...WINDOW, width } };
+    },
     pressOf(testID) {
       const id = root.nodeId(testID);
       if (!id) throw new Error(`no node with testID ${testID}`);
@@ -94,6 +101,7 @@ export async function openBrowser(options: SessionOptions = {}): Promise<Session
         for (const id of pending.splice(0)) {
           // The first is the window's own view; the rest are popups and panels.
           const bounds = first ? WINDOW : { ...WINDOW, width: 200, height: 120 };
+          if (first) windowId = id;
           first = false;
           host.emit({ type: "resize", nodeId: id, bounds });
         }
