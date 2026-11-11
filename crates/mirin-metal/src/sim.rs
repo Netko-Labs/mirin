@@ -55,6 +55,17 @@ pub enum SimCommand {
     ContextMenu { id: String },
     /// Pointer enters (`true`) or leaves (`false`) node `id`.
     Hover { id: String, hovered: bool },
+    /// Move the pointer to the centre of node `id`, or to the point (`x`,
+    /// `y`) in window pixels, as a real pointer move: GPUI's hover styles
+    /// (`hoverBackground`) and `onHover` respond to it.
+    Move {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        x: Option<f32>,
+        #[serde(default)]
+        y: Option<f32>,
+    },
     /// Window management the user would do with the title bar: `zoom`
     /// toggles maximized, `minimize` minimizes.
     Window { action: String },
@@ -87,10 +98,67 @@ pub(crate) struct LayoutMap(Rc<RefCell<LayoutState>>);
 #[derive(Default)]
 pub(crate) struct LayoutState {
     frame: u64,
-    nodes: HashMap<String, (Bounds<Pixels>, u64)>,
+    nodes: HashMap<String, Entry>,
+    /// Retained subtrees (`retain.rs`), by group id: a node recorded inside
+    /// one stays painted while the subtree's last drawing is reused, though
+    /// nothing records it again.
+    groups: HashMap<u64, Group>,
     /// Bumped whenever a node's bounds change, one is painted anew, or one
     /// is forgotten: what the accessibility tree checks before rebuilding.
     revision: u64,
+}
+
+struct Entry {
+    bounds: Bounds<Pixels>,
+    /// The frame that last recorded it.
+    frame: u64,
+    /// The retained subtree it was recorded in, if any.
+    group: Option<u64>,
+}
+
+/// A retained subtree's frames.
+#[derive(Clone, Copy)]
+struct Group {
+    /// The retained subtree around it when it was last drawn.
+    parent: Option<u64>,
+    /// The last frame it was drawn in (anew or reused).
+    touched: u64,
+    /// The last frame it was drawn anew (its nodes recorded).
+    built: u64,
+}
+
+/// How often grouped entries no longer painted are dropped (they are never
+/// reported meanwhile).
+const PRUNE_EVERY: u64 = 64;
+
+impl LayoutState {
+    /// Whether retained subtree `group` was drawn in `frame`: drawn itself,
+    /// or inside one that reused a drawing it was part of.
+    fn group_live(&self, group: u64, frame: u64) -> bool {
+        let Some(info) = self.groups.get(&group) else {
+            return false;
+        };
+        if info.touched == frame {
+            return true;
+        }
+        info.parent.is_some_and(|parent| {
+            self.groups
+                .get(&parent)
+                .is_some_and(|outer| info.touched >= outer.built)
+                && self.group_live(parent, frame)
+        })
+    }
+
+    /// Whether `entry` was painted in `frame`.
+    fn painted_in(&self, entry: &Entry, frame: u64) -> bool {
+        entry.frame == frame
+            || entry.group.is_some_and(|group| {
+                self.groups
+                    .get(&group)
+                    .is_some_and(|info| entry.frame >= info.built)
+                    && self.group_live(group, frame)
+            })
+    }
 }
 
 impl LayoutMap {
@@ -100,7 +168,30 @@ impl LayoutMap {
         state.frame += 1;
         let previous = state.frame - 1;
         let before = state.nodes.len();
-        state.nodes.retain(|_, (_, frame)| *frame >= previous);
+        if state.frame.is_multiple_of(PRUNE_EVERY) {
+            let dead: Vec<String> = state
+                .nodes
+                .iter()
+                .filter(|(_, entry)| !state.painted_in(entry, previous))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in dead {
+                state.nodes.remove(&id);
+            }
+            let dead: Vec<u64> = state
+                .groups
+                .keys()
+                .copied()
+                .filter(|group| !state.group_live(*group, previous))
+                .collect();
+            for group in dead {
+                state.groups.remove(&group);
+            }
+        } else {
+            state
+                .nodes
+                .retain(|_, entry| entry.group.is_some() || entry.frame >= previous);
+        }
         if state.nodes.len() != before {
             state.revision += 1;
         }
@@ -111,26 +202,51 @@ impl LayoutMap {
         self.0.borrow().revision
     }
 
-    /// Record a node's bounds; returns whether they changed since it was last
-    /// painted (or it is newly painted).
-    pub(crate) fn record(&self, id: &str, bounds: Bounds<Pixels>) -> bool {
+    /// Record a node's bounds (`group`: the retained subtree it is drawn
+    /// in); returns whether they changed since it was last painted (or it is
+    /// newly painted).
+    pub(crate) fn record(&self, id: &str, bounds: Bounds<Pixels>, group: Option<u64>) -> bool {
         let mut state = self.0.borrow_mut();
         let frame = state.frame;
-        let changed = match state.nodes.get_mut(id) {
+        let changed = match state.nodes.get(id) {
             Some(entry) => {
-                let changed = entry.0 != bounds;
-                *entry = (bounds, frame);
-                changed
+                entry.bounds != bounds
+                    || !(entry.frame == frame || state.painted_in(entry, frame - 1))
             }
-            None => {
-                state.nodes.insert(id.to_string(), (bounds, frame));
-                true
-            }
+            None => true,
         };
+        let entry = Entry {
+            bounds,
+            frame,
+            group,
+        };
+        match state.nodes.get_mut(id) {
+            Some(slot) => *slot = entry,
+            None => {
+                state.nodes.insert(id.to_string(), entry);
+            }
+        }
         if changed {
             state.revision += 1;
         }
         changed
+    }
+
+    /// A retained subtree was drawn this frame inside `parent` (`reused`: its
+    /// last drawing was copied, so its nodes were not recorded again).
+    pub(crate) fn touch_group(&self, group: u64, parent: Option<u64>, reused: bool) {
+        let mut state = self.0.borrow_mut();
+        let frame = state.frame;
+        let info = state.groups.entry(group).or_insert(Group {
+            parent,
+            touched: frame,
+            built: frame,
+        });
+        info.parent = parent;
+        info.touched = frame;
+        if !reused {
+            info.built = frame;
+        }
     }
 
     /// Bounds painted in the latest frame.
@@ -139,8 +255,8 @@ impl LayoutMap {
         state
             .nodes
             .iter()
-            .filter(|(_, (_, frame))| *frame == state.frame)
-            .map(|(id, (bounds, _))| (id.clone(), *bounds))
+            .filter(|(_, entry)| state.painted_in(entry, state.frame))
+            .map(|(id, entry)| (id.clone(), entry.bounds))
             .collect()
     }
 
@@ -163,17 +279,13 @@ impl LayoutMap {
         state
             .nodes
             .get(id)
-            .filter(|(_, frame)| *frame == state.frame)
-            .map(|(bounds, _)| *bounds)
+            .filter(|entry| state.painted_in(entry, state.frame))
+            .map(|entry| entry.bounds)
     }
 
     pub(crate) fn node(&self, id: &str) -> Option<LayoutNode> {
-        let state = self.0.borrow();
-        state
-            .nodes
-            .get(id)
-            .filter(|(_, frame)| *frame == state.frame)
-            .map(|(bounds, _)| layout_node(id.to_string(), *bounds))
+        self.bounds(id)
+            .map(|bounds| layout_node(id.to_string(), bounds))
     }
 
     pub(crate) fn snapshot(&self) -> Vec<LayoutNode> {
@@ -209,6 +321,8 @@ pub(crate) enum SimAction {
     Drag(String, LayoutNode, [(f32, f32); 2]),
     ContextMenu(String, f32, f32),
     Hover(String, bool),
+    /// A pointer move to window coordinates.
+    Move(Point<Pixels>),
     Zoom,
     Minimize,
     Scroll(ScrollTarget, f32),
@@ -318,6 +432,23 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             ))
         }
         SimCommand::Hover { id, hovered } => Some(SimAction::Hover(id.clone(), *hovered)),
+        SimCommand::Move { id, x, y } => match (id, x, y) {
+            (Some(id), _, _) => {
+                let Some(bounds) = view.layout.node(id) else {
+                    eprintln!("[mirin-metal] sim move: no painted node with id {id:?}");
+                    return None;
+                };
+                Some(SimAction::Move(point(
+                    px(bounds.x + bounds.width / 2.0),
+                    px(bounds.y + bounds.height / 2.0),
+                )))
+            }
+            (None, Some(x), Some(y)) => Some(SimAction::Move(point(px(*x), px(*y)))),
+            _ => {
+                eprintln!("[mirin-metal] sim move needs an id or x/y");
+                None
+            }
+        },
         SimCommand::Scroll { id, dy } => {
             if let Some(list) = view.lists.get(id) {
                 return Some(SimAction::Scroll(
@@ -360,6 +491,16 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
         }
         SimAction::ContextMenu(id, x, y) => events.context_menu(&id, x, y, Held::default()),
         SimAction::Hover(id, hovered) => events.hover(&id, hovered),
+        SimAction::Move(position) => {
+            let _ = window.dispatch_event(
+                gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+        }
         SimAction::Zoom => {
             crate::trace::log(format_args!("zoom requested"));
             window.zoom_window();
@@ -442,13 +583,13 @@ mod layout_tests {
     fn the_revision_moves_only_when_bounds_do() {
         let layout = LayoutMap::default();
         layout.begin_frame();
-        layout.record("a", at(0.));
+        layout.record("a", at(0.), None);
         let first = layout.revision();
         layout.begin_frame();
-        layout.record("a", at(0.));
+        layout.record("a", at(0.), None);
         assert_eq!(layout.revision(), first, "the same bounds again");
         layout.begin_frame();
-        layout.record("a", at(5.));
+        layout.record("a", at(5.), None);
         assert!(layout.revision() > first, "a scroll or resize moved it");
         let moved = layout.revision();
         layout.begin_frame();
@@ -457,5 +598,32 @@ mod layout_tests {
             layout.revision() > moved,
             "a node no longer painted is forgotten"
         );
+    }
+
+    /// A retained subtree whose drawing is reused records nothing, and its
+    /// nodes (and those of the subtrees inside it) are still painted.
+    #[test]
+    fn a_reused_subtree_keeps_its_nodes_painted() {
+        let layout = LayoutMap::default();
+        // Frame 1: row (group 1) and the card inside it (group 2) drawn anew.
+        layout.begin_frame();
+        layout.record("text", at(1.), Some(2));
+        layout.touch_group(2, Some(1), false);
+        layout.record("card", at(0.), Some(1));
+        layout.touch_group(1, None, false);
+        // Frame 2: the row is reused; nothing inside runs.
+        layout.begin_frame();
+        layout.touch_group(1, None, true);
+        assert!(layout.node("card").is_some());
+        assert!(layout.node("text").is_some(), "inside a reused subtree");
+        // Frame 3: the row is drawn anew without the card.
+        layout.begin_frame();
+        layout.record("card", at(0.), Some(1));
+        layout.touch_group(1, None, false);
+        assert!(layout.node("card").is_some());
+        assert!(layout.node("text").is_none(), "left the row");
+        // Frame 4: the row is gone.
+        layout.begin_frame();
+        assert!(layout.node("card").is_none());
     }
 }

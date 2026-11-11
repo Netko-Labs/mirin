@@ -41,7 +41,11 @@ pub(crate) fn render_node(
     cx: &mut Context<RootView>,
 ) -> AnyElement {
     match node {
-        NodeSpec::View { props, children } => render_view(props, children, view, window, cx),
+        NodeSpec::View { props, children } => match crate::retain::boundary(props, view, cx) {
+            // A subtree kept across frames, built only when it changed (retain.rs).
+            Some(element) => element,
+            None => render_view(props, children, view, window, cx),
+        },
         NodeSpec::Text { props, children } => render_text(props, children),
         NodeSpec::Input { props } => render_input(props, view, window, cx),
         NodeSpec::Svg { props } => render_svg(props),
@@ -189,7 +193,7 @@ fn styled_view(props: &ViewProps) -> Div {
     element
 }
 
-fn render_view(
+pub(crate) fn render_view(
     props: &ViewProps,
     children: &[NodeSpec],
     view: &mut RootView,
@@ -229,10 +233,11 @@ fn render_view_content(
     if child_ids.iter().any(Option::is_some) {
         let layout = view.layout.clone();
         let events = view.events.clone();
+        let group = view.group;
         element = element.on_children_prepainted(move |bounds, _window, _cx| {
             for ((id, watch), bounds) in child_ids.iter().zip(&child_watch).zip(bounds) {
                 if let Some(id) = id {
-                    record_child_bounds(&layout, &events, id, *watch, bounds);
+                    record_child_bounds(&layout, &events, id, *watch, bounds, group);
                 }
             }
         });
@@ -469,16 +474,18 @@ pub(crate) fn flex_from_zero<E: Styled>(mut element: E, flex: f32) -> E {
     element.min_w(px(0.0)).min_h(px(0.0))
 }
 
-/// Record a painted child's bounds; report a `layout` event when a watched
-/// node's bounds changed.
+/// Record a painted child's bounds (`group`: the retained subtree it is
+/// drawn in, `retain.rs`); report a `layout` event when a watched node's
+/// bounds changed.
 pub(crate) fn record_child_bounds(
     layout: &crate::sim::LayoutMap,
     events: &crate::events::EventSender,
     id: &str,
     watch: bool,
     bounds: gpui::Bounds<gpui::Pixels>,
+    group: Option<u64>,
 ) {
-    if layout.record(id, bounds) && watch {
+    if layout.record(id, bounds, group) && watch {
         events.resize(id);
     }
 }
@@ -494,7 +501,7 @@ pub(crate) fn record_root_bounds(
 ) {
     if let Some(id) = node_id(root) {
         let bounds = gpui::Bounds::new(gpui::Point::default(), size);
-        record_child_bounds(layout, events, &id, watches_layout(root), bounds);
+        record_child_bounds(layout, events, &id, watches_layout(root), bounds, None);
     }
 }
 
