@@ -7,9 +7,14 @@ import { driverEnv } from "../src/launch.ts";
 /** JavaScriptCore's option, spelled as Bun reads it from the environment. */
 const MARKERS = "BUN_JSC_numberOfGCMarkers";
 
-test("a driver starts with React's production build and one collector thread", () => {
+test("a driver starts with React's production build, one collector thread and no collection timer", () => {
   const env = driverEnv({ HOME: "/home/u", EMPTY: undefined });
-  expect(env).toEqual({ HOME: "/home/u", NODE_ENV: "production", [MARKERS]: "1" });
+  expect(env).toEqual({
+    HOME: "/home/u",
+    NODE_ENV: "production",
+    [MARKERS]: "1",
+    BUN_GC_TIMER_DISABLE: "1",
+  });
 });
 
 test("what the environment already says is kept", () => {

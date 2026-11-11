@@ -28,6 +28,7 @@ import type {
   RawTextInstance,
 } from "./instances.ts";
 import { forgetHints, insertNodeBefore, removeNode } from "./instances.ts";
+import { committed } from "./rest.ts";
 
 type HostType =
   | typeof VIEW_TYPE
@@ -123,6 +124,7 @@ export const hostConfig: HostConfig = {
   resetAfterCommit(container) {
     forgetHints();
     container.onCommit();
+    committed();
   },
   preparePortalMount() {},
   scheduleTimeout(fn, delay) {

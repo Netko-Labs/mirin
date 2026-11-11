@@ -7,9 +7,11 @@
  *   development build (the example browser's first render takes twice the
  *   time and CPU, and 10 MB more).
  * - `BUN_JSC_numberOfGCMarkers=1`: JavaScriptCore marks a collection on one
- *   thread instead of eight. For half a minute after an app last did
+ *   thread instead of eight; a UI's heap is small enough for one.
+ * - `BUN_GC_TIMER_DISABLE=1`: for half a minute after an app last did
  *   something, Bun collects once a second, and each collection wakes the
- *   seven helper threads; a UI's heap is small enough for one.
+ *   collector's threads. With the timer off, the driver collects once when
+ *   it goes quiet (`lib/rest.ts`), and an app at rest wakes for nothing.
  *
  * A launcher spawns apps with `driverEnv()` as their environment; an app
  * started by hand goes through `mirin-metal run app.tsx` (`cli.ts`).
@@ -34,5 +36,6 @@ export function driverEnv(
   }
   env.NODE_ENV ??= options.development ? "development" : "production";
   env.BUN_JSC_numberOfGCMarkers ??= "1";
+  env.BUN_GC_TIMER_DISABLE ??= "1";
   return env;
 }
