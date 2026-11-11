@@ -12,7 +12,9 @@
  * time for anything to settle: a query right after a move must find the
  * node where it is now. Two hosts driven through it must give the same
  * dumps (`diff -r <out-a> <out-b>`): a host that tells the bus less about a
- * scroll still answers the same.
+ * scroll still answers the same. Under `run.sh` it also turns accessibility
+ * off and on again, and reads the tree that comes back (while it is off the
+ * app is not on the bus: that read says so).
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -30,7 +32,7 @@ import {
 const args = Bun.argv.slice(2);
 const [binary, outDir] = args.filter((arg) => !arg.startsWith("--"));
 if (!binary || !outDir) {
-  console.error("usage: bun bench/a11y/extents.tsx <host> <out-dir> [--visible]");
+  console.error("usage: bun bench/a11y/extents.tsx <host> <out-dir> [--visible] [--trace=<path>]");
   process.exit(2);
 }
 const display = args.includes("--visible") ? null : await startHeadlessDisplay();
@@ -38,8 +40,10 @@ const APP = "extents check";
 const ROWS = 30;
 const COLS = 8;
 
-const frames: number[] = [];
 const complaints: string[] = [];
+// `--trace=<path>`: the host's trace with each step's action and reads in it.
+const tracePath = args.find((arg) => arg.startsWith("--trace="))?.slice("--trace=".length);
+const trace: string[] = [];
 const transport = spawnNativeHost(binary, {
   title: APP,
   appName: APP,
@@ -48,7 +52,7 @@ const transport = spawnNativeHost(binary, {
   env: { ...display?.env, MIRIN_METAL_TRACE: "1", MIRIN_METAL_ACCESS_CHECK: "1" },
   onStderr(line) {
     const match = line.match(/^\[mirin-metal trace\] (\d+\.\d) (.*)$/);
-    if (match?.[2]?.startsWith("render")) frames.push(Number(match[1]));
+    if (match) trace.push(`${match[1]} ${match[2]}`);
     // The host's own complaints: a refused line, or the accessibility
     // tree's check (`MIRIN_METAL_ACCESS_CHECK`) finding a difference.
     else if (!match) complaints.push(line);
@@ -139,14 +143,26 @@ const id = (testId: string): string => {
 mkdirSync(outDir, { recursive: true });
 const dump = new URL("./dump.py", import.meta.url).pathname;
 let step = 0;
-/** Do `action`, wait for the frame that shows it, and read the tree at once. */
-async function after(name: string, action: () => void): Promise<void> {
-  const from = frames.length;
-  action();
-  for (let waited = 0; waited < 3000 && frames.length === from; waited += 2) await Bun.sleep(2);
+/** Whether the host has drawn a frame since it read a line sent after trace line `from`. */
+const shown = (from: number): boolean => {
+  const read = trace.findIndex((line, index) => index >= from && line.includes(" line parsed "));
+  return read >= 0 && trace.slice(read).some((line) => line.includes(" render "));
+};
+/**
+ * Do `action`, wait for the frame that shows it (the first the host draws
+ * after reading what the action sent: one already on its way shows nothing
+ * of it), and read the tree at once.
+ */
+async function after(name: string, action: (() => void) | null): Promise<void> {
+  const from = trace.length;
+  trace.push(`${Date.now()} step ${step} ${name}`);
+  action?.();
+  for (let waited = 0; action && waited < 3000 && !shown(from); waited += 2) await Bun.sleep(2);
   // A patch may take a second frame (the driver's commit after the press).
   if (name.startsWith("patch")) await Bun.sleep(150);
+  trace.push(`${Date.now()} read ${step}`);
   const read = Bun.spawnSync(["python3", "-I", dump, APP]);
+  trace.push(`${Date.now()} read ${step} done`);
   const file = `${outDir}/${String(step).padStart(2, "0")}-${name}.txt`;
   writeFileSync(file, read.stdout.toString() + read.stderr.toString());
   step += 1;
@@ -155,7 +171,7 @@ async function after(name: string, action: () => void): Promise<void> {
 const scroll = (dy: number) => () => transport.simulate({ kind: "scroll", id: id("scroller"), dy });
 const press = (testId: string) => () => transport.simulate({ kind: "click", id: id(testId) });
 
-await after("start", () => {});
+await after("start", null);
 await after("scroll-40", scroll(40));
 await after("scroll-40-again", scroll(40));
 await after("scroll-far", scroll(700));
@@ -171,7 +187,21 @@ await Bun.sleep(200);
 await after("patch-type", () => transport.simulate({ kind: "type", text: "ab" }));
 await after("scroll-to-the-end", scroll(5000));
 await after("scroll-to-the-start", scroll(-5000));
+// Accessibility turned off and on again under the app (`run.sh`), as a
+// screen reader quitting and starting does: the tree is whole again, and
+// follows what moves after that.
+const status = Number(process.env.A11Y_STATUS_PID);
+if (status) {
+  process.kill(status, "SIGUSR1");
+  await Bun.sleep(700);
+  await after("scroll-while-off", scroll(200));
+  process.kill(status, "SIGUSR1");
+  await Bun.sleep(1200);
+  await after("on-again", null);
+  await after("scroll-after-on-again", scroll(60));
+}
 
+if (tracePath) writeFileSync(tracePath, `${trace.join("\n")}\n`);
 root.unmount();
 transport.close();
 display?.close();
