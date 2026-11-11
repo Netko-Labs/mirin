@@ -1,4 +1,4 @@
-import { Loader2Icon } from "../icons/index.ts";
+import { Loader2Icon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 
 function Spinner({ className, ...props }: React.ComponentProps<"svg">) {

@@ -6,7 +6,7 @@ import {
   Loader2Icon,
   OctagonXIcon,
   TriangleAlertIcon,
-} from "../icons/index.ts";
+} from "../icons/core.generated.ts";
 import { registerOverlayChild } from "../overlay/host.tsx";
 import { Toaster as Sonner, type ToasterProps } from "../primitives/sonner.tsx";
 

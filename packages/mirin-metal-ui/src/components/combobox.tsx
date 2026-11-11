@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CheckIcon, ChevronDownIcon, XIcon } from "../icons/index.ts";
+import { CheckIcon, ChevronDownIcon, XIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { Combobox as ComboboxPrimitive } from "../primitives/base-ui.tsx";
 

@@ -28,6 +28,8 @@ export interface StartupOptions {
   bunArgs: string[];
   /** `K=V` for the child's environment. */
   env: string[];
+  /** Variables the child starts without. */
+  unset: string[];
   json: boolean;
 }
 
@@ -43,6 +45,7 @@ async function run(options: StartupOptions, profile: boolean): Promise<ChildRepo
     const at = pair.indexOf("=");
     if (at > 0) env[pair.slice(0, at)] = pair.slice(at + 1);
   }
+  for (const key of options.unset) delete env[key];
   if (profile) env.BENCH_PROFILE = "1";
   else delete env.BENCH_PROFILE;
   env.BENCH_SPAWNED_AT = String(Date.now());

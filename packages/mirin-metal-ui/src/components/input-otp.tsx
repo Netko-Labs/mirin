@@ -1,5 +1,5 @@
 import * as React from "react";
-import { MinusIcon } from "../icons/index.ts";
+import { MinusIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { OTPInput, OTPInputContext } from "../primitives/input-otp.tsx";
 

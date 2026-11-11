@@ -1,4 +1,4 @@
-import { GripVerticalIcon } from "../icons/index.ts";
+import { GripVerticalIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import * as ResizablePrimitive from "../primitives/resizable-panels.tsx";
 

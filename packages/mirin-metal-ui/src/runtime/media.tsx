@@ -4,7 +4,6 @@
  * back to markup and drawn as icons tinted with the current text color.
  */
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +30,8 @@ export function resolveImage(src: string): Promise<string | null> {
   const cached = inflight.get(src);
   if (cached) return cached;
   const job = (async () => {
-    const hash = createHash("sha256").update(src).digest("hex").slice(0, 32);
+    // Bun's hasher: `node:crypto` loads the streams with it (4 ms of every start).
+    const hash = new Bun.CryptoHasher("sha256").update(src).digest("hex").slice(0, 32);
     const ext = src.match(/\.(png|jpe?g|gif|webp|svg)(?:[?#]|$)/i)?.[1]?.toLowerCase() ?? "img";
     const path = join(CACHE_DIR, `${hash}.${ext}`);
     if (existsSync(path)) return path;

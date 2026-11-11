@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { ArrowDownIcon } from "../icons/index.ts";
+import { ArrowDownIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import {
   MessageScroller as MessageScrollerPrimitive,

@@ -3,16 +3,17 @@
  * measured on the example browser against a stand-in host (a transport that
  * announces the patch protocol and counts lines; no process, no compositor).
  *
- *   bun bench/driver.tsx startup [--runs=7] [--profile] [--bun=<bun flag>]... [--env=K=V]...
+ *   bun bench/driver.tsx startup [--runs=7] [--profile] [--bun=<bun flag>]... [--env=K=V]... [--unset=K]...
  *   bun bench/driver.tsx interact [--rounds=40] [--profile] [--json]
  *   bun bench/driver.tsx memory [--rounds=3] [--json]
  *   bun bench/driver.tsx record <file> [--whole] [--against=<file>]
  *
  * - startup: fresh processes; wall and CPU from spawn to each part of the
  *   start (modules, first tree, the tree again once the host takes patches,
- *   the example). `--bun=--config=/dev/null` starts without this package's
- *   `bunfig.toml` (React's development build, as an app that defines nothing
- *   gets); `--env=BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` without Bun's cache.
+ *   the example). `--bun=--config=<an empty file> --unset=NODE_ENV` starts
+ *   without this package's `bunfig.toml` (React's development build, as an
+ *   app that defines nothing gets); `--env=BUN_RUNTIME_TRANSPILER_CACHE_PATH=0`
+ *   without Bun's transpiler cache.
  *   `--profile` adds where the first render's samples fell.
  * - interact: per switch of example, character typed and theme toggle: event
  *   to last line sent, process CPU, bytes; `--profile` splits the main
@@ -39,6 +40,7 @@ if (mode === "startup") {
     profile: has("profile"),
     bunArgs: flags("bun"),
     env: flags("env"),
+    unset: flags("unset"),
     json: has("json"),
   });
 } else if (mode === "interact") {
