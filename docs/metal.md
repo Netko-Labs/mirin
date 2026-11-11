@@ -1037,6 +1037,11 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   whole AT-SPI tree (roles, names, states, extents, actions, text): the
   example browser driven through `layout-check.tsx`'s steps gives the same
   dump, to the byte, on the host before and after the tree was kept.
+  `kill -USR1 $A11Y_STATUS_PID` flips IsEnabled under a running app, as
+  turning a screen reader on or off does: an idle app's whole tree is on
+  the bus at once (no frame is painted for it), it leaves the bus and
+  builds nothing while off, and is whole again, as the app then is, when
+  turned back on.
 
 Open: React work per update (the demo re-renders its whole list on select),
 and retained subtrees inside scroll views (moved, so drawn again each

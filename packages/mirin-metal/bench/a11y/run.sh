@@ -16,7 +16,8 @@
 # private accessibility bus and registry and a stand-in for
 # at-spi-bus-launcher (`status.py`), in a runtime directory of its own. The
 # compositor is the one it was started under. `dump.py <app name>` prints an
-# application's whole AT-SPI tree from inside such a run.
+# application's whole AT-SPI tree from inside such a run, and
+# `kill -USR1 $A11Y_STATUS_PID` turns accessibility on or off under it.
 #
 # Needs dbus-daemon, at-spi2-core's registry, and python3 with PyGObject
 # (Atspi 2.0).
@@ -57,6 +58,7 @@ exec dbus-run-session --config-file="$run/session.conf" -- sh -c '
   "$A11Y_REGISTRY" >/dev/null 2>&1 & registry=$!
   enabled=true; [ "$A11Y_MODE" = off ] && enabled=false
   python3 -I "$A11Y_HERE/status.py" $enabled & status=$!
+  export A11Y_STATUS_PID=$status
   sleep 0.5
   listener=
   if [ "$A11Y_MODE" = at ]; then
