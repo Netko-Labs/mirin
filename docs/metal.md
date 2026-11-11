@@ -282,9 +282,11 @@ patches change it in place, in order (section "Patches").
   `{"kind":"key","keystroke":"ctrl-enter"}` and `{"kind":"type","text"}` go
   through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds
   (only nodes painted in the latest frame), `{"kind":"scroll","id","dy"}`
-  scrolls a scroll view or virtualized list, and `{"kind":"focus","id"}` gives
+  scrolls a scroll view or virtualized list, `{"kind":"focus","id"}` gives
   a field or `focusable` view the keyboard without pressing it (a screen
-  reader's focus).
+  reader's focus), and `{"kind":"move","id"}` / `{"kind":"move","x","y"}`
+  moves the pointer there through GPUI's real mouse dispatch, so
+  `hoverBackground` and `onHover` respond (`hover` only reports `onHover`).
 - Grid: `grid` lays children out as a CSS grid (taffy) with `gridColumns` /
   `gridRows` track lists (a number is px; `"1fr"`, `"25%"`, `"auto"`,
   `"min-content"`, `"max-content"`; `{"min","max"}` is `minmax`), item
@@ -874,9 +876,65 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   under a scroll view, so its lists and scroll views are checked), driver
   alone 7.7 → 6.5 ms; its click-to-frame time is the frame's.
 
+- Retained subtrees (2026-11-10; release host, `bench/stress.tsx` with
+  patches, medians, two runs each of the baseline host and this one back to
+  back on a nested dashi-comp; `hover` now moves the real pointer, sim
+  `move`). A frame used to build, lay out, prepaint and paint all ~15k
+  nodes whatever changed. Now a view whose subtree renders from its content
+  alone (no field, focus, scroll view, virtualized list, height transition,
+  drag source or drop target inside) and has at least four nodes is a
+  *retained subtree* (`crates/mirin-metal/src/retain.rs`, GPUI fork's
+  `elements/retained.rs`): it is built only when its content changed
+  (after a patch, its subtree generation; after a whole tree, a comparison
+  with the old tree) or GPUI notified it (a hover style; each subtree has a
+  small entity for that), its taffy nodes and taffy's cache stay in a layout
+  tree kept across frames, and when it lands where it was drawn last frame
+  its hitboxes, listeners, dispatch nodes, element states and scene
+  primitives are copied instead of drawn. Subtrees nest (a row of cards in a
+  grid); one that moved (a row above it grew) is built again and laid out
+  detached exactly as its kept nodes sit. `MIRIN_METAL_RETAIN=0` turns it off
+  for comparison.
+
+  | stress bench (15k nodes) | baseline | retained |
+  | --- | --- | --- |
+  | select: frame | 155–157 ms | 5.3–5.8 ms |
+  | type: frame | 160–161 ms | 3.6–4.9 ms |
+  | hover: frame (`MIRIN_METAL_RETAIN=0` for baseline) | 110–178 ms | 4.3–6.1 ms |
+  | patch apply (incl. the retained sync) | — | 0.6–0.8 ms |
+  | RSS | 368 MB | 264–267 MB |
+  | example browser (~900 nodes): full frame | 1.8–1.9 ms | 1.5–1.7 ms |
+
+  `total` (input to painted frame) stayed 300–450 ms in this environment for
+  every host: the nested compositor delivers frame callbacks about once a
+  second, so it measures the compositor, not the host. What made it cheap,
+  in the forks (`forks/gpui/MIRIN.md`, `forks/taffy/MIRIN.md`): GPUI's layout
+  engine no longer clears taffy every frame (it frees only the frame's own
+  nodes and subtrees no longer drawn); taffy rounds only nodes a layout
+  touched (rounding walked all 15k every frame); a retained subtree keeps its
+  elements' states in its own state (GPUI moved every element state between
+  two hash maps every frame, cloning a 32-deep id path each time: a third of
+  a fully reused frame); and mirin-metal gives a GPUI element id only to
+  views that interact (5 of every 6 nodes in the bench needed no state).
+  Layout equivalence: `bun bench/layout-check.tsx <grid|browser> <host-a>
+  <host-b>` in `packages/mirin-metal-ui` compares every id'd node's bounds
+  after each of a series of interactions (selections that grow a row and
+  move every row below it, hovers, typing; example swaps, a list scroll, a
+  theme switch, a search): identical to the baseline host on both apps. The
+  GPUI fork's `retained` test checks that kept, recolored and moved rows draw
+  the same quads, glyphs and hitboxes as drawing everything.
+
+  Left in a frame (profile after): the accessibility tree, rebuilt and
+  published whole after every update (~45% of the host's draw time, in
+  paint after the traced frame ends); copying reused primitives into the
+  scene and re-inserting their bounds for draw order (~15–20%); taffy's
+  pass over the spine and the changed row (~19%); reshaping the rebuilt
+  card's text. A subtree that moves (scrolled, or below one that grew) is
+  built again rather than its drawing offset.
+
 Open: React work per update (the demo re-renders its whole list on select),
-GPUI's full relayout for trees that are not long lists, and the
-accessibility tree, rebuilt whole after every update.
+retained subtrees inside scroll views (moved, so drawn again each scrolled
+frame; their drawings could be offset instead), and the accessibility tree,
+rebuilt whole after every update.
 
 ## 5c. Who uses it: Dashi
 

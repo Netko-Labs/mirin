@@ -5,7 +5,7 @@ use crate::{
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use stacksafe::{StackSafe, stacksafe};
-use std::{fmt::Debug, ops::Range};
+use std::{cell::RefCell, fmt::Debug, ops::Range, rc::Rc};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -27,10 +27,61 @@ type NodeMeasureFn = StackSafe<
 struct NodeContext {
     measure: NodeMeasureFn,
 }
+
+/// The measure function taffy calls for a measured leaf (text): device
+/// pixels in and out, logical pixels for the element's own function.
+fn measure_with<'a>(
+    scale_factor: f32,
+    window: &'a mut Window,
+    cx: &'a mut App,
+) -> impl FnMut(
+    TaffySize<Option<f32>>,
+    TaffySize<TaffyAvailableSpace>,
+    NodeId,
+    Option<&mut NodeContext>,
+    &taffy::style::Style,
+) -> TaffySize<f32>
++ 'a {
+    move |known_dimensions, available_space, _id, node_context, _style| {
+        let Some(node_context) = node_context else {
+            return taffy::geometry::Size::default();
+        };
+
+        let known_dimensions = Size {
+            width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
+            height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
+        };
+
+        let available_space: Size<AvailableSpace> = available_space.into();
+        let untransform = |ev: AvailableSpace| match ev {
+            AvailableSpace::Definite(pixels) => {
+                AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
+            }
+            AvailableSpace::MinContent => AvailableSpace::MinContent,
+            AvailableSpace::MaxContent => AvailableSpace::MaxContent,
+        };
+        let available_space = size(
+            untransform(available_space.width),
+            untransform(available_space.height),
+        );
+
+        let a: Size<Pixels> = (node_context.measure)(known_dimensions, available_space, window, cx);
+        size(a.width.0 * scale_factor, a.height.0 * scale_factor).into()
+    }
+}
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
+    // mirin: the tree is kept across frames so a retained subtree
+    // (`elements::retained`) keeps its nodes, and taffy's cache, from one frame
+    // to the next. Nodes made outside any retained subtree live one frame.
+    /// Nodes made this frame outside a retained subtree; removed at `clear`.
+    loose: Vec<LayoutId>,
+    /// The retained subtrees being built, innermost last: what each made.
+    owners: Vec<Vec<LayoutId>>,
+    /// Nodes of retained subtrees no longer drawn; removed at `clear`.
+    released: Rc<RefCell<Vec<LayoutId>>>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -43,13 +94,70 @@ impl TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
+            loose: Vec::new(),
+            owners: Vec::new(),
+            released: Rc::default(),
         }
     }
 
     pub fn clear(&mut self) {
-        self.taffy.clear();
+        // mirin: keep retained subtrees; remove this frame's other nodes and
+        // the subtrees no longer drawn. Parents were made after their
+        // children, so removing newest first never edits a parent's child
+        // list that is about to go too.
+        if self.loose.len() == self.taffy.total_node_count() {
+            // Nothing retained: drop the tree at once, as upstream does.
+            self.taffy.clear();
+            self.loose.clear();
+        }
+        for id in self.loose.drain(..).rev() {
+            self.taffy.remove(id.into()).expect(EXPECT_MESSAGE);
+        }
+        let released = std::mem::take(&mut *self.released.borrow_mut());
+        self.remove_nodes(released);
         self.absolute_layout_bounds.clear();
         self.computed_layouts.clear();
+    }
+
+    // mirin: track a new node: owned by the retained subtree being built, if
+    // any, or this frame's.
+    fn track(&mut self, id: LayoutId) -> LayoutId {
+        match self.owners.last_mut() {
+            Some(owned) => owned.push(id),
+            None => self.loose.push(id),
+        }
+        id
+    }
+
+    /// mirin: start building a retained subtree: the nodes made until
+    /// `end_owned` are its own (not this frame's).
+    pub fn begin_owned(&mut self) {
+        self.owners.push(Vec::new());
+    }
+
+    /// mirin: the nodes made since the matching `begin_owned`.
+    pub fn end_owned(&mut self) -> Vec<LayoutId> {
+        self.owners.pop().unwrap_or_default()
+    }
+
+    /// mirin: remove a retained subtree's nodes (made in this order) now.
+    pub fn remove_nodes(&mut self, nodes: Vec<LayoutId>) {
+        for id in nodes.into_iter().rev() {
+            if self.taffy.contains(id.into()) {
+                self.taffy.remove(id.into()).expect(EXPECT_MESSAGE);
+            }
+        }
+    }
+
+    /// mirin: where a retained subtree's state puts its nodes when it is
+    /// dropped (no longer drawn); they are removed at the next `clear`.
+    pub fn released(&self) -> Rc<RefCell<Vec<LayoutId>>> {
+        self.released.clone()
+    }
+
+    /// mirin: whether a kept node is still in the tree.
+    pub fn contains(&self, id: LayoutId) -> bool {
+        self.taffy.contains(id.into())
     }
 
     pub fn request_layout(
@@ -61,7 +169,7 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
-        if children.is_empty() {
+        let id = if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
@@ -72,7 +180,8 @@ impl TaffyLayoutEngine {
                 .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
                 .expect(EXPECT_MESSAGE)
                 .into()
-        }
+        };
+        self.track(id)
     }
 
     pub fn request_measured_layout(
@@ -90,7 +199,8 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
-        self.taffy
+        let id = self
+            .taffy
             .new_leaf_with_context(
                 taffy_style,
                 NodeContext {
@@ -98,7 +208,8 @@ impl TaffyLayoutEngine {
                 },
             )
             .expect(EXPECT_MESSAGE)
-            .into()
+            .into();
+        self.track(id)
     }
 
     // Used to understand performance
@@ -200,33 +311,28 @@ impl TaffyLayoutEngine {
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, _id, node_context, _style| {
-                    let Some(node_context) = node_context else {
-                        return taffy::geometry::Size::default();
-                    };
+                measure_with(scale_factor, window, cx),
+            )
+            .expect(EXPECT_MESSAGE);
+    }
 
-                    let known_dimensions = Size {
-                        width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
-                        height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
-                    };
-
-                    let available_space: Size<AvailableSpace> = available_space.into();
-                    let untransform = |ev: AvailableSpace| match ev {
-                        AvailableSpace::Definite(pixels) => {
-                            AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
-                        }
-                        AvailableSpace::MinContent => AvailableSpace::MinContent,
-                        AvailableSpace::MaxContent => AvailableSpace::MaxContent,
-                    };
-                    let available_space = size(
-                        untransform(available_space.width),
-                        untransform(available_space.height),
-                    );
-
-                    let a: Size<Pixels> =
-                        (node_context.measure)(known_dimensions, available_space, window, cx);
-                    size(a.width.0 * scale_factor, a.height.0 * scale_factor).into()
-                },
+    /// mirin: lay `id` out as `twin` is laid out where it sits (taffy's
+    /// `compute_detached_layout_with_measure`): a retained subtree built again
+    /// from the same content, detached, to be drawn where its kept layout is.
+    #[stacksafe]
+    pub fn compute_detached_layout(
+        &mut self,
+        id: LayoutId,
+        twin: LayoutId,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let scale_factor = window.scale_factor();
+        self.taffy
+            .compute_detached_layout_with_measure(
+                id.into(),
+                twin.into(),
+                measure_with(scale_factor, window, cx),
             )
             .expect(EXPECT_MESSAGE);
     }

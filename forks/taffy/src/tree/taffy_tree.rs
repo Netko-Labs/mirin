@@ -9,14 +9,15 @@ use crate::geometry::Size;
 use crate::style::{AvailableSpace, Display, Style};
 use crate::sys::DefaultCheapStr;
 use crate::tree::{
-    Cache, ClearState, Layout, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, PrintTree, RoundTree, RunMode,
+    Cache, ClearState, Layout, LayoutInput, LayoutOutput, LayoutPartialTree, LayoutPartialTreeExt, NodeId, PrintTree,
+    RoundTree, RunMode,
     TraversePartialTree, TraverseTree,
 };
 use crate::util::debug::{debug_log, debug_log_node};
 use crate::util::sys::{new_vec_with_capacity, ChildrenVec, Vec};
 
 use crate::compute::{
-    compute_cached_layout, compute_hidden_layout, compute_leaf_layout, compute_root_layout, round_layout,
+    compute_cached_layout, compute_hidden_layout, compute_leaf_layout, compute_root_layout,
 };
 use crate::CacheTree;
 #[cfg(feature = "block_layout")]
@@ -110,6 +111,16 @@ struct NodeData {
     /// The computation result from layout algorithm
     #[cfg(feature = "detailed_layout_info")]
     pub(crate) detailed_layout_info: DetailedLayoutInfo,
+
+    // mirin: incremental rounding (`TaffyTree::round_changed`). A tree kept
+    // across layouts rounds again only what a layout touched.
+    /// Its unrounded layout was written since it was last rounded.
+    pub(crate) written: bool,
+    /// Its layout algorithm ran (a cache miss) since it was last rounded, so
+    /// its children's unrounded layouts may have been written too.
+    pub(crate) ran: bool,
+    /// Its parent's cumulative unrounded position when it was last rounded.
+    pub(crate) rounded_at: Option<(f32, f32)>,
 }
 
 impl NodeData {
@@ -122,6 +133,9 @@ impl NodeData {
             unrounded_layout: Layout::new(),
             final_layout: Layout::new(),
             has_context: false,
+            written: true,
+            ran: true,
+            rounded_at: None,
             #[cfg(feature = "detailed_layout_info")]
             detailed_layout_info: DetailedLayoutInfo::None,
         }
@@ -337,7 +351,10 @@ where
 
     #[inline(always)]
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        self.taffy.nodes[node_id.into()].unrounded_layout = *layout;
+        let node = &mut self.taffy.nodes[node_id.into()];
+        node.unrounded_layout = *layout;
+        // mirin: round it again (`TaffyTree::round_changed`).
+        node.written = true;
     }
 
     #[inline(always)]
@@ -351,6 +368,8 @@ where
         // and thus that we should lay out this node using hidden layout regardless of it's own display style.
         if inputs.run_mode == RunMode::PerformHiddenLayout {
             debug_log!("HIDDEN");
+            // mirin: its children are laid out again (`TaffyTree::round_changed`).
+            self.taffy.nodes[node.into()].ran = true;
             return compute_hidden_layout(self, node);
         }
 
@@ -360,6 +379,8 @@ where
         //
         // If there was no cache match and a new result needs to be computed then that result will be added to the cache
         compute_cached_layout(self, node, inputs, |tree, node, inputs| {
+            // mirin: its children may be laid out again (`TaffyTree::round_changed`).
+            tree.taffy.nodes[node.into()].ran = true;
             let display_mode = tree.taffy.nodes[node.into()].style.display;
             let has_children = tree.child_count(node) > 0;
 
@@ -623,13 +644,23 @@ impl<NodeContext> TaffyTree<NodeContext> {
         // Remove "parent" references to a node when removing that node
         if let Some(children) = self.children.get(key) {
             for child in children.iter().copied() {
-                self.parents[child.into()] = None;
+                // mirin: only where it is still the parent. A tree kept across
+                // layouts (GPUI's retained subtrees) gives a child a new parent
+                // before the old one is removed.
+                if let Some(parent) = self.parents.get_mut(child.into()) {
+                    if *parent == Some(node) {
+                        *parent = None;
+                    }
+                }
             }
         }
 
         let _ = self.children.remove(key);
         let _ = self.parents.remove(key);
         let _ = self.nodes.remove(key);
+        // mirin: drop its context (a measure function and what it holds) now,
+        // not when the slot is reused.
+        let _ = self.node_context_data.remove(key);
 
         Ok(node)
     }
@@ -806,6 +837,12 @@ impl<NodeContext> TaffyTree<NodeContext> {
         Ok(self.children[parent_key][child_index])
     }
 
+    /// mirin: whether `node` is (still) in the tree. A kept node id can
+    /// outlive its node; GPUI checks before reusing one.
+    pub fn contains(&self, node: NodeId) -> bool {
+        self.nodes.contains_key(node.into())
+    }
+
     /// Returns the total number of nodes in the tree
     #[inline]
     pub fn total_node_count(&self) -> usize {
@@ -913,7 +950,93 @@ impl<NodeContext> TaffyTree<NodeContext> {
         let mut taffy_view = TaffyView { taffy: self, measure_function };
         compute_root_layout(&mut taffy_view, node_id, available_space);
         if use_rounding {
-            round_layout(&mut taffy_view, node_id);
+            // mirin: round only what this layout touched (`round_changed`).
+            self.round_changed(node_id, 0.0, 0.0, true);
+        }
+        Ok(())
+    }
+
+    // mirin: incremental rounding. Produces exactly what `round_layout` does,
+    // but skips a subtree whose root's unrounded layout was not written, whose
+    // layout algorithm did not run, and whose parent sits where it sat when it
+    // was last rounded: a node's children are laid out (written) only when
+    // it runs, so nothing below such a node changed either. A tree kept
+    // across layouts (GPUI's retained subtrees, where taffy's cache skips
+    // clean subtrees) then rounds in time proportional to what changed.
+    fn round_changed(&mut self, node: NodeId, parent_x: f32, parent_y: f32, force: bool) {
+        let data = &mut self.nodes[node.into()];
+        if !force && !data.written && !data.ran && data.rounded_at == Some((parent_x, parent_y)) {
+            return;
+        }
+        let unrounded = data.unrounded_layout;
+        let x = parent_x + unrounded.location.x;
+        let y = parent_y + unrounded.location.y;
+        data.final_layout = crate::compute::round_node(&unrounded, x, y);
+        data.written = false;
+        data.ran = false;
+        data.rounded_at = Some((parent_x, parent_y));
+        for index in 0..self.children[node.into()].len() {
+            let child = self.children[node.into()][index];
+            self.round_changed(child, x, y, false);
+        }
+    }
+
+    /// mirin: lay `node` out as `twin` is laid out where it sits: the same
+    /// size, inside the same parent, its location the same, and rounded at
+    /// the same position. `node` is a detached copy of `twin`'s subtree built
+    /// from the same content (GPUI's retained subtree drawn again where its
+    /// layout is kept but its last frame's drawing could not be reused), so
+    /// its layout comes out as `twin`'s did without laying the tree around
+    /// `twin` out again.
+    pub fn compute_detached_layout_with_measure<MeasureFunction>(
+        &mut self,
+        node: NodeId,
+        twin: NodeId,
+        measure_function: MeasureFunction,
+    ) -> Result<(), TaffyError>
+    where
+        MeasureFunction:
+            FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
+    {
+        let twin_layout = self.nodes.get(twin.into()).ok_or(TaffyError::InvalidInputNode(twin))?.unrounded_layout;
+        let mut parent_size = Size::NONE;
+        let (mut parent_x, mut parent_y) = (0.0, 0.0);
+        let mut ancestor = self.parents.get(twin.into()).copied().flatten();
+        if let Some(parent) = ancestor {
+            let parent = &self.nodes[parent.into()].unrounded_layout;
+            let edges = parent.padding + parent.border;
+            parent_size = Size {
+                width: Some(parent.size.width - edges.left - edges.right),
+                height: Some(parent.size.height - edges.top - edges.bottom),
+            };
+        }
+        while let Some(id) = ancestor {
+            let location = self.nodes[id.into()].unrounded_layout.location;
+            parent_x += location.x;
+            parent_y += location.y;
+            ancestor = self.parents[id.into()];
+        }
+        let available_space = Size {
+            width: parent_size.width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            height: parent_size.height.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+        };
+        let use_rounding = self.config.use_rounding;
+        let mut taffy_view = TaffyView { taffy: self, measure_function };
+        let output = taffy_view.perform_child_layout(
+            node,
+            Size { width: Some(twin_layout.size.width), height: Some(twin_layout.size.height) },
+            parent_size,
+            available_space,
+            crate::tree::SizingMode::ContentSize,
+            crate::geometry::Line::FALSE,
+        );
+        let mut layout = twin_layout;
+        layout.content_size = output.content_size;
+        let data = &mut self.nodes[node.into()];
+        data.unrounded_layout = layout;
+        data.written = true;
+        if use_rounding {
+            self.round_changed(node, parent_x, parent_y, true);
         }
         Ok(())
     }
@@ -1398,5 +1521,95 @@ mod tests {
         taffy.set_children(new_parent, &[child]).unwrap();
 
         assert!(taffy.children(old_parent).unwrap().is_empty());
+    }
+}
+
+// mirin: incremental rounding (`round_changed`), removal that keeps a moved
+// child's new parent, and detached layout (`compute_detached_layout_with_measure`).
+#[cfg(test)]
+mod mirin_tests {
+    use super::*;
+    use crate::style::FlexDirection;
+    use crate::style_helpers::*;
+
+    fn cell(taffy: &mut TaffyTree<()>, grow: f32) -> NodeId {
+        let leaf =
+            taffy.new_leaf(Style { size: Size { width: auto(), height: length(7.3) }, ..Default::default() }).unwrap();
+        taffy
+            .new_with_children(
+                Style { flex_grow: grow, flex_basis: length(0.0), padding: length(1.25), ..Default::default() },
+                &[leaf],
+            )
+            .unwrap()
+    }
+
+    fn row_style() -> Style {
+        Style {
+            flex_direction: FlexDirection::Row,
+            size: Size { width: length(100.0), height: auto() },
+            padding: length(0.4),
+            ..Default::default()
+        }
+    }
+
+    // Three thirds of 100 px: fractional positions, so rounding matters.
+    fn fractional_row(taffy: &mut TaffyTree<()>) -> (NodeId, Vec<NodeId>) {
+        let cells: Vec<NodeId> = (0..3).map(|_| cell(taffy, 1.0)).collect();
+        let root = taffy.new_with_children(row_style(), &cells).unwrap();
+        (root, cells)
+    }
+
+    fn layouts(taffy: &TaffyTree<()>, root: NodeId) -> Vec<Layout> {
+        let mut out = vec![*taffy.layout(root).unwrap()];
+        for child in taffy.children(root).unwrap() {
+            out.extend(layouts(taffy, child));
+        }
+        out
+    }
+
+    #[test]
+    fn rounding_only_what_changed_matches_rounding_everything() {
+        let wider = Style { flex_grow: 2.0, flex_basis: length(0.0), padding: length(1.25), ..Default::default() };
+        let mut kept: TaffyTree<()> = TaffyTree::new();
+        let (root, cells) = fractional_row(&mut kept);
+        kept.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        // Change one cell; the rest keep their cache and are not all rounded again.
+        kept.set_style(cells[1], wider.clone()).unwrap();
+        kept.compute_layout(root, Size::MAX_CONTENT).unwrap();
+
+        let mut fresh: TaffyTree<()> = TaffyTree::new();
+        let (fresh_root, fresh_cells) = fractional_row(&mut fresh);
+        fresh.set_style(fresh_cells[1], wider).unwrap();
+        fresh.compute_layout(fresh_root, Size::MAX_CONTENT).unwrap();
+        assert_eq!(layouts(&kept, root), layouts(&fresh, fresh_root));
+    }
+
+    #[test]
+    fn a_kept_subtree_under_a_new_parent_keeps_it_when_the_old_one_goes() {
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let (old_root, cells) = fractional_row(&mut taffy);
+        taffy.compute_layout(old_root, Size::MAX_CONTENT).unwrap();
+        // A new frame's parent adopts the cells, then last frame's goes.
+        let new_root = taffy.new_with_children(row_style(), &cells).unwrap();
+        taffy.remove(old_root).unwrap();
+        assert!(!taffy.contains(old_root));
+        assert_eq!(taffy.parent(cells[0]), Some(new_root));
+        taffy.compute_layout(new_root, Size::MAX_CONTENT).unwrap();
+
+        let mut fresh: TaffyTree<()> = TaffyTree::new();
+        let (fresh_root, _) = fractional_row(&mut fresh);
+        fresh.compute_layout(fresh_root, Size::MAX_CONTENT).unwrap();
+        assert_eq!(layouts(&taffy, new_root), layouts(&fresh, fresh_root));
+    }
+
+    #[test]
+    fn a_detached_copy_is_laid_out_as_its_twin() {
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let (root, cells) = fractional_row(&mut taffy);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        // A copy of the middle cell, built anew and not attached.
+        let copy = cell(&mut taffy, 1.0);
+        taffy.compute_detached_layout_with_measure(copy, cells[1], |_, _, _, _, _| Size::ZERO).unwrap();
+        assert_eq!(layouts(&taffy, copy), layouts(&taffy, cells[1]));
     }
 }

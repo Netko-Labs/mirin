@@ -189,6 +189,10 @@ pub(crate) struct RootView {
     pub(crate) access: Option<Rc<RefCell<Accessibility>>>,
     /// Which field or view the keyboard goes to with Tab and the arrows (`focus/`).
     pub(crate) focus: crate::focus::FocusState,
+    /// The subtrees GPUI keeps across frames (`retain.rs`).
+    pub(crate) boundaries: crate::retain::Boundaries,
+    /// While a retained subtree is built: its group (`sim::LayoutMap`).
+    pub(crate) group: Option<u64>,
 }
 
 /// A view with `onKeyDown`: its focus, and whether it still has to take it.
@@ -228,7 +232,10 @@ impl RootView {
             content_painted: false,
             access: None,
             focus: crate::focus::FocusState::new(cx),
+            boundaries: crate::retain::Boundaries::default(),
+            group: None,
         };
+        view.boundaries.sync(None, &view.tree, false, cx);
         view.focus.sync(&view.tree, cx);
         view.sync_inputs(cx);
         view.sync_key_targets(cx);
@@ -239,7 +246,11 @@ impl RootView {
 
     /// Replace the tree and reconcile input state with it.
     pub(crate) fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
+        // A whole tree: retained subtrees are compared with the old one (retain.rs).
+        let old = Rc::clone(self.tree.tree());
         self.tree.replace(tree);
+        self.boundaries.sync(Some(&old), &self.tree, false, cx);
+        drop(old);
         self.placeholder = false;
         self.tree_changed(&Applied::everything(), cx);
     }
@@ -253,6 +264,8 @@ impl RootView {
         cx: &mut App,
     ) -> Result<(), PatchError> {
         let applied = self.tree.apply(ops);
+        // A patch: the generations say which retained subtrees changed (retain.rs).
+        self.boundaries.sync(None, &self.tree, applied.is_ok(), cx);
         self.placeholder = false;
         match &applied {
             Ok(applied) => self.tree_changed(applied, cx),
@@ -489,8 +502,10 @@ impl Render for RootView {
                         crate::trace::since_start_ms()
                     ));
                 }
+                let (built, reused) = crate::retain::take_counts();
                 crate::trace::log(format_args!(
-                    "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms",
+                    "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms, \
+                     retained subtrees {built} built, {reused} reused",
                     f32::from(size.width),
                     f32::from(size.height),
                     started.elapsed().as_secs_f64() * 1000.0

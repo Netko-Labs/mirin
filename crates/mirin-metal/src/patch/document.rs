@@ -151,8 +151,14 @@ impl Document {
 
     /// The node `id`, if the tree has it (found along its parents).
     pub(crate) fn find(&self, id: &str) -> Option<&NodeSpec> {
+        self.find_in(&self.tree, id)
+    }
+
+    /// `find` in `root`, a share of this tree held apart from the document
+    /// (a retained subtree built while the view is borrowed, retain.rs).
+    pub(crate) fn find_in<'t>(&self, root: &'t NodeSpec, id: &str) -> Option<&'t NodeSpec> {
         let path = path(self.index.as_ref()?, id).ok()?;
-        let mut node: &NodeSpec = &self.tree;
+        let mut node: &NodeSpec = root;
         if path.is_empty() {
             return (node.key() == Some(id)).then_some(node);
         }

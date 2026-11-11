@@ -299,6 +299,9 @@ package = "gpui_sum_tree"
 
 [dependencies.taffy]
 version = "=0.9.0"
+# mirin: the fork (retained subtrees use its incremental rounding, detached
+# layout, and node checks), also when this crate is built alone for its tests.
+path = "../taffy"
 
 [dependencies.thiserror]
 version = "2.0.12"

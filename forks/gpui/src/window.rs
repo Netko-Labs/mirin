@@ -717,24 +717,26 @@ pub(crate) struct Frame {
 }
 
 #[derive(Clone, Default)]
+// mirin: fields crate-visible so a retained subtree (`elements::retained`) can
+// move the ranges it keeps along with the ranges they were copied with.
 pub(crate) struct PrepaintStateIndex {
-    hitboxes_index: usize,
-    tooltips_index: usize,
-    deferred_draws_index: usize,
-    dispatch_tree_index: usize,
-    accessed_element_states_index: usize,
-    line_layout_index: LineLayoutIndex,
+    pub(crate) hitboxes_index: usize,
+    pub(crate) tooltips_index: usize,
+    pub(crate) deferred_draws_index: usize,
+    pub(crate) dispatch_tree_index: usize,
+    pub(crate) accessed_element_states_index: usize,
+    pub(crate) line_layout_index: LineLayoutIndex,
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    scene_index: usize,
-    mouse_listeners_index: usize,
-    input_handlers_index: usize,
-    cursor_styles_index: usize,
-    accessed_element_states_index: usize,
-    tab_handle_index: usize,
-    line_layout_index: LineLayoutIndex,
+    pub(crate) scene_index: usize,
+    pub(crate) mouse_listeners_index: usize,
+    pub(crate) input_handlers_index: usize,
+    pub(crate) cursor_styles_index: usize,
+    pub(crate) accessed_element_states_index: usize,
+    pub(crate) tab_handle_index: usize,
+    pub(crate) line_layout_index: LineLayoutIndex,
 }
 
 impl Frame {
@@ -894,6 +896,13 @@ pub struct Window {
     pub(crate) suspended_observers: SubscriberSet<(), AnyObserver>,
     // mirin: whether the last frame set an input handler (`set_accepts_text`).
     accepts_text: bool,
+    // mirin: retained subtrees (`elements::retained`): how many are being
+    // drawn again detached from their kept layout, and the subtrees each one
+    // being drawn holds (innermost last).
+    pub(crate) retained_detached: usize,
+    pub(crate) retained_collectors: Vec<Vec<Rc<crate::elements::retained::RetainedRecord>>>,
+    // mirin: the element states of the retained subtrees being drawn, innermost last.
+    pub(crate) element_state_scopes: Vec<ElementStateScope>,
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
@@ -936,6 +945,17 @@ pub(crate) struct ElementStateBox {
     pub(crate) inner: Box<dyn Any>,
     #[cfg(debug_assertions)]
     pub(crate) type_name: &'static str,
+}
+
+/// mirin: the element states of a retained subtree (`elements::retained`)
+/// being drawn: what it kept from its last drawing (`prev`) and what this one
+/// accessed (`next`, kept for the next). They live in the subtree's own
+/// state rather than the frame's, so reusing the subtree carries them as one
+/// instead of one by one.
+#[derive(Default)]
+pub(crate) struct ElementStateScope {
+    pub(crate) prev: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
+    pub(crate) next: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> Bounds<Pixels> {
@@ -1315,6 +1335,9 @@ impl Window {
             chrome_observers: SubscriberSet::new(),
             suspended_observers: SubscriberSet::new(),
             accepts_text: false,
+            retained_detached: 0,
+            retained_collectors: Vec::new(),
+            element_state_scopes: Vec::new(),
             active,
             hovered,
             needs_present,
@@ -1342,8 +1365,12 @@ impl Window {
     }
 }
 
+// mirin: public, so a host can drive `Window::dispatch_event` itself
+// (mirin-metal's simulated pointer moves); it was a private type in a public
+// signature, which made the method uncallable from outside.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DispatchEventResult {
+#[doc(hidden)]
+pub struct DispatchEventResult {
     pub propagate: bool,
     pub default_prevented: bool,
 }
@@ -2485,6 +2512,77 @@ impl Window {
         );
     }
 
+    // mirin: what a retained subtree (`elements::retained`) needs of the window.
+
+    /// Whether `range` lies within last frame's accessed element states.
+    pub(crate) fn element_states_range_valid(&self, range: &Range<usize>) -> bool {
+        range.start <= range.end && range.end <= self.rendered_frame.accessed_element_states.len()
+    }
+
+    /// Whether `range` lies within what last frame prepainted (so
+    /// `reuse_prepaint` can copy it).
+    pub(crate) fn prepaint_range_valid(&self, range: &Range<PrepaintStateIndex>) -> bool {
+        let frame = &self.rendered_frame;
+        let (start, end) = (&range.start, &range.end);
+        start.hitboxes_index <= end.hitboxes_index
+            && end.hitboxes_index <= frame.hitboxes.len()
+            && start.tooltips_index <= end.tooltips_index
+            && end.tooltips_index <= frame.tooltip_requests.len()
+            && start.deferred_draws_index <= end.deferred_draws_index
+            && end.deferred_draws_index <= frame.deferred_draws.len()
+            && start.dispatch_tree_index <= end.dispatch_tree_index
+            && end.dispatch_tree_index <= frame.dispatch_tree.len()
+            && self.element_states_range_valid(
+                &(start.accessed_element_states_index..end.accessed_element_states_index),
+            )
+            && self.text_system.layouts_range_valid(
+                &(start.line_layout_index.clone()..end.line_layout_index.clone()),
+            )
+    }
+
+    /// Whether `range` lies within what last frame painted (so `reuse_paint`
+    /// can copy it).
+    pub(crate) fn paint_range_valid(&self, range: &Range<PaintIndex>) -> bool {
+        let frame = &self.rendered_frame;
+        let (start, end) = (&range.start, &range.end);
+        start.scene_index <= end.scene_index
+            && end.scene_index <= frame.scene.len()
+            && start.mouse_listeners_index <= end.mouse_listeners_index
+            && end.mouse_listeners_index <= frame.mouse_listeners.len()
+            && start.input_handlers_index <= end.input_handlers_index
+            && end.input_handlers_index <= frame.input_handlers.len()
+            && start.cursor_styles_index <= end.cursor_styles_index
+            && end.cursor_styles_index <= frame.cursor_styles.len()
+            && start.tab_handle_index <= end.tab_handle_index
+            && end.tab_handle_index <= frame.tab_stops.paint_index()
+            && self.element_states_range_valid(
+                &(start.accessed_element_states_index..end.accessed_element_states_index),
+            )
+            && self.text_system.layouts_range_valid(
+                &(start.line_layout_index.clone()..end.line_layout_index.clone()),
+            )
+    }
+
+    /// The layout engine, for a retained subtree's node bookkeeping.
+    pub(crate) fn layout_engine(&mut self) -> &mut TaffyLayoutEngine {
+        self.layout_engine.as_mut().unwrap()
+    }
+
+    /// Lay `layout_id` out as `twin` is laid out where it sits
+    /// (`TaffyLayoutEngine::compute_detached_layout`).
+    pub(crate) fn compute_detached_layout(
+        &mut self,
+        layout_id: LayoutId,
+        twin: LayoutId,
+        cx: &mut App,
+    ) {
+        self.invalidator.debug_assert_prepaint();
+
+        let mut layout_engine = self.layout_engine.take().unwrap();
+        layout_engine.compute_detached_layout(layout_id, twin, self, cx);
+        self.layout_engine = Some(layout_engine);
+    }
+
     /// Push a text style onto the stack, and call a function with that style active.
     /// Use [`Window::text_style`] to get the current, combined text style. This method
     /// should only be called as part of element drawing.
@@ -2793,16 +2891,22 @@ impl Window {
         self.invalidator.debug_assert_paint_or_prepaint();
 
         let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
-        self.next_frame
-            .accessed_element_states
-            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+        // mirin: inside a retained subtree, its own map holds the state
+        // (`ElementStateScope`), so a reused subtree carries its elements'
+        // states as one.
+        let found = if let Some(scope) = self.element_state_scopes.last_mut() {
+            scope.next.remove(&key).or_else(|| scope.prev.remove(&key))
+        } else {
+            self.next_frame
+                .accessed_element_states
+                .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+            self.next_frame
+                .element_states
+                .remove(&key)
+                .or_else(|| self.rendered_frame.element_states.remove(&key))
+        };
 
-        if let Some(any) = self
-            .next_frame
-            .element_states
-            .remove(&key)
-            .or_else(|| self.rendered_frame.element_states.remove(&key))
-        {
+        if let Some(any) = found {
             let ElementStateBox {
                 inner,
                 #[cfg(debug_assertions)]
@@ -2836,7 +2940,7 @@ impl Window {
             );
             let (result, state) = f(Some(state), self);
             state_box.replace(state);
-            self.next_frame.element_states.insert(
+            self.store_element_state(
                 key,
                 ElementStateBox {
                     inner: state_box,
@@ -2847,7 +2951,7 @@ impl Window {
             result
         } else {
             let (result, state) = f(None, self);
-            self.next_frame.element_states.insert(
+            self.store_element_state(
                 key,
                 ElementStateBox {
                     inner: Box::new(Some(state)),
@@ -2856,6 +2960,19 @@ impl Window {
                 },
             );
             result
+        }
+    }
+
+    // mirin: where `with_element_state` keeps a state for the next frame:
+    // the innermost retained subtree being drawn, or the frame.
+    fn store_element_state(&mut self, key: (GlobalElementId, TypeId), state: ElementStateBox) {
+        match self.element_state_scopes.last_mut() {
+            Some(scope) => {
+                scope.next.insert(key, state);
+            }
+            None => {
+                self.next_frame.element_states.insert(key, state);
+            }
         }
     }
 

@@ -269,7 +269,7 @@ pub(crate) fn render_list(
             let (layout, events) = (layout.clone(), events.clone());
             row = row.on_children_prepainted(move |bounds, _window, _cx| {
                 if let Some(bounds) = bounds.first() {
-                    record_child_bounds(&layout, &events, &id, watch, *bounds);
+                    record_child_bounds(&layout, &events, &id, watch, *bounds, None);
                 }
             });
         }
