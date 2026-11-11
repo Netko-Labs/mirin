@@ -9,7 +9,8 @@ use std::{
 use crate::{
     self as gpui, AnyElement, AppContext, Context, Entity, InteractiveElement, IntoElement,
     ParentElement, Render, RetainedDraw, ScrollHandle, StatefulInteractiveElement, Styled,
-    TestAppContext, VisualTestContext, Window, div, point, px, retained, rgb, size,
+    TestAppContext, VisualTestContext, Window, div, point, prelude::FluentBuilder, px, retained,
+    rgb, size,
 };
 
 #[derive(Clone)]
@@ -33,6 +34,9 @@ struct Scene {
     cells: usize,
     /// Rows may be moved and left out (`Retained::movable`, `skippable`).
     loose: bool,
+    /// The rows stand side by side, in a view that scrolls across: each
+    /// row's `height` is its width.
+    across: bool,
     /// Added to every cell's color when it is built. Not part of any
     /// version: a cell hears of a change by being notified.
     tint: Rc<Cell<u32>>,
@@ -70,6 +74,7 @@ fn row(
     row: Row,
     cells: Vec<AnyElement>,
     unsteady: Option<&RefCell<HashMap<usize, usize>>>,
+    across: bool,
 ) -> AnyElement {
     let built_before = unsteady.is_some_and(|builds| {
         let mut builds = builds.borrow_mut();
@@ -82,7 +87,13 @@ fn row(
         .flex()
         .flex_shrink_0()
         .gap_1()
-        .h(px(row.height))
+        .map(|row_div| {
+            if across {
+                row_div.w(px(row.height)).h_full()
+            } else {
+                row_div.h(px(row.height))
+            }
+        })
         .bg(rgb(row.color))
         .hover(|style| style.bg(rgb(0xff0000)))
         .child(format!("row {index}"))
@@ -106,12 +117,18 @@ impl Render for Rows {
                 if !self.retain {
                     let tint = scene.tint.get();
                     let cells = (0..scene.cells).map(|cell_index| cell(index, cell_index, tint));
-                    return row(index, spec, cells.collect(), scene.unsteady.as_deref());
+                    return row(
+                        index,
+                        spec,
+                        cells.collect(),
+                        scene.unsteady.as_deref(),
+                        scene.across,
+                    );
                 }
                 let version = spec.version;
                 let draws = self.draws.clone();
                 // Built by the subtree, as often as it is asked.
-                let (scene_cells, loose) = (scene.cells, scene.loose);
+                let (scene_cells, loose, across) = (scene.cells, scene.loose, scene.across);
                 let (tint, unsteady) = (scene.tint.clone(), scene.unsteady.clone());
                 let cell_markers = self.cell_markers.clone();
                 let cell_draws = self.draws.clone();
@@ -144,7 +161,7 @@ impl Render for Rows {
                                 .into_any_element()
                             })
                             .collect();
-                        row(index, spec.clone(), cells, unsteady.as_deref())
+                        row(index, spec.clone(), cells, unsteady.as_deref(), across)
                     },
                 )
                 .movable(scene.loose)
@@ -156,10 +173,21 @@ impl Render for Rows {
         let list = div()
             .id("list")
             .flex()
-            .flex_col()
+            .map(|list| {
+                if scene.across {
+                    list.flex_row()
+                } else {
+                    list.flex_col()
+                }
+            })
             .gap(px(2.5))
             .children(rows);
-        let list = if scene.viewport > 0.0 {
+        let list = if scene.viewport > 0.0 && scene.across {
+            list.w(px(scene.viewport))
+                .h(px(60.0))
+                .overflow_x_scroll()
+                .track_scroll(&self.scroll)
+        } else if scene.viewport > 0.0 {
             list.h(px(scene.viewport))
                 .overflow_y_scroll()
                 .track_scroll(&self.scroll)
@@ -200,6 +228,7 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         viewport: 120.0,
         cells,
         loose: true,
+        across: false,
         tint: Rc::default(),
         unsteady: None,
         builds: Rc::default(),
@@ -269,6 +298,7 @@ fn plain(rows: Vec<Row>) -> Scene {
         viewport: 0.0,
         cells: 0,
         loose: false,
+        across: false,
         tint: Rc::default(),
         unsteady: None,
         builds: Rc::default(),
@@ -388,7 +418,13 @@ fn compare_at(
         for step in steps {
             let to = step(&mut opened.scene.borrow_mut());
             if let Some(to) = to {
-                opened.scroll.set_offset(point(px(0.0), px(-to)));
+                let to = px(-to);
+                let offset = if scene.across {
+                    point(to, px(0.0))
+                } else {
+                    point(px(0.0), to)
+                };
+                opened.scroll.set_offset(offset);
             }
             draw(opened.cx);
             frames.push(drawn(opened.cx));

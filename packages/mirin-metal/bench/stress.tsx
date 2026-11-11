@@ -6,7 +6,7 @@
  * `bench/native.tsx`, ~900 nodes) is too small to show.
  *
  *   bun bench/stress.tsx [host-binary] [--rows=100] [--cols=25] [--visible] [--json] [--trace=<path>]
- *     [--only=scroll,grow] [--step=40] [--scroll-steps=24]
+ *     [--only=scroll,grow] [--step=40] [--scroll-steps=24] [--shadow]
  *
  * Scenarios, each timed from the driver's action to the host's next painted
  * frame (`MIRIN_METAL_TRACE` log). `parse` is the host reading the line
@@ -31,6 +31,9 @@
  * scrolls across (`overflow: "scroll-x"`):
  * - hscroll: one step (`--step` px) across per frame, right and back left,
  *   `--scroll-steps` each way (sim `scroll` with `dx`).
+ *
+ * `--shadow` gives every card a small drop shadow (`shadow: "sm"`, a logical
+ * pixel below it: off the device grid at a scale factor such as 1.1).
  *
  * Runs in an off-screen compositor unless `--visible` (see `startHeadlessDisplay`).
  */
@@ -59,6 +62,7 @@ const rows = option("rows", 100);
 const cols = option("cols", 25);
 const step = option("step", 40);
 const scrollSteps = option("scroll-steps", 24);
+const shadow = args.includes("--shadow") ? ("sm" as const) : undefined;
 // `--only=a,b`: just these scenarios (for a profile of one).
 const only = args
   .find((arg) => arg.startsWith("--only="))
@@ -110,6 +114,7 @@ function Card({ index }: { index: number }) {
         borderColor: selected ? "#3b82f6" : "#27272a",
         backgroundColor: selected ? "#1e3a8a" : "#18181b",
         hoverBackgroundColor: "#27272a",
+        shadow,
       }}
     >
       <View style={{ flexDirection: "row", justifyContent: "space-between" }}>

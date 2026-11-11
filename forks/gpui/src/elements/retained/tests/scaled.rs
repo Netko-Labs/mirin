@@ -39,11 +39,10 @@ fn rows_move_by_whole_device_pixels_at_any_scale_factor(cx: &mut TestAppContext)
     // float holds.
     for scale in [1.0, 2.0, 1.25, 1.5, 1.75, 3.0, 1.1] {
         let draws = compare_at(cx, scrolled(30, 3), scale, true, UNEVEN_STEPS);
-        // At 1.1 a row's shadow, a logical pixel below its box, is on no
-        // grid a float holds: the rows are drawn again, the cells moved.
-        let rows = if scale == 1.1 { 0 } else { 60 };
+        // At 1.1 a row's shadow, a logical pixel below its box, is snapped
+        // to the grid (`Grid::snap_distance`): the rows move there too.
         assert!(
-            count(&draws, RetainedDraw::Moved) > rows,
+            count(&draws, RetainedDraw::Moved) > 60,
             "{scale}: {draws:?}"
         );
         assert!(
@@ -52,9 +51,8 @@ fn rows_move_by_whole_device_pixels_at_any_scale_factor(cx: &mut TestAppContext)
         );
         // Without cells, a row is one drawing.
         let draws = compare_at(cx, scrolled(30, 0), scale, true, UNEVEN_STEPS);
-        let rows = if scale == 1.1 { 0 } else { 30 };
         assert!(
-            count(&draws, RetainedDraw::Moved) >= rows,
+            count(&draws, RetainedDraw::Moved) >= 30,
             "{scale}: {draws:?}"
         );
     }
@@ -134,6 +132,30 @@ fn small_wheel_steps_add_up_to_whole_pixel_moves(cx: &mut TestAppContext) {
         );
         assert!(
             count(&draws, RetainedDraw::Reused) > STEPS - moves,
+            "{scale}: {draws:?}"
+        );
+    }
+}
+
+// mirin: text moves across too (`Window::paint_line_glyph`).
+#[gpui::test]
+fn rows_with_text_move_across_by_whole_device_pixels(cx: &mut TestAppContext) {
+    // The rows side by side, each with its text and cells of text, in a
+    // view that scrolls across: a glyph lands on the same subpixel position
+    // a whole number of device pixels away, so they are copied there.
+    for scale in [1.0, 2.0, 1.25, 1.5, 3.0, 1.1] {
+        let mut scene = scrolled(30, 3);
+        scene.across = true;
+        scene.viewport = 200.0;
+        let draws = compare_at(cx, scene.clone(), scale, true, UNEVEN_STEPS);
+        assert!(
+            count(&draws, RetainedDraw::Moved) > 60,
+            "{scale}: {draws:?}"
+        );
+        scene.cells = 0;
+        let draws = compare_at(cx, scene, scale, true, UNEVEN_STEPS);
+        assert!(
+            count(&draws, RetainedDraw::Moved) > 30,
             "{scale}: {draws:?}"
         );
     }

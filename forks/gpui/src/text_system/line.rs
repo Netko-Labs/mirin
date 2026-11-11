@@ -230,6 +230,18 @@ fn paint_line(
             ),
             origin.y,
         );
+        // mirin: how far across the glyph is from the line's origin, worked
+        // out as `glyph_origin.x` is but from zero: a glyph is painted from
+        // the line's position and this apart (`Window::paint_line_glyph`).
+        let mut glyph_offset_x = aligned_origin_x(
+            point(px(0.), origin.y),
+            align_width.unwrap_or(layout.width),
+            px(0.0),
+            &align,
+            layout,
+            text,
+            wraps.peek(),
+        );
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
         let mut first_glyph_x = origin.x;
@@ -238,6 +250,7 @@ fn paint_line(
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+                glyph_offset_x += glyph.position.x - prev_glyph_position.x;
                 if glyph_ix == 0 && run_ix == 0 {
                     first_glyph_x = glyph_origin.x;
                 }
@@ -273,6 +286,15 @@ fn paint_line(
 
                     glyph_origin.x = aligned_origin_x(
                         origin,
+                        align_width.unwrap_or(layout.width),
+                        glyph.position.x,
+                        &align,
+                        layout,
+                        text,
+                        wraps.peek(),
+                    );
+                    glyph_offset_x = aligned_origin_x(
+                        point(px(0.), origin.y),
                         align_width.unwrap_or(layout.width),
                         glyph.position.x,
                         &align,
@@ -378,22 +400,15 @@ fn paint_line(
                 // region around its content mask would show, and hears of
                 // the ones it leaves out (`elements::retained`).
                 if max_glyph_bounds.intersects(&window.cull_mask()) {
-                    if glyph.is_emoji {
-                        window.paint_emoji(
-                            glyph_origin + baseline_offset,
-                            run.font_id,
-                            glyph.id,
-                            layout.font_size,
-                        )?;
-                    } else {
-                        window.paint_glyph(
-                            glyph_origin + baseline_offset,
-                            run.font_id,
-                            glyph.id,
-                            layout.font_size,
-                            color,
-                        )?;
-                    }
+                    window.paint_line_glyph(
+                        origin.x,
+                        glyph_offset_x + baseline_offset.x,
+                        glyph_origin.y + baseline_offset.y,
+                        run.font_id,
+                        glyph.id,
+                        layout.font_size,
+                        (!glyph.is_emoji).then_some(color),
+                    )?;
                 } else {
                     window.record_left_out(max_glyph_bounds);
                 }

@@ -561,13 +561,18 @@ fn trace_scale(scale: f32) {
 /// with `MIRIN_METAL_TRACE=1`): a digest of the scene's primitives and
 /// hitboxes, for comparing two hosts. Any other value is a file every
 /// frame's primitives and hitboxes are appended to as well (the inner
-/// `Some`), for finding what differs.
+/// `Some`), for finding what differs. With `MIRIN_METAL_TRACE_SCENE_GLYPHS=1`
+/// it also says which subpixel variant each glyph is drawn as (a host from
+/// before that ignores it, so compare such a trace only with another).
 fn scene_traced() -> Option<Option<&'static std::path::Path>> {
     static TRACED: std::sync::OnceLock<Option<Option<std::path::PathBuf>>> =
         std::sync::OnceLock::new();
     TRACED
         .get_or_init(|| {
             let value = std::env::var("MIRIN_METAL_TRACE_SCENE").ok()?;
+            if std::env::var("MIRIN_METAL_TRACE_SCENE_GLYPHS").is_ok_and(|glyphs| glyphs == "1") {
+                gpui::describe_glyph_variants(true);
+            }
             Some((value != "1").then(|| value.into()))
         })
         .as_ref()
