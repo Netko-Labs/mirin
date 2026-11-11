@@ -937,10 +937,13 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   `dashi-comp --backend winit --no-xwayland -c "bun bench/stress.tsx <host> --visible"`
   (with `DASHI_COMP_SOCKET` set when a session's dashi-comp is running). Read
   `frame`, `parse` and `apply` there; `total` (input → painted frame) also
-  waits for the compositor's next frame callback, and a dashi-comp that sends
-  a window's `wl_callback.done` only once a second (seen with
-  `WAYLAND_DEBUG=1`: done timestamps exactly 1000 ms apart) makes it 200–400 ms
-  for any host. The host waits for that callback by design (section 4). With
+  waits for the compositor's next frame callback, which the host does by
+  design (section 4). A nested dashi-comp only draws when the outer session
+  asks its window to (winit `Redraw`), and a surface it did not draw hears
+  `wl_callback.done` once a second (`send_frames`' throttle; seen with
+  `WAYLAND_DEBUG=1`, done timestamps exactly 1000 ms apart). So with the
+  nested window out of sight (screen off, another desktop, covered) `total`
+  is 200–400 ms for any host; with it on screen it was ~20 ms. With
   patches and retained subtrees together, a select on the stress bench is
   ~1 ms of driver, ~0.7 ms of apply and ~4.5 ms of frame, where it was ~12,
   ~12 and ~150 ms.
