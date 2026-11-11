@@ -34,16 +34,22 @@ pub fn dialog_show(spec_json: String) {
     // Linux dialogs are portal round trips / helper processes that block until
     // the user answers, so they get their own thread instead of the UI thread
     // (which must keep pumping CEF so the portal's picker can appear on top).
+    // A spec that doesn't parse has no `requestId` to answer, on every
+    // platform; the runtime builds it, so that is a bug on its side.
     #[cfg(target_os = "linux")]
     {
-        std::thread::Builder::new()
+        let Ok(spec) = serde_json::from_str::<DialogSpec>(&spec_json) else {
+            return;
+        };
+        let request_id = spec.request_id;
+        let spawned = std::thread::Builder::new()
             .name("mirin-dialog".into())
-            .spawn(move || {
-                if let Ok(spec) = serde_json::from_str::<DialogSpec>(&spec_json) {
-                    run(&spec);
-                }
-            })
-            .ok();
+            .spawn(move || run(&spec));
+        // No thread, no dialog: answer at once, as a cancel, so the Worker's
+        // promise settles.
+        if spawned.is_err() {
+            emit_result(request_id, serde_json::Value::Null);
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -83,9 +89,14 @@ fn run(spec: &DialogSpec) {
         _ => serde_json::Value::Null,
     };
 
+    emit_result(spec.request_id, value);
+}
+
+/// The `dialog.result` event the Worker's pending promise waits for.
+fn emit_result(request_id: u32, value: serde_json::Value) {
     let event = serde_json::json!({
         "type": "dialog.result",
-        "requestId": spec.request_id,
+        "requestId": request_id,
         "value": value,
     });
     crate::engine::emit_event(&event.to_string());
