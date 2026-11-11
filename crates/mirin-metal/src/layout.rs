@@ -76,6 +76,12 @@ impl LayoutMap {
         self.0.borrow_mut().begin_frame();
     }
 
+    /// The scale factor the frame is drawn at: what a copied group's nodes
+    /// are moved by (`LayoutState::bounds_of`).
+    pub(crate) fn set_scale(&self, scale: f32) {
+        self.0.borrow_mut().scale = scale;
+    }
+
     /// The frame's prepaint is over: what it did not draw has left.
     pub(crate) fn end_frame(&self) {
         self.0.borrow_mut().end_frame();

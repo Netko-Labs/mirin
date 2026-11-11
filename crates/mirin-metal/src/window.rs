@@ -463,6 +463,7 @@ impl Render for RootView {
         let started = std::time::Instant::now();
         self.idle.frame_drawn(cx);
         self.layout.begin_frame();
+        self.layout.set_scale(window.scale_factor());
         if self.drop_target.is_some() && !cx.has_active_drag() {
             self.files_gone(window);
         }

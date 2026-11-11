@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{Bounds, Pixels, Point};
+use gpui::{px, Bounds, Pixels, Point};
 
 use super::{Changes, Placed};
 
@@ -15,8 +15,9 @@ const PRUNE_EVERY: u64 = 64;
 /// The most changes noted before the account is given up.
 const NOTED_MOST: usize = 1 << 18;
 
-#[derive(Default)]
 pub(super) struct LayoutState {
+    /// The scale factor frames are drawn at (`bounds_of`).
+    pub(super) scale: f32,
     pub(super) frame: u64,
     /// The last frame whose leavers were found (`end_frame`).
     pub(super) ended: u64,
@@ -29,6 +30,22 @@ pub(super) struct LayoutState {
     pub(super) revision: u64,
     /// What changed since it was last taken, while someone takes it.
     pub(super) changes: Option<Changes>,
+}
+
+impl Default for LayoutState {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            frame: 0,
+            ended: 0,
+            nodes: HashMap::new(),
+            groups: HashMap::new(),
+            top: Drawn::default(),
+            built: Vec::new(),
+            revision: 0,
+            changes: None,
+        }
+    }
 }
 
 pub(super) struct Entry {
@@ -153,16 +170,26 @@ impl LayoutState {
 
     /// The bounds of `entry` now: as recorded, moved with its group.
     pub(super) fn bounds_of(&self, entry: &Entry) -> Bounds<Pixels> {
-        let moved = entry
-            .group
-            .and_then(|group| self.origin(group))
-            .map(|origin| origin - entry.at);
-        match moved {
-            Some(moved) if moved != Point::default() => Bounds {
-                origin: entry.bounds.origin + moved,
-                size: entry.bounds.size,
+        let Some(origin) = entry.group.and_then(|group| self.origin(group)) else {
+            return entry.bounds;
+        };
+        if origin == entry.at {
+            return entry.bounds;
+        }
+        let along = |value: Pixels, from: Pixels, to: Pixels| {
+            px(moved_along(
+                self.scale,
+                f32::from(value),
+                f32::from(from),
+                f32::from(to),
+            ))
+        };
+        Bounds {
+            origin: Point {
+                x: along(entry.bounds.origin.x, entry.at.x, origin.x),
+                y: along(entry.bounds.origin.y, entry.at.y, origin.y),
             },
-            _ => entry.bounds,
+            size: entry.bounds.size,
         }
     }
 
@@ -278,4 +305,25 @@ impl LayoutState {
             self.revive(group);
         }
     }
+}
+
+/// `value` (logical) moved as far as its group moved from `from` to `to`.
+/// Where scaling is not exact (not a power of two) GPUI places a node from
+/// its device position on the grid (eighths of a device pixel) with one
+/// division (`forks/gpui`'s `Grid`): when all three are on that grid the
+/// move is made there and divided once, which is where laying the node out
+/// there puts it, to the bit. Otherwise, a logical move.
+pub(super) fn moved_along(scale: f32, value: f32, from: f32, to: f32) -> f32 {
+    let exact = scale > 0.0 && scale.log2().fract() == 0.0;
+    let on_grid = |logical: f32| {
+        let device = logical * scale;
+        let nearest = (device * 8.0).round() / 8.0;
+        ((device - nearest).abs() <= 1.0 / 64.0 && nearest.abs() < 1_048_576.0).then_some(nearest)
+    };
+    if !exact {
+        if let (Some(value), Some(from), Some(to)) = (on_grid(value), on_grid(from), on_grid(to)) {
+            return (value + (to - from)) / scale;
+        }
+    }
+    value + (to - from)
 }
