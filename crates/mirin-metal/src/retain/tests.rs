@@ -212,3 +212,46 @@ fn a_patch_builds_only_the_subtrees_whose_generation_moved(cx: &mut TestAppConte
     let patched = layout(&view, window);
     assert_eq!(patched, drawn_whole(cx, grid(8, 6, &[], &[9])));
 }
+
+#[gpui::test]
+fn views_that_left_the_tree_are_not_remembered_for_good(cx: &mut TestAppContext) {
+    let (view, window) = open(cx, grid(2, 6, &[], &[]));
+    // Each patch swaps the last row for one of new views (as a list keyed
+    // by fresh ids does): 19 new ids a patch, 3800 over the run.
+    let row = |round: usize| {
+        let cards: Vec<String> = (0..6)
+            .map(|col| {
+                let index = round * 100 + col;
+                format!(
+                    r#"{{"type":"view","props":{{"id":"c{index}","width":44}},"children":[
+                      {{"type":"view","props":{{"id":"h{index}"}},"children":[
+                        {{"type":"text","props":{{}},"children":["{index}"]}}]}},
+                      {{"type":"view","props":{{"id":"d{index}","width":6,"height":6}}}}]}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"type":"view","props":{{"id":"r{round}","direction":"row","gap":2}},"children":[{}]}}"#,
+            cards.join(",")
+        )
+    };
+    let mut last = "row1".to_owned();
+    for round in 0..200 {
+        let patch = format!(
+            r#"{{"patch":[{{"op":"remove","id":"{last}"}},{{"op":"insert","parent":"grid","node":{}}}]}}"#,
+            row(round)
+        );
+        let ops = crate::patch::parse_patch(&patch).expect("test patch parses");
+        window.update(|_, cx| {
+            view.update(cx, |view, cx| view.apply_patch(ops, cx))
+                .expect("the patch applies")
+        });
+        draw(window);
+        last = format!("r{round}");
+    }
+    let walks = window.update(|_, cx| view.read(cx).boundaries.walks.len());
+    assert!(walks <= 2 * super::WALKS_PRUNED_PAST, "{walks} walks kept");
+    // What is left is still what the tree is: the last row is kept and drawn.
+    let laid_out = layout(&view, window);
+    assert!(laid_out.iter().any(|node| node.id == "c19905"));
+}
