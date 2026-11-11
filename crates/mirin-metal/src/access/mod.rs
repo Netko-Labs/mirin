@@ -16,10 +16,12 @@
 
 #[cfg(target_os = "linux")]
 mod linux;
+mod pace;
 mod tree;
 
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use accesskit::{Action, NodeId, Rect};
 
@@ -77,17 +79,14 @@ impl Built {
     }
 }
 
-/// Whether `now` needs the tree built again after `last`. Bounds that moved
-/// alone (every frame of a scroll or a resize) matter only to a screen reader
-/// that is listening: rebuilding the whole tree for each of those frames cost
-/// a host about half again its CPU while scrolling a long list, with nobody
-/// to hear it. A screen reader that starts later gets the last tree built,
-/// and fresh bounds at the next frame painted.
-fn needs_build(last: Option<&Built>, now: &Built, listening: bool) -> bool {
+/// What changed in `now` since `last` was built (`pace.rs`).
+fn change(last: Option<&Built>, now: &Built) -> pace::Change {
     match last {
-        None => true,
-        Some(last) if last.same_but_layout(now) => listening && last.layout != now.layout,
-        Some(_) => true,
+        Some(last) if last.same_but_layout(now) && last.layout == now.layout => {
+            pace::Change::Nothing
+        }
+        Some(last) if last.same_but_layout(now) => pace::Change::BoundsOnly,
+        _ => pace::Change::New,
     }
 }
 
@@ -95,6 +94,10 @@ fn needs_build(last: Option<&Built>, now: &Built, listening: bool) -> bool {
 pub(crate) struct Accessibility {
     title: String,
     last: Option<Built>,
+    /// When the tree was last built, and whether a repaint is asked for to
+    /// publish bounds held back since (`pace.rs`).
+    built_at: Option<Instant>,
+    waiting: bool,
     /// Where a screen reader's press or focus goes (shared with the adapter's thread).
     targets: Arc<Mutex<tree::Targets>>,
     #[cfg(target_os = "linux")]
@@ -141,6 +144,8 @@ impl Accessibility {
         Some(Self {
             title: title.to_owned(),
             last: None,
+            built_at: None,
+            waiting: false,
             targets,
             #[cfg(target_os = "linux")]
             publisher: linux::Publisher::new(press),
@@ -160,14 +165,16 @@ impl Accessibility {
     }
 
     /// Publish the tree for `tree` as just painted (bounds from `layout`),
-    /// unless nothing it is built from changed since the last time.
+    /// unless nothing it is built from changed since the last time, or only
+    /// bounds did and they wait (`pace.rs`): then the wait after which the
+    /// caller repaints, the first time it is held back.
     pub(crate) fn refresh(
         &mut self,
         tree: &Rc<NodeSpec>,
         layout: &LayoutMap,
         focused: Option<Focused>,
         window_active: bool,
-    ) {
+    ) -> Option<Duration> {
         let now = Built {
             tree: Rc::clone(tree),
             layout: layout.revision(),
@@ -175,8 +182,15 @@ impl Accessibility {
             window_active,
             title: self.title.clone(),
         };
-        if !needs_build(self.last.as_ref(), &now, self.listening()) {
-            return;
+        let since = self.built_at.map(|at| at.elapsed());
+        match pace::step(change(self.last.as_ref(), &now), self.listening(), since) {
+            pace::Step::Skip => return None,
+            pace::Step::Defer(wait) => {
+                let first = !self.waiting;
+                self.waiting = true;
+                return first.then_some(wait);
+            }
+            pace::Step::Build => {}
         }
         let bounds = |id: &str| {
             layout.bounds(id).map(|bounds| {
@@ -211,6 +225,9 @@ impl Accessibility {
         #[cfg(not(target_os = "linux"))]
         let _ = built.update;
         self.last = Some(now);
+        self.built_at = Some(Instant::now());
+        self.waiting = false;
+        None
     }
 }
 
@@ -218,7 +235,7 @@ impl Accessibility {
 mod tests {
     use std::rc::Rc;
 
-    use super::{app_name, needs_build, Built};
+    use super::{app_name, change, pace::Change, Built};
     use crate::tree::{parse_tree, NodeSpec};
 
     fn built(tree: &Rc<NodeSpec>, layout: u64) -> Built {
@@ -236,36 +253,26 @@ mod tests {
     }
 
     #[test]
-    fn bounds_that_moved_alone_build_nothing_while_nobody_listens() {
+    fn what_changed_since_the_last_build() {
         let tree = a_tree();
         let last = built(&tree, 1);
-        assert!(
-            !needs_build(Some(&last), &built(&tree, 2), false),
-            "a scroll, no screen reader"
+        assert_eq!(change(None, &last), Change::New, "the first frame");
+        assert_eq!(change(Some(&last), &built(&tree, 1)), Change::Nothing);
+        assert_eq!(
+            change(Some(&last), &built(&tree, 2)),
+            Change::BoundsOnly,
+            "a scroll"
         );
-        assert!(
-            needs_build(Some(&last), &built(&tree, 2), true),
-            "a scroll, a screen reader listening"
-        );
-        assert!(
-            !needs_build(Some(&last), &built(&tree, 1), true),
-            "nothing changed"
-        );
-    }
-
-    #[test]
-    fn a_new_tree_or_focus_always_builds() {
-        let tree = a_tree();
-        let last = built(&tree, 1);
-        assert!(needs_build(None, &last, false), "the first frame");
-        assert!(
-            needs_build(Some(&last), &built(&a_tree(), 1), false),
+        assert_eq!(
+            change(Some(&last), &built(&a_tree(), 2)),
+            Change::New,
             "a new tree"
         );
-        let mut away = built(&tree, 1);
+        let mut away = built(&tree, 2);
         away.window_active = false;
-        assert!(
-            needs_build(Some(&last), &away, false),
+        assert_eq!(
+            change(Some(&last), &away),
+            Change::New,
             "the window lost the keyboard"
         );
     }

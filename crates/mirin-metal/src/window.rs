@@ -367,10 +367,20 @@ impl RootView {
         Some(
             gpui::canvas(
                 |_, _, _| {},
-                move |_, (), _, _| {
-                    access
+                move |_, (), window, cx| {
+                    let wait = access
                         .borrow_mut()
                         .refresh(&tree, &layout, focused.clone(), active);
+                    // Bounds held back (a scroll, a resize): paint once more
+                    // after the wait, so the last of them is published.
+                    if let Some(wait) = wait {
+                        window
+                            .spawn(cx, async move |cx| {
+                                cx.background_executor().timer(wait).await;
+                                let _ = cx.update(|window, _| window.refresh());
+                            })
+                            .detach();
+                    }
                 },
             )
             .absolute()
