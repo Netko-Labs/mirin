@@ -20,7 +20,8 @@ export function useCopyToClipboard({ timeout = 2000 }: { timeout?: number } = {}
         child.stdin.write(value);
         void child.stdin.end();
       } catch {
-        // No clipboard tool installed.
+        // No clipboard tool installed: nothing was copied, so don't say so.
+        return;
       }
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), timeout);
