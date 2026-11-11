@@ -988,7 +988,7 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   ~12 and ~150 ms.
 
 - The accessibility tree (2026-11-10; release host, the host before and
-  this one back to back, one or two runs each, medians; `access`, `cpu`
+  this one back to back, one to four runs each, medians; `access`, `cpu`
   and the node counts are `bench/stress.tsx`'s new columns). The host
   built the whole tree after every update and handed it to AccessKit whole,
   whether or not the adapter was on the accessibility bus: on the stress
@@ -1001,13 +1001,13 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
 
   | stress bench (15k nodes, 7504 accessibility nodes), per update | before | after |
   | --- | --- | --- |
-  | select: accessibility, off / on / listener / this session | 6.7 / 9.5 / 10.9–13.1 / 9.3–9.6 ms | 0.0 / 0.1 / 0.1 / 0.1 ms |
-  | type: accessibility, off / on / listener / this session | 15.6 / 22.0 / 21.4–22.2 / 12.2–19.2 ms | 0.0 / 0.1 / 0.1–0.3 / 0.1 ms |
+  | select: accessibility, off / on / listener / this session | 6.7 / 9.5 / 9.4–13.1 / 9.3–9.6 ms | 0.0 / 0.1 / 0.1 / 0.1 ms |
+  | type: accessibility, off / on / listener / this session | 15.6 / 22.0 / 12.0–22.2 / 12.2–19.2 ms | 0.0 / 0.1 / 0.1–0.3 / 0.1 ms |
   | select: nodes made / handed over (on) | 7504 / 7504 | 3 / 0 |
   | type: nodes made / handed over (on) | 7504–15008 / the same | 4–5 / 2–3 |
-  | select: host CPU, off / on / listener / this session | 11.0 / 13.5 / 14.5–20.5 / 11.5–14.0 ms | 6.5 / 6.0 / 6.5–9.0 / 6.5 ms |
-  | type: host CPU, off / on / listener / this session | 20.5 / 19.5 / 20.5–27.5 / 16.5–17.0 ms | 6.5 / 5.5 / 7.5–11.0 / 5.5–7.0 ms |
-  | hover: host CPU (no accessibility work either way) | 4.5–5.5 ms | 5.0–8.5 ms |
+  | select: host CPU, off / on / listener / this session | 11.0 / 13.5 / 12.0–20.5 / 11.5–14.0 ms | 6.5 / 6.0 / 5.5–9.0 / 6.5 ms |
+  | type: host CPU, off / on / listener / this session | 20.5 / 19.5 / 17.0–27.5 / 16.5–17.0 ms | 6.5 / 5.5 / 7.0–11.0 / 5.5–7.0 ms |
+  | hover: host CPU (no accessibility work either way) | 4.5–5.5 ms | 5.0–6.0 ms |
   | RSS, off / on | 244 / 258–262 MB | 240 / 259–261 MB |
   | example browser (~900 nodes, 550 accessibility nodes): per click, on | 0.8 ms, 554 / 554 | 0.4–0.5 ms, 7–14 / 3–9 |
   | example browser: per scrolled frame, on | 0.7 ms, 547 / 547 | 0.2 ms, 1 / 31–35 |
@@ -1016,7 +1016,8 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   `accessibility` is time on the window's thread after the frame (so not in
   `frame`); host CPU is user + system for every thread per update over the
   scenario (10 ms ticks, 20 updates: ±0.5 ms, and other builds ran on the
-  machine). The select changes one card's colors, which a screen reader
+  machine: two runs whose frames took twice as long are left out of the
+  hover row). The select changes one card's colors, which a screen reader
   never hears of: three nodes are made on the way down to the card and none
   differs. A first whole tree costs what it did (12–30 ms at 7504 nodes,
   most of it AccessKit taking the nodes). With accessibility on a host
