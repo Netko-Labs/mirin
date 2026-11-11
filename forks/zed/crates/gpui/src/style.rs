@@ -312,6 +312,19 @@ pub struct Style {
     /// The grid location of this element
     pub grid_location: Option<GridLocation>,
 
+    // mirin: explicit track lists and inline-axis grid alignment.
+    /// Explicit `grid-template-columns` tracks; overrides `grid_cols` when set.
+    pub grid_template_columns: Option<Vec<GridTrack>>,
+
+    /// Explicit `grid-template-rows` tracks; overrides `grid_rows` when set.
+    pub grid_template_rows: Option<Vec<GridTrack>>,
+
+    /// How grid items align along the inline axis (CSS `justify-items`).
+    pub justify_items: Option<JustifyItems>,
+
+    /// How this grid item aligns along the inline axis (CSS `justify-self`).
+    pub justify_self: Option<JustifySelf>,
+
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
     pub debug: bool,
@@ -332,6 +345,46 @@ impl StyleRefinement {
     pub fn grid_location_mut(&mut self) -> &mut GridLocation {
         self.grid_location.get_or_insert_default()
     }
+}
+
+// mirin: explicit grid tracks.
+/// One grid track, `minmax(min, max)`, as in CSS `grid-template-columns`.
+/// `1fr` is `minmax(auto, 1fr)`; Tailwind's `grid-cols-N` uses `minmax(0, 1fr)`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GridTrack {
+    /// The smallest the track may be.
+    pub min: TrackBreadth,
+    /// The largest the track may grow to.
+    pub max: TrackBreadth,
+}
+
+impl GridTrack {
+    /// A track of one breadth (`16px`, `auto`, `1fr`).
+    pub fn new(breadth: TrackBreadth) -> Self {
+        let min = match breadth {
+            // CSS: a flexible size as a single value means `minmax(auto, <flex>)`.
+            TrackBreadth::Fr(_) => TrackBreadth::Auto,
+            other => other,
+        };
+        Self { min, max: breadth }
+    }
+}
+
+/// One end of a [`GridTrack`].
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub enum TrackBreadth {
+    /// Logical pixels.
+    Pixels(f32),
+    /// A fraction (0..1) of the grid container's size.
+    Percent(f32),
+    /// A share of the leftover space (`fr`); only valid as a maximum.
+    Fr(f32),
+    /// Sized by the items in the track.
+    Auto,
+    /// The items' smallest content size.
+    MinContent,
+    /// The items' largest content size.
+    MaxContent,
 }
 
 /// The value of the visibility property, similar to the CSS property `visibility`
@@ -812,6 +865,10 @@ impl Default for Style {
             grid_rows: None,
             grid_cols: None,
             grid_location: None,
+            grid_template_columns: None,
+            grid_template_rows: None,
+            justify_items: None,
+            justify_self: None,
 
             #[cfg(debug_assertions)]
             debug: false,

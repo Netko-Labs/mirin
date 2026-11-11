@@ -276,7 +276,10 @@ impl Boundaries {
 /// whole, as before: for comparing the two).
 fn enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("MIRIN_METAL_RETAIN").map_or(true, |value| value != "0"))
+    *ENABLED.get_or_init(|| {
+        crate::gpui_api::RETAINED
+            && std::env::var("MIRIN_METAL_RETAIN").map_or(true, |value| value != "0")
+    })
 }
 
 /// Whether a view renders from its own props alone (its children are
@@ -324,7 +327,7 @@ pub(crate) fn boundary(
     let root = cx.entity();
     let node_id: SharedString = id.to_owned().into();
     let layout = view.layout.clone();
-    let element = gpui::retained(
+    let element = crate::gpui_api::retained(
         ElementId::Name(node_id.clone()),
         notified,
         version,

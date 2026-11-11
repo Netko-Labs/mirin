@@ -514,8 +514,19 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size, scale_factor),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
-            grid_template_rows: to_grid_repeat(&self.grid_rows),
-            grid_template_columns: to_grid_repeat(&self.grid_cols),
+            // mirin: explicit track lists win over `repeat(N, minmax(0, 1fr))`.
+            grid_template_rows: self
+                .grid_template_rows
+                .as_deref()
+                .map(|tracks| to_grid_tracks(tracks, scale_factor))
+                .unwrap_or_else(|| to_grid_repeat(&self.grid_rows)),
+            grid_template_columns: self
+                .grid_template_columns
+                .as_deref()
+                .map(|tracks| to_grid_tracks(tracks, scale_factor))
+                .unwrap_or_else(|| to_grid_repeat(&self.grid_cols)),
+            justify_items: self.justify_items.map(Into::into).unwrap_or_default(),
+            justify_self: self.justify_self.map(|x| x.into()),
             grid_row: self
                 .grid_location
                 .as_ref()
@@ -529,6 +540,36 @@ impl ToTaffy<taffy::style::Style> for Style {
             ..Default::default()
         }
     }
+}
+
+// mirin: explicit grid tracks; lengths in device pixels, rounded as every length is.
+fn to_grid_tracks<T: taffy::style::CheapCloneStr>(
+    tracks: &[crate::GridTrack],
+    scale_factor: f32,
+) -> Vec<taffy::GridTemplateComponent<T>> {
+    use crate::TrackBreadth;
+    use taffy::style::{MaxTrackSizingFunction as Max, MinTrackSizingFunction as Min};
+    tracks
+        .iter()
+        .map(|track| {
+            let min = match track.min {
+                TrackBreadth::Pixels(px) => Min::length(round_to_device_pixel(px, scale_factor)),
+                TrackBreadth::Percent(fraction) => Min::percent(fraction),
+                TrackBreadth::MinContent => Min::min_content(),
+                TrackBreadth::MaxContent => Min::max_content(),
+                TrackBreadth::Auto | TrackBreadth::Fr(_) => Min::auto(),
+            };
+            let max = match track.max {
+                TrackBreadth::Pixels(px) => Max::length(round_to_device_pixel(px, scale_factor)),
+                TrackBreadth::Percent(fraction) => Max::percent(fraction),
+                TrackBreadth::Fr(fr) => Max::fr(fr),
+                TrackBreadth::MinContent => Max::min_content(),
+                TrackBreadth::MaxContent => Max::max_content(),
+                TrackBreadth::Auto => Max::auto(),
+            };
+            taffy::GridTemplateComponent::Single(taffy::geometry::MinMax { min, max })
+        })
+        .collect()
 }
 
 impl ToTaffy<f32> for AbsoluteLength {

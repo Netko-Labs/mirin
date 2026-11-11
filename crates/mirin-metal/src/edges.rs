@@ -61,11 +61,8 @@ pub(crate) fn apply_box_edges(element: &mut Div, props: &ViewProps) {
 /// Tailwind's shadow presets as GPUI box shadows.
 pub(crate) fn shadow_preset(name: &str) -> Vec<BoxShadow> {
     let shade = |alpha: f32| hsla(0.0, 0.0, 0.0, alpha);
-    let layer = |y: f32, blur: f32, spread: f32, alpha: f32| BoxShadow {
-        color: shade(alpha),
-        offset: point(px(0.0), px(y)),
-        blur_radius: px(blur),
-        spread_radius: px(spread),
+    let layer = |y: f32, blur: f32, spread: f32, alpha: f32| {
+        crate::gpui_api::box_shadow(shade(alpha), point(px(0.0), px(y)), px(blur), px(spread))
     };
     match name {
         "xs" => vec![layer(1.0, 2.0, 0.0, 0.05)],

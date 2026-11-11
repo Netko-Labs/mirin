@@ -51,8 +51,8 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
                 // No automatic focus on mouse down: fields and key-taking
                 // views focus themselves, a focusable view doesn't (focus/).
                 window.prevent_default();
-                let _ = presses.update(cx, |view, _| {
-                    view.pointer_pressed(window);
+                let _ = presses.update(cx, |view, cx| {
+                    view.pointer_pressed(window, cx);
                     match event.button {
                         MouseButton::Left => {
                             view.press_claimed = false;

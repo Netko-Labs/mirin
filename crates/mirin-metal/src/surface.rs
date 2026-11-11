@@ -3,7 +3,7 @@
 //! GPUI's layer-shell options, or a session-lock surface (`role: "lock"`,
 //! which takes no other options). `popup` is reserved.
 
-use gpui::{KeyboardInteractivity, Layer, LayerAnchor, LayerMargin, LayerShellOptions};
+use crate::gpui_api::{KeyboardInteractivity, Layer, LayerAnchor, LayerMargin, LayerShellOptions};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

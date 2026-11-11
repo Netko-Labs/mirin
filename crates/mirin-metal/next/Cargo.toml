@@ -1,0 +1,80 @@
+# mirin-metal built on upstream GPUI (forks/zed, the zed repository's GPUI
+# crates) instead of the fork of gpui 0.2.2 (forks/gpui) that ../Cargo.toml
+# builds. The same sources (`../src`), with the `gpui-next` feature, which
+# `src/gpui_api/` reads to pick its upstream half. Side by side until the
+# switch (docs/metal/gpui-next.md); nothing here changes the default build.
+#
+#   cd crates/mirin-metal/next && cargo build --release --bin mirin-metal-host
+#
+# Its own lockfile (started from zed's, so upstream's crates build with the
+# versions upstream tests) and its own `target/`.
+[package]
+name = "mirin-metal"
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "mirin metal (alpha) on upstream GPUI"
+autoexamples = false
+autobins = false
+autotests = false
+autobenches = false
+
+# Its own workspace root: cargo stops here, and `forks/zed` keeps its own.
+[workspace]
+
+[lib]
+path = "../src/lib.rs"
+
+[[bin]]
+name = "mirin-metal-host"
+path = "../src/bin/host.rs"
+
+[[example]]
+name = "hello"
+path = "../examples/hello.rs"
+
+[[example]]
+name = "counter"
+path = "../examples/counter.rs"
+
+[dependencies]
+gpui = { path = "../../../forks/zed/crates/gpui", default-features = false, features = ["wayland", "x11"] }
+gpui_platform = { path = "../../../forks/zed/crates/gpui_platform", default-features = false, features = ["wayland", "x11"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
+log = "0.4"
+accesskit = "0.25"
+pprof = { version = "0.15", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+ash = "0.38"
+accesskit_unix = "0.24"
+
+[dev-dependencies]
+gpui = { path = "../../../forks/zed/crates/gpui", default-features = false, features = ["test-support"] }
+accesskit_consumer = "0.39"
+
+[features]
+default = ["gpui-next"]
+# Build on upstream GPUI: `src/gpui_api/` picks its upstream half.
+gpui-next = []
+profiling = ["dep:pprof"]
+
+# zed's workspace patches do not reach a dependent outside its workspace: the
+# ones GPUI's crates need are repeated here (forks/zed/Cargo.toml,
+# [patch.crates-io]); keep them in step with it on every sync.
+[patch.crates-io]
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+taffy = { path = "../../../forks/taffy-next" }
+accesskit_unix = { path = "../../../forks/accesskit_unix" }
+
+[profile.dev.package."*"]
+opt-level = 3
