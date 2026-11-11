@@ -655,6 +655,11 @@ impl WindowTextSystem {
         self.line_layout_cache.layout_index()
     }
 
+    /// mirin: whether `range` names layouts of last frame (`elements::retained`).
+    pub(crate) fn layouts_range_valid(&self, range: &Range<LineLayoutIndex>) -> bool {
+        self.line_layout_cache.range_valid(range)
+    }
+
     pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
         self.line_layout_cache.reuse_layouts(index)
     }

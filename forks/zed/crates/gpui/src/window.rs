@@ -1073,6 +1073,76 @@ pub(crate) struct PrepaintStateIndex {
     line_layout_index: LineLayoutIndex,
 }
 
+// mirin: a retained subtree's ranges move along with the subtree around it.
+impl PrepaintStateIndex {
+    /// This index, which was at or after `from`, where it is when `from` is at `to`.
+    pub(crate) fn rebase(&self, from: &Self, to: &Self) -> Self {
+        let at = |index: usize, from: usize, to: usize| index - from + to;
+        Self {
+            hitboxes_index: at(self.hitboxes_index, from.hitboxes_index, to.hitboxes_index),
+            tooltips_index: at(self.tooltips_index, from.tooltips_index, to.tooltips_index),
+            deferred_draws_index: at(
+                self.deferred_draws_index,
+                from.deferred_draws_index,
+                to.deferred_draws_index,
+            ),
+            dispatch_tree_index: at(
+                self.dispatch_tree_index,
+                from.dispatch_tree_index,
+                to.dispatch_tree_index,
+            ),
+            accessed_element_states_index: at(
+                self.accessed_element_states_index,
+                from.accessed_element_states_index,
+                to.accessed_element_states_index,
+            ),
+            line_layout_index: self
+                .line_layout_index
+                .rebase(&from.line_layout_index, &to.line_layout_index),
+        }
+    }
+}
+
+impl PaintIndex {
+    /// This index, which was at or after `from`, where it is when `from` is at `to`.
+    pub(crate) fn rebase(&self, from: &Self, to: &Self) -> Self {
+        let at = |index: usize, from: usize, to: usize| index - from + to;
+        Self {
+            scene_index: at(self.scene_index, from.scene_index, to.scene_index),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_index: at(
+                self.debug_bounds_index,
+                from.debug_bounds_index,
+                to.debug_bounds_index,
+            ),
+            mouse_listeners_index: at(
+                self.mouse_listeners_index,
+                from.mouse_listeners_index,
+                to.mouse_listeners_index,
+            ),
+            input_handlers_index: at(
+                self.input_handlers_index,
+                from.input_handlers_index,
+                to.input_handlers_index,
+            ),
+            cursor_styles_index: at(
+                self.cursor_styles_index,
+                from.cursor_styles_index,
+                to.cursor_styles_index,
+            ),
+            accessed_element_states_index: at(
+                self.accessed_element_states_index,
+                from.accessed_element_states_index,
+                to.accessed_element_states_index,
+            ),
+            tab_handle_index: at(self.tab_handle_index, from.tab_handle_index, to.tab_handle_index),
+            line_layout_index: self
+                .line_layout_index
+                .rebase(&from.line_layout_index, &to.line_layout_index),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
@@ -1307,6 +1377,11 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
+    // mirin: retained subtrees (`elements::retained`): how deep inside one
+    // laid out apart the frame is, and the records of those drawn inside
+    // each one being drawn.
+    pub(crate) retained_detached: usize,
+    pub(crate) retained_nested: Vec<Vec<Rc<RefCell<crate::elements::Drawn>>>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2364,6 +2439,8 @@ impl Window {
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
+            retained_detached: 0,
+            retained_nested: Vec::new(),
             root: None,
             element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
@@ -4239,6 +4316,50 @@ impl Window {
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             line_layout_index: self.text_system.layout_index(),
         }
+    }
+
+    /// mirin: the layout engine, for retained subtrees.
+    pub(crate) fn layout_engine_mut(&mut self) -> &mut TaffyLayoutEngine {
+        self.layout_engine.as_mut().unwrap()
+    }
+
+    /// mirin: whether `range` names a stretch of last frame's prepaint lists
+    /// (`elements::retained` keeps ranges across frames).
+    pub(crate) fn prepaint_range_valid(&self, range: &Range<PrepaintStateIndex>) -> bool {
+        let (start, end, frame) = (&range.start, &range.end, &self.rendered_frame);
+        start.hitboxes_index <= end.hitboxes_index
+            && end.hitboxes_index <= frame.hitboxes.len()
+            && start.tooltips_index <= end.tooltips_index
+            && end.tooltips_index <= frame.tooltip_requests.len()
+            && start.deferred_draws_index <= end.deferred_draws_index
+            && end.deferred_draws_index <= frame.deferred_draws.len()
+            && start.dispatch_tree_index <= end.dispatch_tree_index
+            && end.dispatch_tree_index <= frame.dispatch_tree.len()
+            && start.accessed_element_states_index <= end.accessed_element_states_index
+            && end.accessed_element_states_index <= frame.accessed_element_states.len()
+            && self.text_system.layouts_range_valid(
+                &(start.line_layout_index.clone()..end.line_layout_index.clone()),
+            )
+    }
+
+    /// mirin: whether `range` names a stretch of last frame's paint lists.
+    pub(crate) fn paint_range_valid(&self, range: &Range<PaintIndex>) -> bool {
+        let (start, end, frame) = (&range.start, &range.end, &self.rendered_frame);
+        start.scene_index <= end.scene_index
+            && end.scene_index <= frame.scene.len()
+            && start.mouse_listeners_index <= end.mouse_listeners_index
+            && end.mouse_listeners_index <= frame.mouse_listeners.len()
+            && start.input_handlers_index <= end.input_handlers_index
+            && end.input_handlers_index <= frame.input_handlers.len()
+            && start.cursor_styles_index <= end.cursor_styles_index
+            && end.cursor_styles_index <= frame.cursor_styles.len()
+            && start.accessed_element_states_index <= end.accessed_element_states_index
+            && end.accessed_element_states_index <= frame.accessed_element_states.len()
+            && start.tab_handle_index <= end.tab_handle_index
+            && end.tab_handle_index <= frame.tab_stops.insertion_history.len()
+            && self.text_system.layouts_range_valid(
+                &(start.line_layout_index.clone()..end.line_layout_index.clone()),
+            )
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {

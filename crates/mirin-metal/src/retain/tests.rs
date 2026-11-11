@@ -103,8 +103,6 @@ fn drawn_whole(cx: &mut TestAppContext, tree: NodeSpec) -> Vec<LayoutNode> {
 }
 
 #[gpui::test]
-// GAP: no retained subtrees on upstream GPUI yet (gpui_api::RETAINED).
-#[cfg_attr(feature = "gpui-next", ignore)]
 fn a_frame_that_keeps_the_tree_lays_it_out_as_one_that_draws_it(cx: &mut TestAppContext) {
     let (view, window) = open(cx, grid(8, 6, &[], &[]));
     let first = layout(&view, window);
@@ -129,12 +127,19 @@ fn a_frame_that_keeps_the_tree_lays_it_out_as_one_that_draws_it(cx: &mut TestApp
     // is, so none is built or drawn again.
     set_tree(&view, window, grid_under(20, 8, 6, &[13], &[9]));
     let counts = take_counts();
-    assert!(counts.moved >= 8, "the rows are moved: {counts:?}");
-    assert_eq!(
-        (counts.built, counts.redrawn),
-        (0, 1),
-        "the grid alone: {counts:?}"
-    );
+    // GAP: upstream GPUI's retained subtrees don't copy a moved drawing yet;
+    // the rows are drawn again where they land (checked below all the same).
+    #[cfg(not(feature = "gpui-next"))]
+    {
+        assert!(counts.moved >= 8, "the rows are moved: {counts:?}");
+        assert_eq!(
+            (counts.built, counts.redrawn),
+            (0, 1),
+            "the grid alone: {counts:?}"
+        );
+    }
+    #[cfg(feature = "gpui-next")]
+    let _ = counts;
     let lowered = layout(&view, window);
     assert_eq!(lowered, drawn_whole(cx, grid_under(20, 8, 6, &[13], &[9])));
 
@@ -145,8 +150,6 @@ fn a_frame_that_keeps_the_tree_lays_it_out_as_one_that_draws_it(cx: &mut TestApp
 }
 
 #[gpui::test]
-// GAP: no retained subtrees on upstream GPUI yet (gpui_api::RETAINED).
-#[cfg_attr(feature = "gpui-next", ignore)]
 fn only_subtrees_that_render_from_their_content_alone_are_kept(cx: &mut TestAppContext) {
     let tree = |value: &str| {
         parse_tree(&format!(

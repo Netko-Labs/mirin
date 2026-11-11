@@ -35,6 +35,19 @@ pub struct TaffyLayoutEngine {
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
+    // mirin: the tree is kept across frames for retained subtrees
+    // (`elements::retained`). Nodes made this frame, in the order they were
+    // made, go at its end; nodes made while a retained subtree is built are
+    // its own (`begin_owned`/`end_owned`) and stay until it lets them go
+    // (`released`). With nothing retained the tree is cleared whole, as before.
+    frame_nodes: Vec<LayoutId>,
+    owning: Vec<Vec<LayoutId>>,
+    owned_count: usize,
+    released: std::rc::Rc<std::cell::RefCell<Vec<LayoutId>>>,
+    /// The unrounded absolute origin (device pixels) a parentless node is
+    /// laid out at: a retained subtree's copy laid out apart, placed where its
+    /// twin sits so its edges round as the twin's do (`place_detached`).
+    detached_origins: FxHashMap<LayoutId, Point<f32>>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -49,14 +62,90 @@ impl TaffyLayoutEngine {
             absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
+            frame_nodes: Vec::new(),
+            owning: Vec::new(),
+            owned_count: 0,
+            released: Default::default(),
+            detached_origins: FxHashMap::default(),
         }
     }
 
     pub fn clear(&mut self) {
-        self.taffy.clear();
+        // mirin: keep the nodes retained subtrees own; free the frame's own
+        // and the ones let go, children before their parents.
+        let released = std::mem::take(&mut *self.released.borrow_mut());
+        self.owned_count = self.owned_count.saturating_sub(released.len());
+        if self.owned_count == 0 && self.owning.is_empty() {
+            self.taffy.clear();
+            self.owned_count = 0;
+        } else {
+            for id in self.frame_nodes.iter().chain(&released) {
+                let _ = self.taffy.remove(id.0);
+            }
+        }
+        self.frame_nodes.clear();
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
+        self.detached_origins.clear();
+    }
+
+    /// mirin: nodes made from now until `end_owned` belong to a retained
+    /// subtree and are kept across frames.
+    pub(crate) fn begin_owned(&mut self) {
+        self.owning.push(Vec::new());
+    }
+
+    /// mirin: the nodes made since `begin_owned`, in the order they were made.
+    pub(crate) fn end_owned(&mut self) -> Vec<LayoutId> {
+        let owned = self.owning.pop().unwrap_or_default();
+        self.owned_count += owned.len();
+        owned
+    }
+
+    /// mirin: where retained subtrees put the nodes they let go of (when
+    /// their state is dropped or rebuilt); they are freed at the frame's end.
+    pub(crate) fn released(&self) -> std::rc::Rc<std::cell::RefCell<Vec<LayoutId>>> {
+        self.released.clone()
+    }
+
+    /// mirin: whether `id` is still in the tree.
+    pub(crate) fn contains(&self, id: LayoutId) -> bool {
+        self.taffy.contains(id.0)
+    }
+
+    fn made(&mut self, id: LayoutId) -> LayoutId {
+        match self.owning.last_mut() {
+            Some(owned) => owned.push(id),
+            None => self.frame_nodes.push(id),
+        }
+        id
+    }
+
+    /// mirin: lay `root` (a retained subtree's copy, made this frame) out
+    /// apart from the tree, as its `twin` (kept in the tree) is laid out
+    /// there: the twin's size, no margins or offsets of its own, and edges
+    /// rounded from where the twin sits. Its bounds are then the twin's.
+    pub(crate) fn place_detached(&mut self, root: LayoutId, twin: LayoutId) -> Size<Pixels> {
+        let twin_layout = *self.taffy.layout(twin.0).expect(EXPECT_MESSAGE);
+        let mut style = self.taffy.style(root.0).expect(EXPECT_MESSAGE).clone();
+        style.size = taffy::geometry::Size {
+            width: taffy::style::Dimension::length(twin_layout.size.width),
+            height: taffy::style::Dimension::length(twin_layout.size.height),
+        };
+        style.min_size = taffy::geometry::Size::auto();
+        style.max_size = taffy::geometry::Size::auto();
+        style.margin = taffy::geometry::Rect::zero();
+        style.inset = taffy::geometry::Rect::auto();
+        style.position = taffy::style::Position::Relative;
+        self.taffy.set_style(root.0, style).expect(EXPECT_MESSAGE);
+        if let Some(origin) = self.absolute_outer_origins.get(&twin).copied() {
+            self.detached_origins.insert(root, origin);
+        }
+        Size {
+            width: Pixels(twin_layout.size.width),
+            height: Pixels(twin_layout.size.height),
+        }
     }
 
     pub fn request_layout(
@@ -68,7 +157,7 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
-        if children.is_empty() {
+        let id = if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
@@ -79,7 +168,9 @@ impl TaffyLayoutEngine {
                 .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
                 .expect(EXPECT_MESSAGE)
                 .into()
-        }
+        };
+        // mirin: kept with a retained subtree, or freed with the frame.
+        self.made(id)
     }
 
     pub fn request_measured_layout(
@@ -100,10 +191,13 @@ impl TaffyLayoutEngine {
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
 
-        self.taffy
+        let id = self
+            .taffy
             .new_leaf_with_context(taffy_style, NodeContext { measure })
             .expect(EXPECT_MESSAGE)
-            .into()
+            .into();
+        // mirin: kept with a retained subtree, or freed with the frame.
+        self.made(id)
     }
 
     /// Treats any `auto` dimension of the given node's style as filling `size`.
@@ -387,7 +481,11 @@ impl TaffyLayoutEngine {
                     .expect("parent absolute outer origin should be cached");
                 parent_origin + Point::from(layout_location)
             }
-            None => Point::from(layout_location),
+            // mirin: a retained subtree's copy laid out apart sits where its twin does.
+            None => {
+                self.detached_origins.get(&id).copied().unwrap_or_default()
+                    + Point::from(layout_location)
+            }
         };
         self.absolute_outer_origins
             .insert(id, absolute_outer_origin);

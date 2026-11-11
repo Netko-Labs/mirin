@@ -512,7 +512,34 @@ pub(crate) struct LineLayoutIndex {
     wrapped_lines_index: usize,
 }
 
+// mirin: retained subtrees (`elements::retained`) keep ranges into last
+// frame's layouts and move them along when a subtree around them is copied.
+impl LineLayoutIndex {
+    /// This index, which was at or after `from`, where it is when `from` is at `to`.
+    pub(crate) fn rebase(&self, from: &Self, to: &Self) -> Self {
+        Self {
+            font_generation: to.font_generation,
+            lines_index: self.lines_index - from.lines_index + to.lines_index,
+            wrapped_lines_index: self.wrapped_lines_index - from.wrapped_lines_index
+                + to.wrapped_lines_index,
+        }
+    }
+}
+
 impl LineLayoutCache {
+    /// mirin: whether `range` names layouts of last frame (with today's fonts).
+    pub(crate) fn range_valid(&self, range: &Range<LineLayoutIndex>) -> bool {
+        let font_generation = self.clear_if_font_generation_changed();
+        let state = self.state.borrow();
+        let previous = &state.previous_frame;
+        range.start.font_generation == font_generation
+            && range.end.font_generation == font_generation
+            && range.start.lines_index <= range.end.lines_index
+            && range.end.lines_index <= previous.used_lines.len()
+            && range.start.wrapped_lines_index <= range.end.wrapped_lines_index
+            && range.end.wrapped_lines_index <= previous.used_wrapped_lines.len()
+    }
+
     pub fn new(
         platform_text_system: Arc<dyn PlatformTextSystem>,
         font_generation: Arc<AtomicUsize>,

@@ -681,7 +681,14 @@ impl<NodeContext> TaffyTree<NodeContext> {
         // Remove "parent" references to a node when removing that node
         if let Some(children) = self.children.get(key) {
             for child in children.iter().copied() {
-                self.parents[child.into()] = None;
+                // mirin: only where it is still this node's child: a node kept across
+                // frames (GPUI's retained subtrees) is adopted by its next parent before
+                // the last one is removed, and must keep the new one.
+                if let Some(parent) = self.parents.get_mut(child.into()) {
+                    if *parent == Some(node) {
+                        *parent = None;
+                    }
+                }
             }
         }
 
@@ -691,6 +698,13 @@ impl<NodeContext> TaffyTree<NodeContext> {
         let _ = self.node_context_data.remove(key);
 
         Ok(node)
+    }
+
+    // mirin: a kept node id can outlive its node; GPUI checks before reusing one.
+    /// Whether `node` is in the tree.
+    #[inline]
+    pub fn contains(&self, node: NodeId) -> bool {
+        self.nodes.contains_key(node.into())
     }
 
     /// Sets the context data associated with the node

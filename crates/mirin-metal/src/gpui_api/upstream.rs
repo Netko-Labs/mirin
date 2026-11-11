@@ -5,13 +5,14 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    px, AnyElement, App, Application, AsyncApp, Bounds, BoxShadow, ElementId, EntityId,
-    FocusHandle, Hsla, IntoElement, Keystroke, ListState, Pixels, Point, ScrollHandle, ShapedLine,
-    Size, StyledText, Subscription, TextLayout, Window, WindowKind, WindowOptions,
+    px, App, Application, AsyncApp, Bounds, BoxShadow, FocusHandle, Hsla, Keystroke, ListState,
+    Pixels, Point, ScrollHandle, ShapedLine, Size, StyledText, Subscription, TextLayout, Window,
+    WindowKind, WindowOptions,
 };
 
 pub(crate) use gpui::layer_shell::{KeyboardInteractivity, Layer};
 pub(crate) use gpui::ScrollEvent as ScrollWheelEvent;
+pub(crate) use gpui::{retained, take_built_apart, RetainedDraw};
 
 /// The application, on the platform GPUI picks.
 pub(crate) fn application() -> Application {
@@ -241,61 +242,8 @@ pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear(cx);
 }
 
-/// Whether retained subtrees exist. GAP: not ported yet; every frame draws
-/// the whole tree, and nothing below is ever made.
-pub(crate) const RETAINED: bool = false;
-
-/// GAP: what a retained subtree did in a frame (the fork's `RetainedDraw`).
-#[allow(dead_code)] // never made while `RETAINED` is false
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RetainedDraw {
-    Built,
-    Redrawn,
-    Reused,
-    Moved,
-    Skipped,
-}
-
-impl RetainedDraw {
-    pub(crate) fn drew(self) -> bool {
-        matches!(self, Self::Built | Self::Redrawn)
-    }
-}
-
-/// GAP: the fork's `gpui::retained`; never made while [`RETAINED`] is false.
-pub(crate) struct Retained;
-
-pub(crate) fn retained(
-    _id: impl Into<ElementId>,
-    _view: EntityId,
-    _version: u64,
-    _build: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
-) -> Retained {
-    Retained
-}
-
-impl Retained {
-    pub(crate) fn movable(self, _movable: bool) -> Self {
-        self
-    }
-
-    pub(crate) fn skippable(self, _skippable: bool) -> Self {
-        self
-    }
-
-    pub(crate) fn on_prepaint(
-        self,
-        _callback: impl FnOnce(RetainedDraw, Bounds<Pixels>, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self
-    }
-
-    pub(crate) fn into_any_element(self) -> AnyElement {
-        gpui::Empty.into_any_element()
-    }
-}
-
-/// GAP: the fork's count of retained subtrees laid out apart.
-pub(crate) fn take_built_apart() -> usize {
-    0
-}
+/// Whether retained subtrees exist (`gpui::retained`, forks/zed). In place
+/// they are copied; a move, or one nothing of shows, is drawn again (not yet
+/// the fork's moved copies and skips: `Retained::movable` and `skippable`
+/// are accepted and unused).
+pub(crate) const RETAINED: bool = true;

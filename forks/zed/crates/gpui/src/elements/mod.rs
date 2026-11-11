@@ -7,6 +7,8 @@ mod div;
 mod image_cache;
 mod img;
 mod list;
+// mirin: subtrees kept across frames.
+mod retained;
 mod surface;
 mod svg;
 mod text;
@@ -21,6 +23,8 @@ pub use div::*;
 pub use image_cache::*;
 pub use img::*;
 pub use list::*;
+pub use retained::*;
+pub(crate) use retained::Drawn;
 pub use surface::*;
 pub use svg::*;
 pub use text::*;
