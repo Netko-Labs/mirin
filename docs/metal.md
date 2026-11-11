@@ -1592,7 +1592,8 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   node slot map had doubled to 79 MB for the two trees of that frame (it
   never shrinks), and GPUI's element arena, the frame's lists and the
   layout map's tables had grown to their largest. Switching back and
-  forth five times added 404 − 339 MB, less each time. One thing did
+  forth five times (`--switches=5`) took it from 339 to 404 MB, less each
+  time (+43, then +0 to +10; now 312 → 373 MB, alike). One thing did
   grow for good: what each id'd view's subtree was when last walked
   (`retain.rs`), which a patch updates only for what it changed, so the
   views a patch removed stayed for the window's life (19 new ids a patch
