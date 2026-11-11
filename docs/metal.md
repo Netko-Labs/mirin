@@ -10,8 +10,11 @@ is for the CEF runtime. Public API changes still go through
 `docs/api-design.md` sign-off before leaving alpha.
 
 Status: **alpha, standalone.** `crates/mirin-metal` is excluded from the Cargo
-workspace and `@mirinjs/metal` is not wired into `mirinjs`, the CLI, or
-release tooling. Metal seeds from the earlier `mirin-native` spike (branch
+workspace (its own lockfile; CI checks it in its own `metal` job) and
+`@mirinjs/metal` is not wired into `mirinjs`, the CLI, or release tooling.
+Linux (Wayland, X11 fallback) is the platform it is built and used on; macOS
+builds and passes its tests in CI but has not been verified with a real app;
+Windows has not been tried. Metal seeds from the earlier `mirin-native` spike (branch
 `claude/mirin-native-gpu-validation-vumae7`), imported and renamed on
 2026-10-29.
 
@@ -756,7 +759,49 @@ Open: React work per update (the demo re-renders its whole list on select),
 whole-tree JSON per update (the patch protocol, B3), GPUI's full relayout for
 trees that are not long lists.
 
+## 5c. Who uses it: Dashi
+
+Dashi, the Linux desktop of section 0b, is Metal's first and main consumer. Its
+shell surfaces (menu bar, dock, launcher, notifications, lock screen) and its
+apps (Activity Monitor, Software, Calculator, Notes, Calendar, a terminal, and
+more) are React on `@mirinjs/metal` and `@mirinjs/metal-ui`, each window drawn by
+a `mirin-metal-host` process its driver spawns (`spawnNativeHost`). Dashi
+depends on the packages by path (`"@mirinjs/metal": "file:../mirin/..."`, see
+section 6 on sharing one React) and builds the host from this crate. Most of
+the GPUI fork's changes (`vendor/gpui/MIRIN.md`) came from Dashi's needs:
+layer-shell and session-lock surfaces, the unified title bar on Dashi's
+compositor, idle windows that stop drawing, text input only while a field
+takes text, truncation and wrapping fixes, and scroll views that end where
+their content does.
+
 ## 6. Run it
+
+Build and check the crate (from `crates/mirin-metal`; Linux build deps in
+section 4):
+
+```sh
+cargo build --release --bin mirin-metal-host
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test                      # headless: GPUI's test platform, no display
+```
+
+The GPUI fork's own tests build it alone with this crate's lockfile:
+
+```sh
+cd vendor/gpui && cp ../../Cargo.lock . \
+  && CARGO_TARGET_DIR=../../target/gpui-alone cargo test --lib --features test-support; \
+  rm Cargo.lock
+```
+
+The TypeScript packages are checked with the rest of the repository
+(`bun run fmt-lint`, `bun run typecheck`, `bun run test`). The root `test`
+script runs `@mirinjs/metal-ui`'s tests from their package directory, because
+Bun applies that package's `tsconfig.json` (`jsxImportSource`) and
+`bunfig.toml` only for the directory it runs in; run them by hand with
+`cd packages/mirin-metal-ui && bun test`.
+
+Run a demo:
 
 ```sh
 cd crates/mirin-metal && cargo build --bin mirin-metal-host
