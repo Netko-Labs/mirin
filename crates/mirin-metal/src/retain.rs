@@ -12,7 +12,11 @@
 //!
 //! A kept subtree that moved (it scrolled, or what is above it grew) has
 //! its drawing copied to where it is now, and one nothing shows of (rows
-//! scrolled out of a view) is not drawn at all (`Traits`).
+//! scrolled out of a view) is not drawn at all (`Traits`); GPUI keeps its
+//! drawing aside, up to a budget, and copies it back when it shows again.
+//! Scroll views paint their content at whole device pixels (`drive.rs`,
+//! `scroll_snap`), so a scrolled row lands a whole number of them away,
+//! which is what a drawing can be copied by, at any scale factor.
 
 use std::collections::HashMap;
 

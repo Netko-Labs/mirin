@@ -1304,4 +1304,81 @@ mod test {
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
     }
+
+    // mirin: `Window::set_scroll_snap`.
+    #[gpui::test]
+    fn test_items_are_painted_on_device_pixels_when_scrolls_snap(cx: &mut TestAppContext) {
+        use crate::{
+            AppContext, Context, Element, IntoElement, ListState, ParentElement, Render, Styled,
+            Window, canvas, div, list, point, px, size,
+        };
+        use std::{cell::RefCell, rc::Rc};
+
+        let cx = cx.add_empty_window();
+        cx.update(|window, _| window.set_scroll_snap(true));
+        let state = ListState::new(20, crate::ListAlignment::Top, px(10.));
+        // Where each item was painted in the last frame.
+        let painted: Rc<RefCell<Vec<(usize, f32)>>> = Rc::default();
+
+        struct TestView(ListState, Rc<RefCell<Vec<(usize, f32)>>>);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let painted = self.1.clone();
+                list(self.0.clone(), move |index, _, _| {
+                    let painted = painted.clone();
+                    div()
+                        .h(px(20.))
+                        .w_full()
+                        .child(
+                            canvas(
+                                move |bounds, _, _| {
+                                    painted.borrow_mut().push((index, bounds.origin.y.0))
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        )
+                        .into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+        let mut draw = |cx: &mut crate::VisualTestContext| {
+            painted.borrow_mut().clear();
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+                cx.new(|_| TestView(state.clone(), painted.clone()))
+            });
+        };
+        draw(cx);
+
+        // Steps of a third of a pixel, across the end of the first items: a
+        // test window draws two device pixels to a logical one, so every
+        // item sits at a multiple of a half, the same half for all of them.
+        let mut scrolled = 0.0f32;
+        for _ in 0..150 {
+            state.scroll_by(px(0.3));
+            scrolled += 0.3;
+            draw(cx);
+            let top = state.logical_scroll_top();
+            let precise = top.item_ix as f32 * 20. + top.offset_in_item.0;
+            assert!((precise - scrolled).abs() < 1e-2, "{precise} of {scrolled}");
+            let rounded = (precise * 2.).round() / 2.;
+            let painted = painted.borrow();
+            assert!(!painted.is_empty());
+            for (index, y) in painted.iter() {
+                assert_eq!(
+                    *y,
+                    *index as f32 * 20. - rounded,
+                    "item {index} at {precise}"
+                );
+            }
+        }
+
+        // The end is painted where it is.
+        state.scroll_by(px(10_000.));
+        draw(cx);
+        let (index, y) = *painted.borrow().last().unwrap();
+        assert_eq!((index, y), (19, 80.));
+    }
 }
