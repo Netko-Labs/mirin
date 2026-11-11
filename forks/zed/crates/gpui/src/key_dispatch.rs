@@ -163,6 +163,22 @@ impl DispatchTree {
         self.nodes.len()
     }
 
+    /// mirin: whether the nodes in `range` take nothing: no focus, no key,
+    /// action or modifier listeners, no key context. A retained subtree
+    /// whose nodes are inert may be left out of the frame while nothing of
+    /// it shows (`elements::retained`).
+    pub fn range_is_inert(&self, range: Range<usize>) -> bool {
+        self.nodes.get(range).is_some_and(|nodes| {
+            nodes.iter().all(|node| {
+                node.focus_id.is_none()
+                    && node.context.is_none()
+                    && node.key_listeners.is_empty()
+                    && node.action_listeners.is_empty()
+                    && node.modifiers_changed_listeners.is_empty()
+            })
+        })
+    }
+
     pub fn push_node(&mut self) -> DispatchNodeId {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());

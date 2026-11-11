@@ -24,7 +24,7 @@ pub use image_cache::*;
 pub use img::*;
 pub use list::*;
 pub use retained::*;
-pub(crate) use retained::Drawn;
+pub(crate) use retained::{Drawn, Recording, Steadiness, is_exact};
 pub use surface::*;
 pub use svg::*;
 pub use text::*;

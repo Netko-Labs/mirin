@@ -746,6 +746,11 @@ fn paint_line(
                     size: max_glyph_size,
                 };
 
+                // mirin: whether it is culled depends on where it is: a
+                // retained subtree being drawn anew reaches that far.
+                if !window.retained_recordings.is_empty() {
+                    window.retained_reach(max_glyph_bounds);
+                }
                 let content_mask = window.content_mask();
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
                     let vertical_offset = point(px(0.0), glyph.position.y);

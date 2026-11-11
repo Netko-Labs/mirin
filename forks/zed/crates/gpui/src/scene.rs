@@ -50,6 +50,38 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    /// mirin: while a retained subtree is drawn anew, how far what it puts
+    /// in the scene reaches (`elements::retained`).
+    pub(crate) reach: Option<SceneReach>,
+}
+
+/// mirin: what a retained subtree being drawn anew put in the scene: every
+/// primitive's bounds, shown or not, and whether one knows where it is (a
+/// path, a transformed sprite) so the drawing can't be moved.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SceneReach {
+    pub(crate) extent: Option<Bounds<ScaledPixels>>,
+    pub(crate) pinned: bool,
+}
+
+impl SceneReach {
+    fn take_in(&mut self, primitive: &Primitive) {
+        let bounds = *primitive.bounds();
+        self.extent = Some(match self.extent {
+            Some(extent) => extent.union(&bounds),
+            None => bounds,
+        });
+        self.pinned |= match primitive {
+            Primitive::Path(_) | Primitive::Surface(_) => true,
+            Primitive::MonochromeSprite(sprite) => {
+                sprite.transformation != TransformationMatrix::unit()
+            }
+            Primitive::SubpixelSprite(sprite) => {
+                sprite.transformation != TransformationMatrix::unit()
+            }
+            _ => false,
+        };
+    }
 }
 
 #[expect(missing_docs)]
@@ -86,6 +118,10 @@ impl Scene {
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
+        // mirin: counted whether it shows or not.
+        if let Some(reach) = &mut self.reach {
+            reach.take_in(&primitive);
+        }
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
@@ -143,6 +179,30 @@ impl Scene {
             match operation {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
+                PaintOperation::EndLayer => self.pop_layer(),
+            }
+        }
+    }
+
+    /// mirin: `replay`, `by` device pixels (whole ones) away, for a retained
+    /// subtree's drawing copied to where it moved (`elements::retained`).
+    /// Each primitive takes the content mask `mask` gives for the one it had.
+    pub(crate) fn replay_moved(
+        &mut self,
+        range: Range<usize>,
+        prev_scene: &Scene,
+        by: Point<ScaledPixels>,
+        mask: impl Fn(&ContentMask<ScaledPixels>) -> ContentMask<ScaledPixels>,
+    ) {
+        for operation in &prev_scene.paint_operations[range] {
+            match operation {
+                PaintOperation::Primitive(primitive) => {
+                    let mut primitive = primitive.clone();
+                    let content_mask = mask(primitive.content_mask());
+                    primitive.move_by(by, content_mask);
+                    self.insert_primitive(primitive);
+                }
+                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds + by),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
@@ -320,6 +380,46 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+        }
+    }
+
+    /// mirin: the same primitive `by` device pixels away, under `mask`
+    /// (`Scene::replay_moved`). Never a path or a surface (`SceneReach`).
+    pub(crate) fn move_by(&mut self, by: Point<ScaledPixels>, mask: ContentMask<ScaledPixels>) {
+        match self {
+            Primitive::Shadow(shadow) => {
+                shadow.bounds.origin += by;
+                shadow.element_bounds.origin += by;
+                shadow.content_mask = mask;
+            }
+            Primitive::Quad(quad) => {
+                quad.bounds.origin += by;
+                quad.content_mask = mask;
+            }
+            Primitive::Path(path) => {
+                path.bounds.origin += by;
+                path.content_mask = mask;
+            }
+            Primitive::Underline(underline) => {
+                underline.bounds.origin += by;
+                underline.content_mask = mask;
+            }
+            Primitive::MonochromeSprite(sprite) => {
+                sprite.bounds.origin += by;
+                sprite.content_mask = mask;
+            }
+            Primitive::SubpixelSprite(sprite) => {
+                sprite.bounds.origin += by;
+                sprite.content_mask = mask;
+            }
+            Primitive::PolychromeSprite(sprite) => {
+                sprite.bounds.origin += by;
+                sprite.content_mask = mask;
+            }
+            Primitive::Surface(surface) => {
+                surface.bounds.origin += by;
+                surface.content_mask = mask;
+            }
         }
     }
 

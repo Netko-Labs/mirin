@@ -1,0 +1,204 @@
+//! mirin: what a retained subtree drawn anew records about its drawing, so
+//! a later frame can tell whether that drawing, copied a whole number of
+//! device pixels away, is what drawing it there would give
+//! (`docs/metal/gpui-next.md`, "Retained subtrees on upstream GPUI", step 2).
+//!
+//! - How far it reaches ([`Recorded::extent`]): every primitive and hitbox,
+//!   whether it showed or not, every glyph a line culled, every layer, and
+//!   every content mask pushed inside it as given. Where the mask around it
+//!   held all of that, nothing of it was clipped or left out by that mask,
+//!   so a copy under the mask around it elsewhere (that holds it too) is
+//!   whole: what was under that mask takes the new one, and every mask
+//!   pushed inside moves with it.
+//! - What it rounds ([`Steadiness`]): the edges `layout_bounds` rounds and
+//!   the positions `Window::paint_*` round, through the layout engine's and
+//!   the window's accumulators while it records.
+//! - What knows where it is (`pinned`): a deferred draw, an input handler,
+//!   a window control area, a path (its vertices are not moved), a rotated
+//!   sprite, or a `div` whose drag, drop, tooltip or group style keeps a
+//!   hitbox's bounds; tooltips are found from its ranges.
+//!
+//! A subtree drawn anew inside another records its own; the one around it
+//! takes it in when it is painted (`absorb_retained`), as it takes in a
+//! subtree inside that was copied.
+
+use crate::{Bounds, Pixels, ScaledPixels, Window, point, px, scene::SceneReach, size};
+
+use super::steady::Steadiness;
+
+/// What a retained subtree's drawing was found to be when it was drawn.
+#[derive(Clone, Copy, Debug, Default)]
+#[doc(hidden)]
+pub struct Recorded {
+    /// Everything it draws or pushes, shown or not; `None`: nothing.
+    pub(crate) extent: Option<Bounds<Pixels>>,
+    /// Something in it knows where it is: never moved.
+    pub(crate) pinned: bool,
+    /// The edges its layout rounds (taffy's space: moved as its root is
+    /// laid out elsewhere).
+    pub(crate) layout: Steadiness,
+    /// The positions its painting rounds (the window's space).
+    pub(crate) paint: Steadiness,
+}
+
+impl Recorded {
+    fn reach(&mut self, bounds: Bounds<Pixels>) {
+        self.extent = Some(match self.extent {
+            Some(extent) => extent.union(&bounds),
+            None => bounds,
+        });
+    }
+
+    /// Take in a retained subtree inside this one.
+    pub(crate) fn absorb(&mut self, inner: &Recorded) {
+        if let Some(extent) = inner.extent {
+            self.reach(extent);
+        }
+        self.pinned |= inner.pinned;
+        self.layout.merge(&inner.layout);
+        self.paint.merge(&inner.paint);
+    }
+}
+
+/// A retained subtree being drawn anew, in the phase being drawn.
+pub(crate) struct Recording {
+    recorded: Recorded,
+    /// The element offset at its root: one that differs inside it (a
+    /// scroll view in it) is snapped on its own.
+    offset: crate::Point<Pixels>,
+    /// The accumulators of the recording around it, put back when it ends.
+    saved_layout: Option<Steadiness>,
+    saved_paint: Option<Steadiness>,
+    saved_scene: Option<SceneReach>,
+}
+
+impl Window {
+    /// Start (prepaint) or carry on (paint, with what prepaint recorded)
+    /// recording the retained subtree about to be drawn anew.
+    pub(crate) fn begin_recording(&mut self, carried: Option<Recorded>) {
+        let saved_layout = self
+            .layout_engine_mut()
+            .steadiness
+            .replace(Steadiness::default());
+        let saved_paint = self
+            .retained_paint_steadiness
+            .replace(Some(Steadiness::default()));
+        let saved_scene = self.next_frame.scene.reach.replace(SceneReach::default());
+        self.retained_recordings.push(Recording {
+            recorded: carried.unwrap_or_default(),
+            offset: self.element_offset(),
+            saved_layout,
+            saved_paint,
+            saved_scene,
+        });
+    }
+
+    /// End the recording begun last; its findings so far.
+    pub(crate) fn end_recording(&mut self) -> Recorded {
+        let recording = self
+            .retained_recordings
+            .pop()
+            .expect("a recording ends where it began");
+        let mut recorded = recording.recorded;
+        let scale = self.scale_factor();
+        let engine = self.layout_engine_mut();
+        let layout = std::mem::replace(&mut engine.steadiness, recording.saved_layout);
+        if let Some(layout) = layout {
+            recorded.layout.merge(&layout);
+        }
+        if let Some(paint) = self
+            .retained_paint_steadiness
+            .replace(recording.saved_paint)
+        {
+            recorded.paint.merge(&paint);
+        }
+        let scene = std::mem::replace(&mut self.next_frame.scene.reach, recording.saved_scene);
+        if let Some(scene) = scene {
+            recorded.pinned |= scene.pinned;
+            if let Some(extent) = scene.extent {
+                recorded.reach(logical(extent, scale));
+            }
+        }
+        recorded
+    }
+
+    /// Take a retained subtree inside the one being recorded (if one is)
+    /// into its recording.
+    pub(crate) fn absorb_retained(&mut self, inner: &Recorded) {
+        if let Some(recording) = self.retained_recordings.last_mut() {
+            recording.recorded.absorb(inner);
+        }
+    }
+
+    /// Something in the retained subtree being drawn anew knows where it is
+    /// in the window: its drawing is never moved.
+    pub(crate) fn pin_recordings(&mut self) {
+        if let Some(recording) = self.retained_recordings.last_mut() {
+            recording.recorded.pinned = true;
+        }
+    }
+
+    /// `bounds` is drawn, or decided on, by the retained subtree being
+    /// drawn anew (if one is): it reaches that far.
+    pub(crate) fn retained_reach(&mut self, bounds: Bounds<Pixels>) {
+        if let Some(recording) = self.retained_recordings.last_mut() {
+            recording.recorded.reach(bounds);
+        }
+    }
+
+    /// A hitbox or a content mask (as given) is put down at `bounds`: it
+    /// reaches that far, and a copy moves it as it is, so it moves exactly
+    /// only where it is exact.
+    pub(crate) fn retained_place(&mut self, bounds: Bounds<Pixels>) {
+        let scale = self.scale_factor();
+        let Some(recording) = self.retained_recordings.last_mut() else {
+            return;
+        };
+        recording.recorded.reach(bounds);
+        let paint = &mut recording.recorded.paint;
+        paint.exact(0, bounds.origin.x.0 * scale);
+        paint.exact(1, bounds.origin.y.0 * scale);
+        paint.exact(0, bounds.size.width.0 * scale);
+        paint.exact(1, bounds.size.height.0 * scale);
+    }
+
+    /// An element inside the retained subtree being drawn anew is laid out
+    /// (`layout_bounds`) under an element offset other than its root's: a
+    /// scroll view in it, snapped on its own. Not moved.
+    pub(crate) fn retained_offset_check(&mut self) {
+        let offset = self.element_offset();
+        if let Some(recording) = self.retained_recordings.last_mut()
+            && recording.offset != offset
+        {
+            recording.recorded.paint.fixed = [true; 2];
+        }
+    }
+
+    /// A position is rounded to the device pixel nearest (halves toward
+    /// zero) while painting; `axis` 0 is across. For `&self` painting.
+    pub(crate) fn retained_round_half(&self, axis: usize, device: f32, units: f32) {
+        if let Some(mut steady) = self.retained_paint_steadiness.get() {
+            steady.round_half(axis, device, units, true);
+            self.retained_paint_steadiness.set(Some(steady));
+        }
+    }
+
+    /// A position is floored or ceiled to a device pixel while painting.
+    pub(crate) fn retained_floor(&self, axis: usize, device: f32) {
+        if let Some(mut steady) = self.retained_paint_steadiness.get() {
+            steady.floor(axis, device, true);
+            self.retained_paint_steadiness.set(Some(steady));
+        }
+    }
+}
+
+/// Device bounds in logical pixels.
+fn logical(bounds: Bounds<ScaledPixels>, scale: f32) -> Bounds<Pixels> {
+    Bounds {
+        origin: point(px(bounds.origin.x.0 / scale), px(bounds.origin.y.0 / scale)),
+        size: size(
+            px(bounds.size.width.0 / scale),
+            px(bounds.size.height.0 / scale),
+        ),
+    }
+}
