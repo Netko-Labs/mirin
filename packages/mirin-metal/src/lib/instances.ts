@@ -1,9 +1,10 @@
 /** Internal host-instance tree the reconciler mutates between commits. */
 
 import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
+import type { PropCounts } from "./commit-log.ts";
 
 /** What every host instance has: its identity, where it is, and its last head sent. */
-interface InstanceBase {
+interface InstanceBase extends PropCounts {
   /** Stable per-mount identity; keys events across the boundary. */
   id: number;
   /** The id as the tree and its events spell it (`String(id)`), made once. */

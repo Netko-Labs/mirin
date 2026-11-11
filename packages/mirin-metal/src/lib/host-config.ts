@@ -84,7 +84,15 @@ export const hostConfig: HostConfig = {
 
   createInstance(type, props) {
     const id = nextInstanceId++;
-    const base = { id, key: String(id), children: [], parent: null, slot: -1 };
+    const base = {
+      id,
+      key: String(id),
+      children: [],
+      parent: null,
+      slot: -1,
+      propCount: -1,
+      styleCount: -1,
+    };
     // Type-only narrowing: the reconciler types props as the union across host
     // types, but the element type discriminates which props these are.
     if (type === VIEW_TYPE) return { kind: "view", props: props as ViewProps, ...base };
@@ -183,7 +191,7 @@ export const hostConfig: HostConfig = {
   commitUpdate(instance, _type, prevProps, nextProps) {
     instance.props = nextProps;
     // A new props object every render; only a change that may be sent is logged.
-    if (!sameProps(prevProps, nextProps)) logDirty(instance);
+    if (!sameProps(prevProps, nextProps, instance)) logDirty(instance);
   },
   clearContainer(container) {
     for (const child of [...container.children]) remove(container, child);
