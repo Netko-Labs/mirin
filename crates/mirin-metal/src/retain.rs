@@ -16,6 +16,7 @@ use gpui::{
     div, prelude::*, AnyElement, App, Context, ElementId, Entity, EntityId, SharedString, Window,
 };
 
+use crate::patch::Document;
 use crate::render::render_view;
 use crate::tree::{NodeSpec, ViewProps};
 use crate::window::RootView;
@@ -45,6 +46,8 @@ struct Boundary {
 pub(crate) struct Boundaries {
     map: HashMap<String, Boundary>,
     next: u64,
+    /// The tree generation the last sync saw (`patch::Document`).
+    synced: u64,
 }
 
 /// What a subtree is, as far as keeping it goes.
@@ -57,11 +60,19 @@ struct Walk {
 }
 
 impl Boundaries {
-    /// Bring the retained subtrees in line with `new`, the tree replacing
-    /// `old`: subtrees whose content changed get a new version, new ones are
-    /// added, and ones no longer in the tree (or whose id is not unique) are
-    /// dropped.
-    pub(crate) fn sync(&mut self, old: Option<&NodeSpec>, new: &NodeSpec, cx: &mut App) {
+    /// Bring the retained subtrees in line with `doc` after an update:
+    /// subtrees whose content changed get a new version, new ones are added,
+    /// and ones no longer in the tree (or whose id is not unique) are dropped.
+    /// After a patch (`by_generation`) a subtree changed when its subtree
+    /// generation is newer than the last sync; after a whole tree it is
+    /// compared with the one it replaced (`old`; none: all changed).
+    pub(crate) fn sync(
+        &mut self,
+        old: Option<&NodeSpec>,
+        doc: &Document,
+        by_generation: bool,
+        cx: &mut App,
+    ) {
         if !enabled() {
             return;
         }
@@ -70,7 +81,11 @@ impl Boundaries {
         }
         let mut path = Vec::new();
         let mut duplicates = Vec::new();
-        self.walk(new, old, &mut path, &mut duplicates, cx);
+        let synced = self.synced;
+        let changed = |id: &str| doc.subtree_generation(id) > synced;
+        let changed: Option<&dyn Fn(&str) -> bool> = by_generation.then_some(&changed);
+        self.walk(doc, old, changed, &mut path, &mut duplicates, cx);
+        self.synced = doc.generation();
         self.map.retain(|_, boundary| boundary.seen);
         for id in duplicates {
             self.map.remove(&id);
@@ -81,6 +96,7 @@ impl Boundaries {
         &mut self,
         node: &NodeSpec,
         old: Option<&NodeSpec>,
+        changed: Option<&dyn Fn(&str) -> bool>,
         path: &mut Vec<u32>,
         duplicates: &mut Vec<String>,
         cx: &mut App,
@@ -122,7 +138,7 @@ impl Boundaries {
                 None => None,
             };
             path.push(index as u32);
-            let child_walk = self.walk(child, paired, path, duplicates, cx);
+            let child_walk = self.walk(child, paired, changed, path, duplicates, cx);
             path.pop();
             walk.pure &= child_walk.pure;
             walk.nodes += child_walk.nodes;
@@ -133,7 +149,8 @@ impl Boundaries {
             .as_deref()
             .filter(|_| walk.pure && walk.nodes >= MIN_NODES)
         {
-            self.keep(id, walk.same, path, duplicates, cx);
+            let same = changed.map_or(walk.same, |changed| !changed(id));
+            self.keep(id, same, path, duplicates, cx);
         }
         walk
     }
@@ -271,7 +288,9 @@ fn build(
     cx: &mut Context<RootView>,
 ) -> AnyElement {
     count(1, 0);
-    let tree = view.tree.clone();
+    // Shared only while it is built: a tree held past the frame makes the
+    // next patch copy it whole.
+    let tree = std::rc::Rc::clone(view.tree.tree());
     let node = view
         .boundaries
         .get(id)

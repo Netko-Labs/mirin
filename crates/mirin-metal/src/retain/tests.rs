@@ -6,6 +6,7 @@ use gpui::{px, size, Entity, TestAppContext, VisualTestContext};
 
 use super::{take_counts, Boundaries};
 use crate::events::EventSender;
+use crate::patch::Document;
 use crate::sim::{LayoutMap, LayoutNode};
 use crate::tree::{parse_tree, NodeSpec};
 use crate::window::RootView;
@@ -57,8 +58,9 @@ fn open(cx: &mut TestAppContext, tree: NodeSpec) -> (Entity<RootView>, &mut Visu
     let (tx, _rx) = std::sync::mpsc::channel();
     let layout = LayoutMap::default();
     let events = EventSender::new(tx, layout.clone());
-    let (view, cx) =
-        cx.add_window_view(move |_, cx| RootView::new(tree, false, events, layout, cx));
+    let (view, cx) = cx.add_window_view(move |_, cx| {
+        RootView::new(Document::new(tree), false, events, layout, cx)
+    });
     cx.simulate_resize(size(px(1000.0), px(700.0)));
     cx.run_until_parked();
     draw(cx);
@@ -135,7 +137,7 @@ fn only_subtrees_that_render_from_their_content_alone_are_kept(cx: &mut TestAppC
     };
     cx.update(|cx| {
         let mut boundaries = Boundaries::default();
-        boundaries.sync(None, &tree("x"), cx);
+        boundaries.sync(None, &Document::new(tree("x")), false, cx);
         // A field and a scroll view keep state of their own; `small` is too
         // small to be worth it. The root holds the field.
         let kept: Vec<&str> = ["root", "form", "list", "small", "card"]
@@ -144,9 +146,9 @@ fn only_subtrees_that_render_from_their_content_alone_are_kept(cx: &mut TestAppC
             .collect();
         assert_eq!(kept, ["card"]);
         let version = boundaries.get("card").map(|card| card.version);
-        boundaries.sync(Some(&tree("x")), &tree("x"), cx);
+        boundaries.sync(Some(&tree("x")), &Document::new(tree("x")), false, cx);
         assert_eq!(boundaries.get("card").map(|card| card.version), version);
-        boundaries.sync(Some(&tree("x")), &tree("y"), cx);
+        boundaries.sync(Some(&tree("x")), &Document::new(tree("y")), false, cx);
         assert_ne!(boundaries.get("card").map(|card| card.version), version);
     });
 }
@@ -162,7 +164,26 @@ fn a_subtree_whose_id_is_not_unique_is_not_kept(cx: &mut TestAppContext) {
     .expect("test tree must parse");
     cx.update(|cx| {
         let mut boundaries = Boundaries::default();
-        boundaries.sync(None, &tree, cx);
+        boundaries.sync(None, &Document::new(tree), false, cx);
         assert!(boundaries.get("card").is_none());
     });
+}
+
+#[gpui::test]
+fn a_patch_builds_only_the_subtrees_whose_generation_moved(cx: &mut TestAppContext) {
+    let (view, window) = open(cx, grid(8, 6, &[], &[]));
+    let patch = r##"{"patch":[{"op":"set","id":"card9","node":{"type":"view","props":{
+        "id":"card9","width":44,"padding":4,"gap":2,"borderWidth":1,"background":"#1e3a8a",
+        "onPress":true,"hoverBackground":"#27272a"}}}]}"##;
+    let ops = crate::patch::parse_patch(patch).expect("test patch parses");
+    window.update(|_, cx| {
+        view.update(cx, |view, cx| view.apply_patch(ops, cx))
+            .expect("the patch applies")
+    });
+    take_counts();
+    draw(window);
+    let (built, _) = take_counts();
+    assert!(built <= 3, "built {built}");
+    let patched = layout(&view, window);
+    assert_eq!(patched, drawn_whole(cx, grid(8, 6, &[], &[9])));
 }

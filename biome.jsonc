@@ -110,6 +110,7 @@
       "!**/.mirin",
       "!**/target",
       "!**/vendor",
+      "!forks",
       "!**/vendor/cef",
       "!**/dist",
       "!**/build",

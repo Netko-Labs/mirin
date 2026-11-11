@@ -22,6 +22,7 @@ use crate::access::Accessibility;
 use crate::events::{EventSender, NativeUiEvent};
 use crate::focus::FOCUS_MARKER;
 use crate::media::MetalAssets;
+use crate::patch::{Document, PatchError, PatchOp};
 use crate::sim::{self, LayoutMap, SimCommand};
 use crate::surface::Surface;
 use crate::titlebar::{Chrome, Controls, TitleBar};
@@ -85,8 +86,11 @@ pub fn run(
                 }
                 let (tree, placeholder) = match first.tree.take() {
                     Some(tree) => (tree, false),
-                    None => (initial_tree, true),
+                    None => (Document::new(initial_tree), true),
                 };
+                for reason in std::mem::take(&mut first.resyncs) {
+                    ask_resync(&events, reason);
+                }
                 let opened = cx
                     .update(|cx| {
                         open_window(
@@ -105,6 +109,7 @@ pub fn run(
                     return;
                 };
                 let mut drive = Drive::new(Some(window), events, None, access);
+                drive.desynced = first.desynced;
                 if !first.rest.is_empty() && !drive.turn(first.rest, cx).await {
                     return;
                 }
@@ -123,8 +128,12 @@ const FIRST_TREE_WAIT: Duration = Duration::from_millis(2000);
 /// not the host's dark stand-in followed by the app a moment later.
 #[derive(Default)]
 struct FirstTree {
-    /// The newest tree, to open on.
-    tree: Option<NodeSpec>,
+    /// The newest tree with the patches after it applied, to open on.
+    tree: Option<Document>,
+    /// A patch failed: later ones are dropped until a whole tree comes.
+    desynced: bool,
+    /// Why patches failed, for the driver once the window is up (`resync`).
+    resyncs: Vec<String>,
     /// The newest title, to open with.
     title: Option<String>,
     /// Everything else, in order, for the window once it is open.
@@ -134,7 +143,15 @@ struct FirstTree {
 impl FirstTree {
     fn take(&mut self, message: HostMessage) {
         match message {
-            HostMessage::Driver(DriverMessage::Tree(tree)) => self.tree = Some(*tree),
+            HostMessage::Driver(DriverMessage::Tree(tree)) => {
+                self.tree = Some(Document::new(*tree));
+                self.desynced = false;
+            }
+            HostMessage::Driver(DriverMessage::Patch(ops)) => {
+                if let Err(error) = patch_held(&mut self.tree, &mut self.desynced, ops) {
+                    self.resyncs.push(error.to_string());
+                }
+            }
             HostMessage::Driver(DriverMessage::Title(title)) => self.title = Some(title),
             other => self.rest.push(other),
         }
@@ -240,7 +257,7 @@ fn bridge<T: Send + 'static, M: Send + 'static>(
 fn open_window(
     cx: &mut App,
     options: &NativeUiOptions,
-    tree: NodeSpec,
+    tree: Document,
     placeholder: bool,
     events: mpsc::Sender<NativeUiEvent>,
     access: UnboundedSender<SimCommand>,
@@ -365,10 +382,94 @@ struct Resident {
     hiding: Rc<Cell<bool>>,
 }
 
+/// The tree updates of one turn: the newest whole tree, then the patches
+/// sent after it, in order (patches before a whole tree are moot).
+#[derive(Default)]
+struct Trees {
+    whole: Option<NodeSpec>,
+    patches: Vec<Vec<PatchOp>>,
+}
+
+impl Trees {
+    fn whole(&mut self, tree: NodeSpec) {
+        self.whole = Some(tree);
+        self.patches.clear();
+    }
+
+    fn patch(&mut self, ops: Vec<PatchOp>) {
+        self.patches.push(ops);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.whole.is_none() && self.patches.is_empty()
+    }
+
+    /// Apply to a window's tree (traced, for the benches); the errors of
+    /// the patches that failed. After one fails, the rest are dropped until
+    /// a whole tree comes.
+    fn apply(self, desynced: &mut bool, view: &mut RootView, cx: &mut App) -> Vec<PatchError> {
+        let mut failed = Vec::new();
+        if let Some(tree) = self.whole {
+            let started = std::time::Instant::now();
+            view.set_tree(tree, cx);
+            *desynced = false;
+            crate::trace::log(format_args!(
+                "tree applied in {:.2}ms",
+                started.elapsed().as_secs_f64() * 1000.0
+            ));
+        }
+        for ops in self.patches {
+            if *desynced {
+                crate::trace::log(format_args!("patch dropped: waiting for a whole tree"));
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let count = ops.len();
+            if let Err(error) = view.apply_patch(ops, cx) {
+                *desynced = true;
+                failed.push(error);
+            }
+            crate::trace::log(format_args!(
+                "patch applied ({count} ops) in {:.2}ms",
+                started.elapsed().as_secs_f64() * 1000.0
+            ));
+        }
+        failed
+    }
+}
+
+/// Apply a patch to a tree no window shows (before the first open, while
+/// hidden); none yet, or a failed patch earlier, is an error.
+fn patch_held(
+    held: &mut Option<Document>,
+    desynced: &mut bool,
+    ops: Vec<PatchOp>,
+) -> Result<(), PatchError> {
+    if *desynced {
+        return Ok(());
+    }
+    let applied = match held {
+        Some(tree) => tree.apply(ops).map(|_| ()),
+        None => Err(PatchError::new("a patch came before any tree")),
+    };
+    *desynced = applied.is_err();
+    applied
+}
+
+/// Ask the driver for the whole tree: a patch didn't apply (`reason`).
+fn ask_resync(events: &mpsc::Sender<NativeUiEvent>, reason: String) {
+    eprintln!("[mirin-metal-host] patch refused, asking for the whole tree: {reason}");
+    let _ = events.send(NativeUiEvent {
+        node_id: "root".into(),
+        kind: crate::events::EventKind::Resync { reason },
+        bounds: None,
+    });
+}
+
 /// The newest tree, title, size and unlock of one turn of messages.
 #[derive(Default)]
 struct Turn {
-    tree: Option<NodeSpec>,
+    trees: Trees,
     title: Option<String>,
     size: Option<(f32, f32)>,
     min_size: Option<(f32, f32)>,
@@ -382,7 +483,11 @@ struct Drive {
     /// Deferred hosts only: what opening and hiding need.
     resident: Option<Resident>,
     /// The newest tree while no window is shown, drawn by the next open.
-    held: Option<NodeSpec>,
+    held: Option<Document>,
+    /// A patch failed and the driver was asked for the whole tree: patches
+    /// are dropped until it comes (they would apply to a tree it doesn't
+    /// have).
+    desynced: bool,
     /// Simulated commands waiting for a later turn: a focus or press must
     /// land (and the driver's resulting tree arrive) before the commands
     /// after it, so at most one of those is performed per turn.
@@ -403,6 +508,7 @@ impl Drive {
             events,
             resident,
             held: None,
+            desynced: false,
             pending: VecDeque::new(),
             access,
         }
@@ -461,7 +567,8 @@ impl Drive {
         let mut turn = Turn::default();
         for message in batch {
             match message {
-                HostMessage::Driver(DriverMessage::Tree(tree)) => turn.tree = Some(*tree),
+                HostMessage::Driver(DriverMessage::Tree(tree)) => turn.trees.whole(*tree),
+                HostMessage::Driver(DriverMessage::Patch(ops)) => turn.trees.patch(ops),
                 HostMessage::Driver(DriverMessage::Sim(command)) => self.pending.push_back(command),
                 HostMessage::Driver(DriverMessage::Unlock) => turn.unlock = true,
                 HostMessage::Driver(DriverMessage::Title(title)) => turn.title = Some(title),
@@ -507,8 +614,15 @@ impl Drive {
         if self.window.is_some() {
             return;
         }
-        if let Some(tree) = turn.tree.take() {
-            self.held = Some(tree);
+        let trees = std::mem::take(&mut turn.trees);
+        if let Some(tree) = trees.whole {
+            self.held = Some(Document::new(tree));
+            self.desynced = false;
+        }
+        for ops in trees.patches {
+            if let Err(error) = patch_held(&mut self.held, &mut self.desynced, ops) {
+                ask_resync(&self.events, error.to_string());
+            }
         }
         turn.title = None;
         turn.size = None;
@@ -553,20 +667,19 @@ impl Drive {
                 break;
             }
         }
-        if turn.tree.is_none() && sims.is_empty() {
+        if turn.trees.is_empty() && sims.is_empty() {
             return true;
         }
         // Resolve while the view is leased; dispatch with only the window
         // leased, because keystrokes re-enter the view's listeners.
-        let tree = turn.tree;
+        let trees = turn.trees;
+        let desynced = &mut self.desynced;
         let resolved = window.update(cx, |view, window, cx| {
-            if let Some(tree) = tree {
-                let started = std::time::Instant::now();
-                view.set_tree(tree, cx);
-                crate::trace::log(format_args!(
-                    "tree applied in {:.2}ms",
-                    started.elapsed().as_secs_f64() * 1000.0
-                ));
+            if !trees.is_empty() {
+                let failed = trees.apply(desynced, view, cx);
+                for error in failed {
+                    ask_resync(&view.events.sender(), error.to_string());
+                }
                 view.apply_pending_focus(window);
                 cx.notify();
             }
@@ -605,7 +718,7 @@ impl Drive {
         }
         let (tree, placeholder) = match self.held.take() {
             Some(tree) => (tree, false),
-            None => ((resident.initial_for)(&options), true),
+            None => (Document::new((resident.initial_for)(&options)), true),
         };
         let events = self.events.clone();
         let opened = cx
@@ -640,7 +753,8 @@ impl Drive {
         let shown = window.update(cx, |view, window, _cx| {
             hiding.set(true);
             window.remove_window();
-            (*view.tree).clone()
+            // The window is gone; its tree (and the generations in it) is kept.
+            std::mem::replace(&mut view.tree, Document::new(NodeSpec::empty()))
         });
         match shown {
             Ok(tree) => self.held = Some(tree),
@@ -674,8 +788,10 @@ mod tests {
         first.take(tree("#ffffff"));
         first.take(HostMessage::Driver(DriverMessage::Title("Software".into())));
         assert_eq!(
-            first.tree,
-            parse_tree(r##"{"type":"view","props":{"background":"#ffffff"}}"##).ok()
+            first.tree.as_deref(),
+            parse_tree(r##"{"type":"view","props":{"background":"#ffffff"}}"##)
+                .ok()
+                .as_ref()
         );
         assert_eq!(first.title.as_deref(), Some("Software"));
         assert!(first.rest.is_empty());
@@ -695,5 +811,50 @@ mod tests {
                 HostMessage::Driver(DriverMessage::Unlock)
             ]
         ));
+    }
+
+    fn patch(json: &str) -> HostMessage {
+        HostMessage::Driver(DriverMessage::Patch(
+            crate::patch::parse_patch(json).expect("test patch parses"),
+        ))
+    }
+
+    fn background(first: &FirstTree) -> Option<String> {
+        match first.tree.as_deref() {
+            Some(crate::tree::NodeSpec::View { props, .. }) => props.background.clone(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn patches_before_the_window_opens_apply_until_one_fails() {
+        let mut first = FirstTree::default();
+        // A patch with no tree to apply to: the driver is asked for one.
+        first.take(patch(r#"{"patch":[{"op":"remove","id":"x"}]}"#));
+        assert_eq!(first.resyncs.len(), 1);
+        let whole = r##"{"type":"view","props":{"id":"1","background":"#000000"}}"##;
+        first.take(HostMessage::Driver(DriverMessage::Tree(Box::new(
+            parse_tree(whole).unwrap(),
+        ))));
+        assert!(!first.desynced);
+        let set = |color: &str| {
+            patch(&format!(
+                r#"{{"patch":[{{"op":"set","id":"1","node":{{"type":"view","props":{{"id":"1","background":"{color}"}}}}}}]}}"#
+            ))
+        };
+        first.take(set("#111111"));
+        assert_eq!(background(&first).as_deref(), Some("#111111"));
+        // One that fails changes nothing, and the ones after it are dropped
+        // until a whole tree comes.
+        first.take(patch(r#"{"patch":[{"op":"remove","id":"nope"}]}"#));
+        assert_eq!(first.resyncs.len(), 2);
+        first.take(set("#222222"));
+        assert_eq!(background(&first).as_deref(), Some("#111111"));
+        first.take(HostMessage::Driver(DriverMessage::Tree(Box::new(
+            parse_tree(whole).unwrap(),
+        ))));
+        first.take(set("#333333"));
+        assert_eq!(background(&first).as_deref(), Some("#333333"));
+        assert_eq!(first.resyncs.len(), 2);
     }
 }

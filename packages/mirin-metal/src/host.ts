@@ -57,6 +57,18 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       return nodeId === "root" && typeof record.visible === "boolean"
         ? { type: "visibility", nodeId: "root", visible: record.visible }
         : null;
+    case "protocol":
+      return nodeId === "root" && typeof record.patches === "number"
+        ? { type: "protocol", nodeId: "root", patches: record.patches }
+        : null;
+    case "resync":
+      return nodeId === "root"
+        ? {
+            type: "resync",
+            nodeId: "root",
+            reason: typeof record.value === "string" ? record.value : "",
+          }
+        : null;
     case "typing":
       return nodeId === "root" && typeof record.typing === "boolean"
         ? { type: "typing", nodeId: "root", typing: record.typing }

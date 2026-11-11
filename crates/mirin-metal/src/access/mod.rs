@@ -2,9 +2,9 @@
 //! window. Built from the element tree and the renderer's own state
 //! (`tree.rs`), published over AT-SPI on Linux through AccessKit
 //! (`linux.rs`), and nowhere yet on other platforms. A screen reader's
-//! "press", or its "focus" on a field, comes back as a simulated click on
-//! that element (`sim.rs`), so it does exactly what the person's click does;
-//! focusing a button never presses it.
+//! "press" comes back as a simulated click on that element (`sim.rs`), so it
+//! does exactly what the person's click does; its "focus" gives the element
+//! the keyboard (`{"kind":"focus"}`) and never presses it.
 //!
 //! On by default; `MIRIN_METAL_ACCESSIBLE=0` turns it off. A driver checks
 //! the host binary for `ACCESSIBLE_MARKER` before it sends `access` props:
@@ -18,7 +18,6 @@
 mod linux;
 mod tree;
 
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use accesskit::{Action, NodeId, Rect};
@@ -55,9 +54,11 @@ pub(crate) struct Focused {
 }
 
 /// What the tree was last built from; the same again builds nothing. The
-/// tree is held, so a new one can't take its place in memory unnoticed.
+/// tree is known by its generation (`patch::Document`), which every whole
+/// tree and every patch changes; holding the tree itself would make every
+/// patch copy it.
 struct Built {
-    tree: Rc<NodeSpec>,
+    generation: u64,
     /// The layout's revision: bounds that moved (a resize, a scroll) with the
     /// same tree still need publishing.
     layout: u64,
@@ -68,7 +69,7 @@ struct Built {
 
 impl Built {
     fn same(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.tree, &other.tree)
+        self.generation == other.generation
             && self.layout == other.layout
             && self.focused == other.focused
             && self.window_active == other.window_active
@@ -97,16 +98,18 @@ impl Accessibility {
         let press = {
             let targets = Arc::clone(&targets);
             move |action: Action, node: NodeId| {
-                let id = targets
-                    .lock()
-                    .ok()
-                    .and_then(|targets| targets.element_for(action, node).map(str::to_owned));
-                if let Some(id) = id {
-                    act(SimCommand::Click {
-                        id: Some(id),
-                        x: None,
-                        y: None,
-                    });
+                let command = targets.lock().ok().and_then(|targets| {
+                    targets.request(action, node).map(|request| match request {
+                        tree::Request::Click(id) => SimCommand::Click {
+                            id: Some(id.to_owned()),
+                            x: None,
+                            y: None,
+                        },
+                        tree::Request::Focus(id) => SimCommand::Focus { id: id.to_owned() },
+                    })
+                });
+                if let Some(command) = command {
+                    act(command);
                 }
             }
         };
@@ -138,13 +141,14 @@ impl Accessibility {
     /// unless nothing it is built from changed since the last time.
     pub(crate) fn refresh(
         &mut self,
-        tree: &Rc<NodeSpec>,
+        tree: &NodeSpec,
+        generation: u64,
         layout: &LayoutMap,
         focused: Option<Focused>,
         window_active: bool,
     ) {
         let now = Built {
-            tree: Rc::clone(tree),
+            generation,
             layout: layout.revision(),
             focused,
             window_active,

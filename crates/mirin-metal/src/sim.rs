@@ -72,6 +72,9 @@ pub enum SimCommand {
     /// Scroll the scrollable node `id` down by `dy` pixels (negative scrolls
     /// up), clamped to its content, as a wheel turn over it would.
     Scroll { id: String, dy: f32 },
+    /// Give the keyboard to field or `focusable` view `id`, pressing nothing
+    /// (a screen reader's focus).
+    Focus { id: String },
 }
 
 fn half() -> f32 {
@@ -449,6 +452,17 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
                 None
             }
         },
+        SimCommand::Focus { id } => {
+            let handle = match view.inputs.get(id) {
+                Some(state) => Some(&state.focus),
+                None => view.focus.handle(id),
+            };
+            let Some(handle) = handle else {
+                eprintln!("[mirin-metal] sim focus: no field or focusable view with id {id:?}");
+                return None;
+            };
+            Some(SimAction::Focus(handle.clone()))
+        }
         SimCommand::Scroll { id, dy } => {
             if let Some(list) = view.lists.get(id) {
                 return Some(SimAction::Scroll(
@@ -625,5 +639,16 @@ mod layout_tests {
         // Frame 4: the row is gone.
         layout.begin_frame();
         assert!(layout.node("card").is_none());
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::SimCommand;
+
+    #[test]
+    fn a_focus_names_its_element() {
+        let command: SimCommand = serde_json::from_str(r#"{"kind":"focus","id":"save"}"#).unwrap();
+        assert_eq!(command, SimCommand::Focus { id: "save".into() });
     }
 }

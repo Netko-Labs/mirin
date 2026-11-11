@@ -30,8 +30,8 @@ struct Actions<F>(F);
 
 impl<F: Fn(Action, NodeId) + Send> ActionHandler for Actions<F> {
     fn do_action(&mut self, request: ActionRequest) {
-        // A press, or moving the keyboard to a field; the targets decide
-        // which nodes each one clicks (`tree::Targets::element_for`).
+        // A press, or moving the keyboard; the targets decide what each one
+        // does to which node (`tree::Targets::request`).
         if matches!(request.action, Action::Click | Action::Focus) {
             (self.0)(request.action, request.target_node);
         }

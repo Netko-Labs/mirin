@@ -2,46 +2,50 @@
 
 import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
 
-export interface ViewInstance {
+/** What every host instance has: its identity, where it is, and its last head sent. */
+interface InstanceBase {
+  /** Stable per-mount identity; keys events across the boundary. */
+  id: number;
+  children: HostNode[];
+  /** The instance or container it is attached to; null while detached. */
+  parent: HostParent | null;
+  /** Its head (`lib/serialize.ts`) as a patching host last got it. */
+  wire?: string;
+}
+
+export interface ViewInstance extends InstanceBase {
   kind: "view";
-  /** Stable per-mount identity; keys press handlers across the boundary. */
-  id: number;
   props: ViewProps;
-  children: HostNode[];
 }
 
-export interface TextInstance {
+export interface TextInstance extends InstanceBase {
   kind: "text";
-  id: number;
   props: TextProps;
-  children: HostNode[];
 }
 
-export interface InputInstance {
+export interface InputInstance extends InstanceBase {
   kind: "input";
-  id: number;
   props: TextInputProps;
-  children: HostNode[];
 }
 
 /** A raw string/number child, e.g. the text inside `<Text>`. */
 export interface RawTextInstance {
   kind: "raw";
   text: string;
+  /** Its id as a text node of its own, when placed directly in a view ("r1", "r2", …). */
+  key: string;
+  parent: HostParent | null;
+  wire?: string;
 }
 
-export interface SvgInstance {
+export interface SvgInstance extends InstanceBase {
   kind: "svg";
-  id: number;
   props: SvgProps;
-  children: HostNode[];
 }
 
-export interface ImageInstance {
+export interface ImageInstance extends InstanceBase {
   kind: "image";
-  id: number;
   props: ImageProps;
-  children: HostNode[];
 }
 
 export type HostInstance =
@@ -51,8 +55,11 @@ export type HostInstance =
   | SvgInstance
   | ImageInstance;
 export type HostNode = HostInstance | RawTextInstance;
+/** What a node is attached to: another instance, or a root's container (a portal's target is an instance). */
+export type HostParent = HostInstance | Container;
 
 export interface Container {
+  kind: "root";
   children: HostNode[];
   /** Invoked after each commit; the renderer serializes and sends from here. */
   onCommit: () => void;

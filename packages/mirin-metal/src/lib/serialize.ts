@@ -1,31 +1,22 @@
 /**
- * Committed instance tree → the JSON element tree the native renderer
- * understands (crates/mirin-metal `tree.rs`), plus the handler maps keyed by
- * the node ids stamped into that tree.
+ * One committed host node → its node in the JSON element tree the native
+ * renderer understands (crates/mirin-metal `tree.rs`), without its children:
+ * the "head" a whole tree is assembled from and a patch sets
+ * (`lib/tree-sync.ts`). Events come back keyed by the ids stamped here.
  */
 
 import type {
   AccessibilityProps,
-  Bounds,
   Color,
   Dimension,
-  DropInfo,
   GridPlacement,
   GridTrack,
-  KeyDownInfo,
   LineNumbers,
-  Modifiers,
-  PointerInfo,
-  PressInfo,
-  RunPressInfo,
   TextHighlight,
   TextInputStyle,
   TextRun,
-  TextSelection,
   TextStyle,
   ViewStyle,
-  WheelInfo,
-  WindowKeyInfo,
 } from "../types.ts";
 import type {
   HostInstance,
@@ -129,6 +120,8 @@ interface ViewNodeProps {
 }
 
 interface TextNodeProps {
+  /** Only to address the node in a patch; sent to a patching host only. */
+  id?: string;
   color?: Color;
   size?: number;
   weight?: "normal" | "medium" | "semibold" | "bold";
@@ -198,7 +191,7 @@ interface InputNodeProps {
   focusNextOnSubmit?: boolean;
   submitOnEnter?: boolean;
   onKey?: boolean;
-  selection?: TextSelection;
+  selection?: { start: number; end: number };
   onSelection?: boolean;
   selectionColor?: Color;
   runs?: InputRunProps[];
@@ -210,7 +203,6 @@ interface InputNodeProps {
 interface ViewNode {
   type: "view";
   props: ViewNodeProps;
-  children: TreeNode[];
 }
 
 interface TextNode {
@@ -227,6 +219,7 @@ interface InputNode {
 interface SvgNode {
   type: "svg";
   props: {
+    id?: string;
     markup: string;
     size?: number;
     width?: number;
@@ -239,6 +232,7 @@ interface SvgNode {
 interface ImageNode {
   type: "image";
   props: {
+    id?: string;
     src: string;
     width?: number;
     height?: number;
@@ -250,32 +244,6 @@ interface ImageNode {
 }
 
 type TreeNode = ViewNode | TextNode | InputNode | SvgNode | ImageNode;
-
-export interface Handlers {
-  press: Map<string, (event: PressInfo) => void>;
-  hover: Map<string, (hovered: boolean, bounds?: Bounds) => void>;
-  pointer: Map<string, (event: PointerInfo) => void>;
-  contextMenu: Map<string, (event: { x: number; y: number; modifiers: Modifiers }) => void>;
-  keyDown: Map<string, (event: KeyDownInfo) => void>;
-  windowKey: Map<string, (event: WindowKeyInfo) => void>;
-  wheel: Map<string, (event: WheelInfo) => void>;
-  drop: Map<string, (event: DropInfo) => void>;
-  layout: Map<string, (bounds: Bounds) => void>;
-  change: Map<string, (text: string) => void>;
-  submit: Map<string, (text: string) => void>;
-  key: Map<string, (key: "Escape" | "ArrowUp" | "ArrowDown") => void>;
-  selection: Map<string, (selection: TextSelection) => void>;
-  runPress: Map<string, (event: RunPressInfo) => void>;
-  /** The value and revision of each field with `onSelectionChange`, by node id (render.ts keeps what its host holds). */
-  fields: Map<string, { value: string; revision: number | undefined }>;
-  /** `testID` → native node id, for checks and tools. */
-  testIds: Map<string, string>;
-}
-
-export interface SerializedUi {
-  treeJson: string;
-  handlers: Handlers;
-}
 
 const ALIGN: Record<NonNullable<ViewStyle["alignItems"]>, ViewNodeProps["align"]> = {
   "flex-start": "start",
@@ -301,54 +269,57 @@ const WEIGHT: Record<NonNullable<TextStyle["fontWeight"]>, TextNodeProps["weight
   bold: "bold",
 };
 
-/** Serialize the committed root, or null when nothing is mounted. */
-export function serializeRoot(children: HostNode[]): SerializedUi | null {
-  const root = children.find((child): child is HostInstance => child.kind !== "raw");
-  if (!root) {
-    return null;
-  }
-  const handlers: Handlers = {
-    press: new Map(),
-    hover: new Map(),
-    pointer: new Map(),
-    contextMenu: new Map(),
-    keyDown: new Map(),
-    windowKey: new Map(),
-    wheel: new Map(),
-    drop: new Map(),
-    layout: new Map(),
-    change: new Map(),
-    submit: new Map(),
-    key: new Map(),
-    selection: new Map(),
-    runPress: new Map(),
-    fields: new Map(),
-    testIds: new Map(),
-  };
-  const tree = serializeInstance(root, handlers);
-  // The root has no flex parent to grow into; it always fills the window.
-  if (tree.type === "view") tree.props.fill = true;
-  return { treeJson: JSON.stringify(tree), handlers };
+/** How heads are written: with an `id` on every node (a patching host), and as the root (which always fills the window). */
+export interface HeadOptions {
+  ids: boolean;
+  root: boolean;
 }
 
-function serializeInstance(instance: HostInstance, handlers: Handlers): TreeNode {
-  switch (instance.kind) {
-    case "view":
-      return serializeView(instance, handlers);
+/**
+ * The node's JSON without its children: a view's `{"type":"view","props":…}`
+ * (its children are other nodes), every other node whole. A string placed
+ * directly in a view is a text node in the view's `textStyle`.
+ */
+export function headJson(
+  node: HostNode,
+  parent: HostInstance | null,
+  options: HeadOptions,
+): string {
+  return JSON.stringify(head(node, parent, options));
+}
+
+function head(node: HostNode, parent: HostInstance | null, options: HeadOptions): TreeNode {
+  const id = options.ids ? nodeKey(node) : undefined;
+  switch (node.kind) {
+    case "raw": {
+      const style = parent?.kind === "view" ? (parent.props.textStyle ?? {}) : {};
+      return textNode(style, undefined, [node.text], id);
+    }
+    case "view": {
+      const props = viewProps(node);
+      // The root has no flex parent to grow into; it always fills the window.
+      if (options.root) props.fill = true;
+      return { type: "view", props } as ViewNode;
+    }
     case "text":
-      return serializeText(instance);
+      return serializeText(node, id);
     case "input":
-      return serializeInput(instance, handlers);
+      return { type: "input", props: inputProps(node) };
     case "svg":
-      return serializeSvg(instance);
+      return serializeSvg(node, id);
     case "image":
-      return serializeImage(instance);
+      return serializeImage(node, id);
   }
 }
 
-function serializeSvg(instance: SvgInstance): SvgNode {
+/** The id a node has in the tree: a host instance's number, a string's own. */
+export function nodeKey(node: HostNode): string {
+  return node.kind === "raw" ? node.key : String(node.id);
+}
+
+function serializeSvg(instance: SvgInstance, id: string | undefined): SvgNode {
   const { markup, size, width, height, color, opacity } = instance.props;
-  const props: SvgNode["props"] = { markup };
+  const props: SvgNode["props"] = id === undefined ? { markup } : { id, markup };
   if (size !== undefined) props.size = size;
   if (width !== undefined) props.width = width;
   if (height !== undefined) props.height = height;
@@ -357,9 +328,9 @@ function serializeSvg(instance: SvgInstance): SvgNode {
   return { type: "svg", props };
 }
 
-function serializeImage(instance: ImageInstance): ImageNode {
+function serializeImage(instance: ImageInstance, id: string | undefined): ImageNode {
   const { source, resizeMode, style = {} } = instance.props;
-  const props: ImageNode["props"] = { src: source };
+  const props: ImageNode["props"] = id === undefined ? { src: source } : { id, src: source };
   if (style.width !== undefined) props.width = style.width;
   if (style.height !== undefined) props.height = style.height;
   if ((style.flex ?? 0) >= 1) props.fill = true;
@@ -397,7 +368,7 @@ function dimension(value: Dimension | undefined): { px?: number; fraction?: numb
   return Number.isFinite(percent) ? { fraction: percent / 100 } : {};
 }
 
-function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
+function viewProps(instance: ViewInstance): ViewNodeProps {
   const style = instance.props.style ?? {};
   const props: ViewNodeProps = { id: String(instance.id) };
   if (style.flexDirection) props.direction = style.flexDirection;
@@ -479,7 +450,6 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
     selectsOnFocus,
     focusTrap,
     onWindowKeyDown,
-    testID,
   } = instance.props;
   if (focusable) props.focusable = true;
   if (focusGroup) props.focusGroup = true;
@@ -487,11 +457,9 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (focusTrap) props.focusTrap = true;
   if (onWindowKeyDown) {
     props.onWindowKey = true;
-    handlers.windowKey.set(String(instance.id), onWindowKeyDown);
   }
   if (onLayout) {
     props.onLayout = true;
-    handlers.layout.set(String(instance.id), onLayout);
   }
   if (occlude) props.occlude = true;
   if (dragRegion) props.dragRegion = true;
@@ -509,19 +477,15 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   if (style.rowGap !== undefined) props.gapY = style.rowGap;
   if (onPointer) {
     props.onPointer = true;
-    handlers.pointer.set(String(instance.id), onPointer);
   }
   if (onContextMenu) {
     props.onContextMenu = true;
-    handlers.contextMenu.set(String(instance.id), onContextMenu);
   }
   if (onKeyDown) {
     props.onKeyDown = true;
-    handlers.keyDown.set(String(instance.id), onKeyDown);
   }
   if (onWheel) {
     props.onWheel = true;
-    handlers.wheel.set(String(instance.id), onWheel);
   }
   if (dragFiles && dragFiles.paths.length > 0) {
     props.dragFiles = {
@@ -532,43 +496,33 @@ function serializeView(instance: ViewInstance, handlers: Handlers): ViewNode {
   }
   if (onDrop) {
     props.onDrop = true;
-    handlers.drop.set(String(instance.id), onDrop);
   }
   if (onPress) {
     props.onPress = true;
-    handlers.press.set(String(instance.id), onPress);
   }
   if (onHoverChange) {
     props.onHover = true;
-    handlers.hover.set(String(instance.id), onHoverChange);
   }
-  if (testID) handlers.testIds.set(testID, String(instance.id));
   const access = accessOf(instance.props);
   if (access) props.access = access;
 
-  // A string directly in a view (a component returned it) renders as text in
-  // the view's `textStyle` instead of being dropped.
-  const children = instance.children.map((child) =>
-    child.kind === "raw"
-      ? textNode(instance.props.textStyle ?? {}, undefined, [child.text])
-      : serializeInstance(child, handlers),
-  );
-  return { type: "view", props, children };
+  return props;
 }
 
-function serializeText(instance: TextInstance): TextNode {
+function serializeText(instance: TextInstance, id: string | undefined): TextNode {
   const children = instance.children
     .filter((child): child is RawTextInstance => child.kind === "raw")
     .map((child) => child.text);
-  return textNode(instance.props.style ?? {}, instance.props.numberOfLines, children);
+  return textNode(instance.props.style ?? {}, instance.props.numberOfLines, children, id);
 }
 
 function textNode(
   style: TextStyle,
   numberOfLines: number | undefined,
   children: string[],
+  id: string | undefined,
 ): TextNode {
-  const props: TextNodeProps = {};
+  const props: TextNodeProps = id === undefined ? {} : { id };
   if (style.color) props.color = style.color;
   if (style.fontSize !== undefined) props.size = style.fontSize;
   if (style.fontWeight && style.fontWeight !== "normal") props.weight = WEIGHT[style.fontWeight];
@@ -616,7 +570,7 @@ function offset(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
-function serializeInput(instance: InputInstance, handlers: Handlers): InputNode {
+function inputProps(instance: InputInstance): InputNodeProps {
   const id = String(instance.id);
   const { props: input } = instance;
   const style: TextInputStyle = input.style ?? {};
@@ -641,30 +595,16 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (style.minHeight !== undefined) props.minHeight = style.minHeight;
   if (style.flex !== undefined) props.flex = style.flex;
   if (style.textAlign === "right" && !input.multiline) props.align = "right";
-  if (input.onChangeText) {
-    props.onChange = true;
-    handlers.change.set(id, input.onChangeText);
-  }
-  if (input.onSubmitEditing) {
-    props.onSubmit = true;
-    handlers.submit.set(id, input.onSubmitEditing);
-  }
+  if (input.onChangeText) props.onChange = true;
+  if (input.onSubmitEditing) props.onSubmit = true;
   if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
   if (input.multiline && input.submitBehavior === "submit") props.submitOnEnter = true;
-  if (input.onKeyPress) {
-    props.onKey = true;
-    handlers.key.set(id, input.onKeyPress);
-  }
+  if (input.onKeyPress) props.onKey = true;
   if (input.selection)
     props.selection = { start: offset(input.selection.start), end: offset(input.selection.end) };
-  if (input.onSelectionChange) {
-    props.onSelection = true;
-    handlers.selection.set(id, input.onSelectionChange);
-    handlers.fields.set(id, { value: input.value, revision: input.valueRevision });
-  }
+  if (input.onSelectionChange) props.onSelection = true;
   if (input.selectionColor) props.selectionColor = input.selectionColor;
   if (input.runs && input.runs.length > 0) props.runs = input.runs.map(serializeRun);
-  if (input.onRunPress) handlers.runPress.set(id, input.onRunPress);
   if (input.highlights && input.highlights.length > 0)
     props.highlights = input.highlights.map(({ start, end, color }) => ({
       start: offset(start),
@@ -676,8 +616,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
       width: Math.max(0, input.lineNumbers.width),
       color: input.lineNumbers.color,
     };
-  if (input.testID) handlers.testIds.set(input.testID, id);
   const access = accessOf(input);
   if (access) props.access = access;
-  return { type: "input", props };
+  return props;
 }
