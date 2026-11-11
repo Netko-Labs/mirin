@@ -123,15 +123,15 @@ Build the host and run a demo:
 
 ```bash
 cd crates/mirin-metal && cargo build --release --bin mirin-metal-host
-cd ../../packages/mirin-metal && bun demo/counter.tsx
+cd ../../packages/mirin-metal \
+  && bun demo/counter.tsx ../../crates/mirin-metal/target/release/mirin-metal-host
 ```
 
 On Fedora the build needs `libxkbcommon-devel libxkbcommon-x11-devel
 wayland-devel vulkan-loader-devel fontconfig-devel freetype-devel libxcb-devel`
 (Ubuntu: the `-dev` equivalents, see the `metal` job in `.github/workflows/ci.yml`).
 
-Metal is the app platform of Dashi, a Linux
-desktop: its shell (menu bar, dock, launcher, lock screen) and its apps are
+Metal is the app platform of Dashi, a Linux desktop: its shell (menu bar, dock, launcher, lock screen) and its apps are
 React on `@mirinjs/metal` and `@mirinjs/metal-ui`, each drawn by a
 `mirin-metal-host` process. See [docs/metal.md](docs/metal.md) for the element
 tree, the process model, platform findings and milestones.
