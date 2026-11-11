@@ -624,6 +624,9 @@ export type SimCommand =
   | { kind: "drag"; id: string; fromX?: number; fromY?: number; toX?: number; toY?: number }
   | { kind: "contextmenu"; id: string }
   | { kind: "hover"; id: string; hovered: boolean }
+  /** Move the pointer to node `id`'s centre (or `x`, `y`) as a real pointer would: hover styles respond. */
+  | { kind: "move"; id: string }
+  | { kind: "move"; x: number; y: number }
   /** Scroll a scrollable node down by `dy` px (negative scrolls up). */
   | { kind: "scroll"; id: string; dy: number }
   | { kind: "window"; action: "zoom" | "minimize" };

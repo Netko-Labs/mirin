@@ -5,13 +5,13 @@
  * cost as trees grow, which the example-browser bench (`metal-ui`'s
  * `bench/native.tsx`, ~900 nodes) is too small to show.
  *
- *   bun bench/stress.tsx [host-binary] [--rows=100] [--cols=25] [--visible] [--json]
+ *   bun bench/stress.tsx [host-binary] [--rows=100] [--cols=25] [--visible] [--json] [--trace=<path>]
  *
  * Scenarios, each timed from the driver's action to the host's next painted
  * frame (`MIRIN_METAL_TRACE` log):
  * - select: click a card, which toggles its highlight (one node's style).
  * - type: keystrokes into a field above the grid (one text node).
- * - hover: hover a card on and off (`hoverBackgroundColor`, renderer-side only).
+ * - hover: move the pointer onto a card and off (`hoverBackgroundColor`, renderer-side only).
  * - idle: host CPU while nothing changes, and resident memory.
  *
  * Runs in an off-screen compositor unless `--visible` (see `startHeadlessDisplay`).
@@ -33,7 +33,7 @@ const args = Bun.argv.slice(2);
 const option = (name: string, fallback: number): number =>
   Number(args.find((arg) => arg.startsWith(`--${name}=`))?.split("=")[1] ?? fallback);
 const binary =
-  args.find((arg) => arg.includes("/")) ??
+  args.find((arg) => !arg.startsWith("--") && arg.includes("/")) ??
   [`${target}release/mirin-metal-host`, `${target}debug/mirin-metal-host`].find(existsSync) ??
   "";
 const rows = option("rows", 100);
@@ -193,7 +193,10 @@ const hover: Sample[] = [];
 for (let index = 0; index < 20; index += 1) {
   const id = cardId((index * 53) % visible);
   const on = index % 2 === 0;
-  const sample = await measure(() => transport.simulate({ kind: "hover", id, hovered: on }));
+  // A real pointer move (sim `move`): onto the card, then off the grid.
+  const sample = await measure(() =>
+    transport.simulate(on ? { kind: "move", id } : { kind: "move", x: 2, y: 2 }),
+  );
   if (sample) hover.push(sample);
 }
 
@@ -211,6 +214,12 @@ await Bun.sleep(3000);
 const idleCpuMs = ((ticks() - idleFrom) * 1000) / 100;
 const idleFrames = rendersAfter(idleFramesFrom).length;
 const memory = rss();
+
+// `--trace=<path>`: the host's whole trace log, for a closer look at a run.
+const tracePath = args.find((arg) => arg.startsWith("--trace="))?.slice("--trace=".length);
+if (tracePath) {
+  await Bun.write(tracePath, trace.map((line) => `${line.at} ${line.message}`).join("\n"));
+}
 
 root.unmount();
 transport.close();
