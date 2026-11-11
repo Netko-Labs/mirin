@@ -6,6 +6,10 @@
 //!
 //! Row heights stay cached across tree updates; `sync` compares each list's
 //! old and new children and invalidates only the rows that changed.
+//!
+//! The rows are drawn in a group of the layout map (`layout.rs`), the
+//! list's content, whose top left is where the list paints it: a scroll
+//! moves that group alone, as it does a scroll view's content.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -247,11 +251,18 @@ pub(crate) fn render_list(
     let spacing = entry.spacing;
     let layout = view.layout.clone();
     let events = view.events.clone();
+    // The rows are a group of the layout map, as a scroll view's content
+    // is (`layout/scroll.rs`): its top left is where the list's content is
+    // painted, so a scroll moves the group and no row.
+    let group = crate::layout::scroll_group(id);
+    let around = view.group;
     let render_row = cx.processor(move |view: &mut RootView, index: usize, window, cx| {
         let Some(node) = rows.get(index) else {
             return div().into_any_element();
         };
+        let outer = view.group.replace(group);
         let element = render_node(node, view, window, cx);
+        view.group = outer;
         // GPUI's list applies only vertical padding; horizontal padding goes
         // on each row.
         let mut row = div()
@@ -269,7 +280,7 @@ pub(crate) fn render_list(
             let (layout, events) = (layout.clone(), events.clone());
             row = row.on_children_prepainted(move |bounds, _window, _cx| {
                 if let Some(bounds) = bounds.first() {
-                    record_child_bounds(&layout, &events, &id, watch, *bounds, None);
+                    record_child_bounds(&layout, &events, &id, watch, *bounds, Some(group));
                 }
             });
         }
@@ -277,7 +288,11 @@ pub(crate) fn render_list(
     });
     container.style().padding = Default::default();
     let state = entry.state.clone();
+    let layout = view.layout.clone();
     let rows_element = list(state.clone(), render_row)
+        .on_content_origin(move |origin, _window, _cx| {
+            layout.touch_group(group, around, origin, true);
+        })
         .size_full()
         .pt(px(spacing.top))
         .pb(px(spacing.bottom));
