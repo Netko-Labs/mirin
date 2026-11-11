@@ -2554,6 +2554,12 @@ impl ContentMask<Pixels> {
 
 impl Window {
     fn mark_view_dirty(&mut self, view_id: EntityId) {
+        // mirin: the view itself is dirty even when the dispatch node it was
+        // set on names another: sibling views set on one node (retained
+        // subtrees, `elements::retained`, each set on their parent's) leave it
+        // the last one's, and the path from it would skip this view.
+        let notified = view_id;
+        self.dirty_views.insert(notified);
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
         for view_id in self
@@ -2561,6 +2567,9 @@ impl Window {
             .dispatch_tree
             .view_path_reversed(view_id)
         {
+            if view_id == notified {
+                continue;
+            }
             if !self.dirty_views.insert(view_id) {
                 break;
             }
