@@ -8,6 +8,7 @@
 //! path is handed back to CEF on the UI thread.
 
 use cef::*;
+#[cfg(target_os = "linux")]
 use std::cell::RefCell;
 
 #[cfg(target_os = "linux")]
