@@ -931,6 +931,20 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   card's text. A subtree that moves (scrolled, or below one that grew) is
   built again rather than its drawing offset.
 
+- Measuring (2026-11-10): headless Weston has no `wl_seat` (GPUI's Wayland
+  client requires one) and headless dashi-comp loses the Vulkan surface, so
+  without KWin the benches run with `--visible` inside a nested compositor:
+  `dashi-comp --backend winit --no-xwayland -c "bun bench/stress.tsx <host> --visible"`
+  (with `DASHI_COMP_SOCKET` set when a session's dashi-comp is running). Read
+  `frame`, `parse` and `apply` there; `total` (input → painted frame) also
+  waits for the compositor's next frame callback, and a dashi-comp that sends
+  a window's `wl_callback.done` only once a second (seen with
+  `WAYLAND_DEBUG=1`: done timestamps exactly 1000 ms apart) makes it 200–400 ms
+  for any host. The host waits for that callback by design (section 4). With
+  patches and retained subtrees together, a select on the stress bench is
+  ~1 ms of driver, ~0.7 ms of apply and ~4.5 ms of frame, where it was ~12,
+  ~12 and ~150 ms.
+
 Open: React work per update (the demo re-renders its whole list on select),
 retained subtrees inside scroll views (moved, so drawn again each scrolled
 frame; their drawings could be offset instead), and the accessibility tree,
