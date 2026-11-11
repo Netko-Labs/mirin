@@ -437,7 +437,13 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
 - **Trace.** With `MIRIN_METAL_TRACE=1` the host logs `line parsed (N KB)
   in Xms` for every line, then `tree applied in Xms` for a whole tree or
   `patch applied (N ops) in Xms` for a patch (`bench/stress.tsx` reads
-  both).
+  both). Every frame logs `render WxH took Xms, frame Xms, retained
+  subtrees N built, N redrawn (N apart), N reused, N moved, N skipped`
+  (section 5b says what each is), and with `MIRIN_METAL_TRACE_SCENE=1` also
+  `scene <digest>`: a digest of the frame's primitives and hitboxes, for
+  comparing what two hosts drew (`bench/layout-check.tsx --scene`). Any
+  other value is a file each frame's primitives and hitboxes are appended
+  to as well, under a `frame <digest>` line, for finding what differs.
 - **Driver side.** The host config logs each mutation React makes
   (`appendChild`, `insertBefore`, `removeChild`, the portal container's
   own) and each node whose props or text changed (`lib/commit-log.ts`; a
@@ -833,7 +839,10 @@ in an off-screen virtual compositor (`startHeadlessDisplay()`, which runs
 examples and scrolls the example list through the simulation channel, and
 splits each click into driver, transport, and frame stages from the host's
 `MIRIN_METAL_TRACE=1` log. For CPU profiles, build the host with
-`--features profiling` and set `MIRIN_METAL_PROFILE=<path>` (folded stacks).
+`--features profiling` and set `MIRIN_METAL_PROFILE=<path>` (folded stacks;
+`MIRIN_METAL_PROFILE_SECS` long, after `MIRIN_METAL_PROFILE_AFTER` seconds,
+to leave the first frames out; `bench/stress.tsx --only=scroll` runs one
+scenario).
 
 Findings and fixes (2026-10-29, release host, 866-node tree, medians):
 
@@ -968,7 +977,87 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   scene and re-inserting their bounds for draw order (~15–20%); taffy's
   pass over the spine and the changed row (~19%); reshaping the rebuilt
   card's text. A subtree that moves (scrolled, or below one that grew) is
-  built again rather than its drawing offset.
+  built again rather than its drawing offset. (All but the first are the
+  next entry's; the accessibility tree has its own.)
+
+- Moved and unseen subtrees (2026-11-11; release host, `bench/stress.tsx`,
+  medians of two runs each of the host before (`retained` above) and this
+  one, back to back on a nested dashi-comp). A retained subtree that landed
+  anywhere but where it was drawn was built, laid out and drawn again with
+  everything inside it, so a frame that moved content cost what it did
+  without retention: a scroll view scrolled one wheel step, or a banner
+  above the grid growing, drew all 15k nodes. And rows out of view were
+  copied every frame. Now each kept subtree is drawn the cheapest way that
+  gives what drawing it anew would (the trace counts them):
+
+  - *reused*: where it was, under the same clip: last frame's drawing is
+    copied, as before;
+  - *moved*: somewhere else, laid out inside as it was: the same drawing is
+    copied there, each hitbox and primitive under the content mask it has
+    there (the frame keeps every mask as it was pushed, so the masks inside
+    the subtree move with it and are clipped again by the ones around it);
+  - *skipped*: nothing of it shows (a row scrolled out, or below the fold
+    of an `overflow: hidden` box): it is not drawn at all, and its nodes'
+    bounds are still reported, moved with it (`sim::LayoutMap`);
+  - *redrawn*: its elements are built again for the layout nodes it kept
+    (no layout runs), and the subtrees inside it are each reused, moved,
+    skipped or redrawn in turn. A scroll view's content is redrawn at its
+    own level every scrolled frame (its rows come and go), which costs its
+    own nodes, not its rows'. *apart* counts the ones that could not be
+    built onto their nodes and were laid out again as a detached copy, as
+    before: elements that differ from one build to the next, and subtrees
+    one of whose texts taffy measured again since they were built (what
+    the text then holds depends on taffy's cache, not on the layout);
+  - *built*: its content changed, or it was notified.
+
+  A drawing is moved only when the copy is exactly what drawing it there
+  gives (`forks/gpui/MIRIN.md` has the list): by whole device pixels at a
+  scale factor of 1, 2 or 4, not sideways when it holds text, not under the
+  pointer (hover styles), and only where it is whole. For the last, a
+  subtree drawn anew keeps what its clip hides within 256 px (so a row
+  scrolled into view is drawn once, not on every frame until it all
+  shows), and remembers where anything was left out. Otherwise it is
+  redrawn, which is still far cheaper than it was. mirin-metal lets a
+  subtree move unless a view in it has `onLayout` (it must hear of every
+  move), and be skipped unless one has `onHover` (it must hear the pointer
+  left).
+
+  | stress bench (15k nodes), frame | retained (before) | now |
+  | --- | --- | --- |
+  | scroll, one 40 px step a frame (p95) | 113.8–114.1 ms (141–142) | 3.8–4.0 ms (4.5–4.6) |
+  | grow: a banner above the grid, 12 ↔ 40 px | 110.6–111.3 ms | 3.4–3.9 ms |
+  | grow, the grid in a scroll view | 117.0–117.2 ms | 4.1 ms |
+  | select | 4.2–6.0 ms | 2.6 ms |
+  | select, the grid in a scroll view | 6.1–6.8 ms | 2.3–2.9 ms |
+  | type | 3.4–4.0 ms | 1.7–1.8 ms |
+  | hover | 4.7–4.8 ms | 2.5–2.6 ms |
+  | RSS (both layouts drawn) | 311–315 MB | 266–269 MB |
+  | example browser (~900 nodes): scroll frame (p95) | 1.7–1.8 ms (2.2–2.3) | 1.3–1.5 ms (1.9–2.1) |
+
+  What made the frames that reuse cheaper too, from a profile of each:
+  replaying a drawing put every primitive into the scene's bounds tree
+  again to find its draw order (a third of a frame); a drawing that shows
+  what it did is now placed once, as its bounds, its primitives keeping
+  their order among themselves. Taffy's incremental rounding walked every
+  node below one that moved (4 ms of a grow frame); a subtree moved by
+  whole pixels now rounds as it did. A text built again for a kept layout
+  takes over the lines the element before it shaped (a row scrolled into
+  view was reshaped: 0.7 ms a frame). The scroll frame is now the row that
+  comes into view (built once: ~150 nodes, 26 subtrees) and little else.
+
+  Checks: `bun bench/layout-check.tsx scroll <host-a> <host-b>` (in
+  `packages/mirin-metal-ui`) drives the grid in a scroll view through
+  scrolls (whole and half pixels, to the end and back), a banner growing
+  above it, and presses and pointer moves by window coordinates, and
+  compares every id'd node's bounds and the node each press and hover
+  reached: identical to the host before on it, on `grid` and on `browser`.
+  With `--scene --env-b=MIRIN_METAL_RETAIN=0` and the same host twice it
+  also compares what each frame drew (primitives and hitboxes, with real
+  text): identical with retention and without. The GPUI fork's tests
+  compare retained frames against drawing everything for moves, partial
+  clipping, rows scrolled out and in, a row growing above, subtrees inside
+  moved subtrees and a pointer resting over moving rows; they compare what
+  is painted over what, since draw order numbers now differ.
 
 - Measuring (2026-11-10): headless Weston has no `wl_seat` (GPUI's Wayland
   client requires one) and headless dashi-comp loses the Vulkan surface, so
@@ -1044,13 +1133,18 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   builds nothing while off, and is whole again, as the app then is, when
   turned back on.
 
-Open: React work per update (the demo re-renders its whole list on select),
-and retained subtrees inside scroll views (moved, so drawn again each
-scrolled frame; their drawings could be offset instead). For the
-accessibility tree: comparing every node's bounds when any moved (about
-0.4 µs a node; the layout could say which moved), a scroll's bounds going
-out every frame (they could wait for it to settle), and the tree a session
-with accessibility on but nothing reading it still pays for once.
+Open: React work per update (the demo re-renders its whole list on select);
+a scroll by a fraction of a pixel (a touchpad) or at a scale factor other
+than 1, 2 or 4 moves nothing (every row in view is redrawn from its kept
+layout: 17 ms a frame on the stress bench with 40.5 px steps, a sixth of
+what it cost): scroll offsets snapped to device pixels, and layout kept in
+device pixels through painting, would lift both; and a row that comes into
+view is built again though it was drawn before (its drawing is not kept
+while it is out of view). For the accessibility tree: comparing every
+node's bounds when any moved (about 0.4 µs a node; the layout could say
+which moved), a scroll's bounds going out every frame (they could wait for
+it to settle), and the tree a session with accessibility on but nothing
+reading it still pays for once.
 
 ### Footprint: what one small app costs
 

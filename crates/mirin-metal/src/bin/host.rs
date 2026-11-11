@@ -294,6 +294,8 @@ fn parse_line(line: &str) -> Result<DriverMessage, String> {
 /// `MIRIN_METAL_PROFILE=<path>` (with `--features profiling`): sample the
 /// process for `MIRIN_METAL_PROFILE_SECS` seconds (default 10) and write
 /// folded stacks (`frame;frame;frame count`) to `<path>`.
+/// `MIRIN_METAL_PROFILE_AFTER` seconds pass first (default 0), to leave the
+/// first frames out.
 #[cfg(feature = "profiling")]
 fn start_profiler() {
     let Ok(path) = std::env::var("MIRIN_METAL_PROFILE") else {
@@ -303,7 +305,12 @@ fn start_profiler() {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(10);
+    let after = std::env::var("MIRIN_METAL_PROFILE_AFTER")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
     std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(after));
         let guard = match pprof::ProfilerGuardBuilder::default()
             .frequency(1000)
             .build()

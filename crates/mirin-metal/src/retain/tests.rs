@@ -12,9 +12,20 @@ use crate::tree::{parse_tree, NodeSpec};
 use crate::window::RootView;
 
 /// A grid of `rows` × `cols` cards like the stress bench's; `tall` cards get
-/// a second line of text (taller, so everything below them moves), and
-/// `selected` ones another background.
+/// a second line of text (taller by a fraction of a pixel, so everything
+/// below them moves and rounds anew), and `selected` ones another background.
 fn grid(rows: usize, cols: usize, tall: &[usize], selected: &[usize]) -> NodeSpec {
+    grid_under(0, rows, cols, tall, selected)
+}
+
+/// `grid` under a banner `above` px tall.
+fn grid_under(
+    above: usize,
+    rows: usize,
+    cols: usize,
+    tall: &[usize],
+    selected: &[usize],
+) -> NodeSpec {
     let card = |index: usize| {
         let background = if selected.contains(&index) {
             "#1e3a8a"
@@ -48,6 +59,7 @@ fn grid(rows: usize, cols: usize, tall: &[usize], selected: &[usize]) -> NodeSpe
     let json = format!(
         r#"{{"type":"view","props":{{"id":"root","fill":true,"padding":8,"gap":8}},"children":[
           {{"type":"input","props":{{"id":"query","value":""}}}},
+          {{"type":"view","props":{{"id":"banner","height":{above}}}}},
           {{"type":"view","props":{{"id":"grid","flex":1,"gap":2,"clip":true}},"children":[{}]}}]}}"#,
         rows.join(",")
     );
@@ -98,18 +110,31 @@ fn a_frame_that_keeps_the_tree_lays_it_out_as_one_that_draws_it(cx: &mut TestApp
 
     // Nothing changed: everything is reused, and laid out where it was.
     set_tree(&view, window, grid(8, 6, &[], &[]));
-    assert_eq!(take_counts().0, 0, "nothing is built again");
+    assert_eq!(take_counts().built, 0, "nothing is built again");
     assert_eq!(layout(&view, window), first);
 
     // One card's background: that card, its row and the grid are built again.
     set_tree(&view, window, grid(8, 6, &[], &[9]));
-    let (built, _) = take_counts();
+    let built = take_counts().built;
     assert!(built <= 3, "built {built}");
     let kept = layout(&view, window);
 
     // One card grows: the rows below it move, and are drawn where they land.
     set_tree(&view, window, grid(8, 6, &[13], &[9]));
     let moved = layout(&view, window);
+
+    // What is above the grid grows by whole pixels: every row moves as it
+    // is, so none is built or drawn again.
+    set_tree(&view, window, grid_under(20, 8, 6, &[13], &[9]));
+    let counts = take_counts();
+    assert!(counts.moved >= 8, "the rows are moved: {counts:?}");
+    assert_eq!(
+        (counts.built, counts.redrawn),
+        (0, 1),
+        "the grid alone: {counts:?}"
+    );
+    let lowered = layout(&view, window);
+    assert_eq!(lowered, drawn_whole(cx, grid_under(20, 8, 6, &[13], &[9])));
 
     let whole = drawn_whole(cx, grid(8, 6, &[], &[9]));
     assert_eq!(kept, whole);
@@ -182,7 +207,7 @@ fn a_patch_builds_only_the_subtrees_whose_generation_moved(cx: &mut TestAppConte
     });
     take_counts();
     draw(window);
-    let (built, _) = take_counts();
+    let built = take_counts().built;
     assert!(built <= 3, "built {built}");
     let patched = layout(&view, window);
     assert_eq!(patched, drawn_whole(cx, grid(8, 6, &[], &[9])));

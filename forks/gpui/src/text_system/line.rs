@@ -374,8 +374,10 @@ fn paint_line(
                     size: max_glyph_size,
                 };
 
-                let content_mask = window.content_mask();
-                if max_glyph_bounds.intersects(&content_mask.bounds) {
+                // mirin: a retained subtree drawn anew keeps the glyphs a
+                // region around its content mask would show, and hears of
+                // the ones it leaves out (`elements::retained`).
+                if max_glyph_bounds.intersects(&window.cull_mask()) {
                     if glyph.is_emoji {
                         window.paint_emoji(
                             glyph_origin + baseline_offset,
@@ -392,6 +394,8 @@ fn paint_line(
                             color,
                         )?;
                     }
+                } else {
+                    window.record_left_out(max_glyph_bounds);
                 }
             }
         }

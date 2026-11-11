@@ -494,7 +494,7 @@ impl Render for RootView {
         let events = self.events.clone();
         let marker = gpui::canvas(
             |_, _, _| {},
-            move |_, (), _, _| {
+            move |_, (), window, _| {
                 if first {
                     events.frame();
                 }
@@ -509,13 +509,28 @@ impl Render for RootView {
                         crate::trace::since_start_ms()
                     ));
                 }
-                let (built, reused) = crate::retain::take_counts();
+                if let Some(dump) = scene_traced() {
+                    // For a check that two hosts draw the same (`layout-check --scene`).
+                    let digest = window.scene_digest();
+                    crate::trace::log(format_args!("scene {digest:016x}"));
+                    if let Some(path) = dump {
+                        dump_scene(path, digest, &window.scene_drawn());
+                    }
+                }
+                let drawn = crate::retain::take_counts();
                 crate::trace::log(format_args!(
                     "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms, \
-                     retained subtrees {built} built, {reused} reused",
+                     retained subtrees {} built, {} redrawn ({} apart), {} reused, {} moved, \
+                     {} skipped",
                     f32::from(size.width),
                     f32::from(size.height),
-                    started.elapsed().as_secs_f64() * 1000.0
+                    started.elapsed().as_secs_f64() * 1000.0,
+                    drawn.built,
+                    drawn.redrawn,
+                    gpui::take_built_apart(),
+                    drawn.reused,
+                    drawn.moved,
+                    drawn.skipped,
                 ));
             },
         )
@@ -527,6 +542,35 @@ impl Render for RootView {
             .child(marker)
             .children(access)
             .into_any_element()
+    }
+}
+
+/// Whether each frame's trace says what it drew (`MIRIN_METAL_TRACE_SCENE=1`,
+/// with `MIRIN_METAL_TRACE=1`): a digest of the scene's primitives and
+/// hitboxes, for comparing two hosts. Any other value is a file every
+/// frame's primitives and hitboxes are appended to as well (the inner
+/// `Some`), for finding what differs.
+fn scene_traced() -> Option<Option<&'static std::path::Path>> {
+    static TRACED: std::sync::OnceLock<Option<Option<std::path::PathBuf>>> =
+        std::sync::OnceLock::new();
+    TRACED
+        .get_or_init(|| {
+            let value = std::env::var("MIRIN_METAL_TRACE_SCENE").ok()?;
+            Some((value != "1").then(|| value.into()))
+        })
+        .as_ref()
+        .map(|dump| dump.as_deref())
+}
+
+/// Append a frame's drawing to the scene dump (`scene_traced`).
+fn dump_scene(path: &std::path::Path, digest: u64, drawn: &[String]) {
+    use std::io::Write;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path);
+    if let Ok(mut file) = file {
+        let _ = writeln!(file, "frame {digest:016x}\n{}", drawn.join("\n"));
     }
 }
 

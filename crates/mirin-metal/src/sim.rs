@@ -119,15 +119,24 @@ struct Entry {
     group: Option<u64>,
 }
 
-/// A retained subtree's frames.
+/// A retained subtree's frames, and where it sits. Its nodes are recorded
+/// when it is drawn anew; when its drawing is copied elsewhere, or left out
+/// (nothing of it shows), they are where they were recorded plus how far it
+/// has moved since.
 #[derive(Clone, Copy)]
 struct Group {
     /// The retained subtree around it when it was last drawn.
     parent: Option<u64>,
-    /// The last frame it was drawn in (anew or reused).
+    /// The last frame it was visited in (drawn anew, copied, or left out).
     touched: u64,
     /// The last frame it was drawn anew (its nodes recorded).
     built: u64,
+    /// Its top left when it was last visited, and when it was last drawn anew.
+    origin: Point<Pixels>,
+    built_origin: Point<Pixels>,
+    /// Where the subtree around it was when this one was last visited: this
+    /// one has moved with it since, if it was not visited again.
+    parent_origin: Point<Pixels>,
 }
 
 /// How often grouped entries no longer painted are dropped (they are never
@@ -150,6 +159,38 @@ impl LayoutState {
                 .is_some_and(|outer| info.touched >= outer.built)
                 && self.group_live(parent, frame)
         })
+    }
+
+    /// Where retained subtree `group` sits now: where it was last visited,
+    /// moved along with the subtrees around it that were copied since.
+    fn origin(&self, group: u64) -> Option<Point<Pixels>> {
+        let info = self.groups.get(&group)?;
+        if info.touched == self.frame {
+            return Some(info.origin);
+        }
+        let carried = info
+            .parent
+            .and_then(|parent| self.origin(parent))
+            .map(|parent| parent - info.parent_origin);
+        Some(match carried {
+            Some(carried) => info.origin + carried,
+            None => info.origin,
+        })
+    }
+
+    /// The bounds of `entry` now: as recorded, moved with its subtree.
+    fn bounds_of(&self, entry: &Entry) -> Bounds<Pixels> {
+        let moved = entry.group.and_then(|group| {
+            let built = self.groups.get(&group)?.built_origin;
+            Some(self.origin(group)? - built)
+        });
+        match moved {
+            Some(moved) if moved != Point::default() => Bounds {
+                origin: entry.bounds.origin + moved,
+                size: entry.bounds.size,
+            },
+            _ => entry.bounds,
+        }
     }
 
     /// Whether `entry` was painted in `frame`.
@@ -213,7 +254,7 @@ impl LayoutMap {
         let frame = state.frame;
         let changed = match state.nodes.get(id) {
             Some(entry) => {
-                entry.bounds != bounds
+                state.bounds_of(entry) != bounds
                     || !(entry.frame == frame || state.painted_in(entry, frame - 1))
             }
             None => true,
@@ -235,20 +276,42 @@ impl LayoutMap {
         changed
     }
 
-    /// A retained subtree was drawn this frame inside `parent` (`reused`: its
-    /// last drawing was copied, so its nodes were not recorded again).
-    pub(crate) fn touch_group(&self, group: u64, parent: Option<u64>, reused: bool) {
+    /// A retained subtree was visited this frame inside `parent`, its top
+    /// left at `origin`. `drew`: it is drawn anew, so its nodes are recorded
+    /// again; otherwise its last drawing is copied there or left out, and
+    /// its nodes are where they were recorded, moved as far as it has.
+    pub(crate) fn touch_group(
+        &self,
+        group: u64,
+        parent: Option<u64>,
+        origin: Point<Pixels>,
+        drew: bool,
+    ) {
         let mut state = self.0.borrow_mut();
         let frame = state.frame;
+        let moved = !drew && state.origin(group).is_some_and(|before| before != origin);
+        let parent_origin = parent
+            .and_then(|parent| state.origin(parent))
+            .unwrap_or_default();
         let info = state.groups.entry(group).or_insert(Group {
             parent,
             touched: frame,
             built: frame,
+            origin,
+            built_origin: origin,
+            parent_origin,
         });
         info.parent = parent;
         info.touched = frame;
-        if !reused {
+        info.origin = origin;
+        info.parent_origin = parent_origin;
+        if drew {
             info.built = frame;
+            info.built_origin = origin;
+        }
+        if moved {
+            // Its nodes moved with it, though none is recorded again.
+            state.revision += 1;
         }
     }
 
@@ -259,7 +322,7 @@ impl LayoutMap {
             .nodes
             .iter()
             .filter(|(_, entry)| state.painted_in(entry, state.frame))
-            .map(|(id, entry)| (id.clone(), entry.bounds))
+            .map(|(id, entry)| (id.clone(), state.bounds_of(entry)))
             .collect()
     }
 
@@ -283,7 +346,7 @@ impl LayoutMap {
             .nodes
             .get(id)
             .filter(|entry| state.painted_in(entry, state.frame))
-            .map(|entry| entry.bounds)
+            .map(|entry| state.bounds_of(entry))
     }
 
     pub(crate) fn node(&self, id: &str) -> Option<LayoutNode> {
@@ -622,23 +685,68 @@ mod layout_tests {
         // Frame 1: row (group 1) and the card inside it (group 2) drawn anew.
         layout.begin_frame();
         layout.record("text", at(1.), Some(2));
-        layout.touch_group(2, Some(1), false);
+        layout.touch_group(2, Some(1), at(1.).origin, true);
         layout.record("card", at(0.), Some(1));
-        layout.touch_group(1, None, false);
+        layout.touch_group(1, None, at(0.).origin, true);
         // Frame 2: the row is reused; nothing inside runs.
         layout.begin_frame();
-        layout.touch_group(1, None, true);
+        layout.touch_group(1, None, at(0.).origin, false);
         assert!(layout.node("card").is_some());
         assert!(layout.node("text").is_some(), "inside a reused subtree");
         // Frame 3: the row is drawn anew without the card.
         layout.begin_frame();
         layout.record("card", at(0.), Some(1));
-        layout.touch_group(1, None, false);
+        layout.touch_group(1, None, at(0.).origin, true);
         assert!(layout.node("card").is_some());
         assert!(layout.node("text").is_none(), "left the row");
         // Frame 4: the row is gone.
         layout.begin_frame();
         assert!(layout.node("card").is_none());
+    }
+
+    /// A retained subtree whose drawing is copied elsewhere (it scrolled),
+    /// or left out, records nothing: its nodes, and those of the subtrees
+    /// inside it, are where it is now.
+    #[test]
+    fn a_moved_subtree_takes_its_nodes_along() {
+        let layout = LayoutMap::default();
+        let x = |id: &str| layout.node(id).map(|node| node.x);
+        // Frame 1: the row (group 1) at 10 with a card inside it, and the
+        // card's subtree (group 2) at 12 with a text inside that.
+        layout.begin_frame();
+        layout.touch_group(1, None, at(10.).origin, true);
+        layout.record("card", at(12.), Some(1));
+        layout.touch_group(2, Some(1), at(12.).origin, true);
+        layout.record("text", at(13.), Some(2));
+        let drawn = layout.revision();
+        // Frame 2: the row's drawing is copied 5 further; nothing inside runs.
+        layout.begin_frame();
+        layout.touch_group(1, None, at(15.).origin, false);
+        assert_eq!(x("card"), Some(17.));
+        assert_eq!(x("text"), Some(18.), "inside a subtree carried along");
+        assert!(layout.revision() > drawn, "bounds changed");
+        // Frame 3: left out, 100 further.
+        layout.begin_frame();
+        layout.touch_group(1, None, at(115.).origin, false);
+        assert_eq!(x("text"), Some(118.));
+        let moved = layout.revision();
+        // Frame 4: where it was: nothing changed.
+        layout.begin_frame();
+        layout.touch_group(1, None, at(115.).origin, false);
+        assert_eq!(layout.revision(), moved);
+        // Frame 5: the row is drawn anew at 40 (its card recorded again),
+        // and the card's subtree is copied to where it now is.
+        layout.begin_frame();
+        layout.touch_group(1, None, at(40.).origin, true);
+        layout.record("card", at(42.), Some(1));
+        layout.touch_group(2, Some(1), at(42.).origin, false);
+        assert_eq!(x("card"), Some(42.));
+        assert_eq!(x("text"), Some(43.));
+        // Frame 6: the row copied back to 10; the card's subtree goes with it.
+        layout.begin_frame();
+        layout.touch_group(1, None, at(10.).origin, false);
+        assert_eq!(x("card"), Some(12.));
+        assert_eq!(x("text"), Some(13.));
     }
 }
 

@@ -121,6 +121,15 @@ struct NodeData {
     pub(crate) ran: bool,
     /// Its parent's cumulative unrounded position when it was last rounded.
     pub(crate) rounded_at: Option<(f32, f32)>,
+    // mirin: the layout (`TaffyTree::layout_epoch`) that last changed
+    // something inside it (`TaffyTree::inner_changed_since`).
+    pub(crate) inner_changed_at: u32,
+    /// A measured leaf: the layout that last asked its function again, not
+    /// counting the layout it was made in (`TaffyTree::asked_since`).
+    pub(crate) asked_at: u32,
+    /// One of its edges, or of a node below it, sat close to half a pixel
+    /// when it was last rounded (`TaffyTree::round_changed`).
+    pub(crate) near_half: bool,
 }
 
 impl NodeData {
@@ -136,6 +145,9 @@ impl NodeData {
             written: true,
             ran: true,
             rounded_at: None,
+            inner_changed_at: 0,
+            asked_at: 0,
+            near_half: true,
             #[cfg(feature = "detailed_layout_info")]
             detailed_layout_info: DetailedLayoutInfo::None,
         }
@@ -174,12 +186,75 @@ pub struct TaffyTree<NodeContext = ()> {
 
     /// Layout mode configuration
     config: TaffyConfig,
+
+    // mirin: how many layouts were computed (`layout_epoch`).
+    epoch: u32,
+    // mirin: what a measured leaf's function was last asked
+    // (`last_measure_inputs`).
+    last_measures: SecondaryMap<DefaultKey, (Size<Option<f32>>, Size<AvailableSpace>)>,
 }
 
 impl Default for TaffyTree {
     fn default() -> TaffyTree<()> {
         TaffyTree::new()
     }
+}
+
+// mirin: for `TaffyTree::round_changed`.
+
+/// How close to half a pixel an edge may sit and still round the same way
+/// wherever its subtree is moved by whole pixels: the sums that place a node
+/// (one per level of the tree) each lose up to half an `f32` step, which
+/// below `FAR` pixels and a few dozen levels stays well under this.
+const HALF_PIXEL_MARGIN: f32 = 1.0 / 16.0;
+
+/// Past this many pixels from the origin an `f32` is too coarse for
+/// `HALF_PIXEL_MARGIN` to hold: nodes there are always rounded again.
+const FAR: f32 = 16384.0;
+
+/// Whether a parent that sat at `before` and now sits at `after` (one axis)
+/// moved by a whole number of pixels, exactly.
+fn whole_pixels(before: f32, after: f32) -> bool {
+    let moved = after - before;
+    moved == crate::util::sys::round(moved)
+        && before + moved == after
+        && crate::util::sys::abs(before) < FAR
+        && crate::util::sys::abs(after) < FAR
+}
+
+/// Whether any edge `round_node` rounds for a node with this unrounded
+/// layout at cumulative position (`x`, `y`) sits within `HALF_PIXEL_MARGIN`
+/// of half a pixel (or too far out to tell).
+fn near_half_pixel(layout: &Layout, x: f32, y: f32) -> bool {
+    let near = |value: f32| {
+        let fraction = value - crate::util::sys::floor(value);
+        !(crate::util::sys::abs(value) < FAR) || crate::util::sys::abs(fraction - 0.5) < HALF_PIXEL_MARGIN
+    };
+    let (width, height) = (layout.size.width, layout.size.height);
+    near(x)
+        || near(y)
+        || near(x + width)
+        || near(y + height)
+        || near(x + layout.border.left)
+        || near(x + width - layout.border.right)
+        || near(y + layout.border.top)
+        || near(y + height - layout.border.bottom)
+        || near(x + layout.padding.left)
+        || near(x + width - layout.padding.right)
+        || near(y + layout.padding.top)
+        || near(y + height - layout.padding.bottom)
+        || content_near_half_pixel(layout, x, y, near)
+}
+
+/// `near_half_pixel` for the content size, where it is kept.
+#[cfg(feature = "content_size")]
+fn content_near_half_pixel(layout: &Layout, x: f32, y: f32, near: impl Fn(f32) -> bool) -> bool {
+    near(x + layout.content_size.width) || near(y + layout.content_size.height)
+}
+
+#[cfg(not(feature = "content_size"))]
+fn content_near_half_pixel(_: &Layout, _: f32, _: f32, _: impl Fn(f32) -> bool) -> bool {
+    false
 }
 
 /// Iterator that wraps a slice of nodes, lazily converting them to u64
@@ -407,11 +482,28 @@ where
                     let style = &tree.taffy.nodes[node_key].style;
                     let has_context = tree.taffy.nodes[node_key].has_context;
                     let node_context = has_context.then(|| tree.taffy.node_context_data.get_mut(node_key)).flatten();
+                    // mirin: what the measure function is asked is kept
+                    // (`TaffyTree::last_measure_inputs`), and that it was
+                    // asked again after the layout the node was made in
+                    // (`TaffyTree::asked_since`).
+                    let mut asked = None;
                     let measure_function = |known_dimensions, available_space| {
+                        if has_context {
+                            asked = Some((known_dimensions, available_space));
+                        }
                         (tree.measure_function)(known_dimensions, available_space, node, node_context, style)
                     };
                     // TODO: implement calc() in high-level API
-                    compute_leaf_layout(inputs, style, |_, _| 0.0, measure_function)
+                    let output = compute_leaf_layout(inputs, style, |_, _| 0.0, measure_function);
+                    if let Some(asked) = asked {
+                        tree.taffy.last_measures.insert(node_key, asked);
+                        let epoch = tree.taffy.epoch;
+                        let data = &mut tree.taffy.nodes[node_key];
+                        if data.rounded_at.is_some() {
+                            data.asked_at = epoch;
+                        }
+                    }
+                    output
                 }
             }
         })
@@ -571,6 +663,8 @@ impl<NodeContext> TaffyTree<NodeContext> {
             parents: SlotMap::with_capacity(capacity),
             node_context_data: SecondaryMap::with_capacity(capacity),
             config: TaffyConfig::default(),
+            epoch: 0,
+            last_measures: SecondaryMap::new(),
         }
     }
 
@@ -628,6 +722,8 @@ impl<NodeContext> TaffyTree<NodeContext> {
         self.nodes.clear();
         self.children.clear();
         self.parents.clear();
+        // mirin: what was kept per measured leaf goes with the nodes.
+        self.last_measures.clear();
     }
 
     /// Remove a specific node from the tree and drop it
@@ -661,6 +757,7 @@ impl<NodeContext> TaffyTree<NodeContext> {
         // mirin: drop its context (a measure function and what it holds) now,
         // not when the slot is reused.
         let _ = self.node_context_data.remove(key);
+        let _ = self.last_measures.remove(key);
 
         Ok(node)
     }
@@ -947,6 +1044,8 @@ impl<NodeContext> TaffyTree<NodeContext> {
             FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
     {
         let use_rounding = self.config.use_rounding;
+        // mirin: a new layout (`layout_epoch`).
+        self.epoch += 1;
         let mut taffy_view = TaffyView { taffy: self, measure_function };
         compute_root_layout(&mut taffy_view, node_id, available_space);
         if use_rounding {
@@ -963,22 +1062,97 @@ impl<NodeContext> TaffyTree<NodeContext> {
     // it runs, so nothing below such a node changed either. A tree kept
     // across layouts (GPUI's retained subtrees, where taffy's cache skips
     // clean subtrees) then rounds in time proportional to what changed.
-    fn round_changed(&mut self, node: NodeId, parent_x: f32, parent_y: f32, force: bool) {
+    //
+    // A subtree whose parent moved by whole pixels is skipped too: every
+    // edge in it rounds as it did, that many pixels away, unless it sits so
+    // close to half a pixel that the sums' rounding could tip it (`near_half`;
+    // such a node, and the ones around it, are rounded again). So what moved
+    // because something above it grew costs what changed, not what moved.
+    //
+    // Returns whether an edge of `node`, or of a node below it, is close to
+    // half a pixel.
+    fn round_changed(&mut self, node: NodeId, parent_x: f32, parent_y: f32, force: bool) -> bool {
         let data = &mut self.nodes[node.into()];
-        if !force && !data.written && !data.ran && data.rounded_at == Some((parent_x, parent_y)) {
-            return;
+        if !force && !data.written && !data.ran {
+            if data.rounded_at == Some((parent_x, parent_y)) {
+                return data.near_half;
+            }
+            let moved_whole = data
+                .rounded_at
+                .is_some_and(|(x, y)| whole_pixels(x, parent_x) && whole_pixels(y, parent_y));
+            if moved_whole && !data.near_half {
+                return false;
+            }
         }
         let unrounded = data.unrounded_layout;
         let x = parent_x + unrounded.location.x;
         let y = parent_y + unrounded.location.y;
+        let before = data.final_layout;
         data.final_layout = crate::compute::round_node(&unrounded, x, y);
         data.written = false;
         data.ran = false;
         data.rounded_at = Some((parent_x, parent_y));
+        // mirin: what changed inside whom (`inner_changed_since`). Its own
+        // box changed: inside it. It only moved: inside its parent. An
+        // algorithm that ran again and placed everything as it was changed
+        // nothing.
+        let after = data.final_layout;
+        if (Layout { location: before.location, ..after }) != before {
+            self.mark_inner_changed(Some(node));
+        } else if after.location != before.location {
+            self.mark_inner_changed(self.parents[node.into()]);
+        }
+        let mut near_half = near_half_pixel(&unrounded, x, y);
         for index in 0..self.children[node.into()].len() {
             let child = self.children[node.into()][index];
-            self.round_changed(child, x, y, false);
+            near_half |= self.round_changed(child, x, y, false);
         }
+        self.nodes[node.into()].near_half = near_half;
+        near_half
+    }
+
+    // mirin: this layout changed something inside `node` and so inside
+    // every node around it.
+    fn mark_inner_changed(&mut self, mut node: Option<NodeId>) {
+        while let Some(id) = node {
+            let data = &mut self.nodes[id.into()];
+            if data.inner_changed_at == self.epoch {
+                break;
+            }
+            data.inner_changed_at = self.epoch;
+            node = self.parents[id.into()];
+        }
+    }
+
+    /// mirin: how many layouts this tree has computed. With
+    /// [`Self::inner_changed_since`], what a kept subtree's drawing checks
+    /// before it is reused.
+    pub fn layout_epoch(&self) -> u32 {
+        self.epoch
+    }
+
+    /// mirin: whether a layout after `epoch` changed anything inside `node`:
+    /// its own size, border or padding, or the rounded layout of any node
+    /// below it. Where `node` itself sits in its parent is not inside it,
+    /// and a layout that ran again inside it and came out the same changed
+    /// nothing.
+    pub fn inner_changed_since(&self, node: NodeId, epoch: u32) -> bool {
+        !matches!(self.nodes.get(node.into()), Some(data) if data.inner_changed_at <= epoch)
+    }
+
+    /// mirin: whether a layout after `epoch` asked the measured leaf `node`
+    /// again (the layout it was made in does not count). Until then it holds
+    /// what a layout from nothing leaves it with; after, what it holds
+    /// depends on which of its answers the cache still had.
+    pub fn asked_since(&self, node: NodeId, epoch: u32) -> bool {
+        !matches!(self.nodes.get(node.into()), Some(data) if data.asked_at <= epoch)
+    }
+
+    /// mirin: the known dimensions and available space a measured leaf's
+    /// function was last asked: what to ask a new function for the same
+    /// node so it holds what the old one did.
+    pub fn last_measure_inputs(&self, node: NodeId) -> Option<(Size<Option<f32>>, Size<AvailableSpace>)> {
+        self.last_measures.get(node.into()).copied()
     }
 
     /// mirin: lay `node` out as `twin` is laid out where it sits: the same
@@ -1021,6 +1195,7 @@ impl<NodeContext> TaffyTree<NodeContext> {
             height: parent_size.height.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
         };
         let use_rounding = self.config.use_rounding;
+        self.epoch += 1;
         let mut taffy_view = TaffyView { taffy: self, measure_function };
         let output = taffy_view.perform_child_layout(
             node,
@@ -1529,7 +1704,7 @@ mod tests {
 #[cfg(test)]
 mod mirin_tests {
     use super::*;
-    use crate::style::FlexDirection;
+    use crate::style::{AlignItems, FlexDirection};
     use crate::style_helpers::*;
 
     fn cell(taffy: &mut TaffyTree<()>, grow: f32) -> NodeId {
@@ -1611,5 +1786,153 @@ mod mirin_tests {
         let copy = cell(&mut taffy, 1.0);
         taffy.compute_detached_layout_with_measure(copy, cells[1], |_, _, _, _, _| Size::ZERO).unwrap();
         assert_eq!(layouts(&taffy, copy), layouts(&taffy, cells[1]));
+    }
+
+    // A column: a spacer `height` tall, then a row of three thirds.
+    fn spaced_row(taffy: &mut TaffyTree<()>, height: f32) -> (NodeId, NodeId, NodeId) {
+        let spacer =
+            taffy.new_leaf(Style { size: Size { width: auto(), height: length(height) }, ..Default::default() }).unwrap();
+        let (row, _) = fractional_row(taffy);
+        let column = Style { flex_direction: FlexDirection::Column, ..Default::default() };
+        let root = taffy.new_with_children(column, &[spacer, row]).unwrap();
+        (root, spacer, row)
+    }
+
+    fn spacer(height: f32) -> Style {
+        Style { size: Size { width: auto(), height: length(height) }, ..Default::default() }
+    }
+
+    #[test]
+    fn a_subtree_that_only_moved_did_not_change_inside() {
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let (root, above, row) = spaced_row(&mut taffy, 10.0);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        let drawn = taffy.layout_epoch();
+        assert!(!taffy.inner_changed_since(row, drawn));
+        let before = layouts(&taffy, row);
+
+        // What is above it grows by whole pixels: the row moves as it is.
+        taffy.set_style(above, spacer(24.0)).unwrap();
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert!(!taffy.inner_changed_since(row, drawn));
+        assert!(taffy.inner_changed_since(root, drawn), "the row moved inside the root");
+        let moved = layouts(&taffy, row);
+        assert_eq!(moved[0].location.y, before[0].location.y + 14.0);
+        assert_eq!(moved[1..], before[1..]);
+
+        // By a fraction: what is inside the row rounds differently, so it changed.
+        let drawn = taffy.layout_epoch();
+        taffy.set_style(above, spacer(24.5)).unwrap();
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert_ne!(layouts(&taffy, row)[1..], moved[1..]);
+        assert!(taffy.inner_changed_since(row, drawn));
+    }
+
+    // A column: a spacer, then boxes of `heights`, each with a row of thirds in it.
+    fn stack(taffy: &mut TaffyTree<()>, above: f32, heights: &[f32]) -> (NodeId, NodeId) {
+        let above = taffy.new_leaf(spacer(above)).unwrap();
+        let mut children = vec![above];
+        for height in heights {
+            let (row, _) = fractional_row(taffy);
+            let boxed = Style {
+                size: Size { width: auto(), height: length(*height) },
+                padding: length(0.25),
+                flex_shrink: 0.0,
+                ..Default::default()
+            };
+            children.push(taffy.new_with_children(boxed, &[row]).unwrap());
+        }
+        let column = Style { flex_direction: FlexDirection::Column, ..Default::default() };
+        (taffy.new_with_children(column, &children).unwrap(), above)
+    }
+
+    #[test]
+    fn what_moved_by_whole_pixels_rounds_as_rounding_everything_does() {
+        // Edges at thirds, at halves, just under a half, and whole.
+        let heights = [7.3, 20.5, 10.49, 33.34, 12.0, 0.5, 19.999, 8.25];
+        for (from, to) in [(10.0, 24.0), (24.0, 3.0), (3.0, 300.0), (300.0, 2.0), (2.0, 2.5), (2.5, 9.5)] {
+            let mut kept: TaffyTree<()> = TaffyTree::new();
+            let (root, above) = stack(&mut kept, from, &heights);
+            kept.compute_layout(root, Size::MAX_CONTENT).unwrap();
+            kept.set_style(above, spacer(to)).unwrap();
+            kept.compute_layout(root, Size::MAX_CONTENT).unwrap();
+
+            let mut fresh: TaffyTree<()> = TaffyTree::new();
+            let (fresh_root, _) = stack(&mut fresh, to, &heights);
+            fresh.compute_layout(fresh_root, Size::MAX_CONTENT).unwrap();
+            assert_eq!(layouts(&kept, root), layouts(&fresh, fresh_root), "from {from} to {to}");
+        }
+    }
+
+    #[test]
+    fn a_subtree_laid_out_again_changed_inside() {
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let (root, _, row) = spaced_row(&mut taffy, 10.0);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        let drawn = taffy.layout_epoch();
+        // A cell of the row changes: the row's algorithm runs again.
+        let cell = taffy.children(row).unwrap()[0];
+        taffy.set_style(cell, Style { flex_grow: 3.0, flex_basis: length(0.0), ..Default::default() }).unwrap();
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert!(taffy.inner_changed_since(row, drawn));
+        // A node no longer in the tree is not what was drawn.
+        taffy.remove(cell).unwrap();
+        assert!(taffy.inner_changed_since(cell, taffy.layout_epoch()));
+    }
+
+    #[test]
+    fn a_subtree_laid_out_again_as_it_was_did_not_change_inside() {
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let (root, above, row) = spaced_row(&mut taffy, 10.0);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        let drawn = taffy.layout_epoch();
+        // The row and what is in it are marked dirty and laid out again,
+        // and come out as they were.
+        let cell = taffy.children(row).unwrap()[0];
+        taffy.mark_dirty(taffy.children(cell).unwrap()[0]).unwrap();
+        taffy.set_style(above, spacer(12.0)).unwrap();
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert!(!taffy.inner_changed_since(row, drawn));
+    }
+
+    #[test]
+    fn a_measured_leaf_asked_again_is_known() {
+        let mut taffy: TaffyTree<u8> = TaffyTree::new();
+        let text = taffy.new_leaf_with_context(Style::default(), 0).unwrap();
+        let other = taffy.new_leaf(Style::default()).unwrap();
+        let wide = |width: f32| Style { size: Size { width: length(width), height: auto() }, ..Default::default() };
+        let row = taffy.new_with_children(Style::default(), &[text]).unwrap();
+        let root = taffy.new_with_children(wide(80.0), &[row, other]).unwrap();
+        let mut asked = Vec::new();
+        let mut layout = |taffy: &mut TaffyTree<u8>| {
+            taffy
+                .compute_layout_with_measure(root, Size::MAX_CONTENT, |known, available, _, context, _| {
+                    if context.is_some() {
+                        asked.push((known, available));
+                    }
+                    Size { width: 30.0, height: 12.0 }
+                })
+                .unwrap();
+            asked.last().copied()
+        };
+        // The layout it is made in asks it (more than once): that is not again.
+        let last = layout(&mut taffy);
+        let made = taffy.layout_epoch();
+        assert_eq!(taffy.last_measure_inputs(text), last);
+        assert_eq!(taffy.last_measure_inputs(other), None);
+        assert!(!taffy.asked_since(text, 0));
+        // What is beside it changes: its answers are still in the cache.
+        taffy.set_style(other, wide(10.0)).unwrap();
+        layout(&mut taffy);
+        assert!(!taffy.asked_since(text, made));
+        // It is laid out again: asked again.
+        taffy.mark_dirty(text).unwrap();
+        let last = layout(&mut taffy);
+        assert!(taffy.asked_since(text, made));
+        assert!(!taffy.asked_since(other, made));
+        assert_eq!(taffy.last_measure_inputs(text), last);
+        assert!(!taffy.asked_since(text, taffy.layout_epoch()));
+        taffy.remove(text).unwrap();
+        assert_eq!(taffy.last_measure_inputs(text), None);
     }
 }

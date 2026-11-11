@@ -21,7 +21,7 @@ pub use div::*;
 pub use image_cache::*;
 pub use img::*;
 pub use list::*;
-pub use retained::{Retained, retained};
+pub use retained::{Retained, RetainedDraw, retained, take_built_apart};
 pub use surface::*;
 pub use svg::*;
 pub use text::*;

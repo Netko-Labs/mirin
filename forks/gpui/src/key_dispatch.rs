@@ -306,6 +306,19 @@ impl DispatchTree {
         }
     }
 
+    /// mirin: whether the nodes in `range` take no keys, actions or focus,
+    /// so a retained subtree (`elements::retained`) that made them can be
+    /// left undrawn while nothing of it shows.
+    pub fn range_is_inert(&self, range: Range<usize>) -> bool {
+        self.nodes[range].iter().all(|node| {
+            node.focus_id.is_none()
+                && node.context.is_none()
+                && node.key_listeners.is_empty()
+                && node.action_listeners.is_empty()
+                && node.modifiers_changed_listeners.is_empty()
+        })
+    }
+
     pub fn truncate(&mut self, index: usize) {
         for node in &self.nodes[index..] {
             if let Some(focus_id) = node.focus_id {
