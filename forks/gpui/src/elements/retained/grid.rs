@@ -76,6 +76,19 @@ impl Grid {
         (device * STEP).round() / STEP
     }
 
+    /// A depth something is drawn to inside its box (a border's band), in
+    /// device pixels: the same where it is on the grid (or scaling is
+    /// exact), else the next grid point up, so it is never less.
+    pub(crate) fn snap_up(&self, device: f32) -> f32 {
+        if self.exact || !(device.abs() < FAR) {
+            return device;
+        }
+        match self.near(device) {
+            Some((point, true)) => point,
+            _ => (device * STEP).ceil() / STEP,
+        }
+    }
+
     /// A device position settled, and whether it is on the grid.
     pub(crate) fn settle(&self, value: f32) -> (f32, bool) {
         if !(value.abs() < FAR) {
@@ -229,6 +242,12 @@ mod tests {
             }
         }
         assert_eq!(Grid::new(2.).snap_distance(2.2), 2.2);
+        // Up, never less: a border's band still holds the border.
+        let grid = Grid::new(1.1);
+        assert_eq!(grid.snap_up(6. * 1.1), 6.625);
+        assert_eq!(grid.snap_up(3. * 1.1), 3.375);
+        assert_eq!(Grid::new(1.25).snap_up(6. * 1.25), 7.5);
+        assert_eq!(Grid::new(1.).snap_up(6.3), 6.3);
     }
 
     #[test]

@@ -18,6 +18,7 @@ struct Row {
     color: u32,
     height: f32,
     version: u64,
+    bordered: bool,
 }
 
 struct Marker;
@@ -95,6 +96,11 @@ fn row(
             }
         })
         .bg(rgb(row.color))
+        // A rounded border is drawn in bands as deep as its corners: off
+        // the device grid at 1.1 unless snapped (`Style::paint`).
+        .when(row.bordered, |row| {
+            row.border_1().border_color(rgb(0xffffff)).rounded(px(3.0))
+        })
         .hover(|style| style.bg(rgb(0xff0000)))
         .child(format!("row {index}"))
         // A shadow is painted before a quad of the same draw order: this
@@ -210,6 +216,7 @@ fn rows(count: usize) -> Vec<Row> {
             color: 0x101010 * (index as u32 % 15 + 1),
             height: 10.0 + (index % 3) as f32 * 0.4,
             version: 1,
+            bordered: false,
         })
         .collect()
 }
@@ -222,6 +229,7 @@ fn scrolled(count: usize, cells: usize) -> Scene {
                 color: 0x101010 * (index as u32 % 15 + 1),
                 height: 20.0 + (index % 3) as f32 * 4.0,
                 version: 1,
+                bordered: false,
             })
             .collect(),
         above: 7.0,

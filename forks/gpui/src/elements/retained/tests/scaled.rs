@@ -160,3 +160,20 @@ fn rows_with_text_move_across_by_whole_device_pixels(cx: &mut TestAppContext) {
         );
     }
 }
+
+// mirin: a border's bands snap up onto the grid (`Style::paint`).
+#[gpui::test]
+fn rows_with_a_rounded_border_move_at_any_scale_factor(cx: &mut TestAppContext) {
+    for scale in [1.1, 1.2, 1.25, 1.5, 2.0] {
+        // Without cells, a row is one drawing: what moves is rows.
+        let mut scene = scrolled(30, 0);
+        for row in &mut scene.rows {
+            row.bordered = true;
+        }
+        let draws = compare_at(cx, scene, scale, true, UNEVEN_STEPS);
+        assert!(
+            count(&draws, RetainedDraw::Moved) >= 30,
+            "{scale}: {draws:?}"
+        );
+    }
+}
