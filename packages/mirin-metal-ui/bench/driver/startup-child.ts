@@ -52,6 +52,11 @@ async function show(): Promise<void> {
     createElement(ThemeProvider, null, createElement(Browser, { initial: "button-demo" })),
     host.transport,
   );
+  // BENCH_UNTIL_TREE: the start alone, for a build that cannot load the example (a bundle).
+  if (process.env.BENCH_UNTIL_TREE) {
+    while (host.sends < 2) await Bun.sleep(1);
+    return;
+  }
   await quiet(host, 40);
   if (later) marks.push(later);
   // The whole tree once more: what serializing it alone costs.
