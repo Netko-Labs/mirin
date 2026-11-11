@@ -1,7 +1,8 @@
 /**
  * Public entry: mount normal React onto a native transport. Each commit
- * serializes the host tree and sends it to the native renderer; press events
- * come back keyed by node id and invoke the matching `onPress`.
+ * sends the native renderer the host tree, or only what changed when the
+ * host takes patches (`lib/tree-sync.ts`); events come back keyed by node id
+ * and invoke the matching handler of that node's current props.
  */
 
 import type { ReactNode } from "react";
@@ -10,8 +11,8 @@ import { ConcurrentRoot } from "react-reconciler/constants";
 import { ChromeStore, chromeFromEvent, withChrome } from "./chrome.ts";
 import { FieldTexts } from "./lib/field-texts.ts";
 import { hostConfig } from "./lib/host-config.ts";
-import type { Container } from "./lib/instances.ts";
-import { type Handlers, serializeRoot } from "./lib/serialize.ts";
+import type { Container, HostInstance } from "./lib/instances.ts";
+import { TreeSync } from "./lib/tree-sync.ts";
 import type { Modifiers, NativeEvent, NativeRoot, NativeTransport } from "./types.ts";
 
 /** What a host older than `MIRIN_METAL_FOCUS` reports: no keys held. */
@@ -58,39 +59,24 @@ export function createPortal(children: ReactNode, container: unknown, key?: stri
 
 /** Render a React element tree into the native UI. */
 export function render(element: ReactNode, transport: NativeTransport): NativeRoot {
-  let handlers: Handlers = {
-    press: new Map(),
-    hover: new Map(),
-    pointer: new Map(),
-    contextMenu: new Map(),
-    keyDown: new Map(),
-    windowKey: new Map(),
-    wheel: new Map(),
-    drop: new Map(),
-    layout: new Map(),
-    change: new Map(),
-    submit: new Map(),
-    key: new Map(),
-    selection: new Map(),
-    runPress: new Map(),
-    fields: new Map(),
-    testIds: new Map(),
-  };
-  let lastTree: string | null = null;
   const fields = new FieldTexts();
   const chrome = new ChromeStore();
   const container: Container = {
+    kind: "root",
     children: [],
     onCommit() {
-      const serialized = serializeRoot(container.children);
-      if (!serialized) {
-        return;
-      }
-      handlers = serialized.handlers;
-      fields.follow(serialized.handlers.fields);
-      lastTree = serialized.treeJson;
-      transport.send(serialized.treeJson);
+      sync.commit();
     },
+  };
+  const sync = new TreeSync(container, (line) => transport.send(line), fields);
+  // A node's handlers are its current props: what the host was last sent.
+  const view = (id: string) => {
+    const node: HostInstance | undefined = sync.instance(id);
+    return node?.kind === "view" ? node.props : undefined;
+  };
+  const input = (id: string) => {
+    const node: HostInstance | undefined = sync.instance(id);
+    return node?.kind === "input" ? node.props : undefined;
   };
   // A throwing handler is reported and the app keeps running, as in React DOM.
   // A discrete event (a press, a keystroke, a change) is handled at discrete
@@ -108,46 +94,46 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
   function dispatch(event: NativeEvent): void {
     switch (event.type) {
       case "press":
-        handlers.press.get(event.nodeId)?.({
+        view(event.nodeId)?.onPress?.({
           bounds: event.bounds,
           modifiers: event.modifiers ?? NO_MODIFIERS,
         });
         break;
       case "change":
         fields.typed(event.nodeId, event.value);
-        handlers.change.get(event.nodeId)?.(event.value);
+        input(event.nodeId)?.onChangeText?.(event.value);
         break;
       case "submit":
-        handlers.submit.get(event.nodeId)?.(event.value);
+        input(event.nodeId)?.onSubmitEditing?.(event.value);
         break;
       case "key":
-        handlers.key.get(event.nodeId)?.(event.value);
+        input(event.nodeId)?.onKeyPress?.(event.value);
         break;
       case "selection":
         // A selection in a text the app has since replaced is late: its offsets are not into the value.
         if (!fields.holds(event.nodeId, event.textHash)) break;
-        handlers.selection.get(event.nodeId)?.({ start: event.start, end: event.end });
+        input(event.nodeId)?.onSelectionChange?.({ start: event.start, end: event.end });
         break;
       case "runpress":
-        handlers.runPress.get(event.nodeId)?.({
+        input(event.nodeId)?.onRunPress?.({
           run: event.run,
           offset: event.offset,
           modifiers: event.modifiers,
         });
         break;
       case "hover":
-        handlers.hover.get(event.nodeId)?.(event.hovered, event.bounds);
+        view(event.nodeId)?.onHoverChange?.(event.hovered, event.bounds);
         break;
       case "pointer": {
         const { nodeId: _id, type: _type, ...info } = event;
-        handlers.pointer.get(event.nodeId)?.(info);
+        view(event.nodeId)?.onPointer?.(info);
         break;
       }
       case "resize":
-        handlers.layout.get(event.nodeId)?.(event.bounds);
+        view(event.nodeId)?.onLayout?.(event.bounds);
         break;
       case "contextmenu":
-        handlers.contextMenu.get(event.nodeId)?.({
+        view(event.nodeId)?.onContextMenu?.({
           x: event.x,
           y: event.y,
           modifiers: event.modifiers ?? NO_MODIFIERS,
@@ -155,24 +141,30 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "keydown": {
         const { nodeId: _id, type: _type, ...info } = event;
-        handlers.keyDown.get(event.nodeId)?.(info);
+        view(event.nodeId)?.onKeyDown?.(info);
         break;
       }
       case "windowkey": {
         const { nodeId: _id, type: _type, ...info } = event;
-        handlers.windowKey.get(event.nodeId)?.(info);
+        view(event.nodeId)?.onWindowKeyDown?.(info);
         break;
       }
       case "wheel":
-        handlers.wheel.get(event.nodeId)?.({ dx: event.dx, dy: event.dy });
+        view(event.nodeId)?.onWheel?.({ dx: event.dx, dy: event.dy });
         break;
       case "drop": {
         const { nodeId: _id, type: _type, ...info } = event;
-        handlers.drop.get(event.nodeId)?.(info);
+        view(event.nodeId)?.onDrop?.(info);
         break;
       }
       case "chrome":
         chrome.set(chromeFromEvent(event));
+        break;
+      case "protocol":
+        sync.hostPatches(event.patches);
+        break;
+      case "resync":
+        sync.resync();
         break;
       case "layout":
       case "frame":
@@ -204,10 +196,10 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       transport.close();
     },
     lastTree() {
-      return lastTree;
+      return sync.lastTree();
     },
     nodeId(testID) {
-      return handlers.testIds.get(testID);
+      return sync.nodeId(testID);
     },
   };
 }

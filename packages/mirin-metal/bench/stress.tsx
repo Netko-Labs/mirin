@@ -8,7 +8,9 @@
  *   bun bench/stress.tsx [host-binary] [--rows=100] [--cols=25] [--visible] [--json]
  *
  * Scenarios, each timed from the driver's action to the host's next painted
- * frame (`MIRIN_METAL_TRACE` log):
+ * frame (`MIRIN_METAL_TRACE` log). `parse` is the host reading the line
+ * (`line parsed`), `apply` putting it in its tree (`tree applied`, or
+ * `patch applied` when the host takes patches); `KB` is what the driver sent.
  * - select: click a card, which toggles its highlight (one node's style).
  * - type: keystrokes into a field above the grid (one text node).
  * - hover: hover a card on and off (`hoverBackgroundColor`, renderer-side only).
@@ -57,6 +59,8 @@ const transport = spawnNativeHost(binary, {
   onStderr(line) {
     const match = line.match(/^\[mirin-metal trace\] (\d+\.\d) (.*)$/);
     if (match) trace.push({ at: Number(match[1]), message: match[2] ?? "" });
+    // The host's own complaints (a refused line, a patch it couldn't apply).
+    else console.error(line);
   },
 });
 const sends: Array<{ at: number; bytes: number }> = [];
@@ -133,14 +137,16 @@ const hostPid = Number(
 const rendersAfter = (at: number) =>
   trace.filter((line) => line.at >= at && line.message.startsWith("render"));
 const frameMs = (line: TraceLine) => Number(line.message.match(/frame ([\d.]+)ms/)?.[1] ?? 0);
-const parsesAfter = (at: number) =>
+const timedAfter = (at: number, ...prefixes: string[]) =>
   trace
-    .filter((line) => line.at >= at && line.message.startsWith("line parsed"))
+    .filter((line) => line.at >= at && prefixes.some((prefix) => line.message.startsWith(prefix)))
     .map((line) => Number(line.message.match(/in ([\d.]+)ms/)?.[1] ?? 0));
+const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 
 interface Sample {
   driver: number;
   parse: number;
+  apply: number;
   frame: number;
   total: number;
   bytes: number;
@@ -156,7 +162,8 @@ async function measure(action: () => void, settle = 700): Promise<Sample | null>
   if (!frame) return null;
   return {
     driver: last ? last.at - started : 0,
-    parse: parsesAfter(started).reduce((sum, value) => sum + value, 0),
+    parse: sum(timedAfter(started, "line parsed")),
+    apply: sum(timedAfter(started, "tree applied", "patch applied")),
     frame: frameMs(frame),
     total: frame.at - started,
     bytes: sends.reduce((sum, item) => sum + item.bytes, 0),
@@ -228,6 +235,7 @@ const summary = (samples: Sample[]) => ({
   n: samples.length,
   driver: median(samples.map((s) => s.driver)),
   parse: median(samples.map((s) => s.parse)),
+  apply: median(samples.map((s) => s.apply)),
   frame: median(samples.map((s) => s.frame)),
   frameP95: p95(samples.map((s) => s.frame)),
   total: median(samples.map((s) => s.total)),
@@ -247,13 +255,14 @@ if (args.includes("--json")) {
   console.log(JSON.stringify(result));
 } else {
   console.log(`host: ${binary}\nnodes: ~${result.nodes}`);
-  console.log("scenario  n   driver  parse   frame  frame95  total   tree KB");
+  console.log("scenario  n   driver  parse   apply   frame  frame95  total      KB");
   for (const name of ["select", "type", "hover"] as const) {
     const s = result[name];
     console.log(
       `${name.padEnd(8)} ${String(s.n).padStart(2)} ${[
         s.driver,
         s.parse,
+        s.apply,
         s.frame,
         s.frameP95,
         s.total,

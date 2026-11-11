@@ -26,20 +26,28 @@ export class FieldTexts {
   /** A tree went out with these fields: a value the app set (not one the field typed) replaces the buffer, as a new revision does. */
   follow(fields: ReadonlyMap<string, { value: string; revision: number | undefined }>): void {
     for (const id of this.byId.keys()) if (!fields.has(id)) this.byId.delete(id);
-    for (const [id, { value, revision }] of fields) {
-      const known = this.byId.get(id);
-      if (!known) {
-        this.byId.set(id, { text: value, hash: null, value, revision });
-        continue;
-      }
-      if (known.value === value && known.revision === revision) continue;
-      if (known.revision !== revision || known.text !== value) {
-        known.text = value;
-        known.hash = null;
-      }
-      known.value = value;
-      known.revision = revision;
+    for (const [id, { value, revision }] of fields) this.field(id, value, revision);
+  }
+
+  /** One field went out with this value and revision (a patch), as `follow` takes each. */
+  field(id: string, value: string, revision: number | undefined): void {
+    const known = this.byId.get(id);
+    if (!known) {
+      this.byId.set(id, { text: value, hash: null, value, revision });
+      return;
     }
+    if (known.value === value && known.revision === revision) return;
+    if (known.revision !== revision || known.text !== value) {
+      known.text = value;
+      known.hash = null;
+    }
+    known.value = value;
+    known.revision = revision;
+  }
+
+  /** The field left the tree, or stopped following its selection. */
+  forget(id: string): void {
+    this.byId.delete(id);
   }
 
   /** The field reported its text. */

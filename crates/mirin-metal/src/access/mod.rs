@@ -18,7 +18,6 @@
 mod linux;
 mod tree;
 
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use accesskit::{Action, NodeId, Rect};
@@ -55,9 +54,11 @@ pub(crate) struct Focused {
 }
 
 /// What the tree was last built from; the same again builds nothing. The
-/// tree is held, so a new one can't take its place in memory unnoticed.
+/// tree is known by its generation (`patch::Document`), which every whole
+/// tree and every patch changes; holding the tree itself would make every
+/// patch copy it.
 struct Built {
-    tree: Rc<NodeSpec>,
+    generation: u64,
     /// The layout's revision: bounds that moved (a resize, a scroll) with the
     /// same tree still need publishing.
     layout: u64,
@@ -68,7 +69,7 @@ struct Built {
 
 impl Built {
     fn same(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.tree, &other.tree)
+        self.generation == other.generation
             && self.layout == other.layout
             && self.focused == other.focused
             && self.window_active == other.window_active
@@ -138,13 +139,14 @@ impl Accessibility {
     /// unless nothing it is built from changed since the last time.
     pub(crate) fn refresh(
         &mut self,
-        tree: &Rc<NodeSpec>,
+        tree: &NodeSpec,
+        generation: u64,
         layout: &LayoutMap,
         focused: Option<Focused>,
         window_active: bool,
     ) {
         let now = Built {
-            tree: Rc::clone(tree),
+            generation,
             layout: layout.revision(),
             focused,
             window_active,

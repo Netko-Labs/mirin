@@ -596,6 +596,14 @@ export type NativeEvent =
    * `onKeyDown` is not typing. A host older than this never sends it.
    */
   | { type: "typing"; nodeId: "root"; typing: boolean }
+  /**
+   * The host applies tree patches of protocol `patches` (sent once, as it
+   * starts): `render` then sends only what each commit changed. A host older
+   * than patches never sends it, and gets the whole tree every commit.
+   */
+  | { type: "protocol"; nodeId: "root"; patches: number }
+  /** A patch didn't apply (`reason`): the host wants the whole tree, and drops patches until it comes. */
+  | { type: "resync"; nodeId: "root"; reason: string }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
   | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }

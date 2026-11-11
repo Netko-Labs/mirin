@@ -49,9 +49,11 @@ const transport = spawnNativeHost(binary, {
 
 // Record when trees leave the driver and when events arrive.
 const sends: number[] = [];
+let sentBytes = 0;
 const send = transport.send.bind(transport);
 transport.send = (json) => {
   sends.push(Date.now());
+  sentBytes += json.length;
   send(json);
 };
 const presses: number[] = [];
@@ -74,6 +76,7 @@ interface Sample {
   toFrame: number;
   total: number;
   render: number;
+  bytes: number;
 }
 const samples: Sample[] = [];
 for (let index = 0; index < clicks; index += 1) {
@@ -81,6 +84,7 @@ for (let index = 0; index < clicks; index += 1) {
   const id = root.nodeId(`example:${name}`);
   if (!id) throw new Error(`no node for ${name}`);
   sends.length = 0;
+  sentBytes = 0;
   presses.length = 0;
   const started = Date.now();
   transport.simulate({ kind: "click", id });
@@ -89,7 +93,10 @@ for (let index = 0; index < clicks; index += 1) {
   const lastSend = sends.at(-1);
   if (press === undefined || lastSend === undefined) continue;
   const applied = trace.find(
-    (line) => line.at >= lastSend && line.message.startsWith("tree applied"),
+    // A whole tree, or a patch from a host that takes them.
+    (line) =>
+      line.at >= lastSend &&
+      (line.message.startsWith("tree applied") || line.message.startsWith("patch applied")),
   );
   const frame =
     applied && trace.find((line) => line.at >= applied.at && line.message.startsWith("render"));
@@ -101,6 +108,7 @@ for (let index = 0; index < clicks; index += 1) {
     toFrame: frame.at - applied.at,
     total: frame.at - started,
     render: Number(frame.message.match(/took ([\d.]+)ms/)?.[1] ?? 0),
+    bytes: sentBytes,
   });
 }
 
@@ -160,6 +168,7 @@ const rows: Array<[string, number]> = [
   ["applied → frame rendered", median(samples.map((s) => s.toFrame))],
   ["click → frame (total)", median(samples.map((s) => s.total))],
   ["tree parse", median(parses)],
+  ["KB sent per click", median(samples.map((s) => s.bytes)) / 1024],
   ["tree → elements (all frames)", median(renders)],
   ["full frame (all frames)", median(frames)],
   ["scroll frame", median(scrollFrames)],
