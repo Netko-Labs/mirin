@@ -125,11 +125,6 @@ pub(crate) fn unlock_session(window: &mut Window) {
     window.unlock_session();
 }
 
-/// Change the window's least size after it opened.
-pub(crate) fn set_min_size(window: &mut Window, size: Size<Pixels>) {
-    window.set_window_min_size(size);
-}
-
 /// Paint scroll views at whole device pixels.
 pub(crate) fn set_scroll_snap(window: &mut Window, snap: bool) {
     window.set_scroll_snap(snap);

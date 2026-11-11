@@ -3201,6 +3201,14 @@ impl Window {
         self.platform_window.resize(size);
     }
 
+    /// mirin: change the window's least size after it opened (an app that
+    /// shows a sidebar beside a fixed column needs more room while it does).
+    /// Wayland applies it with the next frame, which this asks for.
+    pub fn set_window_min_size(&mut self, size: Size<Pixels>) {
+        self.platform_window.set_min_size(size);
+        self.refresh();
+    }
+
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.platform_window.is_fullscreen()

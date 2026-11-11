@@ -683,7 +683,7 @@ impl Drive {
         // The least size first: a window grown to show a sidebar is never under it.
         if let Some((width, height)) = turn.min_size {
             let _ = window.update(cx, |_view, window, _cx| {
-                crate::gpui_api::set_min_size(window, size(px(width), px(height)));
+                window.set_window_min_size(size(px(width), px(height)));
             });
         }
         if let Some((width, height)) = turn.size {

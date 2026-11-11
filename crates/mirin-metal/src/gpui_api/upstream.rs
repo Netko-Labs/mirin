@@ -195,9 +195,6 @@ pub(crate) fn observe_chrome(
 /// GAP: no session lock upstream; there is nothing to unlock.
 pub(crate) fn unlock_session(_window: &mut Window) {}
 
-/// GAP: upstream takes a least size only when the window opens.
-pub(crate) fn set_min_size(_window: &mut Window, _size: Size<Pixels>) {}
-
 /// Upstream always paints scroll views at whole device pixels
 /// (`Window::layout_bounds` snaps the element offset, halves toward zero);
 /// the switch to paint them at their offset (`MIRIN_METAL_SCROLL_SNAP=0`) is

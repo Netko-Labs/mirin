@@ -1419,6 +1419,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         Decorations::Server
     }
     fn set_app_id(&mut self, _app_id: &str) {}
+    // mirin: the least size can change after the window opened.
+    /// Change the window's least size; platforms that can't keep the first.
+    fn set_min_size(&mut self, _size: Size<Pixels>) {}
     fn map_window(&mut self) -> anyhow::Result<()> {
         Ok(())
     }

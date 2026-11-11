@@ -1757,6 +1757,18 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
+        // mirin: a maximized or full-screen toplevel keeps its size; a resize
+        // asked meanwhile moves the size it goes back to by as much (an app
+        // growing to show a sidebar while zoomed). Setting the geometry would
+        // have the compositor take it out of the maximized state.
+        {
+            let mut state = self.borrow_mut();
+            if (state.maximized || state.fullscreen) && state.surface_state.toplevel().is_some() {
+                let restored = restored_size(state.window_bounds.size, state.bounds.size, size);
+                state.window_bounds.size = restored;
+                return;
+            }
+        }
         let state = self.borrow();
         let state_ptr = self.0.clone();
 
@@ -1903,6 +1915,13 @@ impl PlatformWindow for WaylandWindow {
     fn set_title(&mut self, title: &str) {
         if let Some(toplevel) = self.borrow().surface_state.toplevel() {
             toplevel.set_title(title.to_string());
+        }
+    }
+
+    // mirin: xdg_toplevel's least size is double-buffered; the next frame's commit applies it.
+    fn set_min_size(&mut self, size: Size<Pixels>) {
+        if let Some(toplevel) = self.borrow().surface_state.toplevel() {
+            toplevel.set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }
     }
 
@@ -2368,6 +2387,23 @@ fn add_rounded_rect(
             area.size.width,
             height,
         );
+    }
+}
+
+/// mirin: the size a maximized or full-screen window goes back to after a
+/// resize to `asked` while it is `current`: `restored` changed by as much
+/// (never under a pixel).
+fn restored_size(
+    restored: Size<Pixels>,
+    current: Size<Pixels>,
+    asked: Size<Pixels>,
+) -> Size<Pixels> {
+    let by = |restored: Pixels, current: Pixels, asked: Pixels| {
+        (restored + (asked - current)).max(px(1.))
+    };
+    Size {
+        width: by(restored.width, current.width, asked.width),
+        height: by(restored.height, current.height, asked.height),
     }
 }
 
