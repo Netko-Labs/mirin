@@ -171,11 +171,15 @@ function Scrolled() {
 type Step = {
   name: string;
   /** `at`: a point inside the border of the node with a test id, as last laid out. */
-  command: (
+  command?: (
     nodeId: (testId: string) => string,
     at: (testId: string) => { x: number; y: number },
   ) => SimCommand;
+  /** Instead of a command: the window is resized to this width (800 tall). */
+  width?: number;
 };
+/** The window resized: every row is laid out at another width. */
+const resize = (width: number): Step => ({ name: `resize to ${width}`, width });
 const scroll = (dy: number): Step => ({
   name: `scroll ${dy}`,
   command: (id) => ({ kind: "scroll", id: id("scroller"), dy }),
@@ -245,6 +249,13 @@ const steps: Step[] =
         scroll(700),
         press(480),
         point(560),
+        // Narrower and back: the rows out of view keep their cards where
+        // they were, and the ones in view are drawn at the new width.
+        resize(1180),
+        point(485),
+        scroll(40),
+        press(530),
+        resize(1280),
         // What is above the rows grows: every row moves.
         { name: "grow", command: (id) => ({ kind: "click", id: id("banner") }) },
         point(485),
@@ -259,8 +270,10 @@ const steps: Step[] =
         scroll(19.5),
         scroll(5000),
         point(1410),
+        resize(1100),
         press(1420),
         scroll(-5000),
+        resize(1280),
         point(35),
         { name: "move off", command: () => ({ kind: "move", x: 2, y: 2 }) },
       ]
@@ -275,6 +288,10 @@ const steps: Step[] =
           { name: "unselect 3", command: (id) => ({ kind: "click", id: id("card:3") }) },
           { name: "focus query", command: (id) => ({ kind: "click", id: id("query") }) },
           { name: "type", command: () => ({ kind: "type", text: "abc" }) },
+          // The rows below the fold are left out at any width.
+          resize(1180),
+          { name: "select 4", command: (id) => ({ kind: "click", id: id("card:4") }) },
+          resize(1280),
         ]
       : [
           { name: "badge", command: (id) => ({ kind: "click", id: id("example:badge-demo") }) },
@@ -295,6 +312,9 @@ const steps: Step[] =
           { name: "theme", command: (id) => ({ kind: "click", id: id("toggle-theme") }) },
           { name: "search", command: (id) => ({ kind: "click", id: id("search") }) },
           { name: "type", command: () => ({ kind: "type", text: "but" }) },
+          // Narrower (a breakpoint the example browser answers) and back.
+          resize(900),
+          resize(1280),
         ];
 
 /** The steps the app is driven through. */
@@ -371,7 +391,8 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
       const [x = 0, y = 0] = (laid?.get(nodeId(testId)) ?? "").split(/[, ]/).map(Number);
       return { x: x + 2, y: y + 2 };
     };
-    transport.simulate(step.command(nodeId, at));
+    if (step.width !== undefined) transport.setSize(step.width, 800);
+    else if (step.command) transport.simulate(step.command(nodeId, at));
     // Several frames: the driver's answer, then whatever it settles into
     // (a scroll bar fades for over a second, at a nested compositor's pace
     // of a frame a second).
