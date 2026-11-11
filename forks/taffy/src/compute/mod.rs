@@ -210,11 +210,25 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
     /// Recursive function to apply rounding to all descendents
     fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
         let unrounded_layout = tree.get_unrounded_layout(node_id);
-        let mut layout = unrounded_layout;
-
         let cumulative_x = cumulative_x + unrounded_layout.location.x;
         let cumulative_y = cumulative_y + unrounded_layout.location.y;
+        let layout = round_node(&unrounded_layout, cumulative_x, cumulative_y);
+        tree.set_final_layout(node_id, &layout);
 
+        let child_count = tree.child_count(node_id);
+        for index in 0..child_count {
+            let child = tree.get_child_id(node_id, index);
+            round_layout_inner(tree, child, cumulative_x, cumulative_y);
+        }
+    }
+}
+
+// mirin: one node's rounding, shared by `round_layout` and the tree's
+// incremental rounding (`TaffyTree::round_changed`). `cumulative_x`/`_y` are
+// the node's own unrounded position from the root, its location included.
+pub(crate) fn round_node(unrounded_layout: &Layout, cumulative_x: f32, cumulative_y: f32) -> Layout {
+    let mut layout = *unrounded_layout;
+    {
         layout.location.x = round(unrounded_layout.location.x);
         layout.location.y = round(unrounded_layout.location.y);
         layout.size.width = round(cumulative_x + unrounded_layout.size.width) - round(cumulative_x);
@@ -236,15 +250,8 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
 
         #[cfg(feature = "content_size")]
         round_content_size(&mut layout, unrounded_layout.content_size, cumulative_x, cumulative_y);
-
-        tree.set_final_layout(node_id, &layout);
-
-        let child_count = tree.child_count(node_id);
-        for index in 0..child_count {
-            let child = tree.get_child_id(node_id, index);
-            round_layout_inner(tree, child, cumulative_x, cumulative_y);
-        }
     }
+    return layout;
 
     #[cfg(feature = "content_size")]
     #[inline(always)]
