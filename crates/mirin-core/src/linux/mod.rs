@@ -15,16 +15,17 @@
 //! Notifications go straight to the session's notification service over D-Bus
 //! (`notification.rs`).
 //!
-//! App-shell features (menu/tray/dialog/clipboard/shortcut) are handled by
-//! the engine's `not(any(macos, windows))` fallback arms for now and grow into
-//! dedicated submodules here as the port reaches the L4 milestone
-//! (`docs/linux-port.md`).
+//! App-shell features grow into dedicated submodules here as the port reaches
+//! the L4 milestone (`docs/linux-port.md`): `dialog` (xdg-desktop-portal file
+//! pickers, zenity/kdialog message boxes) is in; menu/tray/clipboard/shortcut
+//! still use the engine's `not(any(macos, windows))` fallback arms.
 
+pub mod dialog;
 pub mod notification;
 pub mod window;
 
 pub use window::{
     close_all_windows, close_window, control, maybe_start_drag, register_window,
     set_draggable_regions, set_position, set_window_title, tag_browser_view, window_id_for_browser,
-    MirinBrowserViewDelegate, MirinWindowDelegate,
+    MirinBrowserViewDelegate, MirinWindowDelegate, WindowFlags, WindowGeometry,
 };

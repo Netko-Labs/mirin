@@ -61,6 +61,62 @@ bundles retain the complete downloaded runtime.
 
 `app://` is mirin's bundled-asset scheme, served from the app bundle through a CEF scheme handler (dev mode points it at the working tree).
 
+## 1a. Metal engine config (accepted 2026-10-29)
+
+A project picks its UI engine in the manifest. Metal apps declare window UI as
+a component module instead of a URL; the rest of the manifest keeps its meaning.
+Design and rationale: `docs/metal/spec.html` §10–11.
+
+```ts
+export default defineConfig({
+  id: "dev.netko.anko",
+  engine: "metal",                    // "cef" (default) | "metal"
+  capabilities: [],                   // privileged surfaces/APIs, e.g. "shell.surface", "session.lock"
+  windows: {
+    main: { title: "Anko", width: 1280, height: 820, view: "src/windows/main.tsx", titleBar: "unified" },
+    panel: {
+      view: "src/windows/panel.tsx",
+      // Wayland layer-shell surface for desktop-shell UI (panels, docks, launchers).
+      surface: { layer: "top", anchor: ["top", "left", "right"], exclusiveZone: 36, keyboard: "on-demand" },
+    },
+  },
+});
+```
+
+- `engine` selects the flavor at build time; Metal packages `libmirin_metal`
+  and no CEF.
+- `windows.*.view` (Metal) and `windows.*.url` (CEF) are mutually exclusive by
+  engine; using the other one is a config error naming the right key.
+- `windows.*.surface` is Metal-only; CEF rejects it with a clear error. Its
+  `role` is `layer` (default), `popup`, or `lock`; `output` names the screen
+  a layer surface shows on (an output name such as `eDP-1`; the alpha host
+  takes one name, and a surface on every screen is one host per screen; the
+  manifest's `output: "all"` will do that for an app). Layer surfaces also take `margin` (px, or per edge) and
+  `namespace` (the surface's purpose for the compositor; defaults to the
+  title). The alpha host already opens layer surfaces through
+  `spawnNativeHost(binary, { surface })` (docs/metal.md §6). A `lock` surface
+  locks the session (ext-session-lock-v1) on the first output and takes no
+  other options; it unlocks only when the driver calls `unlock()` on the host
+  transport (the host line `{"unlock": true}`). If the host exits or is killed
+  first, the session stays locked, so a crashing lock screen never unlocks.
+- `windows.*.titleBar` is Metal-only: `"standard"` (default) or `"unified"`. A
+  unified window puts the app's own toolbar in the title bar, as macOS Notes
+  does: the content runs to the top edge and the compositor's window controls
+  are drawn over it. Only Dashi's compositor does this (through its private
+  `dashi-chrome-v1` protocol, docs/metal.md §4); elsewhere it falls back to
+  the standard title bar. The alpha host takes it as
+  `spawnNativeHost(binary, { titleBar })` (`MIRIN_METAL_TITLEBAR`, strictly
+  `standard` or `unified`). `@mirinjs/metal` adds `useWindowChrome()`, which
+  returns `{ titleBar, controls }` (`titleBar` is the style the window
+  effectively has; `controls` is the `{ x, y, width, height }` the window
+  controls cover, to leave empty, or `null` for none), and a `dragRegion`
+  boolean on `<View>`: a press moves the window, a double click zooms it, and
+  children with their own press handlers or inputs keep their clicks.
+- `capabilities` lists privileged surfaces and APIs. The session grants them per
+  app id; an app using a privileged key it was not granted fails at startup.
+- `cef.*` is ignored on Metal with a warning.
+- Status: accepted, not yet implemented (milestones R2 and R7).
+
 ## 2. Imperative escape hatches
 
 Everything declared is reachable as a live, typed handle at runtime:

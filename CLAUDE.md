@@ -12,6 +12,9 @@ the same change.
 - Runtime and package manager: Bun.
 - Native core: Rust (`crates/mirin-core`) compiled as `libmirin_core`.
 - Renderer/runtime: CEF, with a Bun Worker owning user main-process code.
+- Metal (alpha): the CEF-free flavor; React rendered as GPU UI through GPUI
+  (`crates/mirin-metal`, `@mirinjs/metal`, `@mirinjs/metal-ui`). See
+  `docs/metal.md`.
 - CLI: `@mirinjs/cli` drives `mirin dev`, `mirin check`, `mirin doctor`,
   `mirin build`, `mirin release`, `mirin init`, and `mirin skill`.
 - Reference: electrobun is useful for proven approaches, but do not copy from it
@@ -25,6 +28,8 @@ the same change.
   changes.
 - `docs/macos-mvp.md`, `docs/windows-port.md`, and `docs/linux-port.md` -
   milestone status, platform findings, and known gaps.
+- `docs/metal.md` - Metal, the CEF-free flavor: element-tree protocol, process
+  model decisions, platform findings, and milestone status.
 - `docs/agent-devtools.md` - the development observability surface: the structured
   event stream, `.mirin/dev/` session artifacts, the loopback inspector, the
   DevTools-protocol bridge, `mirin check` scenarios, `mirin check` / `mirin doctor`,
@@ -44,7 +49,9 @@ the same change.
 - The main process runtime is Bun. Do not add Node compatibility shims to mirin's
   own runtime code.
 - macOS and Linux render with CEF. Windows currently uses CEF and may grow a
-  WebView2 backend behind an abstraction.
+  WebView2 backend behind an abstraction. Metal is a separate app flavor
+  (GPUI), never a mode of a CEF window, and may not break or shadow the shared
+  `mirinjs` surface (`docs/metal.md` section 0).
 - All AppKit, Win32 UI, Xlib window, and CEF browser-process UI calls happen on
   the main/UI thread. Worker-originated commands post UI tasks through the Rust
   engine.
@@ -58,10 +65,17 @@ the same change.
 
 - `crates/mirin-core` - Rust native core (`cdylib` plus test/smoke binaries).
 - `crates/mirin-helper` - CEF subprocess executable.
+- `crates/mirin-metal` - Metal renderer: GPUI-rendered native UI, no CEF (alpha;
+  standalone, excluded from the Cargo workspace). See `docs/metal.md`.
 - `packages/mirin` - developer-facing runtime, RPC, client bridge, updater, and
   typed app APIs.
 - `packages/mirin-cli` - dev/build/release/init tooling.
 - `packages/create-mirin` - project scaffold package.
+- `packages/mirin-metal` - `@mirinjs/metal`, the React renderer for Metal (write
+  normal JSX, rendered as GPU UI through `crates/mirin-metal`).
+- `packages/mirin-metal-ui` - `@mirinjs/metal-ui`, shadcn/ui ported 1:1 onto
+  Metal (same component names, props, variants, theme tokens; `className`
+  strings translated from Tailwind).
 - `packages/native-*` - prebuilt native packages.
 - `examples/*` - real apps used for behavior checks and feature demos.
 - `docs/*` - architecture, API, platform, getting-started, and convention docs.
@@ -89,6 +103,10 @@ the same change.
 - Fetch CEF: `bun scripts/fetch-cef.ts`
 - Run an example app: `cd examples/hello-react && bun run dev`
 - Build a feature-heavy example: `cd examples/kitchen-sink && bun run build`
+- Metal crate (outside the workspace), from `crates/mirin-metal`: `cargo fmt
+  --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and
+  `cargo build --release --bin mirin-metal-host` for the host
+- Metal UI tests alone: `cd packages/mirin-metal-ui && bun test`
 
 ## Verification
 

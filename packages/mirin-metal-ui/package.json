@@ -1,0 +1,62 @@
+{
+  "name": "@mirinjs/metal-ui",
+  "version": "0.1.0-alpha.1",
+  "description": "shadcn/ui for mirin metal: the same component names, props, variants, and theme tokens, rendered as native GPU UI. Existing className strings keep working through a Tailwind-to-style translator.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/Netko-Labs/mirin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netko-Labs/mirin.git",
+    "directory": "packages/mirin-metal-ui"
+  },
+  "bugs": "https://github.com/Netko-Labs/mirin/issues",
+  "keywords": [
+    "bun",
+    "desktop",
+    "react",
+    "gpui",
+    "shadcn",
+    "native-ui"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./jsx-runtime": "./src/jsx-runtime.ts",
+    "./jsx-dev-runtime": "./src/jsx-dev-runtime.ts",
+    "./icons": "./src/icons/index.ts",
+    "./primitives": "./src/primitives/index.ts",
+    "./charts": "./src/charts/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@formisch/react": "^1.1.1",
+    "@hookform/resolvers": "^6.0.2",
+    "@mirinjs/metal": "workspace:*",
+    "@tanstack/react-form": "^1.33.5",
+    "@tanstack/react-table": "^9.3.1",
+    "date-fns": "^4.4.0",
+    "lucide": "1.64.0",
+    "react-hook-form": "^7.91.0",
+    "valibot": "^1.5.0",
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "react": "^19.2.0"
+  }
+}

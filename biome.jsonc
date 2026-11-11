@@ -117,6 +117,7 @@
       "!**/.next",
       "!**/.output",
       "!**/generated",
+      "!**/*.generated.ts",
       "!**/routeTree.gen.ts",
       "!bun.lock",
       "!Cargo.lock",
@@ -125,6 +126,35 @@
     ]
   },
   "overrides": [
+    {
+      // Verbatim shadcn ports and their primitives: upstream code and DOM-style
+      // attribute keys ("data-state"), kept unchanged so ports stay 1:1.
+      "includes": [
+        "packages/mirin-metal-ui/src/components/**",
+        "packages/mirin-metal-ui/src/primitives/**",
+        "packages/mirin-metal-ui/src/compat/**",
+        "packages/mirin-metal-ui/src/runtime/**",
+        "packages/mirin-metal-ui/demo/**",
+        "packages/mirin-metal-ui/src/jsx-runtime.ts",
+        "packages/mirin-metal-ui/src/jsx-dev-runtime.ts"
+      ],
+      "linter": {
+        "rules": {
+          "a11y": "off",
+          // Upstream shadcn idioms kept verbatim: TanStack Form's `children`
+          // render prop and `!= null` checks.
+          "correctness": { "noChildrenProp": "off" },
+          "style": { "useNamingConvention": "off", "noNamespace": "off" },
+          "suspicious": {
+            "noArrayIndexKey": "off",
+            "noExplicitAny": "off",
+            "noDoubleEquals": "off"
+          },
+          "security": { "noDangerouslySetInnerHtml": "off" },
+          "complexity": { "noUselessFragments": "off" }
+        }
+      }
+    },
     {
       "includes": ["packages/docs/**"],
       "linter": {

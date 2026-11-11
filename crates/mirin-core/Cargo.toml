@@ -80,5 +80,6 @@ notify-rust = { version = "4.18", default-features = false }
 x11-dl = "2"
 # Decode the app-icon PNG to ARGB for the window's `_NET_WM_ICON` (taskbar/dock).
 png = "0.17"
-# Desktop notifications over D-Bus (org.freedesktop.Notifications), pure Rust.
-zbus = { version = "6.2", default-features = false, features = ["default-rt"] }
+# D-Bus, pure Rust: desktop notifications (org.freedesktop.Notifications) and
+# file dialogs through xdg-desktop-portal, both blocking on a dialog thread.
+zbus = { version = "6.2", default-features = false, features = ["default-rt", "proxy"] }

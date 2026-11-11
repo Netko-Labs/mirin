@@ -1,0 +1,760 @@
+//! Tree → GPUI elements: turn a parsed `NodeSpec` into GPUI's element tree.
+//! Per-frame mapping; layout/appearance state lives in the driver, exactly like
+//! React Native's shadow tree → native views step. The one renderer-owned piece
+//! of state is the editing buffer of `input` nodes (`window::InputState`).
+
+use std::sync::OnceLock;
+
+use gpui::{
+    div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
+    ElementId, FontWeight, HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
+    ScrollWheelEvent, SharedString, Stateful, Window,
+};
+
+use crate::edges::{apply_box_edges, shadow_preset};
+use crate::input::render_input;
+use crate::media::{render_image, render_svg};
+use crate::tree::{
+    parse_color, Align, Direction, Justify, NodeSpec, TextAlign, TextProps, ViewProps, Weight,
+};
+use crate::window::RootView;
+
+/// What a view's hitbox does to the views painted under it. An `occlude`
+/// view takes every pointer event over it, the wheel included: a wheel over
+/// an open menu, a sheet, or a popover scrolls that (or nothing), never the
+/// page beneath, which GPUI's `block_mouse_except_scroll` would still let
+/// scroll. Views inside it are painted over it, so a list in the menu still
+/// scrolls.
+pub(crate) fn hitbox_behavior(props: &ViewProps) -> HitboxBehavior {
+    if props.occlude {
+        HitboxBehavior::BlockMouse
+    } else {
+        HitboxBehavior::Normal
+    }
+}
+
+/// Render one node (and its subtree) into a GPUI element.
+pub(crate) fn render_node(
+    node: &NodeSpec,
+    view: &mut RootView,
+    window: &mut Window,
+    cx: &mut Context<RootView>,
+) -> AnyElement {
+    match node {
+        NodeSpec::View { props, children } => render_view(props, children, view, window, cx),
+        NodeSpec::Text { props, children } => render_text(props, children),
+        NodeSpec::Input { props } => render_input(props, view, window, cx),
+        NodeSpec::Svg { props } => render_svg(props),
+        NodeSpec::Image { props } => render_image(props),
+    }
+}
+
+/// A `div` carrying every layout and appearance prop of a view (not its
+/// children, identity, or interaction).
+fn styled_view(props: &ViewProps) -> Div {
+    let mut element = div();
+    element = match props.direction {
+        Direction::Column => element.flex().flex_col(),
+        Direction::Row => element.flex().flex_row(),
+    };
+    if props.gap > 0.0 {
+        element = element.gap(px(props.gap));
+    }
+    if props.padding > 0.0 {
+        element = element.p(px(props.padding));
+    }
+    if let Some(padding) = props.padding_x {
+        element = element.px(px(padding));
+    }
+    if let Some(padding) = props.padding_y {
+        element = element.py(px(padding));
+    }
+    // Flex first: it zeroes the minimum size (so flex items can shrink below
+    // their content), and explicit `minWidth`/`minHeight` below must win.
+    if props.flex > 0.0 {
+        element = flex_from_zero(element, props.flex);
+    } else if props.grow > 0.0 {
+        element.style().flex_grow = Some(props.grow);
+        element = element.min_w(px(0.0)).min_h(px(0.0));
+    }
+    if let Some(width) = props.width {
+        element = element.w(px(width));
+    }
+    if let Some(height) = props.height {
+        element = element.h(px(height));
+    }
+    if let Some(width) = props.min_width {
+        element = element.min_w(px(width));
+    }
+    if let Some(height) = props.min_height {
+        element = element.min_h(px(height));
+    }
+    if let Some(width) = props.max_width {
+        element = element.max_w(px(width));
+    }
+    if let Some(height) = props.max_height {
+        element = element.max_h(px(height));
+    }
+    if props.relative {
+        element = element.relative();
+    }
+    if props.absolute {
+        element = element.absolute();
+    }
+    // Offsets place an absolute view against its anchor and shift any other
+    // from where the layout put it (as React Native and CSS do), which is
+    // what a view sliding or rising in place animates.
+    if let Some(top) = props.top {
+        element = element.top(px(top));
+    }
+    if let Some(left) = props.left {
+        element = element.left(px(left));
+    }
+    if let Some(right) = props.right {
+        element = element.right(px(right));
+    }
+    if let Some(bottom) = props.bottom {
+        element = element.bottom(px(bottom));
+    }
+    if props.shrink == Some(false) {
+        element = element.flex_shrink_0();
+    }
+    if let Some(fraction) = props.width_percent {
+        element = element.w(relative(fraction));
+    }
+    if let Some(fraction) = props.height_percent {
+        element = element.h(relative(fraction));
+    }
+    if let Some(ratio) = props.aspect_ratio {
+        element.style().aspect_ratio = Some(ratio);
+    }
+    if props.wrap {
+        element = element.flex_wrap();
+    }
+    if let Some(align) = props.align_self {
+        element.style().align_self = Some(match align {
+            Align::Start => AlignItems::FlexStart,
+            Align::Center => AlignItems::Center,
+            Align::End => AlignItems::FlexEnd,
+            Align::Stretch => AlignItems::Stretch,
+        });
+    }
+    if hitbox_behavior(props) == HitboxBehavior::BlockMouse {
+        element = element.occlude();
+    }
+    if props.fill {
+        element = element.size_full();
+    }
+    if props.center {
+        element = element.items_center().justify_center();
+    }
+    element = match props.align {
+        Some(Align::Start) => element.items_start(),
+        Some(Align::Center) => element.items_center(),
+        Some(Align::End) => element.items_end(),
+        Some(Align::Stretch) | None => element,
+    };
+    element = match props.justify {
+        Some(Justify::Start) => element.justify_start(),
+        Some(Justify::Center) => element.justify_center(),
+        Some(Justify::End) => element.justify_end(),
+        Some(Justify::Between) => element.justify_between(),
+        None => element,
+    };
+    if let Some(color) = props.background.as_deref().and_then(parse_color) {
+        element = element.bg(rgba(color));
+    }
+    if props.corner_radius > 0.0 {
+        element = element.rounded(px(props.corner_radius));
+    }
+    if props.border_width >= 2.0 {
+        element = element.border_2();
+    } else if props.border_width >= 1.0 {
+        element = element.border_1();
+    }
+    apply_box_edges(&mut element, props);
+    crate::grid::apply_grid(&mut element, props);
+    if let Some(color) = props.border_color.as_deref().and_then(parse_color) {
+        element = element.border_color(rgba(color));
+    }
+    if let Some(shadow) = props.shadow.as_deref() {
+        element.style().box_shadow = Some(shadow_preset(shadow));
+    }
+    if props.clip {
+        element = element.overflow_hidden();
+    }
+    if let Some(opacity) = props.opacity {
+        element = element.opacity(opacity);
+    }
+    element
+}
+
+fn render_view(
+    props: &ViewProps,
+    children: &[NodeSpec],
+    view: &mut RootView,
+    window: &mut Window,
+    cx: &mut Context<RootView>,
+) -> AnyElement {
+    let element = render_view_content(props, children, view, window, cx);
+    match (props.id.as_deref(), crate::height::transition_ms(props)) {
+        (Some(id), Some(ms)) => crate::height::clip(element, id, ms, props, &view.heights, window),
+        _ => element,
+    }
+}
+
+fn render_view_content(
+    props: &ViewProps,
+    children: &[NodeSpec],
+    view: &mut RootView,
+    window: &mut Window,
+    cx: &mut Context<RootView>,
+) -> AnyElement {
+    let mut element = styled_view(props);
+    if std::mem::take(&mut view.keeps_length) && keeps_length_in_scroll(props) {
+        element = element.flex_shrink_0();
+    }
+    if crate::list::virtualizes(props, children) {
+        return crate::list::render_list(element, props, view, cx);
+    }
+    let child_ids: Vec<Option<String>> = children.iter().map(node_id).collect();
+    let child_watch: Vec<bool> = children.iter().map(watches_layout).collect();
+    let scrolls_along = scrolls_along_its_direction(props);
+    let mut element = element.children(children.iter().map(|child| {
+        view.keeps_length = scrolls_along;
+        let element = render_node(child, view, window, cx);
+        view.keeps_length = false;
+        element
+    }));
+    if child_ids.iter().any(Option::is_some) {
+        let layout = view.layout.clone();
+        let events = view.events.clone();
+        element = element.on_children_prepainted(move |bounds, _window, _cx| {
+            for ((id, watch), bounds) in child_ids.iter().zip(&child_watch).zip(bounds) {
+                if let Some(id) = id {
+                    record_child_bounds(&layout, &events, id, *watch, bounds);
+                }
+            }
+        });
+    }
+
+    // Interaction and scrolling need a stable element id.
+    let Some(id) = props.id.as_deref() else {
+        if props.on_press
+            || props.on_hover
+            || props.on_pointer
+            || props.on_context_menu
+            || props.on_key_down
+            || props.on_wheel
+            || props.on_drop
+            || props.drag_files.is_some()
+            || props.drag_region
+            || props.focusable
+            || props.on_window_key
+            || props.scroll
+            || props.scroll_x
+            || props.hover_background.is_some()
+        {
+            eprintln!(
+                "[mirin-metal] onPress/dragRegion/scroll/hoverBackground require an id; ignoring"
+            );
+        }
+        return element.into_any_element();
+    };
+    let node_id: SharedString = id.to_string().into();
+    let mut element: Stateful<Div> = element.id(ElementId::Name(node_id.clone()));
+    if props.focusable {
+        element = crate::focus::track(element, id, props, view, window);
+    }
+    if props.scroll {
+        element = element.overflow_y_scroll();
+    }
+    if props.scroll_x {
+        element = element.overflow_x_scroll();
+    }
+    if props.scroll || props.scroll_x {
+        let handle = view.scrolls.entry(id.to_string()).or_default().clone();
+        element = element.track_scroll(&handle);
+        let activity = view
+            .scroll_activity
+            .entry(id.to_string())
+            .or_default()
+            .clone();
+        // Last, so its hit area is over the content's.
+        element = element.child(crate::scrollbar::bars_for(
+            crate::scrollbar::Scrolled::View {
+                handle,
+                across: props.scroll_x,
+                down: props.scroll,
+            },
+            activity,
+        ));
+    }
+    if let Some(color) = props.hover_background.as_deref().and_then(parse_color) {
+        element = element.hover(move |style| style.bg(rgba(color)));
+    }
+    if props.on_hover {
+        let events = view.events.clone();
+        let hover_id = node_id.clone();
+        element = element.on_hover(move |hovered: &bool, _window: &mut Window, _cx: &mut App| {
+            events.hover(hover_id.as_ref(), *hovered);
+        });
+    }
+    if props.drag_files.is_some() {
+        let drag_id = id.to_string();
+        element = element.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |view, event: &MouseDownEvent, _window, _cx| {
+                view.press_draggable(&drag_id, event.position);
+            }),
+        );
+    }
+    if props.on_pointer {
+        let pointer_id = id.to_string();
+        element = element.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |view, event: &MouseDownEvent, _window, _cx| {
+                view.press_claimed = true;
+                // A nested `onPointer` view already has it (press.rs).
+                if !view.claims.claim_pointer(&pointer_id) {
+                    return;
+                }
+                view.dragging = Some(pointer_id.clone());
+                view.emit_pointer(&pointer_id, "down", event.position);
+            }),
+        );
+    }
+    if props.on_key_down {
+        if let Some(focus) = view.key_targets.get(id).map(|target| target.focus.clone()) {
+            let key_id = id.to_string();
+            let events = view.events.clone();
+            let press_focus = focus.clone();
+            element = element
+                .track_focus(&focus)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    move |_event: &MouseDownEvent, window: &mut Window, _cx: &mut App| {
+                        window.focus(&press_focus);
+                    },
+                )
+                .on_key_down(
+                    move |event: &KeyDownEvent, _window: &mut Window, cx: &mut App| {
+                        let keystroke = &event.keystroke;
+                        events.key_down(
+                            &key_id,
+                            crate::events::KeyDown {
+                                key: keystroke.key.clone(),
+                                text: keystroke.key_char.clone(),
+                                ctrl: keystroke.modifiers.control,
+                                alt: keystroke.modifiers.alt,
+                                shift: keystroke.modifiers.shift,
+                                platform: keystroke.modifiers.platform,
+                                repeat: event.is_held,
+                            },
+                        );
+                        cx.stop_propagation();
+                    },
+                );
+        }
+    }
+    if props.on_wheel {
+        let wheel_id = id.to_string();
+        let events = view.events.clone();
+        element = element.on_scroll_wheel(
+            move |event: &ScrollWheelEvent, window: &mut Window, _cx: &mut App| {
+                let (dx, dy) = match event.delta {
+                    ScrollDelta::Lines(lines) => (lines.x, lines.y),
+                    ScrollDelta::Pixels(pixels) => {
+                        let line = f32::from(window.line_height()).max(1.0);
+                        (f32::from(pixels.x) / line, f32::from(pixels.y) / line)
+                    }
+                };
+                events.wheel(&wheel_id, dx, dy);
+            },
+        );
+    }
+    if props.on_context_menu {
+        let menu_id = id.to_string();
+        // The innermost `onContextMenu` view under the pointer opens its
+        // menu; the ones around it don't (press.rs).
+        element = element.on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |view, event: &MouseDownEvent, _window, _cx| {
+                if view.claims.claim_menu(&menu_id) {
+                    view.events.context_menu(
+                        &menu_id,
+                        f32::from(event.position.x),
+                        f32::from(event.position.y),
+                        event.modifiers.into(),
+                    );
+                }
+            }),
+        );
+    }
+    if props.on_press {
+        let press_id = id.to_string();
+        // Pressing a button inside a drag region is a click, not a move; the
+        // innermost pressable under the pointer takes the press (press.rs).
+        element = element.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |view, _event: &MouseDownEvent, _window, _cx| {
+                view.press_claimed = true;
+                view.claims.claim_press(&press_id);
+            }),
+        );
+        // Only the view that took the press fires, with the modifiers held
+        // (⇧-click, ❖-click). GPUI's own keyboard click (on key up) is
+        // ignored: Space and Enter on a focused view press it on key down
+        // (focus/).
+        element = element.cursor_pointer().on_click(cx.listener(
+            move |view, event: &ClickEvent, _window, _cx| {
+                if !event.is_keyboard() && view.claims.owns_press(node_id.as_ref()) {
+                    view.events
+                        .press(node_id.as_ref(), event.modifiers().into());
+                }
+            },
+        ));
+    }
+    if props.drag_region {
+        // Like a title bar: a press starts a compositor-driven move (the
+        // pointer grab goes to the compositor, `xdg_toplevel.move`), a
+        // double click zooms. Listeners run deepest first, so a descendant
+        // that took the press has already said so (`press_claimed`).
+        element = element.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|view, event: &MouseDownEvent, window, _cx| {
+                if view.press_claimed {
+                    return;
+                }
+                if event.click_count >= 2 {
+                    window.zoom_window();
+                } else {
+                    window.start_window_move();
+                }
+            }),
+        );
+    }
+    element.into_any_element()
+}
+
+/// Whether a view scrolls along the way it lays its children out (a column
+/// that scrolls down, a row that scrolls across).
+fn scrolls_along_its_direction(props: &ViewProps) -> bool {
+    match props.direction {
+        Direction::Column => props.scroll,
+        Direction::Row => props.scroll_x,
+    }
+}
+
+/// Whether a view laid out along the way its parent scrolls keeps its
+/// length there. A scroll view's content scrolls instead of squeezing to fit
+/// it, as React Native lays a ScrollView's content out: with CSS's default
+/// `flex-shrink: 1`, a child whose least length taffy underestimated (a row
+/// of wrapping pills in a narrow window) was squeezed, its last lines out of
+/// reach and the next child drawn over them. A view that asks to (`flex`,
+/// `flexGrow`, `flexShrink`) still does as it says.
+fn keeps_length_in_scroll(props: &ViewProps) -> bool {
+    props.shrink.is_none() && props.flex <= 0.0 && props.grow <= 0.0
+}
+
+/// CSS `flex: N 1 0%` / React Native `flex: N`: grow from a zero basis. The 0%
+/// basis lets taffy skip measuring the subtree for its base size (each nested
+/// content-based grow costs another full layout of the subtree); against an
+/// indefinite container a percentage basis falls back to content, as in CSS.
+pub(crate) fn flex_from_zero<E: Styled>(mut element: E, flex: f32) -> E {
+    let style = element.style();
+    style.flex_grow = Some(flex);
+    style.flex_shrink = Some(1.0);
+    style.flex_basis = Some(relative(0.0).into());
+    element.min_w(px(0.0)).min_h(px(0.0))
+}
+
+/// Record a painted child's bounds; report a `layout` event when a watched
+/// node's bounds changed.
+pub(crate) fn record_child_bounds(
+    layout: &crate::sim::LayoutMap,
+    events: &crate::events::EventSender,
+    id: &str,
+    watch: bool,
+    bounds: gpui::Bounds<gpui::Pixels>,
+) {
+    if layout.record(id, bounds) && watch {
+        events.resize(id);
+    }
+}
+
+/// Record the tree's root, which no parent lays out: it fills the window, so
+/// its bounds are the window's `size`. Without it a root `onLayout` never
+/// heard the window resized (a tile, an edge dragged, a zoom).
+pub(crate) fn record_root_bounds(
+    layout: &crate::sim::LayoutMap,
+    events: &crate::events::EventSender,
+    root: &NodeSpec,
+    size: gpui::Size<gpui::Pixels>,
+) {
+    if let Some(id) = node_id(root) {
+        let bounds = gpui::Bounds::new(gpui::Point::default(), size);
+        record_child_bounds(layout, events, &id, watches_layout(root), bounds);
+    }
+}
+
+/// Whether a node asked for `layout` events when its bounds change.
+pub(crate) fn watches_layout(node: &NodeSpec) -> bool {
+    matches!(node, NodeSpec::View { props, .. } if props.on_layout && props.id.is_some())
+}
+
+/// The id a node carries, if any (views may omit one; inputs always have one).
+pub(crate) fn node_id(node: &NodeSpec) -> Option<String> {
+    match node {
+        NodeSpec::View { props, .. } => props.id.clone(),
+        NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => None,
+        NodeSpec::Input { props } => Some(props.id.clone()),
+    }
+}
+
+fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
+    let mut element = div().child(SharedString::from(children.concat()));
+    if let Some(color) = props.color.as_deref().and_then(parse_color) {
+        element = element.text_color(rgba(color));
+    }
+    if let Some(size) = props.size {
+        element = element.text_size(px(size));
+    }
+    element = match props.weight {
+        Weight::Normal => element,
+        Weight::Medium => element.font_weight(FontWeight::MEDIUM),
+        Weight::Semibold => element.font_weight(FontWeight::SEMIBOLD),
+        Weight::Bold => element.font_weight(FontWeight::BOLD),
+    };
+    if props.mono {
+        element = element.font_family(mono_family());
+    }
+    if props.truncate {
+        element = one_line(element);
+    }
+    if let Some(opacity) = props.opacity {
+        element = element.opacity(opacity);
+    }
+    element = match props.align {
+        Some(TextAlign::Center) => element.text_center(),
+        Some(TextAlign::Right) => element.text_right(),
+        Some(TextAlign::Left) | None => element,
+    };
+    if props.italic {
+        element = element.italic();
+    }
+    if props.underline {
+        element = element.underline();
+    }
+    if props.line_through {
+        element = element.line_through();
+    }
+    if let Some(height) = props.line_height {
+        element = element.line_height(px(height));
+    }
+    element.into_any_element()
+}
+
+// A one-line text (and a centered box) laid out by GPUI itself, on its test platform.
+#[cfg(test)]
+mod one_line_tests;
+
+// Scroll views laid out and driven by GPUI, on its test platform.
+#[cfg(test)]
+mod scroll_tests;
+
+/// A text cut to one line (`numberOfLines={1}`): as wide as its box, the
+/// rest of the line given to an ellipsis.
+pub(crate) fn one_line<E: Styled>(element: E) -> E {
+    element
+        .w_full()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+}
+
+/// The system UI sans family (Tailwind's `font-sans` is the system stack),
+/// resolved once through fontconfig; `MIRIN_METAL_FONT` overrides it. GPUI's
+/// own default (IBM Plex Sans) is rarely installed, and its fallback face has
+/// no weights, so `font-semibold`/`font-bold` would not render.
+pub(crate) fn sans_family() -> SharedString {
+    static FAMILY: OnceLock<SharedString> = OnceLock::new();
+    FAMILY
+        .get_or_init(|| {
+            if let Ok(family) = std::env::var("MIRIN_METAL_FONT") {
+                if !family.trim().is_empty() {
+                    return family.trim().to_string().into();
+                }
+            }
+            fontconfig_family("sans-serif").unwrap_or_else(|| ".SystemUIFont".into())
+        })
+        .clone()
+}
+
+fn fontconfig_family(pattern: &str) -> Option<SharedString> {
+    std::process::Command::new("fc-match")
+        .args(["-f", "%{family}", pattern])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|family| {
+            family
+                .split(',')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .filter(|family| !family.is_empty())
+        .map(SharedString::from)
+}
+
+/// The system monospace family, resolved once through fontconfig so `mono`
+/// text matches what terminals on this desktop use. Falls back to a generic
+/// name GPUI can usually resolve.
+pub(crate) fn mono_family() -> SharedString {
+    static FAMILY: OnceLock<SharedString> = OnceLock::new();
+    FAMILY
+        .get_or_init(|| {
+            let detected = std::process::Command::new("fc-match")
+                .args(["-f", "%{family}", "monospace"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .map(|family| {
+                    family
+                        .split(',')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string()
+                })
+                .filter(|family| !family.is_empty());
+            detected.unwrap_or_else(|| "monospace".to_string()).into()
+        })
+        .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::HitboxBehavior;
+
+    use super::hitbox_behavior;
+    use crate::tree::ViewProps;
+
+    #[test]
+    fn an_occluding_view_takes_the_wheel_too() {
+        let ground = ViewProps {
+            occlude: true,
+            ..ViewProps::default()
+        };
+        // Not `BlockMouseExceptScroll`: the wheel over a menu's ground must not reach the page.
+        assert_eq!(hitbox_behavior(&ground), HitboxBehavior::BlockMouse);
+        assert_eq!(
+            hitbox_behavior(&ViewProps::default()),
+            HitboxBehavior::Normal
+        );
+    }
+
+    use super::record_root_bounds;
+    use crate::events::{EventKind, EventSender};
+    use crate::sim::LayoutMap;
+    use crate::tree::parse_tree;
+    use gpui::{px, size};
+
+    #[test]
+    fn a_root_that_watches_its_layout_hears_the_window_resized() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let layout = LayoutMap::default();
+        let events = EventSender::new(tx, layout.clone());
+        let root =
+            parse_tree(r#"{"type":"view","props":{"id":"1","onLayout":true},"children":[]}"#)
+                .expect("test tree must parse");
+        let frame = |width: f32, height: f32| {
+            layout.begin_frame();
+            record_root_bounds(&layout, &events, &root, size(px(width), px(height)));
+        };
+        frame(274.0, 440.0);
+        let opened = rx.try_recv().expect("the first frame reports the root");
+        assert_eq!(opened.node_id, "1");
+        assert_eq!(opened.kind, EventKind::Resize);
+        let bounds = opened.bounds.expect("a resize carries the bounds");
+        assert_eq!(
+            (bounds.x, bounds.y, bounds.width, bounds.height),
+            (0.0, 0.0, 274.0, 440.0)
+        );
+        // The same size again says nothing.
+        frame(274.0, 440.0);
+        assert!(rx.try_recv().is_err());
+        // Tiled: the window grew, and the root hears it.
+        frame(1097.0, 658.0);
+        let tiled = rx.try_recv().expect("a new size reports the root");
+        let bounds = tiled.bounds.expect("a resize carries the bounds");
+        assert_eq!((bounds.width, bounds.height), (1097.0, 658.0));
+    }
+
+    #[test]
+    fn a_root_that_does_not_watch_its_layout_stays_quiet() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let layout = LayoutMap::default();
+        let events = EventSender::new(tx, layout.clone());
+        let root = parse_tree(r#"{"type":"view","props":{"id":"1"},"children":[]}"#)
+            .expect("test tree must parse");
+        layout.begin_frame();
+        record_root_bounds(&layout, &events, &root, size(px(274.0), px(440.0)));
+        assert!(rx.try_recv().is_err());
+        // Still recorded, for a driver's layout query.
+        assert_eq!(layout.node("1").map(|node| node.width), Some(274.0));
+    }
+
+    /// GPUI paints a wrapped right-aligned line from where its ink ends,
+    /// not after the space it broke at (vendor/gpui `ink_end_x`).
+    #[test]
+    fn a_wrapped_line_ends_before_the_space_it_broke_at() {
+        // "4,420 + 316" 10 px a glyph, wrapped before "+": the line ends after "0".
+        let text = "4,420 + 316";
+        let before = (0..6).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(60.0), before, text), px(50.0));
+        // Two spaces, both dropped.
+        let text = "ab  cd";
+        let before = (0..4).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(40.0), before, text), px(20.0));
+        // No space at the break: the line ends where the next starts.
+        let text = "abcd";
+        let before = (0..2).rev().map(|index| (px(index as f32 * 10.0), index));
+        assert_eq!(gpui::ink_end_x(px(20.0), before, text), px(20.0));
+    }
+
+    use gpui::reuses_layout;
+
+    // `numberOfLines: 1` (`render_text`'s `truncate`) is cut with an ellipsis at
+    // the width layout finds. Taffy asks a flex item's text for its whole line
+    // first, then at its width: the second answer must not be the first one.
+    #[test]
+    fn a_line_cut_to_its_width_is_not_the_whole_line_kept() {
+        assert!(!reuses_layout((None, None), (None, Some(px(120.)))));
+        assert!(!reuses_layout((None, Some(px(120.))), (None, None)));
+        assert!(!reuses_layout(
+            (None, Some(px(120.))),
+            (None, Some(px(90.)))
+        ));
+    }
+
+    #[test]
+    fn the_same_query_keeps_its_layout() {
+        assert!(reuses_layout(
+            (None, Some(px(120.))),
+            (None, Some(px(120.)))
+        ));
+        assert!(reuses_layout(
+            (Some(px(200.)), None),
+            (Some(px(200.)), None)
+        ));
+        assert!(!reuses_layout(
+            (Some(px(200.)), None),
+            (Some(px(180.)), None)
+        ));
+    }
+}

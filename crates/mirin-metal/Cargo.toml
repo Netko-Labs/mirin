@@ -1,0 +1,73 @@
+# Alpha crate, intentionally excluded from the root workspace (see the root
+# Cargo.toml `exclude`): gpui's dependency tree is large and its platform
+# requirements (Vulkan on Linux, Metal on macOS, DirectX on Windows) differ from
+# the CEF core's. Build it standalone: `cargo build` from this directory. CI's
+# `metal` job (.github/workflows/ci.yml) checks it on its own.
+[package]
+name = "mirin-metal"
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "mirin metal (alpha): GPU-rendered native UI for mirin apps, built on GPUI"
+
+# Keep the lockfile's `libc` at 0.2.186: gpui 0.2.2 pulls `xattr 0.2.3` (via
+# zed-async-tar), which no longer compiles against libc >= 0.2.190 on Linux.
+# After any `cargo update`, re-pin with `cargo update libc --precise 0.2.186`.
+[dependencies]
+gpui = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Async channel that wakes the window when the driver sends (already in gpui's tree).
+futures = "0.3"
+# The accessibility tree (src/access/): AccessKit's tree types, everywhere.
+accesskit = "0.25"
+# Opt-in sampling profiler for the host (`--features profiling`); see
+# `MIRIN_METAL_PROFILE` in src/bin/host.rs. Not part of normal builds.
+pprof = { version = "0.15", optional = true }
+
+# Ask the Wayland compositor which GPU it composites on (src/gpu.rs). Both are
+# already in gpui's dependency tree.
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+# The shell.toplevels capability (src/toplevels.rs); 0.2 is the version the
+# GPUI fork already builds.
+wayland-protocols-wlr = { version = "0.2", features = ["client"] }
+# Probe that the chosen GPU's Vulkan driver has a device (src/gpu.rs); the
+# version blade-graphics already builds.
+ash = "0.38"
+# Publish the accessibility tree over AT-SPI (src/access/linux.rs), so Orca
+# reads Metal's UI; on zbus 5, which gpui's tree already builds.
+accesskit_unix = "0.24"
+
+# GPUI's test platform (a window with no GPU, a monospace stand-in for the
+# text system), for tests that lay elements out (src/render/tests.rs).
+[dev-dependencies]
+gpui = { version = "0.2", features = ["test-support"] }
+
+[features]
+profiling = ["dep:pprof"]
+
+# mirin's forks: gpui 0.2.2 and the taffy 0.9.0 it pins, and AccessKit's
+# Unix adapter, vendored with small, documented changes (vendor/*/MIRIN.md).
+# Keep versions in sync with upstream.
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }
+taffy = { path = "vendor/taffy" }
+accesskit_unix = { path = "vendor/accesskit_unix" }
+
+# GPUI, taffy, and the text stack are unusably slow unoptimized; optimize
+# dependencies in dev builds too (this crate itself stays fast to compile).
+[profile.dev.package."*"]
+opt-level = 3
+
+[[example]]
+name = "hello"
+
+[[example]]
+name = "counter"
+
+[[bin]]
+name = "mirin-metal-host"
+path = "src/bin/host.rs"

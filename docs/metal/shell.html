@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mirin Metal — Desktop Shell Plan</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #18181b; --muted: #52525b; --line: #e4e4e7;
+    --panel: #f4f4f5; --accent: #2563eb; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+    --code: #f4f4f5; --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0b0d; --fg: #e4e4e7; --muted: #a1a1aa; --line: #27272a;
+      --panel: #151518; --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+      --code: #151518;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
+  }
+  .layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); max-width: 1240px; margin: 0 auto; }
+  nav {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 28px 20px; border-right: 1px solid var(--line); font-size: 13.5px;
+  }
+  nav .title { font-weight: 650; margin-bottom: 12px; }
+  nav ol { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+  nav li { margin: 3px 0; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover { color: var(--fg); }
+  main { padding: 36px 48px 96px; min-width: 0; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 21px; margin: 48px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 28px 0 8px; }
+  p, li { max-width: 78ch; }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre {
+    font-family: var(--mono); font-size: 12.8px; line-height: 1.5; background: var(--code);
+    border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto;
+  }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .meta { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .meta span { margin-right: 18px; }
+  .callout { border: 1px solid var(--line); border-left: 4px solid var(--accent); background: var(--panel);
+    border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+  .callout.decision { border-left-color: var(--ok); }
+  .callout.signoff { border-left-color: var(--warn); }
+  .callout.risk { border-left-color: var(--bad); }
+  .callout > :first-child { margin-top: 0; } .callout > :last-child { margin-bottom: 0; }
+  .tag { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid currentColor; margin-right: 6px; vertical-align: 1px; }
+  .tag.ok { color: var(--ok); } .tag.warn { color: var(--warn); } .tag.bad { color: var(--bad); } .tag.info { color: var(--accent); }
+  .diagram { border: 1px solid var(--line); border-radius: 10px; padding: 16px; background: var(--panel); margin: 16px 0; overflow-x: auto; }
+  .diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  .diagram text { font-family: system-ui, sans-serif; fill: var(--fg); }
+  .diagram .box { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+  .diagram .box.main { stroke: var(--accent); }
+  .diagram .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .diagram .small { font-size: 12px; fill: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); } main { padding: 24px; } .grid2 { grid-template-columns: 1fr; } }
+</style>
+
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="title">Metal Shell Plan</div>
+  <ol>
+    <li><a href="#answer">1. Short answer</a></li>
+    <li><a href="#layers">2. What a desktop is made of</a></li>
+    <li><a href="#compositor">3. Compositor strategy</a></li>
+    <li><a href="#shell">4. The shell as a Metal app</a></li>
+    <li><a href="#changes">5. Architecture changes</a></li>
+    <li><a href="#protocols">6. Protocol dependencies</a></li>
+    <li><a href="#roadmap">7. Roadmap</a></li>
+    <li><a href="#decisions">8. Decisions for the owner</a></li>
+    <li><a href="#risks">9. Risks</a></li>
+  </ol>
+</nav>
+<main>
+
+<h1>Mirin Metal: Desktop Shell Plan</h1>
+<div class="meta">
+  <span><strong>Status:</strong> Decisions accepted 2026-10-29 (§8)</span>
+  <span><strong>Date:</strong> 2026-10-29</span>
+  <span><strong>Builds on:</strong> <code>docs/metal/spec.html</code> (runtime, decisions accepted)</span>
+</div>
+
+<h2 id="answer">1. Short answer</h2>
+<p>
+  The runtime spec already anticipates the shell (layer-shell surfaces in milestone R7), but only as
+  one feature. A shell needs more: a compositor strategy, system services, a privilege model, and a
+  way to host third-party applets. The architecture does <strong>not</strong> need to change in its
+  foundations: process-per-app, GPUI as a Wayland client, the Worker split, the patch protocol, and
+  the <code>mirinjs</code> contract all hold. It needs <strong>eight extension points</strong>
+  (§5), and two of them should shape R1–R7 now so the shell does not force a redesign later.
+</p>
+<div class="callout decision">
+  <p><span class="tag ok">accepted 2026-10-29</span> <strong>Own compositor from the start.</strong>
+  mirin builds its compositor, <code>mirin-comp</code>, in Rust on Smithay, in parallel with the shell.
+  The shell stays a set of privileged Metal apps that are Wayland clients of it over standard
+  protocols, so a shell crash never takes the compositor down and the shell remains testable on
+  other compositors. This is the architecture System76's COSMIC ships: a Smithay compositor, shell
+  components as layer-shell clients, and apps on its own toolkit.</p>
+</div>
+
+<h2 id="layers">2. What a desktop is made of</h2>
+<table>
+  <tr><th>Layer</th><th>Examples</th><th>Who provides it in this plan</th></tr>
+  <tr><td>Compositor</td><td>Window management, input routing, outputs, effects, protocols</td><td><code>mirin-comp</code>, Rust on Smithay (§3) for rendering, input, and protocols; window-management policy moves to Bun over its IPC (decision 5)</td></tr>
+  <tr><td>Shell UI</td><td>Panel, dock, launcher, notifications, OSD, quick settings, app switcher, lock screen, greeter</td><td>Metal apps with shell surfaces (§4)</td></tr>
+  <tr><td>Session services</td><td>Notifications server, tray host, audio, network, power, Bluetooth, polkit agent, portals, settings</td><td>Bun services behind a typed API (§5, E4)</td></tr>
+  <tr><td>Apps</td><td>Settings, files, terminal, Anko, third-party apps</td><td>Metal apps (and CEF apps where a webview fits)</td></tr>
+  <tr><td>Design system</td><td>Tokens, components, icons, motion</td><td><code>@mirinjs/metal-ui</code>, tokens served by the session (E6)</td></tr>
+  <tr><td>OS image</td><td>Base system, updates, session startup</td><td>A regular Fedora spin (§8)</td></tr>
+</table>
+
+<h2 id="compositor">3. Compositor strategy</h2>
+<table>
+  <tr><th>Option</th><th>Gains</th><th>Costs</th></tr>
+  <tr><td><strong>A.</strong> Shell as clients of KWin</td><td>Mature, already on the owner's machine, supports layer-shell; zero compositor work.</td><td>KWin's window management, effects, and Plasma-specific protocols; a Plasma flavor to the session; KWin release cadence.</td></tr>
+  <tr><td><strong>B.</strong> Shell as clients of a wlroots compositor (labwc, sway)</td><td>Standard wlr/ext protocols, lightweight, easy to configure.</td><td>Window management and animations are someone else's design; C, not Rust.</td></tr>
+  <tr><td><strong>C.</strong> Own compositor on Smithay (<code>mirin-comp</code>)</td><td>Full control of window management, animations, gestures, and protocols; Rust, same stack as Metal; COSMIC and niri prove the path.</td><td>A large, long-lived project: input devices, outputs, XWayland, screencast, accessibility, stability.</td></tr>
+  <tr><td><strong>D.</strong> Shell inside the compositor (GNOME Shell model)</td><td>Tight integration, compositor-drawn UI.</td><td>GPUI is a client toolkit, not a compositor renderer; one crash takes everything down.</td></tr>
+</table>
+<p><strong>Decided: C from the start.</strong> D stays ruled out. A remains useful for one thing: developing shell clients before <code>mirin-comp</code> can host them, in a nested KWin session.</p>
+
+<h3>mirin-comp</h3>
+<table>
+  <tr><th>Topic</th><th>Plan</th></tr>
+  <tr><td>Stack</td><td>Rust, Smithay; GLES renderer first, Vulkan later. A standalone crate (<code>crates/mirin-comp</code>), excluded from the Cargo workspace like <code>mirin-metal</code>, sharing <code>mirin-platform</code> and the session tokens.</td></tr>
+  <tr><td>Backends</td><td>Nested (winit) for development on the owner's desktop and in CI; DRM/KMS + libinput + libseat on a TTY for real sessions.</td></tr>
+  <tr><td>Protocols</td><td>Implements every protocol in §6 natively; privileged ones are granted per client by capability (E3), using the client identity the session launcher hands it.</td></tr>
+  <tr><td>Decorations</td><td>Server-side decorations drawn by the compositor from the session tokens, so Metal, CEF, and third-party apps look alike. Apps can opt into client-side decorations.</td></tr>
+  <tr><td>Window management</td><td>Floating plus tiling layouts, workspaces, overview, gestures, animations: the compositor's own design, the main reason to own it.</td></tr>
+  <tr><td>Compatibility</td><td>XWayland for X11 apps; screencast and screenshot through the portal backend (E6) and image-copy-capture.</td></tr>
+  <tr><td>UI drawn by the compositor</td><td>Only what must be: decorations, overview frames, drag feedback. Everything else is a shell client (rule D).</td></tr>
+</table>
+
+<h2 id="shell">4. The shell as a Metal app</h2>
+<p>The shell is not a new kind of program. It is a Metal app with privileged capabilities and shell surfaces, built with the same runtime as any app:</p>
+<table>
+  <tr><th>Process</th><th>Surfaces</th><th>Why separate</th></tr>
+  <tr><td><code>mirin-comp</code></td><td>None of its own (decorations, overview)</td><td>The compositor (§3). Its crash ends the session, so it carries no app logic.</td></tr>
+  <tr><td><code>mirin-shell</code></td><td>Panel and dock per monitor, launcher, notification toasts and center, OSD, quick settings, app switcher</td><td>One process for memory: one GPUI, two Workers, many surfaces. Restarted by the session on crash.</td></tr>
+  <tr><td><code>mirin-lock</code></td><td>Lock surfaces on every output</td><td>Must stay up when the shell crashes; minimal code; the compositor keeps the session locked if it dies.</td></tr>
+  <tr><td><code>mirin-greeter</code></td><td>Login screen (under greetd)</td><td>Runs before any user session exists.</td></tr>
+  <tr><td><code>mirin-settings</code>, apps</td><td>Normal windows</td><td>Ordinary apps; no shell privileges.</td></tr>
+  <tr><td><code>mirin-services</code></td><td>None</td><td>Session services and the portal backend (E4, E6); no UI, so a UI crash never takes audio or notifications down.</td></tr>
+</table>
+
+<h2 id="changes">5. Architecture changes</h2>
+<p>None replace the runtime spec; all extend it. E1 and E3 should be designed into R1–R7 now.</p>
+
+<h3>E1 · Surface roles and outputs <span class="tag warn">shape R7 now</span></h3>
+<ul>
+  <li>Window kinds beyond toplevels: <strong>layer</strong> surfaces, <strong>popup</strong> surfaces (positioned against an anchor, flipping at screen edges), <strong>lock</strong> surfaces (ext-session-lock), each a GPUI fork addition.</li>
+  <li>Output lifecycle: monitors added, removed, rescaled, rearranged reach the App Worker as events; a surface can be declared per output (<code>output: "all"</code>) and is created and destroyed with its monitor.</li>
+  <li>The UI root receives its surface's role and output so a panel renders per monitor.</li>
+</ul>
+
+<h3>E2 · UI contexts and slots <span class="tag info">S2</span></h3>
+<ul>
+  <li>Apps keep one UI Worker (accepted). The shell can add <strong>UI contexts</strong>: extra UI Workers for applets and extensions, each with its own permissions.</li>
+  <li>A <code>slot</code> node in one context's tree hosts another context's root, so a third-party applet renders inside the panel without access to the panel's tree or APIs.</li>
+  <li>Node ids are namespaced per context in the patch protocol. <strong>Reserve the namespace field in protocol v2 now</strong>, even before contexts exist.</li>
+</ul>
+
+<h3>E3 · Capabilities <span class="tag warn">shape R2 now</span></h3>
+<ul>
+  <li>Privileged surfaces and APIs are capabilities declared in the manifest and granted by the session, never assumed: <code>shell.surface</code>, <code>shell.toplevels</code>, <code>shell.workspaces</code>, <code>session.lock</code>, <code>services.*</code>.</li>
+  <li>The compositor enforces protocol access (a security-context allowlist on KWin or wlroots, built in on a mirin compositor); the runtime enforces API access in the App Worker.</li>
+  <li>An ordinary app declaring <code>surface</code> without the grant fails at startup with a clear error. <strong>R2's config validation should already route through a capability check</strong>, even if it grants everything during development.</li>
+</ul>
+
+<h3>E4 · System services <span class="tag info">S2</span></h3>
+<ul>
+  <li>A D-Bus layer in Bun (the D-Bus wire protocol over its Unix socket; <code>bun:ffi</code> where a libc call is needed), event-driven, exposed through a typed package, <code>@mirinjs/shell</code>.</li>
+  <li>Services: open windows and taskbar actions, workspaces, notifications server, tray host (StatusNotifierItem), media (MPRIS), audio (PipeWire), network (NetworkManager), power and sessions (UPower, logind), Bluetooth (BlueZ), polkit agent, idle and inhibition.</li>
+  <li>Long-running services live in <code>mirin-services</code>; the shell subscribes over RPC, so UI restarts never drop state.</li>
+</ul>
+
+<h3>E5 · Session supervision <span class="tag info">S1</span></h3>
+<ul>
+  <li>Each shell process is a systemd user unit with readiness notification and restart on failure; the session target orders them.</li>
+  <li>The shell persists its state (open launcher query, notification history) so a restart is invisible.</li>
+</ul>
+
+<h3>E6 · Design tokens as a session service <span class="tag info">S2</span></h3>
+<ul>
+  <li><code>mirin-services</code> implements the XDG settings portal (color scheme, accent, contrast) plus mirin tokens (radius, fonts, density) and pushes changes live.</li>
+  <li>metal-ui's <code>ThemeProvider</code> follows the session by default; CEF apps get the same values through CSS variables.</li>
+</ul>
+
+<h3>E7 · Always-resident performance <span class="tag info">ongoing</span></h3>
+<ul>
+  <li>Shell budgets stricter than apps: zero idle CPU and wakeups, panel memory under a fixed ceiling, input to frame within one frame.</li>
+  <li>Later: a pre-forked runtime template to cut app cold start, and shared glyph and icon caches across processes.</li>
+</ul>
+
+<h3>E8 · Agent-first <span class="tag info">proposal</span></h3>
+<ul>
+  <li>Owner decision 2026-10-29: Dashi is agent-first and exposes MCP to control the OS. The plan is Dashi's <code>docs/agents.html</code>; its specifics await sign-off.</li>
+  <li>The compositor owns what an agent must not bypass: consent per agent and scope, an agent seat (a second <code>wl_seat</code>) so agents act without moving the person's pointer or focus, the activity indicator, and a stop key. The MCP server itself is Bun, in the shell session (decision 5); the compositor offers it windows, capture, and later input over its IPC, and <code>dashi-mcp</code> bridges an agent's stdio to it.</li>
+  <li>Runtime consequences: Metal's accessibility tree (AccessKit to AT-SPI, planned after v1 in the runtime spec) becomes the tree agents read too, so it moves up; the GPUI fork binds every <code>wl_seat</code>; apps may later declare typed actions that become MCP tools, which is a <code>mirinjs</code> API and needs the owner's sign-off.</li>
+</ul>
+
+<h3>What stays the same</h3>
+<p>Process-per-app, GPUI as the client toolkit, the Worker split, the patch protocol, the <code>mirinjs</code> contract, and the accepted decisions in the runtime spec.</p>
+
+<h2 id="protocols">6. Protocol dependencies</h2>
+<p>The shell talks to the compositor only through these. <code>mirin-comp</code> implements all of them; using only standard protocols keeps the shell runnable on other compositors (nested KWin during early development, tests on others).</p>
+<table>
+  <tr><th>Need</th><th>Protocol</th></tr>
+  <tr><td>Panels, docks, overlays</td><td><code>wlr-layer-shell-unstable-v1</code></td></tr>
+  <tr><td>Lock screen</td><td><code>ext-session-lock-v1</code></td></tr>
+  <tr><td>Taskbar: list windows</td><td><code>ext-foreign-toplevel-list-v1</code></td></tr>
+  <tr><td>Taskbar: activate, minimize, close</td><td><code>wlr-foreign-toplevel-management</code> (KWin: its own window-management protocol, behind an adapter)</td></tr>
+  <tr><td>Workspaces</td><td><code>ext-workspace-v1</code></td></tr>
+  <tr><td>Launching and focus handoff</td><td><code>xdg-activation-v1</code></td></tr>
+  <tr><td>Idle, screen blanking</td><td><code>ext-idle-notify-v1</code>, <code>idle-inhibit</code></td></tr>
+  <tr><td>Window previews, screenshots</td><td><code>ext-image-copy-capture-v1</code></td></tr>
+  <tr><td>Restricting privileged protocols</td><td><code>security-context-v1</code></td></tr>
+  <tr><td>On-screen keyboard</td><td><code>input-method</code>, <code>text-input-v3</code></td></tr>
+</table>
+
+<h2 id="roadmap">7. Roadmap</h2>
+<table>
+  <tr><th>Phase</th><th>Scope</th><th>Exit criteria</th></tr>
+  <tr><td><strong>S0</strong> (with R1–R7)</td><td>Fold E1 into R7 (layer, popup, lock surfaces, outputs); reserve context namespaces in protocol v2 (E2); route config validation through capability checks (E3).</td><td>Runtime spec updated; R7 acceptance includes per-output panels and a lock surface.</td></tr>
+  <tr><td><strong>C1</strong> Compositor core (parallel from the start)</td><td><code>mirin-comp</code> nested backend: xdg-shell, layer-shell, xdg-activation, outputs, input, server-side decorations from tokens.</td><td>Metal and CEF apps and a layer-shell panel run inside nested <code>mirin-comp</code> on the owner's desktop.</td></tr>
+  <tr><td><strong>S1</strong> Shell prototype</td><td><code>mirin-shell</code> as clients (nested KWin until C1 lands, then nested <code>mirin-comp</code>; never the owner's live desktop): panel with taskbar, clock, tray, and notifications; launcher; systemd units.</td><td>A day-to-day usable panel and launcher in a nested session.</td></tr>
+  <tr><td><strong>C2</strong> Real sessions</td><td>DRM/KMS, libinput, libseat on a TTY; multi-monitor; session-lock; foreign-toplevel and workspace protocols; security contexts.</td><td><code>mirin-comp</code> + <code>mirin-shell</code> as a full session from a TTY.</td></tr>
+  <tr><td><strong>S2</strong> Services and extensibility</td><td><code>mirin-services</code>, <code>@mirinjs/shell</code>, UI contexts and slots, capabilities enforced, session tokens.</td><td>A third-party applet runs in its own context inside the panel; audio, network, and power quick settings work.</td></tr>
+  <tr><td><strong>C3</strong> Window management</td><td>Tiling and floating layouts, workspaces, overview, gestures, animations; XWayland; screencast and screenshots.</td><td>Daily-driver window management; X11 apps and screen sharing work.</td></tr>
+  <tr><td><strong>S4</strong> Session</td><td>Greeter under greetd, lock screen, settings app, portal backend, on-screen keyboard.</td><td>Log in, lock, change settings, pick files through portals, all on mirin components.</td></tr>
+  <tr><td><strong>S5</strong> OS image</td><td>A regular, package-based Fedora spin that boots into the mirin session (kickstart, comps group, RPMs for the session components).</td><td>Installable live image; the session updates through dnf.</td></tr>
+</table>
+
+<h2 id="decisions">8. Decisions for the owner</h2>
+<table>
+  <tr><th>#</th><th>Decision</th><th>Outcome</th></tr>
+  <tr><td>1</td><td>Compositor strategy</td><td><span class="tag ok">accepted</span> Own compositor, <code>mirin-comp</code> on Smithay, from the start (§3). Shell stays clients over standard protocols.</td></tr>
+  <tr><td>2</td><td>Third-party applets and extensions</td><td><span class="tag ok">accepted</span> Isolated UI contexts (Workers) embedded through slots, with declared capabilities (E2).</td></tr>
+  <tr><td>3</td><td>OS base</td><td><span class="tag ok">accepted</span> A regular, package-based Fedora spin (S5).</td></tr>
+  <tr><td>4</td><td>Fold E1–E3 into the runtime spec now</td><td><span class="tag ok">accepted</span> Done: surface roles and outputs in R7, context namespaces in protocol v2, capabilities in config (runtime spec §7, §10, §11, §18).</td></tr>
+  <tr><td>5</td><td>Language for system services</td><td><span class="tag ok">accepted 2026-10-29</span> Bun. Owner rule, so people can hack the OS in TypeScript: all logic and every server is Bun; Rust is only for rendering and low-level work Bun can't do on its own (DRM/KMS, GPU, the Wayland protocol server, libinput and the per-event input path, Metal hosts).</td></tr>
+  <tr><td>6</td><td>Agents</td><td><span class="tag ok">accepted 2026-10-29</span> Agent-first: the OS exposes MCP so agents can observe and control it (E8). Accepted with it: consent asked on screen, an MCP server in Bun, an agent seat. The rest are open in Dashi's <code>docs/agents.html</code>.</td></tr>
+</table>
+
+<h2 id="risks">9. Risks</h2>
+<div class="callout risk">
+  <ul>
+    <li><strong>Compositor scope.</strong> A compositor is a multi-year project (input devices, multi-GPU, XWayland, accessibility, stability). Mitigation: Smithay does the heavy lifting; C1–C3 each end in something usable; the shell stays protocol-standard so it never waits on <code>mirin-comp</code>.</li>
+    <li><strong>Two parallel tracks.</strong> Compositor and runtime compete for attention. Mitigation: the runtime (R1–R7) stays first priority because every app needs it; C1 only needs to host clients nested.</li>
+    <li><strong>Shell crash blast radius.</strong> Lock screen, services, and greeter are separate processes for this reason; the shell restarts transparently.</li>
+    <li><strong>GPUI fork growth.</strong> Surface roles add to the fork; keep each patch small, documented in <code>MIRIN.md</code>, and upstream what is generic.</li>
+  </ul>
+</div>
+
+</main>
+</div>
+</body>
+</html>

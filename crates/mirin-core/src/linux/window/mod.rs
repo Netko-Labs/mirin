@@ -14,4 +14,5 @@ pub use drag::{maybe_start_drag, set_draggable_regions};
 pub use state::register_window;
 pub use views::{
     tag_browser_view, window_id_for_browser, MirinBrowserViewDelegate, MirinWindowDelegate,
+    WindowFlags, WindowGeometry,
 };

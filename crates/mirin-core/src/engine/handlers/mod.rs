@@ -6,6 +6,7 @@ mod app;
 mod client;
 mod context_menu;
 mod display;
+mod download;
 mod drag;
 mod lifespan;
 

@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mirin Metal Runtime — Specification</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #18181b; --muted: #52525b; --line: #e4e4e7;
+    --panel: #f4f4f5; --accent: #2563eb; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+    --code: #f4f4f5; --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0b0d; --fg: #e4e4e7; --muted: #a1a1aa; --line: #27272a;
+      --panel: #151518; --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+      --code: #151518;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
+  }
+  .layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); max-width: 1240px; margin: 0 auto; }
+  nav {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 28px 20px; border-right: 1px solid var(--line); font-size: 13.5px;
+  }
+  nav .title { font-weight: 650; margin-bottom: 12px; }
+  nav ol { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+  nav li { margin: 3px 0; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover { color: var(--fg); }
+  main { padding: 36px 48px 96px; min-width: 0; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 21px; margin: 48px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 28px 0 8px; }
+  p, li { max-width: 78ch; }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre {
+    font-family: var(--mono); font-size: 12.8px; line-height: 1.5; background: var(--code);
+    border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto;
+  }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .meta { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .meta span { margin-right: 18px; }
+  .callout { border: 1px solid var(--line); border-left: 4px solid var(--accent); background: var(--panel);
+    border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+  .callout.decision { border-left-color: var(--ok); }
+  .callout.signoff { border-left-color: var(--warn); }
+  .callout.risk { border-left-color: var(--bad); }
+  .callout > :first-child { margin-top: 0; } .callout > :last-child { margin-bottom: 0; }
+  .tag { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid currentColor; margin-right: 6px; vertical-align: 1px; }
+  .tag.ok { color: var(--ok); } .tag.warn { color: var(--warn); } .tag.bad { color: var(--bad); } .tag.info { color: var(--accent); }
+  .diagram { border: 1px solid var(--line); border-radius: 10px; padding: 16px; background: var(--panel); margin: 16px 0; overflow-x: auto; }
+  .diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  .diagram text { font-family: system-ui, sans-serif; fill: var(--fg); }
+  .diagram .box { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+  .diagram .box.main { stroke: var(--accent); }
+  .diagram .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .diagram .small { font-size: 12px; fill: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); } main { padding: 24px; } .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="title">Metal Runtime Spec</div>
+  <ol>
+    <li><a href="#summary">1. Summary</a></li>
+    <li><a href="#context">2. Context and constraints</a></li>
+    <li><a href="#goals">3. Goals and non-goals</a></li>
+    <li><a href="#process">4. Process and thread model</a></li>
+    <li><a href="#native">5. Native library</a></li>
+    <li><a href="#transport">6. Commands and events</a></li>
+    <li><a href="#protocol">7. UI protocol v2</a></li>
+    <li><a href="#rpc">8. RPC between workers</a></li>
+    <li><a href="#api">9. The mirinjs contract on Metal</a></li>
+    <li><a href="#config">10. Configuration</a></li>
+    <li><a href="#windows">11. Windows and shell surfaces</a></li>
+    <li><a href="#input">12. Input, focus, and text</a></li>
+    <li><a href="#shims">13. Web API shims</a></li>
+    <li><a href="#tooling">14. Dev, check, build</a></li>
+    <li><a href="#desktop">15. Desktop integration</a></li>
+    <li><a href="#budgets">16. Performance budgets</a></li>
+    <li><a href="#security">17. Security</a></li>
+    <li><a href="#milestones">18. Milestones</a></li>
+    <li><a href="#decisions">19. Decisions for the owner</a></li>
+    <li><a href="#risks">20. Risks</a></li>
+  </ol>
+</nav>
+<main>
+
+<h1>Mirin Metal Runtime</h1>
+<div class="meta">
+  <span><strong>Status:</strong> Core decisions accepted 2026-10-29 (§19)</span>
+  <span><strong>Date:</strong> 2026-10-29</span>
+  <span><strong>Scope:</strong> Linux first (Fedora/KDE Wayland)</span>
+  <span><strong>Related:</strong> <code>docs/metal.md</code>, <code>docs/architecture.md</code>, <code>docs/api-design.md</code></span>
+</div>
+
+<!-- ───────────────────────────────────────── 1 ─── -->
+<h2 id="summary">1. Summary</h2>
+<p>
+  Metal today renders React through GPUI from a standalone, single-window stdio host. That
+  proved the renderer. This spec turns it into a <strong>runtime</strong>: a Metal app is a real
+  mirin app, with the same <code>mirin.config.ts</code>, the same <code>mirinjs</code> main-process
+  APIs, the same typed RPC, and the same <code>mirin dev / check / build / release</code> loop. Only
+  the UI layer differs: Metal components instead of a webview.
+</p>
+<p>The runtime has four parts:</p>
+<ul>
+  <li><strong>A native library, <code>libmirin_metal</code>,</strong> loaded in-process through Bun FFI. It owns the main thread and runs GPUI.</li>
+  <li><strong>Two Bun Workers per app:</strong> the <em>App Worker</em> runs <code>src/main.ts</code> exactly as on CEF; the <em>UI Worker</em> runs React and every window's component tree.</li>
+  <li><strong>A retained-tree UI protocol</strong> with patches instead of whole-tree JSON, and an event channel that wakes Workers instead of polling them.</li>
+  <li><strong>Desktop integration</strong> aimed at the desktop environment Metal is meant to power: app identity, session theming, multiple windows, and shell surfaces (panels, docks, overlays).</li>
+</ul>
+
+<!-- ───────────────────────────────────────── 2 ─── -->
+<h2 id="context">2. Context and constraints</h2>
+
+<h3>Where Metal is today</h3>
+<table>
+  <tr><th>Area</th><th>State</th></tr>
+  <tr><td>Renderer (<code>crates/mirin-metal</code>)</td><td><span class="tag ok">works</span> GPUI with mirin's GPUI and taffy forks. Views, text, inputs, SVG, images, CSS grid, virtualized lists, simulation channel, tracing, profiler, GPU selection.</td></tr>
+  <tr><td>Host</td><td><span class="tag warn">alpha</span> <code>mirin-metal-host</code>, a separate process driven over stdin/stdout NDJSON. One window. No <code>mirinjs</code> APIs.</td></tr>
+  <tr><td>React renderer (<code>@mirinjs/metal</code>)</td><td><span class="tag ok">works</span> reconciler, components, portals, headless display helper. Sends the whole tree as JSON per commit.</td></tr>
+  <tr><td>Design system (<code>@mirinjs/metal-ui</code>)</td><td><span class="tag ok">works</span> every shadcn component and example, Tailwind engine, grid, <code>has-*</code>.</td></tr>
+  <tr><td>Tooling</td><td><span class="tag bad">missing</span> no <code>mirin dev/check/build</code> for Metal; apps run as plain <code>bun</code> scripts.</td></tr>
+  <tr><td>Performance (example browser, 866 nodes)</td><td>Click to painted frame 22 ms, frame 1.3 ms, host 87 MB RSS, zero idle frames.</td></tr>
+</table>
+
+<h3>Constraints this spec must honor</h3>
+<ul>
+  <li><strong>The mirinjs contract (owner rule).</strong> Metal implements the shared app surface and may not break, fork, or shadow any <code>mirinjs</code> export, event, config key, or RPC frame. Metal-only surface lives in <code>@mirinjs/metal</code>. Shared additions go through <code>docs/api-design.md</code> sign-off.</li>
+  <li><strong>Main thread.</strong> GPUI, like CEF, needs the process main thread. A process is either a CEF app or a Metal app, never both.</li>
+  <li><strong>Threading rules from <code>docs/architecture.md</code> §2.</strong> UI work happens on the main thread; Workers only enqueue commands; no thread blocks on another.</li>
+  <li><strong>Flat C ABI, thin <code>ffi.rs</code>, JSON envelopes</strong> (<code>docs/conventions.md</code>).</li>
+  <li><strong>A desktop environment, not one app.</strong> Many resident apps run at once, so idle cost, memory, and startup are first-class requirements (§16).</li>
+</ul>
+
+<!-- ───────────────────────────────────────── 3 ─── -->
+<h2 id="goals">3. Goals and non-goals</h2>
+<div class="grid2">
+<div>
+<h3>Goals</h3>
+<ul>
+  <li>A Metal app's <code>mirin.config.ts</code> and <code>src/main.ts</code> run unchanged against the CEF flavor, apart from the window UI declaration.</li>
+  <li>In-process FFI host with no stdio hop; Workers isolated from the UI thread.</li>
+  <li>Typed RPC between main-process code and UI, with no network listener.</li>
+  <li>Multiple windows per app, plus shell surfaces for the desktop's shell.</li>
+  <li>Keyboard, focus, and clipboard good enough to port Anko 1:1.</li>
+  <li>Full tooling: <code>mirin dev</code>, <code>check</code>, <code>doctor</code>, <code>build</code>, <code>release</code>, Linux packages without a CEF download.</li>
+  <li>Zero idle wakeups and a per-app memory budget.</li>
+</ul>
+</div>
+<div>
+<h3>Non-goals for v1</h3>
+<ul>
+  <li>macOS and Windows Metal. GPUI supports them; the runtime is designed not to preclude them, but v1 ships Linux.</li>
+  <li>Mixing a CEF webview and Metal UI in one process. A hybrid app would need a second process; not in v1.</li>
+  <li>Accessibility (AT-SPI). Planned through AccessKit after v1; the node protocol reserves roles and labels now.</li>
+  <li>Animations and transforms. Separate renderer work.</li>
+  <li>A native code editor. Needed for Anko's SQL editor, specified separately.</li>
+</ul>
+</div>
+</div>
+
+<!-- ───────────────────────────────────────── 4 ─── -->
+<h2 id="process">4. Process and thread model</h2>
+<p>One OS process per app, mirroring the CEF flavor's host/Worker split:</p>
+
+<div class="diagram">
+<svg viewBox="0 0 900 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Metal process model">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="fill: var(--muted)"/>
+    </marker>
+  </defs>
+  <rect x="10" y="10" width="880" height="360" rx="14" class="box" style="fill:none"/>
+  <text x="28" y="36" font-weight="600" font-size="14">App process (host executable, bun --compile)</text>
+
+  <rect x="30" y="56" width="260" height="140" rx="10" class="box main"/>
+  <text x="48" y="82" font-weight="600" font-size="14">Main thread</text>
+  <text x="48" y="104" class="small">libmirin_metal: mirin_metal_run()</text>
+  <text x="48" y="122" class="small">GPUI event loop, Wayland, Vulkan</text>
+  <text x="48" y="140" class="small">retained trees, layout, paint</text>
+  <text x="48" y="158" class="small">platform features (dialogs, tray…)</text>
+  <text x="48" y="176" class="small">never runs JavaScript</text>
+
+  <rect x="330" y="56" width="250" height="140" rx="10" class="box"/>
+  <text x="348" y="82" font-weight="600" font-size="14">App Worker</text>
+  <text x="348" y="104" class="small">src/main.ts (unchanged from CEF)</text>
+  <text x="348" y="122" class="small">mirinjs: app, windows, dialog,</text>
+  <text x="348" y="140" class="small">clipboard, tray, updater, devtools</text>
+  <text x="348" y="158" class="small">RPC router (app.serve)</text>
+
+  <rect x="620" y="56" width="250" height="140" rx="10" class="box"/>
+  <text x="638" y="82" font-weight="600" font-size="14">UI Worker</text>
+  <text x="638" y="104" class="small">React + @mirinjs/metal</text>
+  <text x="638" y="122" class="small">one root per window</text>
+  <text x="638" y="140" class="small">mirinjs/client (in-process)</text>
+  <text x="638" y="158" class="small">web API shims (opt-in)</text>
+
+  <path d="M330 120 L292 120" class="arrow"/>
+  <text x="296" y="112" class="small">FFI</text>
+  <path d="M620 150 C 520 240, 400 240, 292 170" class="arrow"/>
+  <text x="430" y="236" class="small">FFI: tree patches, window cmds</text>
+  <path d="M582 100 L618 100" class="arrow"/>
+  <path d="M618 116 L582 116" class="arrow"/>
+  <text x="586" y="94" class="small">RPC</text>
+
+  <rect x="30" y="268" width="840" height="84" rx="10" class="box"/>
+  <text x="48" y="292" font-weight="600" font-size="14">Event channels (per Worker)</text>
+  <text x="48" y="314" class="small">Rust pushes events into a queue and writes one byte to that Worker's notify pipe; the Worker awaits the pipe, then drains the queue over FFI.</text>
+  <text x="48" y="334" class="small">UI Worker: input, layout, focus, frame callbacks. App Worker: lifecycle, window, tray, shortcut, dialog results. No idle polling.</text>
+</svg>
+</div>
+
+<table>
+  <tr><th>Thread</th><th>Owns</th><th>Never does</th></tr>
+  <tr><td>Main</td><td>GPUI app and windows, Wayland connection, GPU, retained UI trees, platform calls that must be on the UI thread.</td><td>Run JavaScript; block on a Worker.</td></tr>
+  <tr><td>App Worker</td><td>The user's <code>src/main.ts</code>; all <code>mirinjs</code> main-process APIs; the RPC router.</td><td>Render UI; touch GPUI directly.</td></tr>
+  <tr><td>UI Worker</td><td>React reconciliation for every window; event handlers; <code>mirinjs/client</code>.</td><td>Call privileged main-process APIs except through RPC (same boundary as a webview).</td></tr>
+  <tr><td>Rust internal</td><td>Event notification, file dialogs (portal), image decoding.</td><td>Touch GPUI state outside the main thread.</td></tr>
+</table>
+
+<div class="callout decision">
+  <p><span class="tag ok">accepted 2026-10-29</span> <strong>One UI Worker per app, not one per window.</strong> A JSC VM costs roughly 10–20 MB. Per-window Workers would isolate windows from each other, but a desktop runs dozens of apps, and windows of one app share state and components. Apps that need isolation can still split heavy work into extra Workers (<code>workers</code> in the manifest).</p>
+</div>
+
+<h3>Boot sequence</h3>
+<ol>
+  <li>The host resolves paths, reads the manifest, and <code>dlopen</code>s <code>libmirin_metal</code>.</li>
+  <li>It calls <code>mirin_metal_prepare(config)</code>: GPU driver selection (already in <code>gpu.rs</code>), single-instance check, event pipes. This must happen before any thread starts.</li>
+  <li>It spawns the App Worker and the UI Worker, handing each its event pipe and a <code>MessagePort</code> pair for RPC.</li>
+  <li>It calls <code>mirin_metal_run()</code> on the main thread, which never returns until quit.</li>
+  <li>Declared windows open; each gets a root in the UI Worker, which mounts the window's component; <code>ready</code> fires in the App Worker once every auto-open window has painted its first frame.</li>
+</ol>
+
+<!-- ───────────────────────────────────────── 5 ─── -->
+<h2 id="native">5. Native library</h2>
+<p>
+  <code>libmirin_metal</code> is a new cdylib built from <code>crates/mirin-metal</code>, separate from
+  <code>libmirin_core</code> so the CEF core never pulls in GPUI and Metal apps never download CEF.
+  Platform features both flavors need move into a shared crate:
+</p>
+<pre><code>crates/
+  mirin-core/        CEF flavor (cdylib): CEF browser process, CEF windows
+  mirin-metal/       Metal flavor (cdylib + host bin): GPUI windows, UI trees
+  mirin-platform/    NEW, no CEF and no GPUI: dialogs (portal), clipboard,
+                     notifications, global shortcuts, tray, single instance,
+                     app identity, session settings (theme, fonts)
+  mirin-codec/       updater codec (unchanged)</code></pre>
+
+<h3>C ABI (v1)</h3>
+<p>Same conventions as <code>libmirin_core</code>: flat C functions, JSON options, handles allocated synchronously, work posted to the main thread, no panics across FFI.</p>
+<pre><code>// lifecycle (host only)
+mirin_metal_prepare(config_json) -> i32          // before any thread starts
+mirin_metal_run() -> i32                          // owns the main thread until quit
+mirin_metal_event_fd(worker: u8) -> i32           // notify pipe read end per Worker
+mirin_metal_poll_event(worker: u8) -> *char       // drain one JSON event or null
+
+// windows (App Worker)
+mirin_metal_window_create(opts_json) -> u32      // returns window id
+mirin_metal_window_close(id)
+mirin_metal_window_control(id, cmd_json)          // minimize, maximize, focus, show, hide, …
+mirin_metal_window_set_title(id, title)
+mirin_metal_app_quit()
+
+// UI trees (UI Worker)
+mirin_metal_commit(window, batch_ptr, len) -> i32 // apply a patch batch (§7); 0 = ok
+mirin_metal_query(window, query_json) -> *char    // layout / focus / hit-test queries
+mirin_metal_sim(window, command_json)             // dev only: simulated input
+
+// platform features (App Worker), shared with libmirin_core via mirin-platform
+mirin_metal_dialog_show(opts_json)
+mirin_metal_clipboard_read_text() -> *char
+mirin_metal_clipboard_write_text(text)
+mirin_metal_notification_show(opts_json) -> i32
+mirin_metal_shortcut_register(id, accelerator) -> i32
+mirin_metal_shortcut_unregister(id)
+mirin_metal_tray_create(opts_json)
+mirin_metal_tray_destroy(id)</code></pre>
+<p>
+  The <code>mirinjs</code> Worker code selects a binding table by flavor
+  (<code>native.ts</code> for CEF, a Metal equivalent with the same TypeScript interface). Feature
+  modules (<code>dialog.ts</code>, <code>clipboard.ts</code>, …) stay byte-for-byte shared.
+</p>
+
+<!-- ───────────────────────────────────────── 6 ─── -->
+<h2 id="transport">6. Commands and events</h2>
+
+<h3>Commands (Worker → Rust)</h3>
+<p>
+  Every exported function is callable from either Worker thread. It validates its input, pushes a
+  command onto a lock-free queue, and wakes the GPUI loop through the async channel already used by
+  the alpha (<code>window.rs</code>). Commands that return data (<code>query</code>, clipboard reads)
+  are answered from main-thread state snapshotted after each frame, so they never wait on the main thread.
+</p>
+
+<h3>Events (Rust → Worker)</h3>
+<p>
+  The CEF flavor polls <code>mirin_poll_event</code> every 8 ms, because a <code>bun:ffi</code>
+  callback fired from the blocked main thread never reaches a Worker's loop. That costs 125
+  wakeups per second per app forever, which a desktop cannot afford. Metal instead pairs each queue
+  with a pipe:
+</p>
+<ol>
+  <li>Rust pushes the event onto that Worker's queue and, if the queue was empty, writes one byte to the Worker's notify pipe.</li>
+  <li>The Worker awaits a read on the pipe's read end (a Bun stream over the file descriptor), then drains the queue through <code>mirin_metal_poll_event</code> until it returns null.</li>
+  <li>Idle apps make no wakeups at all.</li>
+</ol>
+<div class="callout">
+  <p><strong>Fallback.</strong> If Bun cannot await a pipe reliably inside a Worker, poll with back-off: 4 ms while events flowed in the last 250 ms, then doubling to 250 ms. The event envelope is unchanged either way, so the transport can switch without touching callers.</p>
+</div>
+<p>Event envelope, same as <code>architecture.md</code> §3:</p>
+<pre><code>{ "v": 1, "kind": "event", "type": "ui.press", "target": 3, "payload": { "node": 812, "x": 410, "y": 96 } }</code></pre>
+
+<!-- ───────────────────────────────────────── 7 ─── -->
+<h2 id="protocol">7. UI protocol v2: retained trees and patches</h2>
+<p>
+  Today every React commit serializes the whole tree (89 KB for the example browser) and Rust
+  replaces its tree. v2 keeps the tree in Rust and sends only what changed, which the reconciler
+  already knows from its mutation methods.
+</p>
+<h3>Patch batch</h3>
+<pre><code>{
+  "v": 2,
+  "ctx": 0,                                   // UI context (0 = the app's UI Worker)
+  "ops": [
+    ["create", 812, "view", { "direction": "row", "gap": 8, "onPress": true }],
+    ["create", 813, "text", { "size": 14 }, "Save"],
+    ["append", 812, 813],
+    ["insert", 40, 812, 77],                 // parent, child, before
+    ["update", 377, { "background": "#262626" }, ["hoverBackground"]],  // set, unset
+    ["text", 813, "Saved"],
+    ["remove", 40, 655],                      // detaches and frees the subtree
+    ["root", 40]
+  ]
+}</code></pre>
+<ul>
+  <li>Node ids are allocated by the UI Worker (reconciler instance ids) and are unique per window <em>and context</em>. <code>ctx</code> is reserved now for shell UI contexts (applets in their own Workers, <code>shell.html</code> E2); apps always send 0.</li>
+  <li>A <code>["slot", id, { "ctx": n }]</code> node hosts the root of context <code>n</code> inside this tree. Reserved in v2, implemented with UI contexts.</li>
+  <li>A batch is atomic: the renderer applies it between frames and never paints a half-applied commit.</li>
+  <li>Props use the existing v1 node vocabulary (<code>docs/metal.md</code> §2), parsed strictly at the boundary. Unknown ops or props reject the whole batch with an error event, never a partial tree.</li>
+  <li>Virtualized lists, input state, scroll state, and layout caches key off node ids, so updates no longer rediscover them by walking the tree.</li>
+  <li>The v1 whole-tree form stays as <code>["replace", tree]</code> for the stdio host and debugging.</li>
+</ul>
+<h3>Encoding</h3>
+<p>JSON first, behind the length-prefixed <code>mirin_metal_commit(ptr, len)</code> call so the encoding can move to a binary form later without an ABI change. Benchmarks decide that (§16).</p>
+<h3>Events from the tree</h3>
+<p>Interaction events carry the node id and its painted bounds, as today. New: <code>ui.key</code> (§12), <code>ui.focus</code>, <code>ui.layout</code> for subscribed nodes, and <code>ui.frame</code> for <code>requestAnimationFrame</code>.</p>
+
+<!-- ───────────────────────────────────────── 8 ─── -->
+<h2 id="rpc">8. RPC between workers</h2>
+<p>
+  The typed RPC router from <code>api-design.md</code> §3 works unchanged. Only the transport differs:
+  where a CEF webview connects to a token-authenticated loopback WebSocket, the Metal UI Worker talks
+  to the App Worker over a <code>MessagePort</code> pair the host creates at boot.
+</p>
+<pre><code>// src/rpc.ts — shared, unchanged
+export const router = rpc.router({
+  runQuery: rpc.mutation(async (sql: string, ctx) => db.run(sql)),
+  progress: rpc.event&lt;{ pct: number }&gt;(),
+});
+
+// src/windows/main.tsx — Metal UI, same client API as a webview
+import { client } from "mirinjs/client";
+const api = client&lt;Router&gt;();
+const rows = await api.runQuery("select 1");</code></pre>
+<ul>
+  <li><code>mirinjs/client</code> selects the in-process transport when it runs in a Metal UI Worker; no code change for the app.</li>
+  <li><code>ctx.window</code> is the handle of the window whose root issued the call; the UI Worker tags each call with its window id.</li>
+  <li><code>app.windows.get(name).rpc.x.emit()</code> and <code>app.rpc.x.broadcast()</code> deliver to the matching roots.</li>
+  <li>No network listener exists, so the token and the accepted loopback-sniffing gap from the CEF flavor do not apply.</li>
+</ul>
+
+<!-- ───────────────────────────────────────── 9 ─── -->
+<h2 id="api">9. The mirinjs contract on Metal</h2>
+<table>
+  <tr><th>Surface</th><th>On Metal</th><th>Notes</th></tr>
+  <tr><td><code>app</code> lifecycle (<code>ready</code>, <code>window-all-closed</code>, <code>quit</code>, <code>open-url</code>)</td><td><span class="tag ok">same</span></td><td><code>ready</code> waits for first paint of auto-open windows.</td></tr>
+  <tr><td><code>app.windows.open/get</code>, <code>WindowHandle</code> controls</td><td><span class="tag ok">same</span></td><td>Minimize, maximize, restore, fullscreen, focus, show, hide, center, position, always-on-top.</td></tr>
+  <tr><td><code>WindowHandle.loadUrl</code></td><td><span class="tag warn">n/a</span></td><td>Rejects with a typed "CEF-only" error; no silent no-op.</td></tr>
+  <tr><td><code>setMaterial</code>, <code>app.dock</code></td><td><span class="tag warn">no-op</span></td><td>macOS features; same as CEF on Linux today.</td></tr>
+  <tr><td>Typed RPC, <code>mirinjs/client</code></td><td><span class="tag ok">same</span></td><td>MessagePort transport (§8).</td></tr>
+  <tr><td><code>dialog</code>, <code>clipboard</code>, <code>notification</code>, <code>globalShortcut</code>, <code>Tray</code></td><td><span class="tag ok">same</span></td><td>Shared through <code>mirin-platform</code>.</td></tr>
+  <tr><td><code>menu.setApplicationMenu</code></td><td><span class="tag warn">no-op on Linux</span></td><td>Same as the CEF flavor on Linux.</td></tr>
+  <tr><td><code>menu.popup</code></td><td><span class="tag info">rendered</span></td><td>Drawn as a Metal popup surface with metal-ui's menu styling, so it matches the app.</td></tr>
+  <tr><td><code>app.updater</code>, sidecars, workers, resources</td><td><span class="tag ok">same</span></td><td>Packaging paths differ, APIs do not.</td></tr>
+  <tr><td><code>devtools.event/expose</code>, inspector, session files</td><td><span class="tag ok">same</span></td><td>No CDP; screenshots and snapshots come from the renderer (§14).</td></tr>
+  <tr><td><code>mirinjs/check</code> <code>CheckDriver</code></td><td><span class="tag ok">same contract</span></td><td>Implemented over the simulation channel; selectors resolve against test ids, text, and roles. <code>evaluate</code> runs in the UI Worker.</td></tr>
+</table>
+
+<!-- ───────────────────────────────────────── 10 ─── -->
+<h2 id="config">10. Configuration</h2>
+<div class="callout decision">
+  <p><span class="tag ok">accepted 2026-10-29</span> The owner signed off on these additions to the shared <code>mirinjs/config</code> surface; they are recorded in <code>docs/api-design.md</code> §1a. They are additive and rejected clearly on the CEF flavor.</p>
+</div>
+<pre><code>export default defineConfig({
+  id: "dev.netko.anko",
+  name: "Anko",
+  engine: "metal",                      // NEW: "cef" (default) | "metal"
+  capabilities: [],                     // NEW: privileged surfaces and APIs this app requests (§11)
+
+  windows: {
+    main: {
+      title: "Anko",
+      width: 1280,
+      height: 820,
+      view: "src/windows/main.tsx",     // NEW, Metal: module whose default export is the window's component
+      // url: "app://ui/index.html",    // CEF only; an error with engine: "metal"
+    },
+    panel: {
+      view: "src/windows/panel.tsx",
+      surface: {                        // NEW, Metal + Wayland: a shell surface (§11)
+        layer: "top",
+        anchor: ["top", "left", "right"],
+        exclusiveZone: 36,
+        keyboard: "on-demand",
+      },
+    },
+  },
+});</code></pre>
+<ul>
+  <li><code>engine</code> picks the flavor at build time; the CLI then packages <code>libmirin_metal</code> instead of CEF.</li>
+  <li><code>view</code> is the Metal counterpart of <code>url</code>. Exactly one of them is valid per engine; the other is a config error naming the right key.</li>
+  <li><code>capabilities</code> lists privileged surfaces and APIs (<code>shell.surface</code>, <code>shell.toplevels</code>, <code>shell.workspaces</code>, <code>session.lock</code>, <code>services.*</code>). The session grants them per app identity; config validation runs every privileged key through one capability check from R2 on, granting everything in development until the session can decide.</li>
+  <li>Every other key keeps its meaning. <code>cef.*</code> is ignored on Metal with a warning.</li>
+</ul>
+<p>A window component receives its handle through a hook, so UI code never imports main-process modules:</p>
+<pre><code>// src/windows/main.tsx
+import { useWindow } from "@mirinjs/metal";
+export default function Main() {
+  const window = useWindow();          // name, id, controls (proxied through RPC)
+  return &lt;App onClose={() =&gt; window.close()} /&gt;;
+}</code></pre>
+
+<!-- ───────────────────────────────────────── 11 ─── -->
+<h2 id="windows">11. Windows and shell surfaces</h2>
+<h3>Regular windows</h3>
+<p>GPUI windows, multiple per app. Client-side or server-side decorations follow the compositor; KWin provides server-side ones. The title is set explicitly after creation (GPUI's Wayland backend ignores it otherwise).</p>
+<h3>Shell surfaces</h3>
+<p>
+  The desktop's shell (panel, dock, launcher, notifications, lock screen, OSD) needs Wayland
+  <code>wlr-layer-shell</code> surfaces: anchored to screen edges, optionally reserving space
+  (exclusive zone), on a stacking layer, with controlled keyboard focus. GPUI does not create them,
+  so this goes into mirin's GPUI fork as a new window kind.
+</p>
+<p>Surface roles a window can take (<code>windows.*.surface.role</code>, default <code>layer</code> when <code>surface</code> is present):</p>
+<table>
+  <tr><th>Role</th><th>Protocol</th><th>Use</th><th>Capability</th></tr>
+  <tr><td><code>toplevel</code></td><td>xdg-shell</td><td>Ordinary windows (no <code>surface</code> key)</td><td>none</td></tr>
+  <tr><td><code>layer</code></td><td>wlr-layer-shell</td><td>Panels, docks, launchers, notifications, OSD</td><td><code>shell.surface</code></td></tr>
+  <tr><td><code>popup</code></td><td>xdg_popup</td><td>Menus, selects, tooltips anchored to a parent surface, flipping at screen edges</td><td>none</td></tr>
+  <tr><td><code>lock</code></td><td>ext-session-lock</td><td>Lock screen, one per output</td><td><code>session.lock</code></td></tr>
+</table>
+<p>Layer surface options:</p>
+<table>
+  <tr><th>Option</th><th>Values</th><th>Meaning</th></tr>
+  <tr><td><code>layer</code></td><td><code>background | bottom | top | overlay</code></td><td>Stacking layer.</td></tr>
+  <tr><td><code>anchor</code></td><td>edges</td><td>Which screen edges the surface attaches to.</td></tr>
+  <tr><td><code>exclusiveZone</code></td><td>px</td><td>Space other windows avoid (a panel's height).</td></tr>
+  <tr><td><code>keyboard</code></td><td><code>none | on-demand | exclusive</code></td><td>Keyboard focus policy (a launcher is <code>exclusive</code>).</td></tr>
+  <tr><td><code>margin</code></td><td>px, or <code>{ top, right, bottom, left }</code></td><td>Distance from the anchored edges (a floating dock's gap).</td></tr>
+  <tr><td><code>namespace</code></td><td>string</td><td>The surface's purpose for the compositor (<code>"dashi.dock"</code>); defaults to the window title.</td></tr>
+  <tr><td><code>output</code></td><td>monitor name, or all</td><td>Which monitor; one surface per monitor when "all".</td></tr>
+</table>
+<p>Status: the <code>layer</code> role is in the GPUI fork (<code>WindowOptions::layer_shell</code>) and the alpha host (<code>MIRIN_METAL_SURFACE</code>); <code>popup</code>, <code>lock</code>, and <code>output</code> are not yet. The alpha host also implements the <code>shell.toplevels</code> capability (every window's title, app id, and state, plus activate, minimize, maximize, and close) over wlr-foreign-toplevel-management; see docs/metal.md §6.</p>
+<h3>Outputs</h3>
+<p>Monitors appearing, disappearing, rescaling, or moving reach the App Worker as <code>app.outputs</code> events. A surface with <code>output: "all"</code> is instantiated per monitor and destroyed with it; its UI root receives the role and output (<code>useWindow().output</code>) so a panel renders per monitor.</p>
+<p>The desktop's own compositor, <code>mirin-comp</code> (Smithay), implements all of these and grants the privileged ones per capability; see <a href="shell.html"><code>shell.html</code></a> §3.</p>
+<p>Popups (menus, tooltips, selects) become real <code>xdg_popup</code> surfaces when they would overflow the window, instead of being clipped to it as today.</p>
+<p>The longer-term shell plan (compositor strategy, shell processes, capabilities, system services, applet contexts, roadmap S0–S5) is in <a href="shell.html"><code>docs/metal/shell.html</code></a>.</p>
+
+<!-- ───────────────────────────────────────── 12 ─── -->
+<h2 id="input">12. Input, focus, and text</h2>
+<table>
+  <tr><th>Capability</th><th>Specification</th></tr>
+  <tr><td>Key events</td><td><code>ui.key</code> events (down/up, key, code, modifiers, repeat) go to the focused node, then bubble to ancestors and the window root, like DOM. Handlers can stop propagation and prevent defaults; the UI Worker answers within the same frame or the default runs.</td></tr>
+  <tr><td>Focus</td><td>Any node with <code>focusable</code> takes focus. Tab and Shift+Tab follow document order; <code>autoFocus</code> and programmatic <code>focus()</code> through refs. <code>ui.focus</code> events drive <code>focus:</code>/<code>focus-visible:</code> styles.</td></tr>
+  <tr><td>Overlays</td><td>metal-ui's menus, selects, dialogs, and command palette get arrow-key navigation, typeahead, Enter, and Escape on top of these events.</td></tr>
+  <tr><td>App shortcuts</td><td>In-window accelerators (Ctrl+Enter, Ctrl+K) through key events. <code>globalShortcut</code> stays for system-wide ones.</td></tr>
+  <tr><td>Text selection</td><td>Selectable text nodes (<code>selectable</code>), drag and double/triple click, copy through the clipboard. Inputs already own their selection.</td></tr>
+  <tr><td>IME</td><td>GPUI's input handler for inputs (compose, preedit display).</td></tr>
+  <tr><td>Pointer</td><td>Existing press, hover, pointer capture, context menu, scroll; plus wheel events for custom scroll handling and drag and drop between nodes.</td></tr>
+</table>
+
+<!-- ───────────────────────────────────────── 13 ─── -->
+<h2 id="shims">13. Web API shims</h2>
+<p>
+  Porting web-built apps (Anko first) needs a few browser globals in the UI Worker. They are an
+  explicit opt-in import, <code>@mirinjs/metal/web</code>, so plain Metal apps do not carry them:
+</p>
+<table>
+  <tr><th>Global</th><th>Backed by</th></tr>
+  <tr><td><code>localStorage</code>, <code>sessionStorage</code></td><td>A per-app file in the app's data directory, written through the App Worker (synchronous API, buffered writes).</td></tr>
+  <tr><td><code>navigator.clipboard.readText/writeText</code></td><td><code>clipboard</code> over RPC.</td></tr>
+  <tr><td><code>window/document.addEventListener("keydown"…)</code></td><td>Window-root <code>ui.key</code> events.</td></tr>
+  <tr><td><code>matchMedia("(prefers-color-scheme: dark)")</code></td><td>Session color scheme (§15), with change events.</td></tr>
+  <tr><td><code>requestAnimationFrame</code></td><td><code>ui.frame</code> events.</td></tr>
+  <tr><td><code>ResizeObserver</code> on refs</td><td><code>ui.layout</code> subscriptions.</td></tr>
+  <tr><td><code>document.title</code></td><td>The window title.</td></tr>
+</table>
+<p>Anything outside this list stays undefined, so a dependency that needs the DOM fails loudly instead of misbehaving.</p>
+
+<!-- ───────────────────────────────────────── 14 ─── -->
+<h2 id="tooling">14. Dev, check, build</h2>
+<table>
+  <tr><th>Command</th><th>Metal behavior</th></tr>
+  <tr><td><code>mirin dev</code></td><td>Bundles both Workers with <code>Bun.build</code> (no Vite), starts the host with the prebuilt or locally built <code>libmirin_metal</code>, watches sources. A UI change rebuilds and restarts only the UI Worker; window state survives because windows live in Rust. React Fast Refresh is a follow-up.</td></tr>
+  <tr><td><code>mirin check</code></td><td>Same <code>CheckDriver</code> scenarios. Runs in an off-screen compositor by default (<code>startHeadlessDisplay</code>), so checks never touch the desktop. Screenshots come from a renderer-side capture command (GPU readback of a window), not the compositor.</td></tr>
+  <tr><td><code>mirin doctor</code></td><td>Adds Metal checks: Vulkan driver, compositor protocols (layer-shell, dmabuf feedback), fonts, GPU selection.</td></tr>
+  <tr><td><code>mirin build</code></td><td>Linux app folder: host, <code>libmirin_metal.so</code>, bundled Workers, resources, icon. No CEF. rpm/deb/AppImage through the existing Linux packagers.</td></tr>
+  <tr><td><code>mirin release</code></td><td>Same updater artifacts and channels; smaller payloads.</td></tr>
+  <tr><td>Native package</td><td><code>@mirinjs/native-metal-linux-x64</code> (and arm64) ships the prebuilt library, like <code>native-core</code>.</td></tr>
+</table>
+<p>The inspector, event stream, and <code>.mirin/dev/</code> session artifacts from <code>docs/agent-devtools.md</code> apply unchanged. The tree snapshot (<code>snapshot()</code>) returns the retained Metal tree with roles, text, and test ids.</p>
+
+<!-- ───────────────────────────────────────── 15 ─── -->
+<h2 id="desktop">15. Desktop integration</h2>
+<ul>
+  <li><strong>App identity.</strong> The manifest <code>id</code> becomes the Wayland <code>app_id</code> and the <code>.desktop</code> file name, so taskbars group windows and show the right icon.</li>
+  <li><strong>Activation and single instance.</strong> A second launch hands its arguments and xdg-activation token to the running instance over D-Bus, which raises the window and emits <code>open-url</code> when relevant.</li>
+  <li><strong>Session theme.</strong> Color scheme, accent color, and contrast come from the XDG settings portal; metal-ui's <code>ThemeProvider</code> follows them by default and updates live.</li>
+  <li><strong>Fonts.</strong> The UI and monospace families come from fontconfig, as now, with a session override.</li>
+  <li><strong>GPU.</strong> Load only the compositor's GPU driver (implemented: dmabuf feedback, <code>gpu.rs</code>).</li>
+  <li><strong>Portals.</strong> File dialogs, notifications, and opening URIs through XDG portals, so apps work sandboxed (Flatpak) without changes.</li>
+  <li><strong>Inter-app communication.</strong> Out of scope for v1; the shell will need it (D-Bus services exposed from the App Worker), tracked as follow-up.</li>
+</ul>
+
+<!-- ───────────────────────────────────────── 16 ─── -->
+<h2 id="budgets">16. Performance budgets</h2>
+<p>Measured by the off-screen benchmark (<code>bench/native.tsx</code>) and added to CI where the hardware allows. A milestone does not close while it regresses a budget.</p>
+<table>
+  <tr><th>Metric</th><th>Budget</th><th>Today (stdio host)</th></tr>
+  <tr><td>Idle wakeups, idle CPU</td><td>0 wakeups/s, 0% CPU</td><td>0 frames; driver polls nothing</td></tr>
+  <tr><td>Input to painted frame</td><td>≤ 1 frame + React work (≤ 16 ms on 60 Hz for small updates)</td><td>22 ms (example browser click)</td></tr>
+  <tr><td>Frame (layout + paint), 1k nodes</td><td>≤ 4 ms</td><td>1.3 ms</td></tr>
+  <tr><td>Patch apply, 10k-node tree, 1 changed node</td><td>≤ 0.2 ms</td><td>n/a (whole tree, 1.6 ms parse)</td></tr>
+  <tr><td>Bytes sent per keystroke in an input</td><td>≤ 1 KB</td><td>~90 KB (whole tree)</td></tr>
+  <tr><td>Cold start to first frame, hello app</td><td>≤ 300 ms</td><td>not measured</td></tr>
+  <tr><td>Memory, hello app (whole process)</td><td>≤ 120 MB RSS</td><td>87 MB host + ~60 MB driver</td></tr>
+</table>
+
+<!-- ───────────────────────────────────────── 17 ─── -->
+<h2 id="security">17. Security</h2>
+<ul>
+  <li>The UI Worker has the same privilege boundary as a webview: privileged APIs only through RPC handlers in the App Worker.</li>
+  <li>No network listener: RPC and devtools for Metal use MessagePorts and the existing token-authenticated inspector only in development.</li>
+  <li>Every FFI input is validated at the boundary (strict serde, length checks); a malformed batch is rejected whole.</li>
+  <li>The simulation channel and renderer capture are compiled in but refuse to run in packaged builds unless <code>devtools.production</code> is set.</li>
+  <li>Images load from local paths only; the UI Worker fetches and caches remote images, never the renderer.</li>
+</ul>
+
+<!-- ───────────────────────────────────────── 18 ─── -->
+<h2 id="milestones">18. Milestones</h2>
+<p>Each milestone lands as working software with its acceptance checks green, docs updated in the same change, and budgets intact.</p>
+
+<h3>R1 · In-process core</h3>
+<ul>
+  <li><code>libmirin_metal</code> cdylib and host bootstrap (<code>mirin_metal_prepare/run</code>), single window, UI in a Worker, notify-pipe events, commands queued to the GPUI loop.</li>
+  <li><strong>Accept:</strong> the example browser runs in-process; benchmark at or below the stdio host; idle wakeups 0; existing headless and sim tests pass over FFI.</li>
+</ul>
+<h3>R2 · Two Workers, RPC, windows</h3>
+<ul>
+  <li>App Worker running <code>src/main.ts</code>; UI Worker with one root per window; MessagePort RPC; <code>app</code> lifecycle and <code>app.windows</code>; <code>useWindow()</code>; <code>engine</code> and <code>view</code> config (after sign-off).</li>
+  <li><strong>Accept:</strong> <code>examples/hello-metal</code> with a typed RPC call and two windows; unchanged <code>mirinjs</code> unit tests; config validation routes <code>surface</code> and <code>capabilities</code> through the capability check.</li>
+</ul>
+<h3>R3 · Retained trees and patches</h3>
+<ul>
+  <li>Reconciler emits patch batches; Rust keeps per-window trees; virtualized lists, inputs, and scroll state keyed by node id.</li>
+  <li><strong>Accept:</strong> patch and byte budgets met; example browser and all metal-ui tests pass; batches carry <code>ctx</code> and the renderer rejects unknown contexts.</li>
+</ul>
+<h3>R4 · Platform features</h3>
+<ul>
+  <li>Extract <code>mirin-platform</code>; dialogs, clipboard, notifications, global shortcuts, tray on Linux for both flavors; rendered <code>menu.popup</code>.</li>
+  <li><strong>Accept:</strong> a Metal kitchen-sink exercises each API; the CEF flavor's Linux behavior is unchanged.</li>
+</ul>
+<h3>R5 · Input and web shims</h3>
+<ul>
+  <li>Key events, focus model, keyboard navigation in metal-ui overlays, text selection and copy, IME, <code>@mirinjs/metal/web</code>.</li>
+  <li><strong>Accept:</strong> metal-ui menus, selects, dialogs, and command palette usable by keyboard alone; Anko's shortcuts work.</li>
+</ul>
+<h3>R6 · Tooling and packaging</h3>
+<ul>
+  <li><code>mirin dev/check/doctor/build/release</code> for <code>engine: "metal"</code>; renderer capture; native package.</li>
+  <li><strong>Accept:</strong> Anko's Metal app builds an rpm with <code>mirin build</code> and passes <code>mirin check</code> off-screen.</li>
+</ul>
+<h3>R7 · Desktop integration and shell surfaces</h3>
+<ul>
+  <li>App identity, activation, session theme, portals; layer, popup, and lock surface roles in the GPUI fork; output events and per-output surfaces.</li>
+  <li><strong>Accept:</strong> a top panel per monitor with an exclusive zone, a launcher overlay, popups that escape their window, and a lock surface on every output, all in a nested compositor; theme follows a live color-scheme switch.</li>
+</ul>
+
+<!-- ───────────────────────────────────────── 19 ─── -->
+<h2 id="decisions">19. Decisions for the owner</h2>
+<table>
+  <tr><th>#</th><th>Decision</th><th>Outcome</th></tr>
+  <tr><td>1</td><td>One UI Worker per app, or per window?</td><td><span class="tag ok">accepted</span> One per app. Revisit only if a real app needs window isolation.</td></tr>
+  <tr><td>2</td><td>Config: <code>engine: "metal"</code>, <code>windows.*.view</code>, <code>windows.*.surface</code></td><td><span class="tag ok">accepted</span> All three, as additive <code>mirinjs/config</code> keys (§10, <code>api-design.md</code> §1a).</td></tr>
+  <tr><td>3</td><td>Popup menus on Metal</td><td><span class="tag ok">accepted</span> Rendered with metal-ui styling, consistent with the shell.</td></tr>
+  <tr><td>4</td><td>Platforms after Linux</td><td><span class="tag ok">accepted</span> Linux only until the desktop shell ships; the design stays portable.</td></tr>
+  <tr><td>5</td><td>Event transport</td><td><span class="tag info">default</span> Notify pipe, back-off polling as fallback (§6). Implementation detail; revisit with R1 measurements.</td></tr>
+  <tr><td>6</td><td>Shared platform crate</td><td><span class="tag info">default</span> Extract <code>mirin-platform</code> in R4; both cores link it.</td></tr>
+  <tr><td>7</td><td>Fork policy</td><td><span class="tag info">default</span> GPUI and taffy forks vendored with <code>MIRIN.md</code> change logs; generic fixes upstreamed.</td></tr>
+</table>
+
+<!-- ───────────────────────────────────────── 20 ─── -->
+<h2 id="risks">20. Risks</h2>
+<div class="callout risk">
+  <ul>
+    <li><strong>GPUI on a Bun-created main thread.</strong> The stdio host avoided this; R1 must prove GPUI initializes and runs its loop on the thread the Bun host hands over (the CEF flavor proved the same for CEF).</li>
+    <li><strong>Awaiting a pipe from a Worker.</strong> If Bun's fd streams misbehave in Workers, the back-off poller covers it at some idle cost.</li>
+    <li><strong>Fork maintenance.</strong> Layer-shell and grid changes grow the GPUI diff; rebasing onto new GPUI releases costs time. Mitigation: small, documented patches; upstream what is generic.</li>
+    <li><strong>Two JS VMs per app.</strong> Memory per app rises by one VM. Mitigation: budget enforced in CI; shared-VM mode for tiny shell applets if needed.</li>
+    <li><strong>Keyboard handling round trip.</strong> Default actions waiting on the UI Worker could add latency; the same-frame deadline keeps typing local.</li>
+  </ul>
+</div>
+
+</main>
+</div>
+</body>
+</html>

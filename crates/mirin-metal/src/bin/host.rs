@@ -1,0 +1,774 @@
+//! mirin-metal-host: stdio bridge for the alpha React renderer.
+//! The driver process (the React reconciler running in Bun — see
+//! `packages/mirin-metal`) writes newline-delimited JSON element trees on
+//! stdin; interaction events go back as newline-delimited JSON on stdout.
+//! This stands in for the eventual in-process FFI wiring.
+
+use std::io::{BufRead, Write};
+use std::sync::mpsc;
+
+#[cfg(target_os = "linux")]
+use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
+use mirin_metal::{
+    parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind, HostMessage,
+    NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar, OPEN_MIN_SIZE_MARKER,
+    RESIDENT_MARKER,
+};
+
+/// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
+/// separated; the `capabilities` key in docs/api-design.md §1a).
+const CAPABILITIES: &[&str] = &["shell.toplevels"];
+
+/// What a stdin line asks for: the window (a tree or a simulation), or a
+/// taskbar action on another window (`{"toplevel": {...}}`, needs the
+/// `shell.toplevels` capability).
+enum HostLine {
+    Window(DriverMessage),
+    /// A deferred host's window (`MIRIN_METAL_DEFERRED=1`): at last, or again
+    /// after a hide.
+    Open(NativeUiOptions),
+    /// `{"hide":true}`: a deferred host's window goes, the host stays.
+    Hide,
+    #[cfg(target_os = "linux")]
+    Toplevel(ToplevelCommand),
+}
+
+/// Where the reader thread sends what the lines ask of the window: a host
+/// with its window from the start, or a deferred one that opens, hides, and
+/// opens it again.
+enum WindowSink {
+    Shown(mpsc::Sender<DriverMessage>),
+    Deferred(mpsc::Sender<HostMessage>),
+}
+
+impl WindowSink {
+    /// Pass a line on; false once the window side has gone.
+    fn send(&self, line: HostLine) -> bool {
+        match (self, line) {
+            (WindowSink::Shown(tx), HostLine::Window(message)) => tx.send(message).is_ok(),
+            (WindowSink::Shown(_), HostLine::Open(_)) => {
+                eprintln!("[mirin-metal-host] rejected line: the window is already open");
+                true
+            }
+            (WindowSink::Shown(_), HostLine::Hide) => {
+                eprintln!(
+                    "[mirin-metal-host] rejected line: hide needs a deferred host ({RESIDENT_MARKER}, MIRIN_METAL_DEFERRED=1)"
+                );
+                true
+            }
+            (WindowSink::Deferred(tx), HostLine::Window(message)) => {
+                tx.send(HostMessage::Driver(message)).is_ok()
+            }
+            (WindowSink::Deferred(tx), HostLine::Open(options)) => {
+                tx.send(HostMessage::Open(Box::new(options))).is_ok()
+            }
+            (WindowSink::Deferred(tx), HostLine::Hide) => tx.send(HostMessage::Hide).is_ok(),
+            #[cfg(target_os = "linux")]
+            (_, HostLine::Toplevel(_)) => true,
+        }
+    }
+}
+
+/// `{"open": {...}}`: what `MIRIN_METAL_TITLE`, `_APP_ID`, `_SIZE`,
+/// `_MIN_SIZE` (`minWidth` and `minHeight`), `_SURFACE`, and `_TITLEBAR` say
+/// for a host started without a window.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpenRequest {
+    title: Option<String>,
+    app_id: Option<String>,
+    width: Option<f32>,
+    height: Option<f32>,
+    min_width: Option<f32>,
+    min_height: Option<f32>,
+    surface: Option<serde_json::Value>,
+    title_bar: Option<String>,
+}
+
+/// A deferred window's least size: both sizes, at least 1 and finite, or
+/// neither (as `MIRIN_METAL_MIN_SIZE`).
+fn open_min_size(width: Option<f32>, height: Option<f32>) -> Result<Option<(f32, f32)>, String> {
+    match (width, height) {
+        (None, None) => Ok(None),
+        (Some(w), Some(h)) if w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0 => {
+            Ok(Some((w, h)))
+        }
+        _ => Err(format!(
+            "open ({OPEN_MIN_SIZE_MARKER}): minWidth and minHeight go together, each at least 1"
+        )),
+    }
+}
+
+/// A window size a line asks for (`size`, `minSize`), in logical px.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SizeRequest {
+    width: f32,
+    height: f32,
+}
+
+fn parse_host_line(line: &str) -> Result<HostLine, String> {
+    if line.trim_start().starts_with("{\"open\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OpenLine {
+            open: OpenRequest,
+        }
+        let parsed: OpenLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let open = parsed.open;
+        let size = open.width.zip(open.height);
+        let min_size = open_min_size(open.min_width, open.min_height)?;
+        let surface = open.surface.map(|surface| surface.to_string());
+        return window_options(
+            open.title.unwrap_or_else(|| "mirin metal".into()),
+            open.app_id,
+            size,
+            surface.as_deref(),
+            open.title_bar.as_deref(),
+        )
+        .map(|options| {
+            HostLine::Open(NativeUiOptions {
+                min_size,
+                ..options
+            })
+        });
+    }
+    // A resident host's window goes; the host, its GPU context, and the tree stay.
+    if line.trim_start().starts_with("{\"hide\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct HideLine {
+            hide: bool,
+        }
+        let parsed: HideLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        if !parsed.hide {
+            return Err("\"hide\" must be true".into());
+        }
+        return Ok(HostLine::Hide);
+    }
+    // A lock surface's way out, after the driver authenticated the person.
+    if line.trim_start().starts_with("{\"unlock\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct UnlockLine {
+            unlock: bool,
+        }
+        let parsed: UnlockLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        if !parsed.unlock {
+            return Err("\"unlock\" must be true".into());
+        }
+        return Ok(HostLine::Window(DriverMessage::Unlock));
+    }
+    if line.trim_start().starts_with("{\"title\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct TitleLine {
+            title: String,
+        }
+        let parsed: TitleLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        return Ok(HostLine::Window(DriverMessage::Title(parsed.title)));
+    }
+    // The app resizes its own window (a sidebar shown or hidden).
+    if line.trim_start().starts_with("{\"size\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SizeLine {
+            size: SizeRequest,
+        }
+        let parsed: SizeLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let SizeRequest { width, height } = parsed.size;
+        if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
+            return Err("\"size\" needs a width and a height of at least 1".into());
+        }
+        return Ok(HostLine::Window(DriverMessage::Size(width, height)));
+    }
+    // The app's least size changes (a sidebar shown or hidden).
+    if line.trim_start().starts_with("{\"minSize\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct MinSizeLine {
+            min_size: SizeRequest,
+        }
+        let parsed: MinSizeLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let SizeRequest { width, height } = parsed.min_size;
+        if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
+            return Err("\"minSize\" needs a width and a height of at least 1".into());
+        }
+        return Ok(HostLine::Window(DriverMessage::MinSize(width, height)));
+    }
+    #[cfg(target_os = "linux")]
+    if line.trim_start().starts_with("{\"toplevel\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ToplevelLine {
+            toplevel: ToplevelCommand,
+        }
+        let parsed: ToplevelLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        return Ok(HostLine::Toplevel(parsed.toplevel));
+    }
+    parse_line(line).map(HostLine::Window)
+}
+
+/// The modifiers held during a press or a right-click, named as `keydown` names them.
+fn write_modifiers(line: &mut serde_json::Value, modifiers: &mirin_metal::Modifiers) {
+    line["shift"] = serde_json::json!(modifiers.shift);
+    line["ctrl"] = serde_json::json!(modifiers.ctrl);
+    line["alt"] = serde_json::json!(modifiers.alt);
+    line["meta"] = serde_json::json!(modifiers.platform);
+}
+
+/// Write one JSON line to stdout. Holding the lock for the whole line keeps
+/// the event and toplevel threads from interleaving.
+fn write_line(line: &serde_json::Value) -> bool {
+    let mut out = std::io::stdout().lock();
+    writeln!(out, "{line}").and_then(|()| out.flush()).is_ok()
+}
+
+fn requested_capabilities() -> Vec<String> {
+    let Ok(list) = std::env::var("MIRIN_METAL_CAPABILITIES") else {
+        return Vec::new();
+    };
+    let requested: Vec<String> = list
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+        .collect();
+    if let Some(unknown) = requested
+        .iter()
+        .find(|name| !CAPABILITIES.contains(&name.as_str()))
+    {
+        eprintln!("[mirin-metal-host] MIRIN_METAL_CAPABILITIES: unknown capability \"{unknown}\"");
+        std::process::exit(2);
+    }
+    requested
+}
+
+/// Start the `shell.toplevels` watcher; its updates go to stdout as
+/// `{"type":"toplevel",...}` and `{"type":"toplevel-closed","id":N}`.
+#[cfg(target_os = "linux")]
+fn start_toplevels() -> Option<Toplevels> {
+    let watched = toplevels::watch(|update| {
+        let line = match update {
+            ToplevelUpdate::Changed(toplevel) => {
+                serde_json::json!({ "type": "toplevel", "toplevel": toplevel })
+            }
+            ToplevelUpdate::Closed(id) => {
+                serde_json::json!({ "type": "toplevel-closed", "id": id })
+            }
+        };
+        write_line(&line);
+    });
+    match watched {
+        Ok(toplevels) => Some(toplevels),
+        Err(error) => {
+            eprintln!("[mirin-metal-host] shell.toplevels unavailable: {error}");
+            None
+        }
+    }
+}
+
+/// A stdin line is either a tree or `{"sim": {...}}`.
+fn parse_line(line: &str) -> Result<DriverMessage, String> {
+    // Parse once: trees are large, and sim lines are recognisable by their
+    // leading key (the driver writes `{"sim":…}` for them).
+    if line.trim_start().starts_with("{\"sim\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SimLine {
+            sim: SimCommand,
+        }
+        let parsed: SimLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        return Ok(DriverMessage::Sim(parsed.sim));
+    }
+    parse_tree(line)
+        .map(|tree| DriverMessage::Tree(Box::new(tree)))
+        .map_err(|e| e.to_string())
+}
+
+/// `MIRIN_METAL_PROFILE=<path>` (with `--features profiling`): sample the
+/// process for `MIRIN_METAL_PROFILE_SECS` seconds (default 10) and write
+/// folded stacks (`frame;frame;frame count`) to `<path>`.
+#[cfg(feature = "profiling")]
+fn start_profiler() {
+    let Ok(path) = std::env::var("MIRIN_METAL_PROFILE") else {
+        return;
+    };
+    let seconds = std::env::var("MIRIN_METAL_PROFILE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(10);
+    std::thread::spawn(move || {
+        let guard = match pprof::ProfilerGuardBuilder::default()
+            .frequency(1000)
+            .build()
+        {
+            Ok(guard) => guard,
+            Err(error) => {
+                eprintln!("[mirin-metal-host] profiler failed to start: {error}");
+                return;
+            }
+        };
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
+        let report = match guard.report().build() {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("[mirin-metal-host] profiler report failed: {error}");
+                return;
+            }
+        };
+        let mut folded = String::new();
+        for (frames, count) in &report.data {
+            let stack: Vec<String> = frames
+                .frames
+                .iter()
+                .rev()
+                .flat_map(|symbols| symbols.iter().rev().map(|symbol| symbol.name()))
+                .collect();
+            folded.push_str(&format!(
+                "{};{} {count}\n",
+                frames.thread_name,
+                stack.join(";")
+            ));
+        }
+        match std::fs::write(&path, folded) {
+            Ok(()) => eprintln!("[mirin-metal-host] profile written to {path}"),
+            Err(error) => eprintln!("[mirin-metal-host] profile write failed: {error}"),
+        }
+    });
+}
+
+#[cfg(not(feature = "profiling"))]
+fn start_profiler() {}
+
+fn main() {
+    // Traced opens are timed from here (`first content frame painted`).
+    mirin_metal::trace::mark_start();
+    // Asked by gpu::prefer_display_gpu, in a child of the host: answer and exit.
+    #[cfg(target_os = "linux")]
+    if std::env::args().nth(1).as_deref() == Some(mirin_metal::gpu::PROBE_ARG) {
+        mirin_metal::gpu::answer_probe();
+    }
+    // Before any thread or GPUI starts: Vulkan reads this at load.
+    #[cfg(target_os = "linux")]
+    if let Some(filter) = mirin_metal::gpu::prefer_display_gpu() {
+        mirin_metal::trace::log(format_args!("vulkan drivers limited to {filter}"));
+    }
+    start_profiler();
+    // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
+    // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
+    // open it again as often as the driver asks (a resident host).
+    let deferred = std::env::var("MIRIN_METAL_DEFERRED").is_ok_and(|v| v == "1");
+    let (update_tx, update_rx) = mpsc::channel::<DriverMessage>();
+    let (host_tx, host_rx) = mpsc::channel::<HostMessage>();
+    let sink = if deferred {
+        WindowSink::Deferred(host_tx)
+    } else {
+        WindowSink::Shown(update_tx)
+    };
+    let (event_tx, event_rx) = mpsc::channel::<NativeUiEvent>();
+
+    let capabilities = requested_capabilities();
+    #[cfg(target_os = "linux")]
+    let toplevels = capabilities
+        .iter()
+        .any(|name| name == "shell.toplevels")
+        .then(start_toplevels)
+        .flatten();
+    #[cfg(not(target_os = "linux"))]
+    if !capabilities.is_empty() {
+        eprintln!("[mirin-metal-host] capabilities are Linux only; ignoring them");
+    }
+
+    // A lock surface whose driver goes away exits at once, still locked: the
+    // session must never unlock because a lock screen crashed.
+    let lock_surface = std::env::var("MIRIN_METAL_SURFACE")
+        .is_ok_and(|json| matches!(parse_surface(&json, ""), Ok(Surface::Lock)));
+
+    // stdin → tree updates. EOF means the driver went away; the window simply
+    // stops updating (closing it quits the process).
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let parsed = parse_host_line(&line);
+            mirin_metal::trace::log(format_args!(
+                "line parsed ({} KB) in {:.2}ms",
+                line.len() / 1024,
+                started.elapsed().as_secs_f64() * 1000.0
+            ));
+            match parsed {
+                Ok(line @ (HostLine::Open(_) | HostLine::Hide | HostLine::Window(_))) => {
+                    if !sink.send(line) {
+                        break;
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                Ok(HostLine::Toplevel(command)) => match &toplevels {
+                    Some(toplevels) => {
+                        if let Err(error) = toplevels.perform(command) {
+                            eprintln!("[mirin-metal-host] toplevel action failed: {error}");
+                        }
+                    }
+                    None => eprintln!(
+                        "[mirin-metal-host] rejected line: toplevel actions need the shell.toplevels capability"
+                    ),
+                },
+                Err(error) => eprintln!("[mirin-metal-host] rejected line: {error}"),
+            }
+        }
+        if lock_surface {
+            std::process::exit(0);
+        }
+    });
+
+    // interaction events → stdout.
+    std::thread::spawn(move || {
+        while let Ok(event) = event_rx.recv() {
+            let mut line =
+                serde_json::json!({ "type": event.kind.name(), "nodeId": event.node_id });
+            if let Some(value) = event.kind.value() {
+                line["value"] = serde_json::Value::String(value.to_string());
+            }
+            if let EventKind::Selection {
+                start,
+                end,
+                text_hash,
+            } = &event.kind
+            {
+                line["start"] = serde_json::json!(start);
+                line["end"] = serde_json::json!(end);
+                line["textHash"] = serde_json::json!(text_hash);
+            }
+            if let EventKind::Hover { hovered } = &event.kind {
+                line["hovered"] = serde_json::Value::Bool(*hovered);
+            }
+            if let EventKind::Pointer { phase, x, y, .. } = &event.kind {
+                line["phase"] = serde_json::json!(phase.name());
+                line["x"] = serde_json::json!(x);
+                line["y"] = serde_json::json!(y);
+            }
+            if let Some(bounds) = &event.bounds {
+                line["bounds"] = serde_json::json!({
+                    "x": bounds.x, "y": bounds.y,
+                    "width": bounds.width, "height": bounds.height,
+                });
+            }
+            if let EventKind::ContextMenu { x, y, modifiers } = &event.kind {
+                line["x"] = serde_json::json!(x);
+                line["y"] = serde_json::json!(y);
+                write_modifiers(&mut line, modifiers);
+            }
+            if let EventKind::Press(modifiers) = &event.kind {
+                write_modifiers(&mut line, modifiers);
+            }
+            if let EventKind::RunPress {
+                run,
+                offset,
+                modifiers,
+            } = &event.kind
+            {
+                line["run"] = serde_json::json!(run);
+                line["offset"] = serde_json::json!(offset);
+                write_modifiers(&mut line, modifiers);
+            }
+            if let EventKind::KeyDown(key) | EventKind::WindowKey { key, .. } = &event.kind {
+                line["key"] = serde_json::json!(key.key);
+                if let Some(text) = &key.text {
+                    line["text"] = serde_json::json!(text);
+                }
+                line["ctrl"] = serde_json::json!(key.ctrl);
+                line["alt"] = serde_json::json!(key.alt);
+                line["shift"] = serde_json::json!(key.shift);
+                line["meta"] = serde_json::json!(key.platform);
+                line["repeat"] = serde_json::json!(key.repeat);
+            }
+            if let EventKind::WindowKey {
+                pasted: Some(pasted),
+                ..
+            } = &event.kind
+            {
+                line["pasted"] = serde_json::json!(pasted);
+            }
+            if let EventKind::Visibility { visible } = &event.kind {
+                line["visible"] = serde_json::json!(visible);
+            }
+            if let EventKind::Typing { typing } = &event.kind {
+                line["typing"] = serde_json::json!(typing);
+            }
+            if let EventKind::Drop(drop) = &event.kind {
+                line["phase"] = serde_json::json!(drop.phase.name());
+                line["x"] = serde_json::json!(drop.x);
+                line["y"] = serde_json::json!(drop.y);
+                line["paths"] = serde_json::json!(drop.paths);
+                line["ctrl"] = serde_json::json!(drop.ctrl);
+                line["alt"] = serde_json::json!(drop.alt);
+                line["shift"] = serde_json::json!(drop.shift);
+            }
+            if let EventKind::Wheel { dx, dy } = &event.kind {
+                line["dx"] = serde_json::json!(dx);
+                line["dy"] = serde_json::json!(dy);
+            }
+            if let EventKind::Chrome(chrome) = &event.kind {
+                line["titleBar"] = serde_json::json!(chrome.title_bar.name());
+                line["controls"] = match &chrome.controls {
+                    Some(c) => serde_json::json!({
+                        "x": c.x, "y": c.y, "width": c.width, "height": c.height,
+                    }),
+                    None => serde_json::Value::Null,
+                };
+            }
+            if let EventKind::Layout { nodes } = &event.kind {
+                line["nodes"] = serde_json::Value::Array(
+                    nodes
+                        .iter()
+                        .map(|node| {
+                            serde_json::json!({
+                                "id": node.id, "x": node.x, "y": node.y,
+                                "width": node.width, "height": node.height,
+                            })
+                        })
+                        .collect(),
+                );
+            }
+            if !write_line(&line) {
+                break;
+            }
+        }
+    });
+
+    if deferred {
+        run_deferred(initial_tree, host_rx, event_tx);
+        return;
+    }
+    let size = std::env::var("MIRIN_METAL_SIZE")
+        .ok()
+        .as_deref()
+        .and_then(parse_size);
+    let options = window_options(
+        std::env::var("MIRIN_METAL_TITLE").unwrap_or_else(|_| "mirin metal".into()),
+        std::env::var("MIRIN_METAL_APP_ID").ok(),
+        size,
+        std::env::var("MIRIN_METAL_SURFACE").ok().as_deref(),
+        std::env::var("MIRIN_METAL_TITLEBAR").ok().as_deref(),
+    )
+    .and_then(|options| {
+        Ok(NativeUiOptions {
+            ask_to_close: asks_to_close(std::env::var("MIRIN_METAL_CLOSE").ok().as_deref())?,
+            min_size: min_size(std::env::var("MIRIN_METAL_MIN_SIZE").ok().as_deref())?,
+            ..options
+        })
+    })
+    .unwrap_or_else(|error| {
+        eprintln!("[mirin-metal] {error}");
+        std::process::exit(2);
+    });
+    let initial = initial_tree(&options);
+    run(options, initial, update_rx, event_tx);
+}
+
+/// `WxH` in logical px (`MIRIN_METAL_SIZE`, `MIRIN_METAL_MIN_SIZE`).
+fn parse_size(text: &str) -> Option<(f32, f32)> {
+    let (w, h) = text.split_once('x')?;
+    Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+}
+
+/// `MIRIN_METAL_MIN_SIZE=WxH`: the smallest the window may be made; unset
+/// leaves it to the compositor. Anything but two sizes of at least 1 is an
+/// error.
+fn min_size(value: Option<&str>) -> Result<Option<(f32, f32)>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    parse_size(value)
+        .filter(|(w, h)| w.is_finite() && h.is_finite() && *w >= 1.0 && *h >= 1.0)
+        .map(Some)
+        .ok_or_else(|| format!("MIRIN_METAL_MIN_SIZE: expected WxH, got `{value}`"))
+}
+
+/// `MIRIN_METAL_CLOSE`: `ask` hands a close from outside to the driver
+/// (`close-request`) instead of closing; `now`, or nothing, closes at once.
+fn asks_to_close(value: Option<&str>) -> Result<bool, String> {
+    match value {
+        None | Some("now") => Ok(false),
+        Some("ask") => Ok(true),
+        Some(other) => Err(format!(
+            "MIRIN_METAL_CLOSE: expected `ask` or `now`, got `{other}`"
+        )),
+    }
+}
+
+/// A window's options from what the driver said (environment or `open` line).
+fn window_options(
+    title: String,
+    app_id: Option<String>,
+    size: Option<(f32, f32)>,
+    surface: Option<&str>,
+    title_bar: Option<&str>,
+) -> Result<NativeUiOptions, String> {
+    // `surface` opens a layer-shell surface (a panel, a dock) instead of a
+    // window; the shape is `windows.*.surface` in docs/api-design.md §1a.
+    let surface = surface
+        .map(|json| {
+            parse_surface(json, &title).map_err(|error| format!("MIRIN_METAL_SURFACE: {error}"))
+        })
+        .transpose()?;
+    // `unified` puts the app's own toolbar in the title bar where the
+    // compositor supports it (Dashi); anything but `standard` and `unified`
+    // is an error.
+    let title_bar = title_bar
+        .map(|value| {
+            TitleBar::parse(value).map_err(|error| format!("MIRIN_METAL_TITLEBAR: {error}"))
+        })
+        .transpose()?
+        .unwrap_or(TitleBar::Standard);
+    // Surfaces may be thin (a 28px menu bar); windows keep a usable minimum,
+    // and a smaller one is raised to it, not thrown out for the 800×600
+    // default. An alert sized to its text is short (about 150 tall), so the
+    // height's floor is lower than the width's.
+    let (min_width, min_height) = if surface.is_some() {
+        (1.0, 1.0)
+    } else {
+        (200.0, 100.0)
+    };
+    let (width, height) = size
+        .filter(|(w, h)| w.is_finite() && h.is_finite() && *w > 0.0 && *h > 0.0)
+        .map(|(w, h)| (w.max(min_width), h.max(min_height)))
+        .unwrap_or((
+            NativeUiOptions::default().width,
+            NativeUiOptions::default().height,
+        ));
+    Ok(NativeUiOptions {
+        title: title.into(),
+        // The app id names the app to the compositor (`dev.dashi.files`).
+        app_id: app_id.filter(|id| !id.is_empty()),
+        width,
+        height,
+        surface,
+        title_bar,
+        ask_to_close: false,
+        min_size: None,
+    })
+}
+
+/// Until the driver's first tree: a dark window, or nothing for a surface
+/// (a dock must not flash an opaque block).
+fn initial_tree(options: &NativeUiOptions) -> mirin_metal::NodeSpec {
+    let initial = if options.surface.is_some() {
+        r##"{"type":"view","props":{"fill":true}}"##
+    } else {
+        r##"{"type":"view","props":{"fill":true,"background":"#111114"}}"##
+    };
+    parse_tree(initial).expect("static initial tree is valid JSON")
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::{parse_host_line, HostLine};
+
+    #[test]
+    fn hide_is_a_line_of_its_own() {
+        assert!(matches!(
+            parse_host_line(r#"{"hide":true}"#),
+            Ok(HostLine::Hide)
+        ));
+        assert!(parse_host_line(r#"{"hide":false}"#).is_err());
+        assert!(parse_host_line(r#"{"hide":true,"now":1}"#).is_err());
+    }
+
+    #[test]
+    fn a_deferred_window_takes_its_least_size_from_the_open_line() {
+        let line = r#"{"open":{"title":"System Settings","width":920,"height":640,"minWidth":748,"minHeight":300}}"#;
+        match parse_host_line(line) {
+            Ok(HostLine::Open(options)) => assert_eq!(options.min_size, Some((748.0, 300.0))),
+            _ => panic!("expected an open line"),
+        }
+        match parse_host_line(r#"{"open":{"title":"Menu"}}"#) {
+            Ok(HostLine::Open(options)) => assert_eq!(options.min_size, None),
+            _ => panic!("expected an open line"),
+        }
+        // The refusal names the marker, so the binary carries it for a driver to find.
+        assert!(matches!(
+            parse_host_line(r#"{"open":{"minWidth":748}}"#),
+            Err(error) if error.contains(super::OPEN_MIN_SIZE_MARKER)
+        ));
+        assert!(parse_host_line(r#"{"open":{"minWidth":0,"minHeight":300}}"#).is_err());
+    }
+
+    #[test]
+    fn open_may_come_again() {
+        let line = r#"{"open":{"title":"Launcher","width":620,"height":520}}"#;
+        for _ in 0..2 {
+            match parse_host_line(line) {
+                Ok(HostLine::Open(options)) => {
+                    assert_eq!(options.title.as_ref(), "Launcher");
+                    assert_eq!((options.width, options.height), (620.0, 520.0));
+                }
+                _ => panic!("expected an open line"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod close_tests {
+    use super::asks_to_close;
+
+    #[test]
+    fn only_ask_hands_the_close_to_the_driver() {
+        assert_eq!(asks_to_close(None), Ok(false));
+        assert_eq!(asks_to_close(Some("now")), Ok(false));
+        assert_eq!(asks_to_close(Some("ask")), Ok(true));
+        assert!(asks_to_close(Some("Ask")).is_err());
+        assert!(asks_to_close(Some("")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod window_size_tests {
+    use super::{min_size, parse_host_line, window_options, HostLine};
+    use mirin_metal::DriverMessage;
+
+    #[test]
+    fn a_minimum_size_is_two_sizes_or_nothing() {
+        assert_eq!(min_size(None), Ok(None));
+        assert_eq!(min_size(Some("274x436")), Ok(Some((274.0, 436.0))));
+        assert!(min_size(Some("274")).is_err());
+        assert!(min_size(Some("0x436")).is_err());
+        assert!(min_size(Some("wide")).is_err());
+    }
+
+    #[test]
+    fn the_app_can_resize_its_window() {
+        assert!(matches!(
+            parse_host_line(r#"{"size":{"width":520,"height":436}}"#),
+            Ok(HostLine::Window(DriverMessage::Size(w, h))) if (w, h) == (520.0, 436.0)
+        ));
+        assert!(parse_host_line(r#"{"size":{"width":0,"height":436}}"#).is_err());
+        assert!(parse_host_line(r#"{"size":{"width":520}}"#).is_err());
+    }
+
+    #[test]
+    fn the_app_can_change_its_least_size() {
+        assert!(matches!(
+            parse_host_line(r#"{"minSize":{"width":498,"height":440}}"#),
+            Ok(HostLine::Window(DriverMessage::MinSize(w, h))) if (w, h) == (498.0, 440.0)
+        ));
+        assert!(parse_host_line(r#"{"minSize":{"width":498,"height":0}}"#).is_err());
+        assert!(parse_host_line(r#"{"minSize":{"width":498}}"#).is_err());
+        assert!(parse_host_line(r#"{"minSize":{"width":498,"height":440,"depth":1}}"#).is_err());
+    }
+
+    #[test]
+    fn small_windows_are_raised_to_the_minimum() {
+        let options = window_options("t".into(), None, Some((420.0, 146.0)), None, None).unwrap();
+        assert_eq!((options.width, options.height), (420.0, 146.0));
+        let options = window_options("t".into(), None, Some((120.0, 60.0)), None, None).unwrap();
+        assert_eq!((options.width, options.height), (200.0, 100.0));
+        let options = window_options("t".into(), None, Some((0.0, 186.0)), None, None).unwrap();
+        assert_eq!((options.width, options.height), (800.0, 600.0));
+    }
+}

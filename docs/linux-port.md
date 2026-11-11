@@ -42,6 +42,31 @@ model:
   `libcef.so`, `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/`,
   `chrome-sandbox`, …) via `export-cef-dir` (auto-selects the host Linux arch).
 
+### Fedora (primary Linux target)
+
+Verified 2026-10-29 on Nobara 44 (Fedora 44 base, KDE Plasma on Wayland, AMD
+RADV). Fedora is the first Linux distribution mirin targets; Debian/Ubuntu
+follow. Everything below is user-space except the dnf line.
+
+```sh
+sudo dnf install -y cmake ninja-build gcc-c++ libxkbcommon-devel \
+  libxkbcommon-x11-devel wayland-devel vulkan-loader-devel fontconfig-devel \
+  freetype-devel libxcb-devel libX11-devel gtk3-devel
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y -c clippy -c rustfmt
+bun scripts/fetch-cef.ts   # needs cargo on PATH: it installs export-cef-dir
+```
+
+- `rpm-build` ships with Fedora, but `mirin release` builds `.rpm` through
+  **fpm** (Ruby) and AppImage through **appimagetool**; both are missing on a
+  stock install (`gem install fpm`; appimagetool from its GitHub releases).
+- `bun` and `cargo` install under `~/.bun/bin` and `~/.cargo/bin`; non-login
+  shells (editor terminals, agents) may not have them on `PATH`.
+- `scripts/fetch-cef.ts` fails with `command not found: cargo` when rustup is
+  installed but not on the calling shell's `PATH`.
+- The Vulkan/XKB/Wayland dev packages are for the Metal renderer
+  (`docs/metal.md`), not CEF; they are listed here so one `dnf` line covers both
+  flavors.
+
 ## Windowing (`linux/window/mod.rs`)
 
 **CEF Views toplevel.** `MirinWindowDelegate` + `MirinBrowserViewDelegate` (via
@@ -178,6 +203,13 @@ Feature status:
 
 - **Window controls** — ✅ minimize / maximize (toggle) / restore / fullscreen /
   always-on-top / activate / show / hide via CEF Views (`linux::control`).
+- **Geometry + frame events** — ✅ `x`/`y` place the window through
+  `WindowDelegate::initial_bounds` (no `x`/`y` still centers), `minWidth`/
+  `minHeight` map to `ViewDelegate::minimum_size`, and the delegate reports
+  `on_window_bounds_changed` as `window.moved` / `window.resized` frame events
+  and `on_window_activation_changed` as `window.focus` / `window.blur`, so
+  `getFrame()`, `isMaximized()`, and focus listeners work like on macOS/Windows
+  (Anko's window-state persistence depends on these).
 - **Custom title bar / frameless** — ✅ **works on X11.** `is_frameless` yields a truly
   borderless window; the app draws its own header + min/max/close, and mirin drives
   native move / resize / live-resize / double-click-maximize via `_NET_WM_MOVERESIZE`
@@ -192,7 +224,21 @@ Feature status:
 - **Menus** — app menu bar is a no-op (like Windows; menus live in the app UI);
   context/popup menus ⬜ TODO (Views `MenuModel`).
 - **Tray** — ⬜ TODO (StatusNotifierItem, e.g. `ksni`).
-- **Dialogs** — ⬜ TODO (`xdg-desktop-portal` FileChooser, e.g. `ashpd`/`rfd`).
+- **Dialogs** — ✅ `dialog.openFile` / `dialog.saveFile` go through the
+  **xdg-desktop-portal** `FileChooser` interface on the session bus
+  (`linux/dialog.rs`, zbus blocking API), so KDE/GNOME show their own native
+  picker under Wayland, X11, and Flatpak alike; `multiple`, `directories`, and
+  `defaultName` map to the portal's `multiple` / `directory` / `current_name`.
+  `dialog.message` has no portal and shells out to **zenity** (then **kdialog**);
+  with neither installed it answers button 0 and logs. Because these block until
+  the user answers, the engine runs Linux dialogs on a dedicated `mirin-dialog`
+  thread instead of the CEF UI thread, and the result still arrives as the
+  `dialog.result` event keyed by `requestId`. The picker is not parented to the
+  CEF toplevel yet (needs an XDG foreign handle); `modal: true` keeps it on top.
+  Verified on Fedora/KDE with `examples/kitchen-sink` and synthetic input.
+- **Downloads** — ✅ page downloads (`<a download>`, blob URLs) go through the
+  shared download handler to the portal save dialog; verified with Anko's CSV
+  export (`engine/handlers/download.rs`).
 - **Deep links** (`urlSchemes`) — ⬜ TODO (`.desktop` MIME registration).
 - **Transparent / material** — ⬜ TODO. A windowed X11 CEF browser is always opaque;
   true transparency would need OSR (as `win/` does), which the Linux port currently

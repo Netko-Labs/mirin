@@ -10,7 +10,7 @@
 
 </div>
 
-Mirin is a desktop application framework in the spirit of Electron, built natively around the [Bun](https://bun.sh) runtime. Your app's main process is Bun — full `Bun.*` APIs, `bun:ffi`, Bun's bundler and test runner — and your UI is real Chromium via [CEF](https://github.com/chromiumembedded/cef) on every platform.
+Mirin is a desktop application framework in the spirit of Electron, built natively around the [Bun](https://bun.sh) runtime. Your app's main process is Bun — full `Bun.*` APIs, `bun:ffi`, Bun's bundler and test runner — and your UI is real Chromium via [CEF](https://github.com/chromiumembedded/cef) on every platform. An alpha second flavor, [Metal](#metal-alpha), draws the same React as native GPU UI with no web engine.
 
 Three spellings, three different things: **Mirin** is the product, `mirinjs` is the npm package, `mirin` is the binary.
 
@@ -98,6 +98,43 @@ matrix.
 Not yet built (toward Electron/electrobun parity): multi-webview windows,
 user preload scripts, session/cookie controls, payload encryption or a CEF IPC
 replacement for the RPC data plane, and a WebView2 option on Windows.
+
+## Metal (alpha)
+
+**Metal** is mirin without CEF: you write normal React (JSX, hooks, state,
+flexbox and Tailwind `className`s) and it renders as GPU-drawn native UI through
+[GPUI](https://www.gpui.rs), the Rust UI framework behind Zed. No web engine and
+no Chromium subprocesses; a Metal app keeps mirin's Bun process model and shared
+`mirinjs` surface. It is an **alpha**: its own API may still change, and it is
+not yet wired into `mirin dev` / `build` / `release`.
+
+| Piece | Where | What |
+| --- | --- | --- |
+| `@mirinjs/metal` | `packages/mirin-metal` | The React renderer: `<View>`, `<Text>`, `<TextInput>`, `<ScrollView>`, and a transport to the host. |
+| `@mirinjs/metal-ui` | `packages/mirin-metal-ui` | shadcn/ui ported 1:1 onto Metal: same components, props, variants and theme tokens, `className` strings translated from Tailwind. |
+| `mirin-metal` crate | `crates/mirin-metal` | The renderer and its `mirin-metal-host` binary: GPUI windows, Wayland layer-shell and lock surfaces, text input, accessibility over AT-SPI. Vendors small, documented forks of GPUI, taffy and AccessKit's Unix adapter (`vendor/*/MIRIN.md`). |
+
+Platforms: **Linux** (Wayland first, X11 fallback; a Vulkan driver at runtime)
+is where Metal is built, tested and used every day. macOS (Apple Metal) builds
+and passes its tests in CI but is not yet verified with a real app; Windows is
+not yet verified.
+
+Build the host and run a demo:
+
+```bash
+cd crates/mirin-metal && cargo build --release --bin mirin-metal-host
+cd ../../packages/mirin-metal \
+  && bun demo/counter.tsx ../../crates/mirin-metal/target/release/mirin-metal-host
+```
+
+On Fedora the build needs `libxkbcommon-devel libxkbcommon-x11-devel
+wayland-devel vulkan-loader-devel fontconfig-devel freetype-devel libxcb-devel`
+(Ubuntu: the `-dev` equivalents, see the `metal` job in `.github/workflows/ci.yml`).
+
+Metal is the app platform of Dashi, a Linux desktop: its shell (menu bar, dock, launcher, lock screen) and its apps are
+React on `@mirinjs/metal` and `@mirinjs/metal-ui`, each drawn by a
+`mirin-metal-host` process. See [docs/metal.md](docs/metal.md) for the element
+tree, the process model, platform findings and milestones.
 
 ## Brand
 
