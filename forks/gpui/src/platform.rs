@@ -1349,6 +1349,12 @@ pub(crate) struct WindowParams {
     // mirin: session-lock surfaces for a lock screen.
     #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
     pub session_lock: bool,
+
+    // mirin: whether the window is transparent once it is open (client-side
+    // decorations, or a background that isn't opaque), so that a Wayland
+    // window's renderer starts as it will be used.
+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
+    pub transparent: bool,
 }
 
 /// Represents the status of how a window should be opened.

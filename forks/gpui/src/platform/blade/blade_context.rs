@@ -6,6 +6,8 @@ use util::ResultExt;
 #[cfg_attr(target_os = "macos", derive(Clone))]
 pub struct BladeContext {
     pub(super) gpu: Arc<gpu::Context>,
+    // mirin: every window's pipelines, built once per surface kind.
+    pub(super) pipelines: Arc<super::blade_renderer::BladePipelineCache>,
 }
 
 impl BladeContext {
@@ -32,7 +34,10 @@ impl BladeContext {
             }
             .map_err(|e| anyhow::anyhow!("{e:?}"))?,
         );
-        Ok(Self { gpu })
+        Ok(Self {
+            gpu,
+            pipelines: Arc::default(), // mirin:
+        })
     }
 }
 

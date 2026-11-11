@@ -7,11 +7,13 @@ use crate::{
     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use blade_graphics as gpu;
+use blade_graphics::ShaderData as _; // mirin: the pipelines' getters use it
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
-use std::sync::Arc;
+use parking_lot::Mutex; // mirin: the pipeline cache
+use std::sync::{Arc, OnceLock}; // mirin: OnceLock for lazy pipelines
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
 
@@ -122,196 +124,304 @@ struct PathRasterizationVertex {
     bounds: Bounds<ScaledPixels>,
 }
 
+// mirin: the pipelines of every window with the same surface format, alpha
+// mode and path sample count, made once per process. GPUI made a set per
+// window, and again when a window's transparency changed (which every
+// opaque window's did right after it opened, since renderers started
+// transparent): each set parsed the shaders (~4 ms) and built eight
+// pipelines (~8 ms), twice in a ~60 ms start, and again for every window a
+// resident host opens. They live as long as the GPU context
+// (`BladePipelines` says when each one is built).
+#[derive(Default)]
+pub(super) struct BladePipelineCache(Mutex<Vec<(gpu::SurfaceInfo, u32, Arc<BladePipelines>)>>);
+
+impl BladePipelineCache {
+    fn get(&self, surface_info: gpu::SurfaceInfo, path_sample_count: u32) -> Arc<BladePipelines> {
+        let mut sets = self.0.lock();
+        if let Some((_, _, pipelines)) = sets
+            .iter()
+            .find(|(info, samples, _)| *info == surface_info && *samples == path_sample_count)
+        {
+            return pipelines.clone();
+        }
+        let pipelines = Arc::new(BladePipelines::new(surface_info, path_sample_count));
+        sets.push((surface_info, path_sample_count, pipelines.clone()));
+        pipelines
+    }
+}
+
+// mirin: a pipeline is built by the first frame that draws with it. GPUI
+// built all eight with the window (SPIR-V written and compiled for each,
+// about 1 ms apiece), where a small app draws with two or three and nothing
+// on Linux draws surfaces. The shader module they are built from is parsed
+// (~4 ms) by a frame that needs a pipeline not built yet, the first frame as
+// a rule, and dropped when that frame ends: kept, it held ~0.7 MB.
 struct BladePipelines {
-    quads: gpu::RenderPipeline,
-    shadows: gpu::RenderPipeline,
-    path_rasterization: gpu::RenderPipeline,
-    paths: gpu::RenderPipeline,
-    underlines: gpu::RenderPipeline,
-    mono_sprites: gpu::RenderPipeline,
-    poly_sprites: gpu::RenderPipeline,
-    surfaces: gpu::RenderPipeline,
+    shader: Mutex<Option<gpu::Shader>>,
+    surface_info: gpu::SurfaceInfo,
+    path_sample_count: u32,
+    quads: OnceLock<gpu::RenderPipeline>,
+    shadows: OnceLock<gpu::RenderPipeline>,
+    path_rasterization: OnceLock<gpu::RenderPipeline>,
+    paths: OnceLock<gpu::RenderPipeline>,
+    underlines: OnceLock<gpu::RenderPipeline>,
+    mono_sprites: OnceLock<gpu::RenderPipeline>,
+    poly_sprites: OnceLock<gpu::RenderPipeline>,
+    surfaces: OnceLock<gpu::RenderPipeline>,
 }
 
 impl BladePipelines {
-    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo, path_sample_count: u32) -> Self {
-        use gpu::ShaderData as _;
+    fn new(surface_info: gpu::SurfaceInfo, path_sample_count: u32) -> Self {
+        Self {
+            shader: Mutex::new(None),
+            surface_info,
+            path_sample_count,
+            quads: OnceLock::new(),
+            shadows: OnceLock::new(),
+            path_rasterization: OnceLock::new(),
+            paths: OnceLock::new(),
+            underlines: OnceLock::new(),
+            mono_sprites: OnceLock::new(),
+            poly_sprites: OnceLock::new(),
+            surfaces: OnceLock::new(),
+        }
+    }
 
-        log::info!(
-            "Initializing Blade pipelines for surface {:?}",
-            surface_info
-        );
-        let shader = gpu.create_shader(gpu::ShaderDesc {
-            source: include_str!("shaders.wgsl"),
+    /// Build a pipeline from the shader module, parsing it if this frame hasn't yet.
+    fn build(
+        &self,
+        gpu: &gpu::Context,
+        pipeline: impl FnOnce(&gpu::Shader) -> gpu::RenderPipeline,
+    ) -> gpu::RenderPipeline {
+        let mut shader = self.shader.lock();
+        let shader = shader.get_or_insert_with(|| {
+            log::info!(
+                "Initializing Blade pipelines for surface {:?}",
+                self.surface_info
+            );
+            let shader = gpu.create_shader(gpu::ShaderDesc {
+                source: include_str!("shaders.wgsl"),
+            });
+            shader.check_struct_size::<GlobalParams>();
+            shader.check_struct_size::<SurfaceParams>();
+            shader.check_struct_size::<Quad>();
+            shader.check_struct_size::<Shadow>();
+            shader.check_struct_size::<PathRasterizationVertex>();
+            shader.check_struct_size::<PathSprite>();
+            shader.check_struct_size::<Underline>();
+            shader.check_struct_size::<MonochromeSprite>();
+            shader.check_struct_size::<PolychromeSprite>();
+            shader
         });
-        shader.check_struct_size::<GlobalParams>();
-        shader.check_struct_size::<SurfaceParams>();
-        shader.check_struct_size::<Quad>();
-        shader.check_struct_size::<Shadow>();
-        shader.check_struct_size::<PathRasterizationVertex>();
-        shader.check_struct_size::<PathSprite>();
-        shader.check_struct_size::<Underline>();
-        shader.check_struct_size::<MonochromeSprite>();
-        shader.check_struct_size::<PolychromeSprite>();
+        pipeline(shader)
+    }
 
+    /// A frame ended: the shader module goes, if this frame parsed it.
+    fn frame_drawn(&self) {
+        self.shader.lock().take();
+    }
+
+    fn color_targets(&self) -> [gpu::ColorTargetState; 1] {
         // See https://apoorvaj.io/alpha-compositing-opengl-blending-and-premultiplied-alpha/
-        let blend_mode = match surface_info.alpha {
+        let blend_mode = match self.surface_info.alpha {
             gpu::AlphaMode::Ignored => gpu::BlendState::ALPHA_BLENDING,
             gpu::AlphaMode::PreMultiplied => gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
             gpu::AlphaMode::PostMultiplied => gpu::BlendState::ALPHA_BLENDING,
         };
-        let color_targets = &[gpu::ColorTargetState {
-            format: surface_info.format,
+        [gpu::ColorTargetState {
+            format: self.surface_info.format,
             blend: Some(blend_mode),
             write_mask: gpu::ColorWrites::default(),
-        }];
-
-        Self {
-            quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
-                name: "quads",
-                data_layouts: &[&ShaderQuadsData::layout()],
-                vertex: shader.at("vs_quad"),
-                vertex_fetches: &[],
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                fragment: Some(shader.at("fs_quad")),
-                color_targets,
-                multisample_state: gpu::MultisampleState::default(),
-            }),
-            shadows: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
-                name: "shadows",
-                data_layouts: &[&ShaderShadowsData::layout()],
-                vertex: shader.at("vs_shadow"),
-                vertex_fetches: &[],
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                fragment: Some(shader.at("fs_shadow")),
-                color_targets,
-                multisample_state: gpu::MultisampleState::default(),
-            }),
-            path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
-                name: "path_rasterization",
-                data_layouts: &[&ShaderPathRasterizationData::layout()],
-                vertex: shader.at("vs_path_rasterization"),
-                vertex_fetches: &[],
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                fragment: Some(shader.at("fs_path_rasterization")),
-                // The original implementation was using ADDITIVE blende mode,
-                // I don't know why
-                // color_targets: &[gpu::ColorTargetState {
-                //     format: PATH_TEXTURE_FORMAT,
-                //     blend: Some(gpu::BlendState::ADDITIVE),
-                //     write_mask: gpu::ColorWrites::default(),
-                // }],
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
-                multisample_state: gpu::MultisampleState {
-                    sample_count: path_sample_count,
-                    ..Default::default()
-                },
-            }),
-            paths: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
-                name: "paths",
-                data_layouts: &[&ShaderPathsData::layout()],
-                vertex: shader.at("vs_path"),
-                vertex_fetches: &[],
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                fragment: Some(shader.at("fs_path")),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState {
-                        color: gpu::BlendComponent::OVER,
-                        alpha: gpu::BlendComponent::ADDITIVE,
-                    }),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
-                multisample_state: gpu::MultisampleState::default(),
-            }),
-            underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
-                name: "underlines",
-                data_layouts: &[&ShaderUnderlinesData::layout()],
-                vertex: shader.at("vs_underline"),
-                vertex_fetches: &[],
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                fragment: Some(shader.at("fs_underline")),
-                color_targets,
-                multisample_state: gpu::MultisampleState::default(),
-            }),
-            mono_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
-                name: "mono-sprites",
-                data_layouts: &[&ShaderMonoSpritesData::layout()],
-                vertex: shader.at("vs_mono_sprite"),
-                vertex_fetches: &[],
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                fragment: Some(shader.at("fs_mono_sprite")),
-                color_targets,
-                multisample_state: gpu::MultisampleState::default(),
-            }),
-            poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
-                name: "poly-sprites",
-                data_layouts: &[&ShaderPolySpritesData::layout()],
-                vertex: shader.at("vs_poly_sprite"),
-                vertex_fetches: &[],
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                fragment: Some(shader.at("fs_poly_sprite")),
-                color_targets,
-                multisample_state: gpu::MultisampleState::default(),
-            }),
-            surfaces: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
-                name: "surfaces",
-                data_layouts: &[&ShaderSurfacesData::layout()],
-                vertex: shader.at("vs_surface"),
-                vertex_fetches: &[],
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                fragment: Some(shader.at("fs_surface")),
-                color_targets,
-                multisample_state: gpu::MultisampleState::default(),
-            }),
-        }
+        }]
     }
 
-    fn destroy(&mut self, gpu: &gpu::Context) {
-        gpu.destroy_render_pipeline(&mut self.quads);
-        gpu.destroy_render_pipeline(&mut self.shadows);
-        gpu.destroy_render_pipeline(&mut self.path_rasterization);
-        gpu.destroy_render_pipeline(&mut self.paths);
-        gpu.destroy_render_pipeline(&mut self.underlines);
-        gpu.destroy_render_pipeline(&mut self.mono_sprites);
-        gpu.destroy_render_pipeline(&mut self.poly_sprites);
-        gpu.destroy_render_pipeline(&mut self.surfaces);
+    fn quads(&self, gpu: &gpu::Context) -> &gpu::RenderPipeline {
+        self.quads.get_or_init(|| {
+            self.build(gpu, |shader| {
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "quads",
+                    data_layouts: &[&ShaderQuadsData::layout()],
+                    vertex: shader.at("vs_quad"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_quad")),
+                    color_targets: &self.color_targets(),
+                    multisample_state: gpu::MultisampleState::default(),
+                })
+            })
+        })
+    }
+
+    fn shadows(&self, gpu: &gpu::Context) -> &gpu::RenderPipeline {
+        self.shadows.get_or_init(|| {
+            self.build(gpu, |shader| {
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "shadows",
+                    data_layouts: &[&ShaderShadowsData::layout()],
+                    vertex: shader.at("vs_shadow"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_shadow")),
+                    color_targets: &self.color_targets(),
+                    multisample_state: gpu::MultisampleState::default(),
+                })
+            })
+        })
+    }
+
+    fn path_rasterization(&self, gpu: &gpu::Context) -> &gpu::RenderPipeline {
+        self.path_rasterization.get_or_init(|| {
+            self.build(gpu, |shader| {
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "path_rasterization",
+                    data_layouts: &[&ShaderPathRasterizationData::layout()],
+                    vertex: shader.at("vs_path_rasterization"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_path_rasterization")),
+                    // The original implementation was using ADDITIVE blende mode,
+                    // I don't know why
+                    // color_targets: &[gpu::ColorTargetState {
+                    //     format: PATH_TEXTURE_FORMAT,
+                    //     blend: Some(gpu::BlendState::ADDITIVE),
+                    //     write_mask: gpu::ColorWrites::default(),
+                    // }],
+                    color_targets: &[gpu::ColorTargetState {
+                        format: self.surface_info.format,
+                        blend: Some(gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: gpu::ColorWrites::default(),
+                    }],
+                    multisample_state: gpu::MultisampleState {
+                        sample_count: self.path_sample_count,
+                        ..Default::default()
+                    },
+                })
+            })
+        })
+    }
+
+    fn paths(&self, gpu: &gpu::Context) -> &gpu::RenderPipeline {
+        self.paths.get_or_init(|| {
+            self.build(gpu, |shader| {
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "paths",
+                    data_layouts: &[&ShaderPathsData::layout()],
+                    vertex: shader.at("vs_path"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_path")),
+                    color_targets: &[gpu::ColorTargetState {
+                        format: self.surface_info.format,
+                        blend: Some(gpu::BlendState {
+                            color: gpu::BlendComponent::OVER,
+                            alpha: gpu::BlendComponent::ADDITIVE,
+                        }),
+                        write_mask: gpu::ColorWrites::default(),
+                    }],
+                    multisample_state: gpu::MultisampleState::default(),
+                })
+            })
+        })
+    }
+
+    fn underlines(&self, gpu: &gpu::Context) -> &gpu::RenderPipeline {
+        self.underlines.get_or_init(|| {
+            self.build(gpu, |shader| {
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "underlines",
+                    data_layouts: &[&ShaderUnderlinesData::layout()],
+                    vertex: shader.at("vs_underline"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_underline")),
+                    color_targets: &self.color_targets(),
+                    multisample_state: gpu::MultisampleState::default(),
+                })
+            })
+        })
+    }
+
+    fn mono_sprites(&self, gpu: &gpu::Context) -> &gpu::RenderPipeline {
+        self.mono_sprites.get_or_init(|| {
+            self.build(gpu, |shader| {
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "mono-sprites",
+                    data_layouts: &[&ShaderMonoSpritesData::layout()],
+                    vertex: shader.at("vs_mono_sprite"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_mono_sprite")),
+                    color_targets: &self.color_targets(),
+                    multisample_state: gpu::MultisampleState::default(),
+                })
+            })
+        })
+    }
+
+    fn poly_sprites(&self, gpu: &gpu::Context) -> &gpu::RenderPipeline {
+        self.poly_sprites.get_or_init(|| {
+            self.build(gpu, |shader| {
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "poly-sprites",
+                    data_layouts: &[&ShaderPolySpritesData::layout()],
+                    vertex: shader.at("vs_poly_sprite"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_poly_sprite")),
+                    color_targets: &self.color_targets(),
+                    multisample_state: gpu::MultisampleState::default(),
+                })
+            })
+        })
+    }
+
+    fn surfaces(&self, gpu: &gpu::Context) -> &gpu::RenderPipeline {
+        self.surfaces.get_or_init(|| {
+            self.build(gpu, |shader| {
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "surfaces",
+                    data_layouts: &[&ShaderSurfacesData::layout()],
+                    vertex: shader.at("vs_surface"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_surface")),
+                    color_targets: &self.color_targets(),
+                    multisample_state: gpu::MultisampleState::default(),
+                })
+            })
+        })
     }
 }
 
@@ -330,17 +440,56 @@ pub struct BladeRenderer {
     surface_config: gpu::SurfaceConfig,
     command_encoder: gpu::CommandEncoder,
     last_sync_point: Option<gpu::SyncPoint>,
-    pipelines: BladePipelines,
+    pipelines: Arc<BladePipelines>, // mirin: shared with the context's other windows
+    pipeline_cache: Arc<BladePipelineCache>, // mirin:
     instance_belt: BufferBelt,
     atlas: Arc<BladeAtlas>,
     atlas_sampler: gpu::Sampler,
     #[cfg(target_os = "macos")]
     core_video_texture_cache: CVMetalTextureCache,
-    path_intermediate_texture: gpu::Texture,
-    path_intermediate_texture_view: gpu::TextureView,
-    path_intermediate_msaa_texture: Option<gpu::Texture>,
-    path_intermediate_msaa_texture_view: Option<gpu::TextureView>,
+    // mirin: the textures paths are drawn through exist only while paths
+    // are on screen (see `PathTextures`).
+    path_textures: Option<PathTextures>,
     rendering_parameters: RenderingParameters,
+}
+
+// mirin: where paths are rasterized (multisampled) and resolved before they
+// are copied to the frame: two textures the size of the window, 20 bytes a
+// pixel at four samples. GPUI made them with every window and at every
+// resize; most windows never draw a path, so they are made by the first
+// frame that has one, at the window's size then, and freed by the first
+// frame without any (and by a resize).
+struct PathTextures {
+    intermediate: gpu::Texture,
+    intermediate_view: gpu::TextureView,
+    msaa: Option<(gpu::Texture, gpu::TextureView)>,
+}
+
+impl PathTextures {
+    fn new(
+        gpu: &gpu::Context,
+        format: gpu::TextureFormat,
+        size: gpu::Extent,
+        samples: u32,
+    ) -> Self {
+        let (intermediate, intermediate_view) =
+            create_path_intermediate_texture(gpu, format, size.width, size.height);
+        let msaa = create_msaa_texture_if_needed(gpu, format, size.width, size.height, samples);
+        Self {
+            intermediate,
+            intermediate_view,
+            msaa,
+        }
+    }
+
+    fn destroy(self, gpu: &gpu::Context) {
+        gpu.destroy_texture(self.intermediate);
+        gpu.destroy_texture_view(self.intermediate_view);
+        if let Some((texture, view)) = self.msaa {
+            gpu.destroy_texture(texture);
+            gpu.destroy_texture_view(view);
+        }
+    }
 }
 
 impl BladeRenderer {
@@ -367,11 +516,9 @@ impl BladeRenderer {
             buffer_count: 2,
         });
         let rendering_parameters = RenderingParameters::from_env(context);
-        let pipelines = BladePipelines::new(
-            &context.gpu,
-            surface.info(),
-            rendering_parameters.path_sample_count,
-        );
+        let pipelines = context
+            .pipelines
+            .get(surface.info(), rendering_parameters.path_sample_count);
         let instance_belt = BufferBelt::new(BufferBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
@@ -384,23 +531,6 @@ impl BladeRenderer {
             min_filter: gpu::FilterMode::Linear,
             ..Default::default()
         });
-
-        let (path_intermediate_texture, path_intermediate_texture_view) =
-            create_path_intermediate_texture(
-                &context.gpu,
-                surface.info().format,
-                config.size.width,
-                config.size.height,
-            );
-        let (path_intermediate_msaa_texture, path_intermediate_msaa_texture_view) =
-            create_msaa_texture_if_needed(
-                &context.gpu,
-                surface.info().format,
-                config.size.width,
-                config.size.height,
-                rendering_parameters.path_sample_count,
-            )
-            .unzip();
 
         #[cfg(target_os = "macos")]
         let core_video_texture_cache = unsafe {
@@ -417,15 +547,13 @@ impl BladeRenderer {
             command_encoder,
             last_sync_point: None,
             pipelines,
+            pipeline_cache: context.pipelines.clone(),
             instance_belt,
             atlas,
             atlas_sampler,
             #[cfg(target_os = "macos")]
             core_video_texture_cache,
-            path_intermediate_texture,
-            path_intermediate_texture_view,
-            path_intermediate_msaa_texture,
-            path_intermediate_msaa_texture_view,
+            path_textures: None,
             rendering_parameters,
         })
     }
@@ -479,35 +607,10 @@ impl BladeRenderer {
             self.surface_config.size = gpu_size;
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
-            self.gpu.destroy_texture(self.path_intermediate_texture);
-            self.gpu
-                .destroy_texture_view(self.path_intermediate_texture_view);
-            if let Some(msaa_texture) = self.path_intermediate_msaa_texture {
-                self.gpu.destroy_texture(msaa_texture);
+            // mirin: the next frame with a path makes them again at this size.
+            if let Some(textures) = self.path_textures.take() {
+                textures.destroy(&self.gpu);
             }
-            if let Some(msaa_view) = self.path_intermediate_msaa_texture_view {
-                self.gpu.destroy_texture_view(msaa_view);
-            }
-            let (path_intermediate_texture, path_intermediate_texture_view) =
-                create_path_intermediate_texture(
-                    &self.gpu,
-                    self.surface.info().format,
-                    gpu_size.width,
-                    gpu_size.height,
-                );
-            self.path_intermediate_texture = path_intermediate_texture;
-            self.path_intermediate_texture_view = path_intermediate_texture_view;
-            let (path_intermediate_msaa_texture, path_intermediate_msaa_texture_view) =
-                create_msaa_texture_if_needed(
-                    &self.gpu,
-                    self.surface.info().format,
-                    gpu_size.width,
-                    gpu_size.height,
-                    self.rendering_parameters.path_sample_count,
-                )
-                .unzip();
-            self.path_intermediate_msaa_texture = path_intermediate_msaa_texture;
-            self.path_intermediate_msaa_texture_view = path_intermediate_msaa_texture_view;
         }
     }
 
@@ -517,9 +620,8 @@ impl BladeRenderer {
             self.surface_config.transparent = transparent;
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
-            self.pipelines.destroy(&self.gpu);
-            self.pipelines = BladePipelines::new(
-                &self.gpu,
+            // mirin: from the cache; the old set stays for the next window like it.
+            self.pipelines = self.pipeline_cache.get(
                 self.surface.info(),
                 self.rendering_parameters.path_sample_count,
             );
@@ -567,21 +669,30 @@ impl BladeRenderer {
         width: f32,
         height: f32,
     ) {
-        self.command_encoder
-            .init_texture(self.path_intermediate_texture);
-        if let Some(msaa_texture) = self.path_intermediate_msaa_texture {
+        // mirin: made by the first frame that draws a path.
+        let textures = self.path_textures.get_or_insert_with(|| {
+            PathTextures::new(
+                &self.gpu,
+                self.surface.info().format,
+                self.surface_config.size,
+                self.rendering_parameters.path_sample_count,
+            )
+        });
+        let intermediate_view = textures.intermediate_view;
+        self.command_encoder.init_texture(textures.intermediate);
+        if let Some((msaa_texture, _)) = textures.msaa {
             self.command_encoder.init_texture(msaa_texture);
         }
 
-        let target = if let Some(msaa_view) = self.path_intermediate_msaa_texture_view {
+        let target = if let Some((_, msaa_view)) = textures.msaa {
             gpu::RenderTarget {
                 view: msaa_view,
                 init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
-                finish_op: gpu::FinishOp::ResolveTo(self.path_intermediate_texture_view),
+                finish_op: gpu::FinishOp::ResolveTo(intermediate_view),
             }
         } else {
             gpu::RenderTarget {
-                view: self.path_intermediate_texture_view,
+                view: intermediate_view,
                 init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
                 finish_op: gpu::FinishOp::Store,
             }
@@ -598,7 +709,7 @@ impl BladeRenderer {
                 premultiplied_alpha: 0,
                 pad: 0,
             };
-            let mut encoder = pass.with(&self.pipelines.path_rasterization);
+            let mut encoder = pass.with(self.pipelines.path_rasterization(&self.gpu));
 
             let mut vertices = Vec::new();
             for path in paths {
@@ -627,20 +738,22 @@ impl BladeRenderer {
         self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
-        self.pipelines.destroy(&self.gpu);
+        // mirin: the pipelines are the context's (`BladePipelineCache`).
         self.gpu.destroy_surface(&mut self.surface);
-        self.gpu.destroy_texture(self.path_intermediate_texture);
-        self.gpu
-            .destroy_texture_view(self.path_intermediate_texture_view);
-        if let Some(msaa_texture) = self.path_intermediate_msaa_texture {
-            self.gpu.destroy_texture(msaa_texture);
-        }
-        if let Some(msaa_view) = self.path_intermediate_msaa_texture_view {
-            self.gpu.destroy_texture_view(msaa_view);
+        if let Some(textures) = self.path_textures.take() {
+            textures.destroy(&self.gpu);
         }
     }
 
     pub fn draw(&mut self, scene: &Scene) {
+        // mirin: no path on screen any more: give the path textures back,
+        // once the frame that last drew through them is done.
+        if scene.paths.is_empty() && self.path_textures.is_some() {
+            self.wait_for_gpu();
+            if let Some(textures) = self.path_textures.take() {
+                textures.destroy(&self.gpu);
+            }
+        }
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
 
@@ -679,7 +792,7 @@ impl BladeRenderer {
             match batch {
                 PrimitiveBatch::Quads(quads) => {
                     let instance_buf = unsafe { self.instance_belt.alloc_typed(quads, &self.gpu) };
-                    let mut encoder = pass.with(&self.pipelines.quads);
+                    let mut encoder = pass.with(self.pipelines.quads(&self.gpu));
                     encoder.bind(
                         0,
                         &ShaderQuadsData {
@@ -692,7 +805,7 @@ impl BladeRenderer {
                 PrimitiveBatch::Shadows(shadows) => {
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(shadows, &self.gpu) };
-                    let mut encoder = pass.with(&self.pipelines.shadows);
+                    let mut encoder = pass.with(self.pipelines.shadows(&self.gpu));
                     encoder.bind(
                         0,
                         &ShaderShadowsData {
@@ -723,7 +836,7 @@ impl BladeRenderer {
                             depth_stencil: None,
                         },
                     );
-                    let mut encoder = pass.with(&self.pipelines.paths);
+                    let mut encoder = pass.with(self.pipelines.paths(&self.gpu));
                     // When copying paths from the intermediate texture to the drawable,
                     // each pixel must only be copied once, in case of transparent paths.
                     //
@@ -751,7 +864,11 @@ impl BladeRenderer {
                         0,
                         &ShaderPathsData {
                             globals,
-                            t_sprite: self.path_intermediate_texture_view,
+                            t_sprite: self
+                                .path_textures
+                                .as_ref()
+                                .expect("the path textures exist once a path batch was drawn")
+                                .intermediate_view, // mirin:
                             s_sprite: self.atlas_sampler,
                             b_path_sprites: instance_buf,
                         },
@@ -761,7 +878,7 @@ impl BladeRenderer {
                 PrimitiveBatch::Underlines(underlines) => {
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(underlines, &self.gpu) };
-                    let mut encoder = pass.with(&self.pipelines.underlines);
+                    let mut encoder = pass.with(self.pipelines.underlines(&self.gpu));
                     encoder.bind(
                         0,
                         &ShaderUnderlinesData {
@@ -778,7 +895,7 @@ impl BladeRenderer {
                     let tex_info = self.atlas.get_texture_info(texture_id);
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
-                    let mut encoder = pass.with(&self.pipelines.mono_sprites);
+                    let mut encoder = pass.with(self.pipelines.mono_sprites(&self.gpu));
                     encoder.bind(
                         0,
                         &ShaderMonoSpritesData {
@@ -801,7 +918,7 @@ impl BladeRenderer {
                     let tex_info = self.atlas.get_texture_info(texture_id);
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
-                    let mut encoder = pass.with(&self.pipelines.poly_sprites);
+                    let mut encoder = pass.with(self.pipelines.poly_sprites(&self.gpu));
                     encoder.bind(
                         0,
                         &ShaderPolySpritesData {
@@ -814,7 +931,7 @@ impl BladeRenderer {
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
                 PrimitiveBatch::Surfaces(surfaces) => {
-                    let mut _encoder = pass.with(&self.pipelines.surfaces);
+                    let mut _encoder = pass.with(self.pipelines.surfaces(&self.gpu));
 
                     for surface in surfaces {
                         #[cfg(not(target_os = "macos"))]
@@ -915,6 +1032,7 @@ impl BladeRenderer {
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
+        self.pipelines.frame_drawn(); // mirin:
     }
 }
 

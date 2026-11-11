@@ -1027,6 +1027,11 @@ impl Window {
                 tabbing_identifier,
                 layer_shell,
                 session_lock,
+                // mirin: what `request_decorations` and
+                // `set_background_appearance` below come to.
+                transparent: window_decorations.unwrap_or(WindowDecorations::Server)
+                    == WindowDecorations::Client
+                    || window_background != WindowBackgroundAppearance::Opaque,
             },
         )?;
 

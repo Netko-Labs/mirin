@@ -585,6 +585,7 @@ impl MacWindow {
             // mirin: layer-shell and session-lock surfaces are Wayland only.
             layer_shell: _,
             session_lock: _,
+            transparent: _, // mirin: a Wayland renderer's start
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
