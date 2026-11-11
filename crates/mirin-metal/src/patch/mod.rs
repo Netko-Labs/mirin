@@ -11,13 +11,18 @@
 //! tree again (`resync`) and drop patches until that tree arrives. The wire
 //! format is described in docs/metal.md ("Patches").
 
+mod apply;
 mod document;
+mod error;
+mod index;
 mod ops;
 #[cfg(test)]
 mod tests;
 mod touched;
+mod undo;
 
-pub(crate) use document::{Applied, Document, PatchError};
+pub(crate) use document::{Applied, Document};
+pub(crate) use error::PatchError;
 pub use ops::{parse_patch, PatchOp};
 pub(crate) use touched::Touched;
 

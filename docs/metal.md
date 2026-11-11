@@ -404,7 +404,7 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   a type or an id. A root that is replaced (another host type, another root
   component) goes as a whole tree.
 - **Resync.** A patch applies whole or not at all: when an op fails, the
-  ops before it are undone (`patch::document` keeps how to take each back),
+  ops before it are undone (`patch/undo.rs` keeps how to take each back),
   so a frame never shows half a commit. The host logs `patch refused` on
   stderr, sends `{"type":"resync","nodeId":"root","value":reason}`, and
   drops every patch until a whole tree comes (they were made against a tree

@@ -19,7 +19,7 @@ type Op =
 
 /**
  * A stand-in host: it announces patches, keeps the tree, and applies each
- * patch as crates/mirin-metal `patch/document.rs` does, failing as loudly.
+ * patch as crates/mirin-metal `patch/` does, failing as loudly.
  */
 class PatchingHost implements NativeTransport {
   tree: Node | null = null;

@@ -1,6 +1,6 @@
 /**
  * The tree a patching host keeps: whole trees replace it, patches change it
- * in place, applied as crates/mirin-metal `patch/document.rs` does and
+ * in place, applied as crates/mirin-metal `patch/` does and
  * failing as loudly. The harness mounts every test through it, so each
  * component's updates are also checked as patches.
  */
