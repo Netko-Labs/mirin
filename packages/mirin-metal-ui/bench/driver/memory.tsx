@@ -61,8 +61,16 @@ export async function memory(rounds: number, json: boolean): Promise<void> {
     await interactions(session, 50);
     snapshots.push(snapshot());
   }
+  // Left alone, the allocator gives freed pages back: what an app at rest holds.
+  await Bun.sleep(6000);
+  const restingRssMb = process.memoryUsage().rss / 1e6;
   if (json) {
-    console.log(JSON.stringify(snapshots.map(({ types: _types, ...rest }) => rest)));
+    console.log(
+      JSON.stringify({
+        restingRssMb,
+        snapshots: snapshots.map(({ types: _types, ...rest }) => rest),
+      }),
+    );
     return;
   }
   snapshots.forEach((shot, index) => {
@@ -81,4 +89,5 @@ export async function memory(rounds: number, json: boolean): Promise<void> {
       }`,
     );
   });
+  console.log(`after 6 s at rest: RSS ${restingRssMb.toFixed(1)} MB`);
 }

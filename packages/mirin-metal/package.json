@@ -22,6 +22,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "mirin-metal": "./src/cli.ts"
+  },
   "files": [
     "src",
     "README.md"
