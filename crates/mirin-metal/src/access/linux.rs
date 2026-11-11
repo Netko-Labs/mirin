@@ -118,6 +118,12 @@ impl Publisher {
         self.listening.whole.load(Ordering::Acquire)
     }
 
+    /// How many AT-SPI signals the process has made for the accessibility
+    /// bus so far: the difference across an update is what it tells the bus.
+    pub(crate) fn signals(&self) -> u64 {
+        accesskit_unix::signals_queued()
+    }
+
     /// Whether the window has the keyboard, for an adapter that is given no
     /// tree (it announces the window when a screen reader starts).
     pub(crate) fn window_active(&mut self, active: bool) {

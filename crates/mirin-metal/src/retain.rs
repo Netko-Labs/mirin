@@ -260,6 +260,12 @@ impl Boundaries {
     fn get(&self, id: &str) -> Option<&Boundary> {
         self.map.get(id)
     }
+
+    /// The layout group of the retained subtree view `id` is the root of,
+    /// when it is one: what the accessibility tree places its nodes in.
+    pub(crate) fn group(&self, id: &str) -> Option<u64> {
+        self.map.get(id).map(|boundary| boundary.group)
+    }
 }
 
 /// Whether subtrees are kept (`MIRIN_METAL_RETAIN=0` draws every frame

@@ -23,6 +23,10 @@ impl Publisher {
         false
     }
 
+    pub(crate) fn signals(&self) -> u64 {
+        0
+    }
+
     pub(crate) fn window_active(&mut self, _active: bool) {}
 
     pub(crate) fn publish(&mut self, _active: bool, _build: impl FnOnce(bool) -> TreeUpdate) {}

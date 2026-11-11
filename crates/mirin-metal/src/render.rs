@@ -224,12 +224,20 @@ fn render_view_content(
     let child_ids: Vec<Option<String>> = children.iter().map(node_id).collect();
     let child_watch: Vec<bool> = children.iter().map(watches_layout).collect();
     let scrolls_along = scrolls_along_its_direction(props);
+    // A scroll view's content is a group of the layout map: what is drawn in
+    // it is placed in it, and a scroll moves the group alone (`layout/scroll.rs`).
+    let around = view.group;
+    if let Some((group, marker)) = crate::layout::scroll_frame(props, view) {
+        element = element.child(marker);
+        view.group = Some(group);
+    }
     let mut element = element.children(children.iter().map(|child| {
         view.keeps_length = scrolls_along;
         let element = render_node(child, view, window, cx);
         view.keeps_length = false;
         element
     }));
+    view.group = around;
     if child_ids.iter().any(Option::is_some) {
         let layout = view.layout.clone();
         let events = view.events.clone();

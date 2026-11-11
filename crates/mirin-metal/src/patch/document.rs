@@ -85,6 +85,9 @@ impl Document {
     /// changed in; an id it doesn't know (none, a node without one) answers
     /// the newest generation, as if it had just changed. For the renderer,
     /// to keep what it built for a node whose own generation it has seen.
+    /// (Nothing does now: the accessibility tree, which looked under a view
+    /// whose own props changed, hears what left from the layout.)
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn own_generation(&self, id: &str) -> u64 {
         self.lookup(id, |entry| entry.own)
     }
