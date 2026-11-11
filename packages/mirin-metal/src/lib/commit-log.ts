@@ -15,12 +15,28 @@ export interface CommitLog {
   mutations: Mutation[];
   /** Nodes whose head may have changed (props, a string's text). */
   dirty: Set<HostNode>;
+  /**
+   * Each view's children as they were before the commit first changed them:
+   * the order the host holds, from which a reorder is sent in the fewest
+   * moves (`lib/tree-sync.ts`).
+   */
+  before: Map<HostParent, HostNode[]>;
 }
 
-let current: CommitLog = { mutations: [], dirty: new Set() };
+const emptyLog = (): CommitLog => ({ mutations: [], dirty: new Set(), before: new Map() });
+let current: CommitLog = emptyLog();
+/** The view whose children were last noted (a commit's changes mostly come a list at a time). */
+let noted: HostParent | null = null;
 
 export function logMutation(mutation: Mutation): void {
   current.mutations.push(mutation);
+}
+
+/** A view's children are about to change: keep their order as it was, once a commit. */
+export function noteChildren(parent: HostParent): void {
+  if (parent === noted || parent.kind !== "view") return;
+  noted = parent;
+  if (!current.before.has(parent)) current.before.set(parent, parent.children.slice());
 }
 
 /** A node's head may have changed; a string in a `<Text>` changes the text node. */
@@ -32,7 +48,8 @@ export function logDirty(node: HostNode): void {
 /** The commit's log, leaving an empty one for the next. */
 export function takeLog(): CommitLog {
   const log = current;
-  current = { mutations: [], dirty: new Set() };
+  current = emptyLog();
+  noted = null;
   return log;
 }
 

@@ -285,6 +285,50 @@ describe("tree patches", () => {
     }
   });
 
+  test("a reorder is sent in the fewest moves, whatever React moved", async () => {
+    const keys = (from: number, count: number) =>
+      Array.from({ length: count }, (_, index) => `k${from + index}`);
+    const rows = control(keys(0, 200));
+    const Row = memo(function Row({ label }: { label: string }) {
+      return createElement(View, null, createElement(Text, null, label));
+    });
+    function App() {
+      return createElement(
+        View,
+        { testID: "list" },
+        rows.use().map((key) => createElement(Row, { key, label: key })),
+      );
+    }
+    const { step, host } = await mounted(createElement(App));
+    const order = () =>
+      ((host.tree?.children ?? []) as Node[]).map((row) => {
+        const text = row.children?.[0] as Node;
+        return String(text.children?.[0]);
+      });
+    const ops = async (next: string[]): Promise<Op[]> => {
+      const line = await step(() => rows.set(next));
+      expect(order()).toEqual(next);
+      return (JSON.parse(line) as { patch: Op[] }).patch;
+    };
+    const base = keys(0, 200);
+    // React places all 190 rows between the two it swaps; two moves say it.
+    const swapped = [...base];
+    [swapped[5], swapped[195]] = [swapped[195] as string, swapped[5] as string];
+    expect((await ops(swapped)).map((op) => op.op)).toEqual(["move", "move"]);
+    expect((await ops(base)).map((op) => op.op)).toEqual(["move", "move"]);
+    // The last row first: React moves the other 199.
+    expect(await ops([base[199] as string, ...base.slice(0, 199)])).toHaveLength(1);
+    expect(await ops(base)).toHaveLength(1);
+    // Moves beside new and removed rows, in one commit.
+    const mixed = [...keys(500, 3), ...swapped.filter((_, index) => index % 50 !== 1), "k600"];
+    const sent = await ops(mixed);
+    expect(sent.filter((op) => op.op === "move")).toHaveLength(2);
+    expect(sent.filter((op) => op.op === "insert")).toHaveLength(4);
+    expect(sent.filter((op) => op.op === "remove")).toHaveLength(4);
+    await ops([...mixed].reverse());
+    await ops(base);
+  });
+
   test("conditional subtrees mount and unmount; fields follow their value", async () => {
     const open = control(false);
     function App() {

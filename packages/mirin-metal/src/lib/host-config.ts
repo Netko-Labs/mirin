@@ -19,7 +19,7 @@ function warnUnknownHost(type: string): void {
 }
 
 import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
-import { logDirty, logMutation, sameProps } from "./commit-log.ts";
+import { logDirty, logMutation, noteChildren, sameProps } from "./commit-log.ts";
 import type {
   Container,
   HostInstance,
@@ -68,6 +68,7 @@ function place(parent: HostParent, child: HostNode, before: HostNode | null): vo
 }
 
 function remove(parent: HostParent, child: HostNode): void {
+  noteChildren(parent);
   removeNode(parent.children, child);
   child.parent = null;
   logMutation({ kind: "remove", parent, child });
@@ -83,7 +84,7 @@ export const hostConfig: HostConfig = {
 
   createInstance(type, props) {
     const id = nextInstanceId++;
-    const base = { id, key: String(id), children: [], parent: null };
+    const base = { id, key: String(id), children: [], parent: null, slot: -1 };
     // Type-only narrowing: the reconciler types props as the union across host
     // types, but the element type discriminates which props these are.
     if (type === VIEW_TYPE) return { kind: "view", props: props as ViewProps, ...base };
@@ -97,7 +98,7 @@ export const hostConfig: HostConfig = {
     return { kind: "view", props: {} as ViewProps, ...base };
   },
   createTextInstance(text) {
-    return { kind: "raw", text, key: `r${nextTextId++}`, parent: null };
+    return { kind: "raw", text, key: `r${nextTextId++}`, parent: null, slot: -1 };
   },
   appendInitialChild(parent, child) {
     parent.children.push(child);
@@ -148,20 +149,24 @@ export const hostConfig: HostConfig = {
   // A child whose parent this already is, is being moved: it leaves its old
   // place first. A new one is in no list, so none is searched for it.
   appendChild(parent, child) {
+    noteChildren(parent);
     if (child.parent === parent) removeNode(parent.children, child);
     parent.children.push(child);
     place(parent, child, null);
   },
   appendChildToContainer(container, child) {
+    noteChildren(container);
     if (child.parent === container) removeNode(container.children, child);
     container.children.push(child);
     place(container, child, null);
   },
   insertBefore(parent, child, before) {
+    noteChildren(parent);
     insertNodeBefore(parent.children, child, before, child.parent === parent);
     place(parent, child, before);
   },
   insertInContainerBefore(container, child, before) {
+    noteChildren(container);
     insertNodeBefore(container.children, child, before, child.parent === container);
     place(container, child, before);
   },

@@ -9,11 +9,15 @@
 
 import { type CommitLog, takeLog } from "./commit-log.ts";
 import type { FieldTexts } from "./field-texts.ts";
-import type { Container, HostInstance, HostNode } from "./instances.ts";
+import type { Container, HostInstance, HostNode, HostParent, ViewInstance } from "./instances.ts";
+import { longestIncreasing } from "./order.ts";
 import { headJson } from "./serialize.ts";
 
 /** The patch protocol this driver speaks (crates/mirin-metal `PATCH_PROTOCOL`). */
 export const PATCH_PROTOCOL = 1;
+
+/** React's moves in one view, at most, sent as it made them (each is one move). */
+const FEWEST_FROM = 2;
 
 type FieldList = Map<string, { value: string; revision: number | undefined }>;
 
@@ -159,6 +163,7 @@ export class TreeSync {
   private patchLine(log: CommitLog): string | null {
     const ops: string[] = [];
     const fresh = new Set<HostNode>();
+    const reordered = this.reordered(log);
     for (const mutation of log.mutations) {
       const parent = mutation.parent;
       // The root's container itself changed: only a whole tree says that.
@@ -168,14 +173,16 @@ export class TreeSync {
       // A parent the host doesn't hold is gone, or new with its children in its insert.
       if (parent.kind !== "view" || !this.holds(parent) || fresh.has(parent)) continue;
       const { child } = mutation;
-      // Ids are digits, or "r" and digits: nothing in them to escape.
-      const parentId = `"${parent.key}"`;
       if (mutation.kind === "remove") {
         if (!this.holds(child)) continue;
         ops.push(`{"op":"remove","id":"${child.key}"}`);
         this.forget(child);
         continue;
       }
+      // A view whose children moved: its new order goes once, below.
+      if (reordered.has(parent)) continue;
+      // Ids are digits, or "r" and digits: nothing in them to escape.
+      const parentId = `"${parent.key}"`;
       const { before } = mutation;
       if (before && !this.holds(before)) return null;
       const where = before ? `,"before":"${before.key}"` : "";
@@ -186,6 +193,9 @@ export class TreeSync {
         ops.push(`{"op":"insert","parent":${parentId}${where},"node":${node}}`);
       }
     }
+    for (const parent of reordered) {
+      if (!this.reorder(parent, log.before.get(parent), fresh, ops)) return null;
+    }
     for (const node of log.dirty) {
       this.setOp(node, fresh, ops);
       // A view's strings are drawn in its `textStyle`.
@@ -194,6 +204,68 @@ export class TreeSync {
       }
     }
     return ops.length > 0 ? `{"patch":[${ops.join(",")}]}` : "";
+  }
+
+  /**
+   * The views the host holds whose children React moved in this commit, more
+   * than `FEWEST_FROM` of them: a move or two goes as React made it.
+   */
+  private reordered(log: CommitLog): Set<ViewInstance> {
+    let moves: Map<ViewInstance, number> | null = null;
+    for (const mutation of log.mutations) {
+      const parent: HostParent = mutation.parent;
+      if (mutation.kind === "place" && parent.kind === "view" && this.holds(mutation.child)) {
+        moves ??= new Map();
+        moves.set(parent, (moves.get(parent) ?? 0) + 1);
+      }
+    }
+    const views = new Set<ViewInstance>();
+    if (moves) for (const [view, count] of moves) if (count > FEWEST_FROM) views.add(view);
+    return views;
+  }
+
+  /**
+   * A view's children in their new order, from the order the host holds
+   * (`before`, less what this commit removed), in the fewest moves: those on
+   * a longest run already in order stay, each other one moves before the
+   * child that follows it now, and new ones go in there, last to first. React
+   * moves every row between two it swaps; this sends two. False when a held
+   * child came from another parent (React never moves one there).
+   */
+  private reorder(
+    parent: ViewInstance,
+    before: HostNode[] | undefined,
+    fresh: Set<HostNode>,
+    ops: string[],
+  ): boolean {
+    if (!this.holds(parent) || fresh.has(parent)) return true;
+    if (!before) return false;
+    for (let slot = 0; slot < before.length; slot += 1) (before[slot] as HostNode).slot = slot;
+    const children = parent.children;
+    const order = new Int32Array(children.length);
+    let held = 0;
+    for (const node of children) {
+      if (!this.holds(node)) continue;
+      // Where it was among the children the host holds; not there, it came from elsewhere.
+      if (before[node.slot] !== node) return false;
+      order[held] = node.slot;
+      held += 1;
+    }
+    const stays = longestIncreasing(order.subarray(0, held), before.length);
+    const parentId = `"${parent.key}"`;
+    let next: HostNode | null = null;
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const node = children[index] as HostNode;
+      const where = next ? `,"before":"${next.key}"` : "";
+      if (!this.holds(node)) {
+        const json = this.freshJson(node, parent, fresh);
+        ops.push(`{"op":"insert","parent":${parentId}${where},"node":${json}}`);
+      } else if (stays[node.slot] !== 1) {
+        ops.push(`{"op":"move","id":"${node.key}","parent":${parentId}${where}}`);
+      }
+      next = node;
+    }
+    return true;
   }
 
   /** A `set` op when the node's head is not what the host has. */
