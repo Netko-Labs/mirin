@@ -226,6 +226,8 @@ fn render_view_content(
     let scrolls_along = scrolls_along_its_direction(props);
     // A scroll view's content is a group of the layout map: what is drawn in
     // it is placed in it, and a scroll moves the group alone (`layout/scroll.rs`).
+    // (Its marker is a child before the others; GPUI hands a view that
+    // scrolls no bounds for its children, so it shifts none recorded below.)
     let around = view.group;
     if let Some((group, marker)) = crate::layout::scroll_frame(props, view) {
         element = element.child(marker);

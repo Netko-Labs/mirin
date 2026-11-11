@@ -98,9 +98,12 @@ pub(super) struct Screen {
     groups: u64,
     /// The tree each retained view was last drawn anew for.
     drawn: HashMap<String, u64>,
-    /// Elements painted elsewhere on their own since the last frame: the
-    /// retained subtrees around them are drawn anew.
+    /// Elements painted elsewhere since the last frame: the retained
+    /// subtrees around them are drawn anew.
     dirty: HashSet<String>,
+    /// The ones painted elsewhere on their own, what is under them staying
+    /// where it was: a retained subtree of theirs is drawn anew as well.
+    alone: HashSet<String>,
     pub(super) layout: LayoutMap,
     focused: Option<String>,
     typed: Option<String>,
@@ -150,6 +153,7 @@ impl Screen {
             groups: 0,
             drawn: HashMap::new(),
             dirty: HashSet::new(),
+            alone: HashSet::new(),
             layout: LayoutMap::default(),
             focused: None,
             typed: None,
@@ -190,6 +194,7 @@ impl Screen {
     pub(super) fn paint(&mut self, id: &str, bounds: Option<Rect>) {
         self.painted.insert(id.to_owned(), bounds);
         self.dirty.insert(id.to_owned());
+        self.alone.insert(id.to_owned());
     }
 
     /// Everything under view `id` is painted `dy` further down, as it is: a
@@ -239,6 +244,7 @@ impl Screen {
         self.draw(&tree, None);
         self.layout.end_frame();
         self.dirty.clear();
+        self.alone.clear();
     }
 
     /// Whether anything strictly under `node` was painted elsewhere.
@@ -278,7 +284,9 @@ impl Screen {
                     .touch_group(scroll_group(id), group, origin, true);
             } else if let Some(&retained) = self.retained.get(id) {
                 let generation = self.document.subtree_generation(id);
-                let anew = self.drawn.get(id) != Some(&generation) || self.dirty_under(node);
+                let anew = self.drawn.get(id) != Some(&generation)
+                    || self.alone.contains(id)
+                    || self.dirty_under(node);
                 self.layout.touch_group(retained, group, origin, anew);
                 if !anew {
                     return;
@@ -355,6 +363,16 @@ impl Screen {
 
     pub(super) fn heard(&self, id: NodeId) -> Option<Node> {
         nodes_of(self.heard.as_ref()?).remove(&id.0)
+    }
+
+    /// How many nodes are frames now.
+    pub(super) fn frames(&self) -> usize {
+        let heard = self.heard.as_ref().expect("an update was heard");
+        let nodes = nodes_of(heard);
+        nodes
+            .values()
+            .filter(|node| node.transform().is_some())
+            .count()
     }
 
     /// The tree as a screen reader walks it.

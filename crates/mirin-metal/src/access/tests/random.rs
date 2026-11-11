@@ -18,7 +18,8 @@ fn any_run_of_changes_keeps_the_tree_whole() {
             ((self.0 >> 33) as usize) % n.max(1)
         }
     }
-    /// A row: `r{n}` over a text and a layout view with another text.
+    /// A row: `r{n}` over a text and a layout view with another text (and a
+    /// button, in every other row).
     #[derive(Clone, Copy)]
     struct Row {
         n: usize,
@@ -45,8 +46,14 @@ fn any_run_of_changes_keeps_the_tree_whole() {
         }
         fn whole(self) -> String {
             let n = self.n;
+            // Every other row has a button in its inner view: a node with
+            // a place under two views that may be frames.
+            let button = match n % 2 {
+                0 => format!(r#",{{"type":"view","props":{{"id":"b{n}","onPress":true}}}}"#),
+                _ => String::new(),
+            };
             format!(
-                r#"{},"children":[{},{{"type":"view","props":{{"id":"g{n}"}},"children":[{}]}}]}}"#,
+                r#"{},"children":[{},{{"type":"view","props":{{"id":"g{n}"}},"children":[{}{button}]}}]}}"#,
                 self.head(),
                 text(&format!("t{n}"), "one"),
                 text(&format!("u{n}"), "two")
@@ -68,6 +75,7 @@ fn any_run_of_changes_keeps_the_tree_whole() {
     let mut rng = Rng(7);
     let mut lists: [Vec<Row>; 2] = [Vec::new(), Vec::new()];
     let mut next = 0;
+    let mut frames = 0;
     for step in 0..1200 {
         let list = rng.below(2);
         let rows = lists[list].len();
@@ -188,8 +196,10 @@ fn any_run_of_changes_keeps_the_tree_whole() {
         // Several changes sometimes land in one update.
         if step % 3 != 0 {
             screen.update();
+            frames = frames.max(screen.frames());
         }
     }
     screen.update();
     assert!(next > 50, "rows came");
+    assert!(frames > 5, "and were frames, in frames");
 }

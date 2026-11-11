@@ -12,6 +12,9 @@ use super::{Changes, Placed};
 /// reported meanwhile).
 const PRUNE_EVERY: u64 = 64;
 
+/// The most changes noted before the account is given up.
+const NOTED_MOST: usize = 1 << 18;
+
 #[derive(Default)]
 pub(super) struct LayoutState {
     pub(super) frame: u64,
@@ -168,12 +171,27 @@ impl LayoutState {
         if let Some(changes) = &mut self.changes {
             changes.nodes.push(Rc::clone(id));
         }
+        self.bound_changes();
     }
 
     pub(super) fn note_group(&mut self, group: u64) {
         self.revision += 1;
         if let Some(changes) = &mut self.changes {
             changes.groups.push(group);
+        }
+        self.bound_changes();
+    }
+
+    /// Nobody took the changes in a long while: no account is kept (whoever
+    /// asks next is told anything may have changed).
+    fn bound_changes(&mut self) {
+        let noted = |changes: &Changes| changes.nodes.len() + changes.groups.len();
+        if self
+            .changes
+            .as_ref()
+            .is_some_and(|changes| noted(changes) > NOTED_MOST)
+        {
+            self.changes = None;
         }
     }
 
