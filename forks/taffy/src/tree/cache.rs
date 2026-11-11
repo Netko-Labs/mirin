@@ -3,6 +3,12 @@ use crate::geometry::Size;
 use crate::style::AvailableSpace;
 use crate::tree::{LayoutOutput, RunMode};
 
+#[cfg(test)]
+std::thread_local! {
+    /// mirin: how often `get_stretched` was asked, for tests.
+    pub(crate) static STRETCHED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
 /// The number of cache entries for each node in the tree
 // mirin: two more (slots 9 and 10), for one known dimension under a definite constraint on the other.
 const CACHE_SIZE: usize = 11;
@@ -17,6 +23,9 @@ pub(crate) struct CacheEntry<T> {
     available_space: Size<AvailableSpace>,
     /// The cached size and baselines of the item
     content: T,
+    /// mirin: the result holds at another width above this
+    /// (`Cache::get_stretched`).
+    stretch: Option<f32>,
 }
 
 /// A cache for caching the results of a sizing a Grid Item or Flexbox Item
@@ -171,19 +180,98 @@ impl Cache {
         run_mode: RunMode,
         layout_output: LayoutOutput,
     ) {
+        self.store_stretchable(known_dimensions, available_space, run_mode, layout_output, None);
+    }
+
+    /// mirin: `store`, with the width above which the result holds at any
+    /// other width (`get_stretched`), when the flexbox algorithm found one.
+    pub fn store_stretchable(
+        &mut self,
+        known_dimensions: Size<Option<f32>>,
+        available_space: Size<AvailableSpace>,
+        run_mode: RunMode,
+        layout_output: LayoutOutput,
+        stretch: Option<f32>,
+    ) {
         match run_mode {
             RunMode::PerformLayout => {
                 self.is_empty = false;
-                self.final_layout_entry = Some(CacheEntry { known_dimensions, available_space, content: layout_output })
+                self.final_layout_entry =
+                    Some(CacheEntry { known_dimensions, available_space, content: layout_output, stretch })
             }
             RunMode::ComputeSize => {
                 self.is_empty = false;
                 let cache_slot = Self::compute_cache_slot(known_dimensions, available_space);
                 self.measure_entries[cache_slot] =
-                    Some(CacheEntry { known_dimensions, available_space, content: layout_output.size });
+                    Some(CacheEntry { known_dimensions, available_space, content: layout_output.size, stretch });
             }
             RunMode::PerformHiddenLayout => {}
         }
+    }
+
+    /// mirin: a result for a query `get` found nothing for, from an entry
+    /// for the same query at another width, where the flexbox algorithm
+    /// found that width changes nothing but itself (a row whose items
+    /// neither grow, shrink nor move with it: `compute_stretch_bound`):
+    ///
+    /// - a known width, before and now, both above the entry's bound: the
+    ///   entry's result at the new width (the items' layouts as they are);
+    /// - no known width, under a definite available width before and now:
+    ///   the entry's result (a row then takes its content's width).
+    ///
+    /// The other dimension must be asked as it was.
+    pub fn get_stretched(
+        &self,
+        known_dimensions: Size<Option<f32>>,
+        available_space: Size<AvailableSpace>,
+        run_mode: RunMode,
+    ) -> Option<LayoutOutput> {
+        /// How far above its bound a width must be: far more than `f32`
+        /// loses in the sums that make the bound.
+        const MARGIN: f32 = 1.0 / 64.0;
+        // The width to answer with (`None`: the entry's), when the entry holds.
+        let width = |entry_known: Size<Option<f32>>, entry_space: Size<AvailableSpace>, size: Size<f32>, stretch| {
+            let bound: f32 = stretch?;
+            let same_height = known_dimensions.height == entry_known.height
+                && (known_dimensions.height.is_some() || entry_space.height.is_roughly_equal(available_space.height));
+            if !same_height {
+                return None;
+            }
+            match (entry_known.width, known_dimensions.width) {
+                (Some(before), Some(now)) if before > bound + MARGIN && now > bound + MARGIN && size.width == before => {
+                    Some(Some(now))
+                }
+                (None, None)
+                    if matches!(entry_space.width, AvailableSpace::Definite(_))
+                        && matches!(available_space.width, AvailableSpace::Definite(_)) =>
+                {
+                    Some(None)
+                }
+                _ => None,
+            }
+        };
+        let output = match run_mode {
+            RunMode::PerformLayout => {
+                let entry = self.final_layout_entry.as_ref()?;
+                let width = width(entry.known_dimensions, entry.available_space, entry.content.size, entry.stretch)?;
+                let mut output = entry.content;
+                output.size.width = width.unwrap_or(output.size.width);
+                Some(output)
+            }
+            RunMode::ComputeSize => {
+                let slot = Self::compute_cache_slot(known_dimensions, available_space);
+                let entry = self.measure_entries[slot].as_ref()?;
+                let width = width(entry.known_dimensions, entry.available_space, entry.content, entry.stretch)?;
+                let size = Size { width: width.unwrap_or(entry.content.width), height: entry.content.height };
+                Some(LayoutOutput::from_outer_size(size))
+            }
+            RunMode::PerformHiddenLayout => None,
+        };
+        #[cfg(test)]
+        if output.is_some() {
+            STRETCHED.with(|count| count.set(count.get() + 1));
+        }
+        output
     }
 
     /// Clear all cache entries and reports clear operation outcome ([`ClearState`])
