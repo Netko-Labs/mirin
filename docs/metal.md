@@ -709,12 +709,50 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
 
 - **The tree.** Every window publishes an accessibility tree over AT-SPI
   through AccessKit's Unix adapter (`src/access/`), so Orca reads Metal's UI.
-  It is built after each paint from the element tree and what only the
-  renderer knows: painted bounds, which field has the keyboard, and what is
-  typed in it (the buffer, not the driver's lagging value; never a password
-  field's). The adapter watches whether assistive technology is on and hands
-  the tree to the accessibility bus only then; the tree is rebuilt only when
-  the element tree, the focus, the typed text, or the window's focus changed.
+  It is made from the element tree and what only the renderer knows: painted
+  bounds, which field has the keyboard, and what is typed in it (the buffer,
+  not the driver's lagging value; never a password field's), and brought in
+  line after each paint in which the element tree, painted bounds, the
+  focus, the typed text, or the window's focus changed.
+- **What it costs.** Nothing while the session has accessibility off, and
+  what changed while it is on.
+  - *Who listens.* AccessKit's adapter joins the accessibility bus when
+    `org.a11y.Status.IsEnabled` is true on the session bus (GNOME's
+    `toolkit-accessibility` setting; a screen reader turns it on, and it
+    stays on) and asks the window for its tree then. That is all it knows:
+    not whether anything on that bus reads the tree. Until it asks, and
+    after the setting goes off, the host builds nothing and keeps nothing
+    (it used to build the whole tree on every update either way). Asked,
+    the adapter is told there is no tree yet and the window is woken to
+    publish one at once, painted or not (the tree lives on the window's
+    thread; a window out of sight paints no frame).
+  - *What an update carries.* The host keeps the tree as the adapter has it
+    (`access/published.rs`) and hands over only nodes that differ from it.
+    A view's subtree is remembered by `Document::subtree_generation`, so a
+    patch has only the views it reached made again (`access/walk.rs`), the
+    views on the way down to them included; a whole tree makes every node
+    again and still sends only the ones that differ. What is typed in the
+    focused field and the option a focused combo box points at are laid
+    over that one node, so typing and moving the focus rebuild nothing.
+    Nodes that left the tree are never named: AccessKit drops what is no
+    longer under the root.
+  - *Bounds.* They follow the paint, not the tree (a scroll, a resize, a
+    row that grew above). When the layout says any moved
+    (`LayoutMap::revision`), every kept node's bounds are compared with
+    where it was last painted and the ones that differ go in the update; a
+    node that is no longer painted loses its bounds. A view whose own props
+    or children changed may stop painting what is under it with nothing
+    else moving, so the bounds under it are compared then too.
+  - *Checking it.* `access/tests.rs` drives runs of patches, focus, typing
+    and bounds changes and hands every update to AccessKit's own tree
+    (`accesskit_consumer`, which refuses an update it cannot place): after
+    each, what a screen reader has is what a tree made from nothing gives.
+    `MIRIN_METAL_ACCESS_CHECK=1` makes the same comparison in a running
+    host after every update and reports a difference on stderr.
+  - *Trace.* `access: built N nodes, published M in X ms (B bounds
+    compared; the adapter took Y ms)` after each update: nodes made again
+    from their elements, nodes handed over, and the time on the window's
+    thread (`bench/stress.tsx` and metal-ui's `bench/native.tsx` read it).
 - **What it says.** A view with `access` (`accessibilityRole`,
   `accessibilityLabel`, `accessibilityState`, `accessibilityLiveRegion` in
   `@mirinjs/metal`, React Native's names) is a node with that role, name and
@@ -925,7 +963,8 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
 
   Left in a frame (profile after): the accessibility tree, rebuilt and
   published whole after every update (~45% of the host's draw time, in
-  paint after the traced frame ends); copying reused primitives into the
+  paint after the traced frame ends; since made to cost what changed, see
+  below); copying reused primitives into the
   scene and re-inserting their bounds for draw order (~15–20%); taffy's
   pass over the spine and the changed row (~19%); reshaping the rebuilt
   card's text. A subtree that moves (scrolled, or below one that grew) is
@@ -948,10 +987,64 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   ~1 ms of driver, ~0.7 ms of apply and ~4.5 ms of frame, where it was ~12,
   ~12 and ~150 ms.
 
+- The accessibility tree (2026-11-10; release host, the host before and
+  this one back to back, one or two runs each, medians; `access`, `cpu`
+  and the node counts are `bench/stress.tsx`'s new columns). The host
+  built the whole tree after every update and handed it to AccessKit whole,
+  whether or not the adapter was on the accessibility bus: on the stress
+  bench that was twice the frame it followed. Now nothing is built while
+  the session has accessibility off, and with it on an update makes and
+  hands over what changed (section 4, "What it costs"). `off`, `on` and
+  `listener` are `bench/a11y/run.sh`'s modes (below); `this session` is the
+  desktop the bench ran on, which has accessibility on and whose shell
+  listens for focus changes.
+
+  | stress bench (15k nodes, 7504 accessibility nodes), per update | before | after |
+  | --- | --- | --- |
+  | select: accessibility, off / on / listener / this session | 6.7 / 9.5 / 10.9–13.1 / 9.3–9.6 ms | 0.0 / 0.1 / 0.1 / 0.1 ms |
+  | type: accessibility, off / on / listener / this session | 15.6 / 22.0 / 21.4–22.2 / 12.2–19.2 ms | 0.0 / 0.1 / 0.1–0.3 / 0.1 ms |
+  | select: nodes made / handed over (on) | 7504 / 7504 | 3 / 0 |
+  | type: nodes made / handed over (on) | 7504–15008 / the same | 4–5 / 2–3 |
+  | select: host CPU, off / on / listener / this session | 11.0 / 13.5 / 14.5–20.5 / 11.5–14.0 ms | 6.5 / 6.0 / 6.5–9.0 / 6.5 ms |
+  | type: host CPU, off / on / listener / this session | 20.5 / 19.5 / 20.5–27.5 / 16.5–17.0 ms | 6.5 / 5.5 / 7.5–11.0 / 5.5–7.0 ms |
+  | hover: host CPU (no accessibility work either way) | 4.5–5.5 ms | 5.0–8.5 ms |
+  | RSS, off / on | 244 / 258–262 MB | 240 / 259–261 MB |
+  | example browser (~900 nodes, 550 accessibility nodes): per click, on | 0.8 ms, 554 / 554 | 0.4–0.5 ms, 7–14 / 3–9 |
+  | example browser: per scrolled frame, on | 0.7 ms, 547 / 547 | 0.2 ms, 1 / 31–35 |
+  | example browser: per click, off | 0.5 ms, 554 / 0 | nothing |
+
+  `accessibility` is time on the window's thread after the frame (so not in
+  `frame`); host CPU is user + system for every thread per update over the
+  scenario (10 ms ticks, 20 updates: ±0.5 ms, and other builds ran on the
+  machine). The select changes one card's colors, which a screen reader
+  never hears of: three nodes are made on the way down to the card and none
+  differs. A first whole tree costs what it did (12–30 ms at 7504 nodes,
+  most of it AccessKit taking the nodes). With accessibility on a host
+  keeps the tree three times (the host's, and AccessKit's two) and its
+  nodes on the bus: about 17 MB at 7504 nodes, as before. What the listener
+  heard over a run (names changed, focus, the window activating) was the
+  same from both hosts, and so is the AT-SPI tree read back after each of a
+  series of steps (below).
+- Measuring accessibility (2026-11-10): whether a host's adapter is on is
+  the session's `org.a11y.Status.IsEnabled`, which a real session keeps as
+  a setting, so `packages/mirin-metal/bench/a11y/run.sh <off|on|at> <out>
+  <command…>` runs a bench on a private session bus with its own
+  accessibility bus and registry: `off` (IsEnabled false), `on` (true,
+  nothing on the bus but the registry), or `at` (true, with `listen.py`
+  registered for the events a screen reader listens to and asking each
+  event's source what it is). Nothing in it touches the person's session.
+  Inside such a run `bench/a11y/dump.py "<app name>"` prints the app's
+  whole AT-SPI tree (roles, names, states, extents, actions, text): the
+  example browser driven through `layout-check.tsx`'s steps gives the same
+  dump, to the byte, on the host before and after the tree was kept.
+
 Open: React work per update (the demo re-renders its whole list on select),
-retained subtrees inside scroll views (moved, so drawn again each scrolled
-frame; their drawings could be offset instead), and the accessibility tree,
-rebuilt whole after every update.
+and retained subtrees inside scroll views (moved, so drawn again each
+scrolled frame; their drawings could be offset instead). For the
+accessibility tree: comparing every node's bounds when any moved (about
+0.4 µs a node; the layout could say which moved), a scroll's bounds going
+out every frame (they could wait for it to settle), and the tree a session
+with accessibility on but nothing reading it still pays for once.
 
 ## 5c. Who uses it: Dashi
 
