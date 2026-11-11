@@ -901,6 +901,8 @@ pub struct Window {
     // being drawn holds (innermost last).
     pub(crate) retained_detached: usize,
     pub(crate) retained_collectors: Vec<Vec<Rc<crate::elements::retained::RetainedRecord>>>,
+    // mirin: the element states of the retained subtrees being drawn, innermost last.
+    pub(crate) element_state_scopes: Vec<ElementStateScope>,
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
@@ -943,6 +945,17 @@ pub(crate) struct ElementStateBox {
     pub(crate) inner: Box<dyn Any>,
     #[cfg(debug_assertions)]
     pub(crate) type_name: &'static str,
+}
+
+/// mirin: the element states of a retained subtree (`elements::retained`)
+/// being drawn: what it kept from its last drawing (`prev`) and what this one
+/// accessed (`next`, kept for the next). They live in the subtree's own
+/// state rather than the frame's, so reusing the subtree carries them as one
+/// instead of one by one.
+#[derive(Default)]
+pub(crate) struct ElementStateScope {
+    pub(crate) prev: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
+    pub(crate) next: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> Bounds<Pixels> {
@@ -1324,6 +1337,7 @@ impl Window {
             accepts_text: false,
             retained_detached: 0,
             retained_collectors: Vec::new(),
+            element_state_scopes: Vec::new(),
             active,
             hovered,
             needs_present,
@@ -2500,22 +2514,6 @@ impl Window {
 
     // mirin: what a retained subtree (`elements::retained`) needs of the window.
 
-    /// Where the next accessed element state goes in this frame's list.
-    pub(crate) fn element_states_index(&self) -> usize {
-        self.next_frame.accessed_element_states.len()
-    }
-
-    /// Carry over the element states last frame accessed in `range` (a
-    /// retained subtree's, accessed while it was laid out, which its prepaint
-    /// and paint ranges don't cover).
-    pub(crate) fn reuse_element_states(&mut self, range: Range<usize>) {
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range]
-                .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-        );
-    }
-
     /// Whether `range` lies within last frame's accessed element states.
     pub(crate) fn element_states_range_valid(&self, range: &Range<usize>) -> bool {
         range.start <= range.end && range.end <= self.rendered_frame.accessed_element_states.len()
@@ -2893,16 +2891,22 @@ impl Window {
         self.invalidator.debug_assert_paint_or_prepaint();
 
         let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
-        self.next_frame
-            .accessed_element_states
-            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+        // mirin: inside a retained subtree, its own map holds the state
+        // (`ElementStateScope`), so a reused subtree carries its elements'
+        // states as one.
+        let found = if let Some(scope) = self.element_state_scopes.last_mut() {
+            scope.next.remove(&key).or_else(|| scope.prev.remove(&key))
+        } else {
+            self.next_frame
+                .accessed_element_states
+                .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+            self.next_frame
+                .element_states
+                .remove(&key)
+                .or_else(|| self.rendered_frame.element_states.remove(&key))
+        };
 
-        if let Some(any) = self
-            .next_frame
-            .element_states
-            .remove(&key)
-            .or_else(|| self.rendered_frame.element_states.remove(&key))
-        {
+        if let Some(any) = found {
             let ElementStateBox {
                 inner,
                 #[cfg(debug_assertions)]
@@ -2936,7 +2940,7 @@ impl Window {
             );
             let (result, state) = f(Some(state), self);
             state_box.replace(state);
-            self.next_frame.element_states.insert(
+            self.store_element_state(
                 key,
                 ElementStateBox {
                     inner: state_box,
@@ -2947,7 +2951,7 @@ impl Window {
             result
         } else {
             let (result, state) = f(None, self);
-            self.next_frame.element_states.insert(
+            self.store_element_state(
                 key,
                 ElementStateBox {
                     inner: Box::new(Some(state)),
@@ -2956,6 +2960,19 @@ impl Window {
                 },
             );
             result
+        }
+    }
+
+    // mirin: where `with_element_state` keeps a state for the next frame:
+    // the innermost retained subtree being drawn, or the frame.
+    fn store_element_state(&mut self, key: (GlobalElementId, TypeId), state: ElementStateBox) {
+        match self.element_state_scopes.last_mut() {
+            Some(scope) => {
+                scope.next.insert(key, state);
+            }
+            None => {
+                self.next_frame.element_states.insert(key, state);
+            }
         }
     }
 

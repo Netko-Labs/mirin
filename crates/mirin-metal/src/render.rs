@@ -243,23 +243,25 @@ fn render_view_content(
         });
     }
 
-    // Interaction and scrolling need a stable element id.
-    let Some(id) = props.id.as_deref() else {
-        if props.on_press
-            || props.on_hover
-            || props.on_pointer
-            || props.on_context_menu
-            || props.on_key_down
-            || props.on_wheel
-            || props.on_drop
-            || props.drag_files.is_some()
-            || props.drag_region
-            || props.focusable
-            || props.on_window_key
-            || props.scroll
-            || props.scroll_x
-            || props.hover_background.is_some()
-        {
+    // Interaction and scrolling need a stable element id. A view without
+    // them gets none: GPUI keeps element state per id'd element, carried
+    // from frame to frame, which large trees pay for on every frame.
+    let interactive = props.on_press
+        || props.on_hover
+        || props.on_pointer
+        || props.on_context_menu
+        || props.on_key_down
+        || props.on_wheel
+        || props.on_drop
+        || props.drag_files.is_some()
+        || props.drag_region
+        || props.focusable
+        || props.on_window_key
+        || props.scroll
+        || props.scroll_x
+        || props.hover_background.is_some();
+    let Some(id) = props.id.as_deref().filter(|_| interactive) else {
+        if interactive {
             eprintln!(
                 "[mirin-metal] onPress/dragRegion/scroll/hoverBackground require an id; ignoring"
             );

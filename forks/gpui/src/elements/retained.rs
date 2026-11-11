@@ -12,6 +12,9 @@
 //! built and drawn again, laid out apart as its kept nodes are laid out
 //! where they sit (`TaffyLayoutEngine::compute_detached_layout`).
 //!
+//! Its elements' states live in its own state (`ElementStateScope`), not
+//! the frame's, so a reused subtree carries them all as one.
+//!
 //! Unlike `AnyView::cached`, a retained subtree may size itself from its
 //! content, and retained subtrees nest: a subtree that is reused carries the
 //! ones inside it, and one that is built again reuses the clean ones inside
@@ -26,14 +29,17 @@
 
 use std::{cell::RefCell, mem, ops::Range, rc::Rc};
 
+use collections::FxHashMap;
+
 use crate::{
     AnyElement, App, Bounds, ContentMask, Element, ElementId, EntityId, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, PaintIndex, Pixels, PrepaintStateIndex, TextStyle,
-    Window,
+    Window, window::ElementStateBox, window::ElementStateScope,
 };
 
 type Build = Box<dyn FnOnce(&mut Window, &mut App) -> AnyElement>;
 type OnPrepaint = Box<dyn FnOnce(bool, &mut Window, &mut App)>;
+type States = FxHashMap<(GlobalElementId, std::any::TypeId), ElementStateBox>;
 
 /// A subtree built only when its content changed. See the module docs.
 pub struct Retained {
@@ -78,8 +84,6 @@ impl Retained {
 /// Where a subtree's drawing sits in last frame's lists.
 #[derive(Clone, Default)]
 struct Ranges {
-    /// Element states accessed while it was laid out.
-    layout_states: Range<usize>,
     prepaint: Range<PrepaintStateIndex>,
     paint: Range<PaintIndex>,
 }
@@ -112,12 +116,12 @@ struct RetainedState {
     record: Rc<RetainedRecord>,
     /// Every retained subtree inside, at any depth.
     nested: Vec<Rc<RetainedRecord>>,
+    /// Its elements' states as last drawn.
+    states: States,
+    /// While it is drawn anew this frame: its elements' states, between phases.
+    drawing: Option<ElementStateScope>,
     /// A whole frame's drawing is recorded.
     painted: bool,
-    /// Built this frame inside a subtree drawn apart: where its prepaint
-    /// range starts (before it was laid out, so the element states it
-    /// accessed then count as prepainted).
-    detached_start: Option<PrepaintStateIndex>,
 }
 
 impl Drop for RetainedState {
@@ -187,29 +191,17 @@ impl Element for Retained {
                                 && key.rem_size == rem_size
                         })
                         && window.layout_engine().contains(state.root)
-                        && window
-                            .element_states_range_valid(&state.record.ranges.borrow().layout_states)
                 });
-                let state = match state {
-                    Some(state) if reusable => state,
+                match state {
+                    // Clean: its kept nodes go into this frame's tree as they are.
+                    Some(state) if reusable => ((state.root, None, build), state),
                     state => {
                         let build = build.expect("a retained subtree is built once a frame");
                         let (root, element, state) =
                             build_layout(state, view, version, build, detached, window, cx);
-                        return ((root, Some(element), None), state);
+                        ((root, Some(element), None), state)
                     }
-                };
-                // Clean: its kept nodes go into this frame's tree as they are.
-                let old = state.record.ranges.borrow().layout_states.clone();
-                let start = window.element_states_index();
-                window.reuse_element_states(old.clone());
-                for record in &state.nested {
-                    let mut ranges = record.ranges.borrow_mut();
-                    ranges.layout_states = moved_states(&ranges.layout_states, &old, start, true);
                 }
-                state.record.ranges.borrow_mut().layout_states =
-                    start..window.element_states_index();
-                ((state.root, None, build), state)
             });
         self.build = build;
         (layout_id, RetainedLayout { element })
@@ -240,67 +232,66 @@ impl Element for Retained {
             window.with_element_state::<RetainedState, _>(global_id, |state, window| {
                 let mut state =
                     state.expect("a retained subtree is laid out before it is prepainted");
-                let (element, reused) = if let Some(mut element) = built {
-                    // Built this frame: draw it.
-                    let start = state
-                        .detached_start
-                        .take()
-                        .unwrap_or_else(|| window.prepaint_index());
-                    window.retained_collectors.push(Vec::new());
-                    window.with_rendered_view(view, |window| element.prepaint(window, cx));
-                    state.nested = window.retained_collectors.pop().unwrap_or_default();
-                    state.record.ranges.borrow_mut().prepaint = start..window.prepaint_index();
-                    (Some(element), false)
-                } else if state.key.as_ref() == Some(&key) && {
+                let reusable = built.is_none() && state.key.as_ref() == Some(&key) && {
                     let ranges = state.record.ranges.borrow();
                     window.prepaint_range_valid(&ranges.prepaint)
                         && window.paint_range_valid(&ranges.paint)
-                } {
+                };
+                let element = if reusable {
                     // Where it was: copy last frame's drawing.
                     let old = state.record.ranges.borrow().prepaint.clone();
                     let start = window.prepaint_index();
                     window.reuse_prepaint(old.clone());
-                    let old_states = old.start.accessed_element_states_index
-                        ..old.end.accessed_element_states_index;
                     for record in &state.nested {
                         let mut ranges = record.ranges.borrow_mut();
                         ranges.prepaint = moved_prepaint(&ranges.prepaint, &old, &start);
-                        ranges.layout_states = moved_states(
-                            &ranges.layout_states,
-                            &old_states,
-                            start.accessed_element_states_index,
-                            false,
-                        );
                     }
                     state.record.ranges.borrow_mut().prepaint = start..window.prepaint_index();
                     let mut accessed = cx.entities.accessed_entities.borrow_mut();
                     accessed.extend(state.nested.iter().map(|record| record.view));
-                    (None, true)
+                    None
                 } else {
-                    // Its layout is kept but it landed elsewhere (or its last
-                    // drawing is gone): build it again and draw it from a
-                    // detached copy laid out as the kept nodes are.
-                    let mut element =
-                        (build.expect("a retained subtree is built once a frame"))(window, cx);
                     let start = window.prepaint_index();
                     window.retained_collectors.push(Vec::new());
-                    window.retained_detached += 1;
-                    let copy = window
-                        .with_rendered_view(view, |window| element.request_layout(window, cx));
-                    window.compute_detached_layout(copy, state.root, cx);
-                    let placed = window.layout_bounds(copy);
-                    window.with_element_offset(bounds.origin - placed.origin, |window| {
-                        window.with_rendered_view(view, |window| element.prepaint(window, cx))
-                    });
-                    window.retained_detached -= 1;
+                    let element = match built {
+                        // Built this frame: draw it.
+                        Some(mut element) => {
+                            let scope = state.drawing.take().unwrap_or_default();
+                            window.element_state_scopes.push(scope);
+                            window.with_rendered_view(view, |window| element.prepaint(window, cx));
+                            state.drawing = window.element_state_scopes.pop();
+                            element
+                        }
+                        // Its layout is kept but it landed elsewhere (or its
+                        // last drawing is gone): build it again and draw it
+                        // from a detached copy laid out as its kept nodes are.
+                        None => {
+                            let build = build.expect("a retained subtree is built once a frame");
+                            let mut element = build(window, cx);
+                            window.element_state_scopes.push(ElementStateScope {
+                                prev: mem::take(&mut state.states),
+                                next: States::default(),
+                            });
+                            window.retained_detached += 1;
+                            let copy = window.with_rendered_view(view, |window| {
+                                element.request_layout(window, cx)
+                            });
+                            window.compute_detached_layout(copy, state.root, cx);
+                            let placed = window.layout_bounds(copy);
+                            window.with_element_offset(bounds.origin - placed.origin, |window| {
+                                window
+                                    .with_rendered_view(view, |window| element.prepaint(window, cx))
+                            });
+                            window.retained_detached -= 1;
+                            state.drawing = window.element_state_scopes.pop();
+                            element
+                        }
+                    };
                     state.nested = window.retained_collectors.pop().unwrap_or_default();
-                    let mut ranges = state.record.ranges.borrow_mut();
-                    ranges.layout_states =
-                        start.accessed_element_states_index..start.accessed_element_states_index;
-                    ranges.prepaint = start..window.prepaint_index();
-                    drop(ranges);
-                    (Some(element), false)
+                    state.record.ranges.borrow_mut().prepaint = start..window.prepaint_index();
+                    Some(element)
                 };
+                let reused = element.is_none();
                 state.key = Some(key);
                 cx.entities.accessed_entities.borrow_mut().insert(view);
                 if let Some(parent) = window.retained_collectors.last_mut() {
@@ -332,7 +323,13 @@ impl Element for Retained {
             let start = window.paint_index();
             match prepaint.element.as_mut() {
                 Some(element) => {
+                    let scope = state.drawing.take().unwrap_or_default();
+                    window.element_state_scopes.push(scope);
                     window.with_rendered_view(view, |window| element.paint(window, cx));
+                    if let Some(scope) = window.element_state_scopes.pop() {
+                        // What it no longer has goes (`scope.prev`, dropped).
+                        state.states = scope.next;
+                    }
                 }
                 None => {
                     let old = state.record.ranges.borrow().paint.clone();
@@ -369,15 +366,16 @@ impl RetainedState {
                 ranges: RefCell::new(Ranges::default()),
             }),
             nested: Vec::new(),
+            states: States::default(),
+            drawing: None,
             painted: false,
-            detached_start: None,
         }
     }
 }
 
 /// Build a retained subtree's element and lay it out: its own nodes, kept
 /// for later frames, or (inside a subtree drawn apart, `detached`) this
-/// frame's only, leaving what it keeps as it is.
+/// frame's only, leaving the nodes it keeps as they are.
 fn build_layout(
     state: Option<RetainedState>,
     view: EntityId,
@@ -388,40 +386,31 @@ fn build_layout(
     cx: &mut App,
 ) -> (LayoutId, AnyElement, RetainedState) {
     let mut element = build(window, cx);
-    let start = window.element_states_index();
-    if detached {
-        // What it accesses counts as prepainted (its prepaint range starts
-        // here), so its layout range is empty.
-        let prepaint_start = window.prepaint_index();
-        let root = window.with_rendered_view(view, |window| element.request_layout(window, cx));
-        let mut state = match state {
-            Some(mut state) => {
-                if state.version != version {
-                    // Not expected (the subtree around it is clean); build it
-                    // properly next frame.
-                    state.painted = false;
-                }
-                state
-            }
-            None => RetainedState::new(view, version, root, Vec::new(), window),
-        };
-        state.record.ranges.borrow_mut().layout_states = start..start;
-        state.detached_start = Some(prepaint_start);
-        return (root, element, state);
-    }
-
     let mut state = state;
-    if let Some(state) = &mut state {
-        // Its old nodes go before the new ones adopt the clean subtrees inside.
-        let owned = mem::take(&mut state.owned);
-        window.layout_engine().remove_nodes(owned);
-    }
-    window.layout_engine().begin_owned();
-    let root = window.with_rendered_view(view, |window| element.request_layout(window, cx));
-    let owned = window.layout_engine().end_owned();
-    let layout_states = start..window.element_states_index();
-    let state = match state {
-        Some(mut state) => {
+    let prev = state
+        .as_mut()
+        .map(|state| mem::take(&mut state.states))
+        .unwrap_or_default();
+    window.element_state_scopes.push(ElementStateScope {
+        prev,
+        next: States::default(),
+    });
+    let (root, owned) = if detached {
+        let root = window.with_rendered_view(view, |window| element.request_layout(window, cx));
+        (root, None)
+    } else {
+        if let Some(state) = &mut state {
+            // Its old nodes go before the new ones adopt the clean subtrees inside.
+            let owned = mem::take(&mut state.owned);
+            window.layout_engine().remove_nodes(owned);
+        }
+        window.layout_engine().begin_owned();
+        let root = window.with_rendered_view(view, |window| element.request_layout(window, cx));
+        (root, Some(window.layout_engine().end_owned()))
+    };
+    let drawing = window.element_state_scopes.pop();
+    let mut state = match (state, owned) {
+        (Some(mut state), Some(owned)) => {
             state.version = version;
             state.root = root;
             state.owned = owned;
@@ -429,9 +418,18 @@ fn build_layout(
             state.painted = false;
             state
         }
-        None => RetainedState::new(view, version, root, owned, window),
+        (Some(mut state), None) => {
+            if state.version != version {
+                // Not expected (the subtree around it is clean); build it
+                // properly next frame.
+                state.painted = false;
+            }
+            state
+        }
+        // A detached first build keeps no nodes; the next frame builds it properly.
+        (None, owned) => RetainedState::new(view, version, root, owned.unwrap_or_default(), window),
     };
-    state.record.ranges.borrow_mut().layout_states = layout_states;
+    state.drawing = drawing;
     (root, element, state)
 }
 
@@ -454,30 +452,6 @@ fn moved<const N: usize>(
         out.1[index] = range.1[index] - from.0[index] + to[index];
     }
     Some(out)
-}
-
-/// A nested subtree's layout-time element states, moved with `from` when
-/// they lie in it. Copying the range around them as it was laid out
-/// (`strict`), they must lie in it: one that doesn't is made invalid, so the
-/// subtree is built again. Copying its prepaint range, only ranges recorded
-/// while drawn detached (which are empty) lie in it, and others stay. An
-/// empty range copies nothing; it is kept within the list.
-fn moved_states(
-    range: &Range<usize>,
-    from: &Range<usize>,
-    to: usize,
-    strict: bool,
-) -> Range<usize> {
-    match moved(
-        ([range.start], [range.end]),
-        ([from.start], [from.end]),
-        [to],
-    ) {
-        Some(([start], [end])) => start..end,
-        None if range.start == range.end => to..to,
-        None if strict => usize::MAX..0,
-        None => range.clone(),
-    }
 }
 
 fn prepaint_fields(index: &PrepaintStateIndex) -> [usize; 7] {
@@ -564,27 +538,4 @@ fn moved_paint(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::moved_states;
-
-    #[test]
-    fn a_nested_range_moves_with_the_range_it_lies_in() {
-        assert_eq!(moved_states(&(12..15), &(10..20), 40, true), 42..45);
-        assert_eq!(moved_states(&(10..20), &(10..20), 0, true), 0..20);
-        assert_eq!(moved_states(&(12..15), &(10..20), 40, false), 42..45);
-    }
-
-    #[test]
-    fn a_nested_range_outside_the_layout_copy_is_made_invalid() {
-        let out = moved_states(&(5..8), &(10..20), 40, true);
-        assert!(out.start > out.end);
-        // Empty ranges copy nothing; they stay within the list.
-        assert_eq!(moved_states(&(3..3), &(10..20), 40, true), 40..40);
-    }
-
-    #[test]
-    fn a_layout_range_outside_a_prepaint_copy_stays() {
-        // Moved with the layout copy already; the prepaint copy leaves it.
-        assert_eq!(moved_states(&(5..8), &(10..20), 40, false), 5..8);
-    }
-}
+mod tests;
