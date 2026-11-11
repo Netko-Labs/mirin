@@ -1150,27 +1150,29 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
 
   | example browser, driver alone | before | after |
   | --- | --- | --- |
-  | start: modules loaded | 46 ms | 30 ms |
-  | start: first tree sent, wall / CPU | 67 ms / 120 ms | 49 ms / 93 ms |
-  | start: the example's tree sent, wall / CPU | 77 ms / 150 ms | 55 ms / 111 ms |
-  | heap in use / RSS after the start | 10.4 / 78 MB | 6.8 / 69 MB |
+  | start: modules loaded | 46 ms | 31 ms |
+  | start: first tree sent, wall / CPU | 68 ms / 117 ms | 48 ms / 92 ms |
+  | start: the example's tree sent, wall / CPU | 76 ms / 147 ms | 55 ms / 109 ms |
+  | heap in use / RSS after the start | 10.6 / 79 MB | 6.8 / 68 MB |
   | heap after 200 interactions / RSS at rest | 11.8 / 82 MB | 9.9 / 75 MB |
   | switch example: event → patch sent, CPU | 5.8 ms, 9.9 ms | 5.1 ms, 8.8 ms |
   | type a character in the search field | 1.9 ms | 1.6 ms |
   | toggle the theme (every node set, 89 KB) | 7.9 ms | 4.8 ms |
   | window resized by a pixel | 6.3 ms | 0.24 ms |
   | with the real host (`bench/native.tsx`): press → last patch sent | 7.0 ms | 6.0 ms |
-  | with the real host: spawn → first content frame | 97 ms | 77 ms |
-  | with the real host: driver CPU by that frame | 210 ms | 130 ms |
-  | with the real host: driver RSS / PSS / anonymous | 71 / 49 / 40 MB | 62 / 40 / 32 MB |
+  | with the real host (`bench/footprint.tsx`): spawn → first content frame | 105 ms | 93 ms |
+  | with the real host: driver CPU by that frame (10 ms ticks) | 210 ms | 130 ms |
+  | with the real host: driver RSS / PSS / anonymous | 71 / 48 / 40 MB | 62 / 40 / 32 MB |
 
-  What the lines sent are did not change: the wire record of a session that
-  opens all 243 examples, hovers, types in and presses inside each, types
-  in the search field and toggles the theme (826 lines, 2.2 MB; timers on
-  the session's own clock, `Math.random` seeded, so one build records the
-  same bytes twice) is identical before and after, to the byte, for a host
-  that takes patches and for one that takes whole trees, and so is the
-  list bench's (`--record`). What changed, by what it bought:
+  `bench/layout-check.tsx browser` against round 2's host on both sides
+  is identical with the driver as it is now. What the lines sent are did
+  not change: the wire record of a session that opens all 243 examples,
+  hovers, types in and presses inside each, types in the search field and
+  toggles the theme (826 lines, 2.2 MB; timers on the session's own clock,
+  `Math.random` seeded, so one build records the same bytes twice) is
+  identical before and after, to the byte, for a host that takes patches
+  and for one that takes whole trees, and so is the list bench's
+  (`--record`). What changed, by what it bought:
 
   - *Icons.* `@mirinjs/metal-ui/icons` imported the whole `lucide` package
     and made 2,271 components over it: 22 ms and 16 MB of every start. An
