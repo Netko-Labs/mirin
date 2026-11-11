@@ -281,8 +281,10 @@ patches change it in place, in order (section "Patches").
   GPUI's mouse dispatch is crate-private, so hit-testing is approximated),
   `{"kind":"key","keystroke":"ctrl-enter"}` and `{"kind":"type","text"}` go
   through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds
-  (only nodes painted in the latest frame), and `{"kind":"scroll","id","dy"}`
-  scrolls a scroll view or virtualized list.
+  (only nodes painted in the latest frame), `{"kind":"scroll","id","dy"}`
+  scrolls a scroll view or virtualized list, and `{"kind":"focus","id"}` gives
+  a field or `focusable` view the keyboard without pressing it (a screen
+  reader's focus).
 - Grid: `grid` lays children out as a CSS grid (taffy) with `gridColumns` /
   `gridRows` track lists (a number is px; `"1fr"`, `"25%"`, `"auto"`,
   `"min-content"`, `"max-content"`; `{"min","max"}` is `minmax`), item
@@ -723,10 +725,10 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   as its active descendant, so the selection is announced as it moves while
   the keyboard stays in the field; a live region is announced when it
   changes. Node ids are hashes of the elements' ids, stable across trees.
-- **Actions.** A screen reader's press, or its focus on a field, is a
-  simulated click on that element (`sim.rs`), the same path the person's
-  click takes. Focusing a button or any other pressable view never presses
-  it.
+- **Actions.** A screen reader's press is a simulated click on that element
+  (`sim.rs`), the same path the person's click takes. Its focus gives a
+  field or `focusable` view the keyboard (`{"kind":"focus"}`) and never
+  presses it.
 - **The application.** The AT-SPI application is named by the driver
   (`MIRIN_METAL_APP_NAME`, `appName` on `spawnNativeHost`), else by the
   first window's title, never the host binary's file name (AccessKit's
