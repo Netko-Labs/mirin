@@ -1,5 +1,5 @@
 /**
- * Generate `src/icons/generated.ts`: every lucide icon under its lucide-react
+ * Generate `src/icons/icons.generated.ts`: every lucide icon under its lucide-react
  * names (`ChevronRight`, `ChevronRightIcon`, `LucideChevronRight`).
  * Usage: bun scripts/gen-icons.ts
  */
