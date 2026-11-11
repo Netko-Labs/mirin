@@ -400,32 +400,33 @@ impl RootView {
             access.borrow_mut().refresh(
                 &self.tree,
                 &self.layout,
+                &|id| self.boundaries.group(id),
                 self.focused(window),
                 window.is_window_active(),
             );
         }
     }
 
-    /// Painted last, after everything else: publishes the accessibility tree
-    /// with this frame's bounds.
-    fn access_canvas(&self, cx: &Context<Self>) -> Option<gpui::AnyElement> {
-        self.access.as_ref()?;
+    /// Painted last, after everything else: the frame's bounds are all
+    /// recorded, so the layout finds what the frame no longer draws, and the
+    /// accessibility tree is published with them.
+    fn frame_end_canvas(&self, cx: &Context<Self>) -> gpui::AnyElement {
         // The view is read when the canvas paints: nothing of the tree is
         // held meanwhile (a share of it would make the next patch copy it).
         let view = cx.weak_entity();
-        Some(
-            gpui::canvas(
-                |_, _, _| {},
-                move |_, (), window, cx| {
-                    if let Some(view) = view.upgrade() {
-                        view.read(cx).refresh_access(window);
-                    }
-                },
-            )
-            .absolute()
-            .size_0()
-            .into_any_element(),
+        let layout = self.layout.clone();
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, (), window, cx| {
+                layout.end_frame();
+                if let Some(view) = view.upgrade() {
+                    view.read(cx).refresh_access(window);
+                }
+            },
         )
+        .absolute()
+        .size_0()
+        .into_any_element()
     }
 
     /// Honour pending `autofocus` requests. Runs outside of rendering.
@@ -476,25 +477,26 @@ impl Render for RootView {
         // opening the app first sees of it (traced).
         let first_content = !self.placeholder && !self.content_painted;
         self.content_painted |= first_content;
-        let access = self.access_canvas(cx);
+        let frame_end = self.frame_end_canvas(cx);
         if !first && !crate::trace::enabled() {
-            return match access {
-                Some(access) => gpui::div()
-                    .size_full()
-                    .child(root)
-                    .child(access)
-                    .into_any_element(),
-                None => root,
-            };
+            return gpui::div()
+                .size_full()
+                .child(root)
+                .child(frame_end)
+                .into_any_element();
         }
         // Painted last, so its paint callback marks the end of GPUI's layout,
         // prepaint, and paint for this frame: the trace's timing, and a new
         // window's first frame (`{"type":"frame"}`, for a driver timing an open).
         let size = window.viewport_size();
         let events = self.events.clone();
+        let layout = self.layout.clone();
         let marker = gpui::canvas(
             |_, _, _| {},
             move |_, (), window, _| {
+                // Part of the frame the trace times (the canvas after this
+                // one finds it done).
+                layout.end_frame();
                 if first {
                     events.frame();
                 }
@@ -540,7 +542,7 @@ impl Render for RootView {
             .size_full()
             .child(root)
             .child(marker)
-            .children(access)
+            .child(frame_end)
             .into_any_element()
     }
 }

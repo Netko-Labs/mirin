@@ -59,6 +59,9 @@ impl Bus {
             "accesskit_atspi_bus_task",
         );
         let socket_proxy = SocketProxy::new(&conn).await?;
+        // mirin: who listens for bounds changes on this bus (`listeners.rs`).
+        crate::listeners::forget();
+        crate::listeners::ask(&conn).await;
         let mut bus = Bus {
             conn,
             _task,
@@ -67,6 +70,11 @@ impl Bus {
         };
         bus.register_root_node().await?;
         Ok(bus)
+    }
+
+    // mirin: ask the registry who listens for bounds changes (`listeners.rs`).
+    pub(crate) async fn ask_listeners(&self) {
+        crate::listeners::ask(&self.conn).await;
     }
 
     fn unique_name(&self) -> &OwnedUniqueName {

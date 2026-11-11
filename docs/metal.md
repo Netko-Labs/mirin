@@ -743,22 +743,58 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
     Nodes that left the tree are never named: AccessKit drops what is no
     longer under the root.
   - *Bounds.* They follow the paint, not the tree (a scroll, a resize, a
-    row that grew above). When the layout says any moved
-    (`LayoutMap::revision`), every kept node's bounds are compared with
-    where it was last painted and the ones that differ go in the update; a
-    node that is no longer painted loses its bounds. A view whose own props
-    or children changed may stop painting what is under it with nothing
-    else moving, so the bounds under it are compared then too.
-  - *Checking it.* `access/tests.rs` drives runs of patches, focus, typing
-    and bounds changes and hands every update to AccessKit's own tree
-    (`accesskit_consumer`, which refuses an update it cannot place): after
-    each, what a screen reader has is what a tree made from nothing gives.
-    `MIRIN_METAL_ACCESS_CHECK=1` makes the same comparison in a running
-    host after every update and reports a difference on stderr.
-  - *Trace.* `access: built N nodes, published M in X ms (B bounds
-    compared; the adapter took Y ms)` after each update: nodes made again
-    from their elements, nodes handed over, and the time on the window's
-    thread (`bench/stress.tsx` and metal-ui's `bench/native.tsx` read it).
+    row that grew above), and what moves as one is one node. The layout
+    map (`src/layout.rs`) keeps each painted node by where it sits in what
+    draws it, a *group*: a retained subtree, or a scroll view's content
+    (its top left is recorded by a zero-size first child, before anything
+    in it); a group is kept by where it sits in the group around it. A
+    scroll, or a push from above, changes one group's place and no node's.
+    In the tree a view that is such a group, with a node under it that has
+    bounds, is a *frame* (`access/place.rs`): its node carries a transform
+    (the group's place), and the bounds under it are from its top left.
+    A view that is only layout gets a node for the frame alone, a generic
+    container, which AccessKit's adapters leave out of what they publish:
+    its children are the node above's to a screen reader, as before.
+    AccessKit adds the transforms up when a client asks where a node is
+    (`Component.GetExtents`, a hit test), so the answer is current at once,
+    with nothing held back to settle. When a frame ends the layout map
+    names exactly the nodes and groups whose place changed, came or went
+    (`layout::Changes`): only those are looked at, and a frame in which
+    nothing moved looks at none. A node whose frame and group disagree (a
+    frame not painted yet, a virtualized list's row, a tree newer than the
+    paint) is placed by where things are in the window and looked at again
+    whenever anything moved.
+  - *Signals.* A frame's move tells the bus nothing: no node a client
+    sees changed its own bounds. Nodes that move on their own (a reflow)
+    each change, and AccessKit sends `object:bounds-changed` for each;
+    mirin's fork of the adapter sends it only while something on the bus
+    registered for it (`forks/accesskit_unix/MIRIN.md`), as at-spi2-atk
+    does: it asks the registry when it joins the bus and again while
+    bounds change, at most once a second, so a client that registers
+    later hears them within a second. Orca registers for no bounds changes (its listeners:
+    `src/orca/script.py`), nor does the Dashi shell.
+  - *Checking it.* `access/tests/` drives runs of patches, focus, typing,
+    scrolls, pushes and subtrees kept or no longer, recording each frame in
+    the layout map as the renderer does, and hands every update to
+    AccessKit's own tree (`accesskit_consumer`, which refuses an update it
+    cannot place): after each, what a screen reader has is what a tree
+    made from nothing gives, every node is found where it was painted
+    (AccessKit's `bounding_box`, the adapter's way), and the tree as a
+    screen reader walks it is the one without frames. `layout/tests.rs`
+    runs random frames against the layout map as it was before
+    (`layout/tests/old.rs`): the same nodes painted at the same places, and
+    the changes named are exactly the places that changed.
+    `MIRIN_METAL_ACCESS_CHECK=1` makes both comparisons in a running host
+    after every update and reports a difference on stderr.
+    `bench/a11y/extents.tsx` reads an app's whole AT-SPI tree over the bus
+    after each of a series of scrolls and changes, the moment the frame is
+    painted, for comparing two hosts.
+  - *Trace.* `access: built N nodes, published M in X ms (P placed again;
+    the adapter took Y ms, S signals)` after each update: nodes made again
+    from their elements, nodes handed over, the time on the window's
+    thread, the kept nodes the layout said moved, and the AT-SPI signals
+    the update queued for the bus (`bench/stress.tsx` and metal-ui's
+    `bench/native.tsx` read it).
 - **What it says.** A view with `access` (`accessibilityRole`,
   `accessibilityLabel`, `accessibilityState`, `accessibilityLiveRegion` in
   `@mirinjs/metal`, React Native's names) is a node with that role, name and
@@ -1132,6 +1168,88 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   the bus at once (no frame is painted for it), it leaves the bus and
   builds nothing while off, and is whole again, as the app then is, when
   turned back on.
+- Accessibility when content moves (2026-11-11; release host, `host-r2`
+  and this one back to back, three runs each on the stress bench and two
+  on the others, medians; accessibility on, as it is in the session the
+  benches ran in). A content change cost 0.1 ms of accessibility work, but
+  a move cost what the tree's size did: every kept node's bounds were
+  compared after any frame in which the layout's revision moved, and it
+  moved on frames in which no bounds did (a subtree drawn anew after a
+  frame it was reused in counted as newly painted, so a select or a hover
+  paid 1.2–1.4 ms for 2500 comparisons that found nothing); a scroll or a
+  banner growing above the grid handed AccessKit every node that has
+  bounds (2500: 11–14 ms on the window's thread, after a 4 ms frame), and
+  its adapter sent one `object:bounds-changed` a node from its own thread
+  (2500 signals a scroll step, 122 500 over the bench's 48 steps and the
+  switch before them), so a step cost 28 ms of host CPU.
+
+  Now what moves as one is one node, and the layout says what moved
+  (section 4, "Bounds"): a scroll is the transform of the scroll view's
+  content, a banner that grows is the transform of the grid's retained
+  subtree, and neither tells the bus anything, because no node a client
+  sees changed its own bounds. The answer to `Component.GetExtents` is
+  AccessKit's sum of the transforms above a node, so it is current as soon
+  as the frame is published: nothing waits to settle.
+
+  | stress bench (15k nodes, 7504 accessibility nodes), per update | before | after |
+  | --- | --- | --- |
+  | select: frame / accessibility / nodes made, handed over / host CPU | 2.6 / 1.4 ms / 3, 0 / 6.5 ms | 2.7 / 0.1 ms / 5, 0 / 5.0 ms |
+  | hover | 2.7 / 1.2 ms / 1, 0 / 4.5 ms | 2.7 / 0.0 ms / 0, 0 / 4.0 ms |
+  | grow (every row moves) | 4.0 / 13.3 ms / 2, 2501 / 30 ms | 3.8 / 0.1 ms / 2, 2 / 5.8 ms |
+  | grow, the grid in a scroll view | 4.0 / 13.7 ms / 2, 2500 / 31 ms | 4.0 / 0.1 ms / 3, 1 / 6.7 ms |
+  | scroll, 40 px a frame: frame / host CPU a step | 4.1 / 28.1 ms | 4.2 / 6.0 ms |
+  | scroll: accessibility / nodes made, handed over | 13.8 ms / 1, 2500 | 0.04 ms / 1, 1 |
+  | scroll: signals on the accessibility bus a step, nothing listening | 2500 | 0 |
+  | scroll: the same with a listener registered for bounds changes (host CPU a step) | 2500 (34 ms) | 0 (5.6 ms) |
+  | nothing retained, grow, with that listener: bounds signals an update | 2501 | 2501 (it asked for them) |
+  | grow: signals an update | 2501 | 0 |
+  | nothing retained (`MIRIN_METAL_RETAIN=0`), scroll: accessibility / handed over | as above (every card) | 0.2 ms / 1 |
+  | nothing retained, grow (every card moves on its own): accessibility / handed over / signals | 11.9 ms / 2501 / 2501 | 12.3–14.4 ms / 2501 / 0 |
+  | example browser (~900 nodes), its virtualized list scrolled: accessibility / handed over / signals a frame | 0.2 ms / 14–17 / one each | 0.1 ms / 14–18 / 0 |
+  | example browser: scroll frame / host CPU a step | 1.3–1.5 / 2.8 ms | 1.6–1.7 / 2.5 ms |
+
+  What it took:
+  - *The layout map* (`src/layout.rs`, out of `sim.rs`) keeps a node by
+    where it sits in the group that draws it and a group by where it sits
+    in the one around it, so a group that moves changes one place. It
+    finds what a frame no longer draws when the frame ends (a group drawn
+    anew says again everything in it; `layout/sweep.rs`) instead of
+    working it out from frame numbers at every lookup, and names the nodes
+    and groups whose place changed (`Changes`). A scroll view's content is
+    a group too (`layout/scroll.rs`), so content that is not retained (a
+    form: focusable views are never retained) scrolls as one as well. A
+    frame in which nothing moved leaves the revision alone: a watched
+    node recorded again where it was by a subtree drawn anew no longer
+    sends a `layout` event with the bounds it had.
+  - *The tree* (`access/place.rs`, `walk.rs`, `follow.rs`) makes such a
+    group a frame when a node under it has bounds: 101 more nodes on the
+    stress bench (the grid and its rows), none a screen reader sees. Only
+    the nodes and frames the layout names are placed again.
+  - *The adapter* (`forks/accesskit_unix`) sends `object:bounds-changed`
+    only while something on the bus registered for it, and counts the
+    signals it makes (the trace's `S signals`).
+
+  The signals were counted on the bus (`bench/a11y/signals.sh` under
+  `run.sh on`, and `run.sh at` for the listener, which heard 122 500
+  `object:bounds-changed` over a scroll run from the host before and none
+  from this one); `bench/a11y/extents.tsx` reads the whole AT-SPI tree
+  after each of 17 steps (scrolls, a banner growing, a row coming and
+  going, typing, accessibility turned off and on), each the moment its
+  frame is painted: both hosts give the same extents for every node at
+  every step. The example browser's list is virtualized: its rows are
+  drawn in no group, so each row in view still moves on its own (a
+  bounded number: the rows in view), now without a signal each.
+
+  Evaluated and not done: holding bounds back while content moves and
+  publishing them once it settles. A client must be answered with current
+  bounds whenever it asks, so the adapter would have to take what is held
+  from the window's thread before it answers any call (every interface
+  method of the fork, or a wait on the window's thread from the bus's);
+  with frames a move that is one transform has nothing to hold. What is
+  left is nodes that each move on their own (a reflow, a window resized,
+  content that is in no group): they are handed over as before, about
+  5 µs a node on the window's thread (1 µs to make it, 4 µs for AccessKit
+  to take it), and send nothing unless something listens.
 
 - **The driver (2026-11-11).** With the host cheap, the app's own Bun
   process is the larger half of what an app costs, so it has benches of its
@@ -1279,11 +1397,17 @@ layout: 17 ms a frame on the stress bench with 40.5 px steps, a sixth of
 what it cost): scroll offsets snapped to device pixels, and layout kept in
 device pixels through painting, would lift both; and a row that comes into
 view is built again though it was drawn before (its drawing is not kept
-while it is out of view). For the accessibility tree: comparing every
-node's bounds when any moved (about 0.4 µs a node; the layout could say
-which moved), a scroll's bounds going out every frame (they could wait for
-it to settle), and the tree a session with accessibility on but nothing
-reading it still pays for once. For the driver: apps started from source
+while it is out of view). For the accessibility tree: nodes that each
+move on their own (a reflow, a window resized) are handed over one by one,
+about 5 µs a node on the window's thread (holding them until the content
+settles needs the adapter to fetch what is held before it answers a
+query: `Component`'s three geometry calls in the fork, waiting on the
+window's thread); a virtualized list's rows are drawn in no group, so a
+scroll of one moves each row in view on its own; a scroll view's own
+children get no bounds from GPUI (`on_children_prepainted` hands a view
+with a tracked scroll handle none), so they are in no layout answer and a
+screen reader is told no extents for them; and the tree a session with
+accessibility on but nothing reading it still pays for once. For the driver: apps started from source
 (a bundle halves the start), the first tree sent three times, serializing
 a view (seventy style fields looked at for each), and four fibers for
 every HTML element in metal-ui (the element, its view, its place among its
@@ -1440,6 +1564,10 @@ cd ../../forks/gpui && cp ../../crates/mirin-metal/Cargo.lock . \
   && CARGO_TARGET_DIR=../../crates/mirin-metal/target/gpui-alone cargo test --lib --features test-support; \
   rm Cargo.lock
 ```
+
+The AccessKit adapter fork's the same way (`cd ../../forks/accesskit_unix`,
+`CARGO_TARGET_DIR=../../crates/mirin-metal/target/accesskit-alone cargo
+test --lib`).
 
 The GPUI fork is gpui 0.2.2, the newest release on crates.io, a year behind
 Zed's tree. [`docs/metal/gpui-next.md`](metal/gpui-next.md) is a spike on

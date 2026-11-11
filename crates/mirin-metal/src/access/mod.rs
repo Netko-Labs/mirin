@@ -9,8 +9,9 @@
 //! It costs what changed. While the session has accessibility off nothing is
 //! built at all; once the adapter is on the accessibility bus the tree is
 //! kept (`published.rs`) and each update makes and hands over only the nodes
-//! that differ: the ones a patch reached, the ones whose painted bounds
-//! moved, the one with the keyboard.
+//! that differ: the ones a patch reached, the ones laid out differently,
+//! the one with the keyboard. What only moved (a scroll, a push from above)
+//! is one node: the frame it moved in (`place.rs`).
 //!
 //! On by default; `MIRIN_METAL_ACCESSIBLE=0` turns it off. A driver checks
 //! the host binary for `ACCESSIBLE_MARKER` before it sends `access` props:
@@ -20,8 +21,11 @@
 //! `appName` option), else by its first window's title: what Orca says for
 //! the app, never the host binary's file name.
 
+mod follow;
+mod fragment;
 #[cfg(target_os = "linux")]
 mod linux;
+mod place;
 mod published;
 #[cfg(not(target_os = "linux"))]
 mod silent;
@@ -32,15 +36,16 @@ mod walk;
 
 use std::sync::{Arc, Mutex};
 
-use accesskit::{Action, NodeId, Rect};
+use accesskit::{Action, NodeId};
 
 #[cfg(target_os = "linux")]
 use self::linux::{name_app, Publisher};
 use self::published::Published;
 #[cfg(not(target_os = "linux"))]
 use self::silent::{name_app, Publisher};
+use crate::layout::LayoutMap;
 use crate::patch::Document;
-use crate::sim::{LayoutMap, SimCommand};
+use crate::sim::SimCommand;
 
 /// Named by a host binary that publishes an accessibility tree and takes
 /// `access` props on views and inputs; also the variable that turns it off.
@@ -97,18 +102,6 @@ impl Built {
             && self.window_active == other.window_active
             && self.title == other.title
     }
-}
-
-/// A node's painted bounds in window pixels, as the layout has them.
-fn painted(layout: &LayoutMap, id: &str) -> Option<Rect> {
-    let bounds = layout.bounds(id)?;
-    let (x, y) = (f64::from(bounds.origin.x), f64::from(bounds.origin.y));
-    Some(Rect::new(
-        x,
-        y,
-        x + f64::from(bounds.size.width),
-        y + f64::from(bounds.size.height),
-    ))
 }
 
 /// One window's accessibility tree and where it is published.
@@ -184,17 +177,19 @@ impl Accessibility {
     }
 
     /// Bring the published tree in line with `tree` as just painted (bounds
-    /// from `layout`): nothing while nobody listens or nothing it is made
-    /// from changed, else the nodes that changed (`published.rs`).
+    /// from `layout`, `retained` naming the group of a view GPUI keeps the
+    /// drawing of): nothing while nobody listens or nothing it is made from
+    /// changed, else the nodes that changed (`published.rs`).
     pub(crate) fn refresh(
         &mut self,
         tree: &Document,
         layout: &LayoutMap,
+        retained: &dyn Fn(&str) -> Option<u64>,
         focused: Option<Focused>,
         window_active: bool,
     ) {
         if !self.publisher.listening() {
-            self.forget();
+            self.forget(layout);
             // The adapter still hears whether the window has the keyboard,
             // to announce it when a screen reader starts.
             if self.window_active != Some(window_active) {
@@ -214,12 +209,10 @@ impl Accessibility {
             return;
         }
         let started = std::time::Instant::now();
-        let bounds = |id: &str| painted(layout, id);
-        let last_layout = self.last.as_ref().map(|last| last.layout);
         let facts = tree::Facts {
             title: &self.title,
-            bounds: &bounds,
-            moved: last_layout != Some(now.layout),
+            layout,
+            retained,
             focused: now.focused.as_ref().map(|focused| focused.id.as_str()),
             typed: now
                 .focused
@@ -227,10 +220,12 @@ impl Accessibility {
                 .and_then(|focused| focused.text.as_deref()),
         };
         let (published, targets) = (&mut self.published, &self.targets);
+        let signals = self.publisher.signals();
         let mut made = None;
         self.publisher.publish(window_active, |whole| {
             if whole {
                 // The adapter has no tree: it gets every node again.
+                layout.drop_changes();
                 *published = Published::default();
                 if let Ok(mut targets) = targets.lock() {
                     *targets = tree::Targets::default();
@@ -249,9 +244,10 @@ impl Accessibility {
         let took = started.elapsed();
         crate::trace::log(format_args!(
             "access: built {built} nodes, published {sent} in {:.2}ms \
-             ({compared} bounds compared; the adapter took {:.2}ms)",
+             ({compared} placed again; the adapter took {:.2}ms, {} signals)",
             took.as_secs_f64() * 1000.0,
-            (took - tree_took).as_secs_f64() * 1000.0
+            (took - tree_took).as_secs_f64() * 1000.0,
+            self.publisher.signals() - signals
         ));
         if self.checked {
             self.check(tree, &facts);
@@ -260,10 +256,11 @@ impl Accessibility {
     }
 
     /// Nobody listens: nothing is kept for them.
-    fn forget(&mut self) {
+    fn forget(&mut self, layout: &LayoutMap) {
         if self.last.take().is_none() && self.published.is_empty() {
             return;
         }
+        layout.drop_changes();
         self.published = Published::default();
         if let Ok(mut targets) = self.targets.lock() {
             *targets = tree::Targets::default();
@@ -289,6 +286,13 @@ impl Accessibility {
                 } else {
                     ", and the targets"
                 }
+            );
+        }
+        // And where a screen reader finds each node is where it was painted.
+        let misplaced = self.published.misplaced(facts.layout);
+        if misplaced > 0 {
+            eprintln!(
+                "[mirin-metal] access check: {misplaced} nodes are not where they were painted"
             );
         }
     }

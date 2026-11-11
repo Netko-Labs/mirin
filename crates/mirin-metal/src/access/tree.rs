@@ -20,8 +20,9 @@
 
 use std::collections::HashMap;
 
-use accesskit::{Action, Live, Node, NodeId, Rect, Role, Toggled};
+use accesskit::{Action, Live, Node, NodeId, Role, Toggled};
 
+use crate::layout::LayoutMap;
 use crate::tree::{AccessProps, InputProps, ViewProps};
 
 /// The window itself.
@@ -31,11 +32,11 @@ pub(crate) const ROOT: NodeId = NodeId(0);
 pub(crate) struct Facts<'a> {
     /// The window's title: the root's name.
     pub title: &'a str,
-    /// A node's painted bounds in window pixels.
-    pub bounds: &'a dyn Fn(&str) -> Option<Rect>,
-    /// Whether any bounds may differ from the last update's (the layout's
-    /// revision moved): every kept node's are compared then.
-    pub moved: bool,
+    /// Where the last paint put each element, and what moved as one.
+    pub layout: &'a LayoutMap,
+    /// The group of the retained subtree a view is the root of
+    /// (`retain.rs`), when it is one.
+    pub retained: &'a dyn Fn(&str) -> Option<u64>,
     /// The field (or key-taking view) with the keyboard.
     pub focused: Option<&'a str>,
     /// What is in it now, when it is a field (the renderer's buffer; the
@@ -286,11 +287,11 @@ mod tests {
     use crate::patch::Document;
     use crate::tree::{parse_tree, NodeSpec};
 
-    fn facts(focused: Option<&str>) -> Facts<'_> {
+    fn facts<'a>(layout: &'a LayoutMap, focused: Option<&'a str>) -> Facts<'a> {
         Facts {
             title: "Launcher",
-            bounds: &|_| Some(Rect::new(0.0, 0.0, 10.0, 10.0)),
-            moved: true,
+            layout,
+            retained: &|_| None,
             focused,
             typed: (focused == Some("field")).then_some("wi"),
         }
@@ -337,7 +338,7 @@ mod tests {
     #[test]
     fn the_launcher_is_a_combobox_over_a_listbox_of_options() {
         let tree = parse_tree(LAUNCHER).unwrap();
-        let built = build(&tree, &facts(Some("field")));
+        let built = build(&tree, &facts(&LayoutMap::default(), Some("field")));
         let field = find(&built, node_id("field"));
         assert_eq!(field.role(), Role::EditableComboBox);
         assert_eq!(field.label(), Some("Search"));
@@ -385,7 +386,7 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        let built = build(&tree, &facts(None));
+        let built = build(&tree, &facts(&LayoutMap::default(), None));
         let ok = find(&built, node_id("ok"));
         assert_eq!(ok.role(), Role::Button);
         assert_eq!(ok.children().len(), 1);
@@ -406,7 +407,7 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        let built = build(&tree, &facts(Some("save")));
+        let built = build(&tree, &facts(&LayoutMap::default(), Some("save")));
         assert_eq!(built.update.focus, node_id("save"));
         let save = find(&built, node_id("save"));
         assert_eq!(save.role(), Role::Button);
