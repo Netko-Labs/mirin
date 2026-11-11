@@ -520,10 +520,10 @@ impl Render for RootView {
                 trace_scale(window.scale_factor());
                 if let Some(dump) = scene_traced() {
                     // For a check that two hosts draw the same (`layout-check --scene`).
-                    let digest = crate::gpui_api::scene_digest(window);
+                    let digest = window.scene_digest();
                     crate::trace::log(format_args!("scene {digest:016x}"));
                     if let Some(path) = dump {
-                        dump_scene(path, digest, &crate::gpui_api::scene_drawn(window));
+                        dump_scene(path, digest, &window.scene_drawn());
                     }
                 }
                 let drawn = crate::retain::take_counts();
@@ -536,7 +536,7 @@ impl Render for RootView {
                     started.elapsed().as_secs_f64() * 1000.0,
                     drawn.built,
                     drawn.redrawn,
-                    crate::gpui_api::take_built_apart(),
+                    gpui::take_built_apart(),
                     drawn.reused,
                     drawn.moved,
                     drawn.skipped,

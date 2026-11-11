@@ -1,6 +1,6 @@
 //! How the retained subtrees of a frame were drawn, for the trace.
 
-use crate::gpui_api::RetainedDraw;
+use gpui::RetainedDraw;
 
 /// How many retained subtrees were drawn each way (traced per frame).
 #[derive(Clone, Copy, Default, Debug, PartialEq)]

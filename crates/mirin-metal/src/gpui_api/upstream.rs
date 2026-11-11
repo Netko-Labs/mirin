@@ -12,7 +12,6 @@ use gpui::{
 
 pub(crate) use gpui::layer_shell::{KeyboardInteractivity, Layer};
 pub(crate) use gpui::ScrollEvent as ScrollWheelEvent;
-pub(crate) use gpui::{retained, take_built_apart, RetainedDraw};
 
 /// The application, on the platform GPUI picks.
 pub(crate) fn application() -> Application {
@@ -216,16 +215,6 @@ pub(crate) fn start_file_drag(
     false
 }
 
-/// GAP: no `scene_drawn` upstream yet.
-pub(crate) fn scene_digest(_window: &Window) -> u64 {
-    0
-}
-
-/// GAP: no `scene_drawn` upstream yet.
-pub(crate) fn scene_drawn(_window: &Window) -> Vec<String> {
-    Vec::new()
-}
-
 /// GAP: upstream shapes a text at one size; every paragraph takes the text's.
 pub(crate) fn with_paragraph_sizes(text: StyledText, _sizes: Vec<Option<Pixels>>) -> StyledText {
     text
@@ -241,9 +230,3 @@ pub(crate) fn line_height_at(layout: &TextLayout, _index: usize) -> Pixels {
 pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear(cx);
 }
-
-/// Whether retained subtrees exist (`gpui::retained`, forks/zed). In place
-/// they are copied; a move, or one nothing of shows, is drawn again (not yet
-/// the fork's moved copies and skips: `Retained::movable` and `skippable`
-/// are accepted and unused).
-pub(crate) const RETAINED: bool = true;

@@ -211,6 +211,27 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
+// mirin: what a frame drew, for checks that two ways of drawing it agree.
+impl Scene {
+    /// Every primitive that shows (inside its content mask), described.
+    pub(crate) fn describe(&self) -> Vec<String> {
+        self.paint_operations
+            .iter()
+            .filter_map(|operation| match operation {
+                PaintOperation::Primitive(primitive) => Some(primitive),
+                _ => None,
+            })
+            .filter(|primitive| {
+                !primitive
+                    .bounds()
+                    .intersect(&primitive.content_mask().bounds)
+                    .is_empty()
+            })
+            .map(Primitive::describe)
+            .collect()
+    }
+}
+
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
@@ -232,6 +253,63 @@ pub enum Primitive {
 
 #[expect(missing_docs)]
 impl Primitive {
+    /// mirin: what is drawn, apart from its draw order and where its
+    /// sprite sits in the atlas (`Window::scene_digest`).
+    pub(crate) fn describe(&self) -> String {
+        fn sprite(tile: &crate::AtlasTile) -> crate::AtlasTile {
+            crate::AtlasTile {
+                texture_id: crate::AtlasTextureId {
+                    index: 0,
+                    kind: tile.texture_id.kind,
+                },
+                tile_id: crate::TileId(0),
+                padding: tile.padding,
+                bounds: Bounds {
+                    origin: Default::default(),
+                    size: tile.bounds.size,
+                },
+            }
+        }
+        match self.clone() {
+            Primitive::Shadow(mut shadow) => {
+                shadow.order = 0;
+                format!("{shadow:?}")
+            }
+            Primitive::Quad(mut quad) => {
+                quad.order = 0;
+                format!("{quad:?}")
+            }
+            Primitive::Path(mut path) => {
+                path.order = 0;
+                path.id = PathId(0);
+                format!("{path:?}")
+            }
+            Primitive::Underline(mut underline) => {
+                underline.order = 0;
+                format!("{underline:?}")
+            }
+            Primitive::MonochromeSprite(mut sprite_) => {
+                sprite_.order = 0;
+                sprite_.tile = sprite(&sprite_.tile);
+                format!("{sprite_:?}")
+            }
+            Primitive::SubpixelSprite(mut sprite_) => {
+                sprite_.order = 0;
+                sprite_.tile = sprite(&sprite_.tile);
+                format!("{sprite_:?}")
+            }
+            Primitive::PolychromeSprite(mut sprite_) => {
+                sprite_.order = 0;
+                sprite_.tile = sprite(&sprite_.tile);
+                format!("{sprite_:?}")
+            }
+            Primitive::Surface(mut surface) => {
+                surface.order = 0;
+                format!("{surface:?}")
+            }
+        }
+    }
+
     pub fn bounds(&self) -> &Bounds<ScaledPixels> {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,

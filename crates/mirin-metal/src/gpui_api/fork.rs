@@ -9,8 +9,7 @@ use gpui::{
 };
 
 pub(crate) use gpui::{
-    retained, take_built_apart, KeyboardInteractivity, Layer, LayerAnchor, LayerMargin,
-    LayerShellOptions, RetainedDraw, ScrollWheelEvent,
+    KeyboardInteractivity, Layer, LayerAnchor, LayerMargin, LayerShellOptions, ScrollWheelEvent,
 };
 
 /// The application, on the platform GPUI picks.
@@ -146,16 +145,6 @@ pub(crate) fn start_file_drag(
     window.start_file_drag(paths, icon, icon_size)
 }
 
-/// A digest of what the frame being painted drew (`scene_drawn`).
-pub(crate) fn scene_digest(window: &Window) -> u64 {
-    window.scene_digest()
-}
-
-/// What the frame being painted drew: primitives and hittable hitboxes, sorted.
-pub(crate) fn scene_drawn(window: &Window) -> Vec<String> {
-    window.scene_drawn()
-}
-
 /// Shape each paragraph of a text at its own size (`None`: the text's).
 pub(crate) fn with_paragraph_sizes(text: StyledText, sizes: Vec<Option<Pixels>>) -> StyledText {
     text.with_paragraph_sizes(sizes)
@@ -171,6 +160,3 @@ pub(crate) fn line_height_at(layout: &TextLayout, index: usize) -> Pixels {
 pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear();
 }
-
-/// Whether retained subtrees exist (`gpui::retained`).
-pub(crate) const RETAINED: bool = true;
