@@ -217,6 +217,21 @@ impl Scene {
         let outer = self.mask_id;
         let operations = &prev_scene.paint_operations[range.clone()];
         let masks = &prev_scene.operation_masks[range];
+        // Runs of primitives share a mask (each under the one around the
+        // drawing, or its row's, or its card's): each is worked out once a
+        // run, not three times a primitive.
+        let last = std::cell::RefCell::new(None);
+        let mask = |old_mask: u32| -> (u32, Option<ContentMask<ScaledPixels>>) {
+            let mut last = last.borrow_mut();
+            match &*last {
+                Some((old, answer)) if *old == old_mask => Clone::clone(answer),
+                _ => {
+                    let answer = mask(old_mask);
+                    *last = Some((old_mask, answer.clone()));
+                    answer
+                }
+            }
+        };
         let placed = |primitive: &Primitive, old_mask: u32| {
             let mut primitive = primitive.clone();
             if let Some(offset) = offset {

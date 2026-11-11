@@ -78,6 +78,7 @@ pub struct Retained {
     on_prepaint: Option<OnPrepaint>,
     movable: bool,
     skippable: bool,
+    stretchable: bool,
 }
 
 /// How a retained subtree was drawn this frame.
@@ -121,6 +122,7 @@ pub fn retained(
         on_prepaint: None,
         movable: false,
         skippable: false,
+        stretchable: false,
     }
 }
 
@@ -153,6 +155,18 @@ impl Retained {
     /// keys or focus is found and always drawn.
     pub fn skippable(mut self, skippable: bool) -> Self {
         self.skippable = skippable;
+        self
+    }
+
+    /// Whether its root draws nothing from its own size: no background,
+    /// border, shadow, mask or hitbox of its bounds, and nothing laid out
+    /// from them rather than by taffy. Then, resized with everything inside
+    /// laid out and placed as it was (a row stretched to a window's new
+    /// width, its children where they were), its last drawing is what
+    /// drawing it would give, and it is copied or left out as if its size
+    /// had not changed.
+    pub fn stretchable(mut self, stretchable: bool) -> Self {
+        self.stretchable = stretchable;
         self
     }
 }
@@ -271,13 +285,13 @@ impl Element for Retained {
         let view = self.view;
         let built = layout.element.take();
         let build = self.build.clone();
-        let (movable, skippable) = (self.movable, self.skippable);
+        let (movable, skippable, stretchable) = (self.movable, self.skippable, self.stretchable);
         let on_prepaint = self.on_prepaint.take();
         window.with_element_state::<RetainedState, _>(global_id, |state, window| {
             let mut state = state.expect("a retained subtree is laid out before it is prepainted");
             let plan = match built {
                 Some(element) => Plan::Draw(element),
-                None => state.plan(bounds, movable, skippable, window),
+                None => state.plan(bounds, movable, skippable, stretchable, window),
             };
             if let Some(on_prepaint) = on_prepaint {
                 on_prepaint(plan.draw(), bounds, window, cx);
