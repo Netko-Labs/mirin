@@ -1228,9 +1228,10 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   are Bun's collection timer, which ticks every second for about half a
   minute after the heap last changed size; each collection wakes
   JavaScriptCore's seven helper threads. 45 s after the start the driver
-  makes no wakeup at all in 5 s. With `BUN_JSC_numberOfGCMarkers=1` the half minute after
-  activity costs 40 wakeups per 5 s instead of 500; `BUN_GC_TIMER_INTERVAL`
-  (ms) or `BUN_GC_TIMER_DISABLE=1` take the rest to 5.
+  makes no wakeup at all in 5 s. With `BUN_JSC_numberOfGCMarkers=1` the
+  half minute after activity costs 40 wakeups per 5 s instead of 500;
+  `BUN_GC_TIMER_INTERVAL` (ms) or `BUN_GC_TIMER_DISABLE=1` take the rest
+  to 5.
 
   Not landed, with numbers. *A bundle*: the same entry built with
   `Bun.build` (`target: "bun"`, minified, `process.env.NODE_ENV` defined)
@@ -1253,11 +1254,12 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   (three serializations, three parses of 90 KB). Waiting one turn of the
   event loop for the host's word sends it once, and the overlay layer could
   reach its portals without a commit; both change the lines sent (fewer of
-  the same), and the first showed nothing above the noise in two runs. *JavaScriptCore
-  options*: `BUN_JSC_useDFGJIT=0` saves 10 MB and 18 ms of start CPU and
-  makes a switch 7.3 ms for 5.2; `BUN_JSC_useJIT=0` leaves a 47 MB driver
-  whose switch takes 22 ms; `BUN_JSC_numberOfDFGCompilerThreads=1` saves
-  15 ms of start CPU for nothing measured; `--smol` costs 30 ms of it.
+  the same), and the first showed nothing above the noise in two runs.
+  *JavaScriptCore options*: `BUN_JSC_useDFGJIT=0` saves 10 MB and 18 ms of
+  start CPU and makes a switch 7.3 ms for 5.2; `BUN_JSC_useJIT=0` leaves a
+  47 MB driver whose switch takes 22 ms;
+  `BUN_JSC_numberOfDFGCompilerThreads=1` saves 15 ms of start CPU for
+  nothing measured; `--smol` costs 30 ms of it.
   *Coalescing moves* in the tree sync (the fewest moves for a parent's new
   order, instead of React's) would send a swap as two ops, not 2,480; the
   12 ms React spends placing them would remain.
