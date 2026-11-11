@@ -1509,7 +1509,97 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   Within those, 13% is looking up the retained state of each of the 2,500
   cards three times a frame, by its whole element id path. One of the
   three went (a card left out is no longer looked up at paint); the rest
-  is open, below.
+  is the next entry's.
+
+- Resize (2026-11-11; release host, `bench/stress.tsx` in
+  `packages/mirin-metal`, `host-r3` and this one back to back on a nested
+  dashi-comp, four runs each, medians and ranges of the three the machine
+  was quiet for; the resize scenario's 12 widths, 100 px apart, with the
+  rows in the scroll view). A resize frame cost what a frame that drew
+  every row did: each of the 100 rows was drawn again onto its kept
+  layout, the 83 out of view too, and taffy measured every card twice.
+  Three changes, in the forks (`forks/gpui/MIRIN.md`, `forks/taffy/MIRIN.md`):
+
+  - *A subtree only resized is left out while nothing of it shows*
+    (`Plan::SkipResized`). Taffy now says whether a layout changed
+    anything below a node (`below_changed_since`: the box or place of a
+    node under it), apart from its own box. A row stretched to the new
+    width, its cards where they were, changed nothing below its root: what
+    it draws reaches as far past its root's edges as before, so its last
+    extent, grown right and down by what the root grew, says whether any
+    of it shows. One nothing of which shows is left out without being
+    drawn, and its old drawing (no longer what it would draw) is dropped:
+    it is drawn when it shows. The nodes inside are where they were, so
+    the layout map's bounds for them (and the accessibility tree's) stay
+    right while it is out of view: `layout-check.tsx` now resizes the
+    window in its `grid`, `scroll` and `browser` runs and compares every
+    node's bounds, out of view too.
+  - *Taffy keeps a definite constraint apart from max-content.* Its cache
+    put a node's size under a definite height and under max-content in one
+    slot. A card in a row is asked both ways in one layout (under
+    max-content while the column sizes the row, under the row's height
+    while the row places it), so each evicted the other and every layout
+    measured all 2,500 cards twice: 5,361 flex runs a resize where 367 now
+    run (the rows themselves, whose width changed). Two more slots keep
+    both; what the cache answers is unchanged. Laying the bench's tree out
+    alone at a new width (taffy on its own, no GPUI): 2.4 → 1.1 ms.
+  - *An element id path holds 16 ids, not 32.* Every element state is
+    keyed by its whole id path, moved by value into the frame's maps:
+    32 `ElementId`s inline made each key 1.3 KB, copied on each of the three
+    lookups a retained subtree drawn makes a frame. The bench's deepest
+    path is 8 (only views that interact or are retained have ids); a deeper
+    one spills to the heap.
+
+  | stress bench (15k nodes) | `host-r3` | now |
+  | --- | --- | --- |
+  | resize: frame (p95) | 21.7–22.3 ms (24.5–26.2) | 6.7–8.4 ms (7.7–10.3) |
+  | resize: host CPU a resize | 24.2–25.0 ms | 10.0–10.8 ms |
+  | resize: rows drawn again / left out a frame | 101 (and 2,075 cards left out one by one) / 0 | 18 / 83 |
+  | resize: accessibility a resize | 0.1 ms, nothing handed over | the same |
+  | select / type / hover | 2.0–2.2 / 1.3 / 2.3–2.5 ms | 1.8–2.4 / 1.1–1.7 / 2.2–3.0 ms |
+  | grow / in the scroll view / select there | 3.5–3.6 / 3.5–3.8 / 2.4–2.5 ms | 3.5–3.7 / 3.6–4.7 / 2.1–3.0 ms |
+  | scroll, 40 px steps (p95) | 2.6–2.8 ms (4.0–4.4) | 2.6–3.5 ms (4.3–5.1) |
+  | RSS idle / after the scroll view's scenarios | 252–260 / 339–340 MB | 219–232 / 312 MB |
+  | example browser: full frame / scroll frame (p95) | 0.7 / 1.0 ms (1.6) | 0.8 / 1.1 ms (1.3) |
+  | example browser: resized by the app to 900 px and back: first frame, accessibility | 0.9 ms, 0.1 ms (1 node handed over) | the same |
+
+  Step by step, each back to back with the host before it: leaving the
+  resized rows out took a resize frame from 20.6 to 12.4 ms, the cache
+  slots to 7.2–7.9, the shorter id paths 7.0–8.2 → 6.6–6.8 (with 8
+  inline; 16 landed). What is left of a resize frame (a profile): taffy a
+  third (each of the 100 rows runs its flex algorithm four times, three
+  sizings and its layout, its cards answering from their caches; rounding
+  what they wrote), drawing the 18 rows in view onto their kept layout,
+  copying their 425 cards (their mask changed with the scroll view's
+  width, so each primitive is masked again), and the retained subtrees'
+  state lookups (a tenth).
+
+  `bench/native.tsx`'s maximize/restore (about 800 ms to a settled frame)
+  is neither resize cost nor an animation: in a nested dashi-comp the
+  window is never resized by it (`frames at a new size` is 0 for every
+  host: every frame of the run is 1280×800), and the time is when the
+  last of the frames the nested compositor paces a second apart came
+  inside the bench's 800 ms. The bench now also resizes the window from
+  the app (`setSize`, which the nested compositor honors), across the
+  example browser's breakpoint: 0.9 ms to the first frame at the new width.
+
+  Memory. Resident memory does not grow over resizes (the same after each
+  of 120). The bench's 240 → 340 MB is the switch to the scroll view
+  (a new tree of 15k nodes built while the old one is alive for a frame),
+  and was a high-water mark, not a leak: after it, the allocator held
+  about 100 MB freed but not given back (glibc's arenas, between live
+  allocations; trimming them after such a frame gave back 15 MB), taffy's
+  node slot map had doubled to 79 MB for the two trees of that frame (it
+  never shrinks), and GPUI's element arena, the frame's lists and the
+  layout map's tables had grown to their largest. Switching back and
+  forth five times added 404 − 339 MB, less each time. One thing did
+  grow for good: what each id'd view's subtree was when last walked
+  (`retain.rs`), which a patch updates only for what it changed, so the
+  views a patch removed stayed for the window's life (19 new ids a patch
+  in a list of fresh rows: 3,800 after 200 patches). They now go once
+  twice as many are kept as after the last time. The layout map keeps
+  nodes no longer drawn until its next prune, every 64 frames: a burst of
+  removals stays that long.
 
 Open: React work per update (the demo re-renders its whole list on select);
 a scale factor that is not a multiple of 1/8 (1.1, 1.2) moves only what
@@ -1518,11 +1608,13 @@ snapping those distances to device pixels would lift it; a subtree with
 text is never moved sideways (a glyph picks one of four subpixel positions
 from its own x), so a horizontal scroll draws its rows again; a row drawn
 for the first time out of view is drawn again when it first shows; a
-resize builds every row whose size changed, in view or not (a subtree's
-own box could say how far it reaches when only its size changed, but then
-the layout map's bounds for it would be stale while it is out of view),
-and looks every retained subtree's state up by its whole id path; the
-layout map moves a copied subtree's nodes by a logical distance, exact
+resize runs the flex algorithm of every row whose width changed, four
+times (taffy's three sizings and the layout; a row whose children
+neither grow, shrink nor move with its width could answer from its last
+layout), draws the rows in view again, and masks every primitive of the
+cards in them again (the scroll view's mask changed); a retained
+subtree's state is still looked up by its whole id path, three times a
+frame; the layout map moves a copied subtree's nodes by a logical distance, exact
 only at a power-of-two scale factor. For the accessibility tree: nodes that each
 move on their own (a reflow, a window resized) are handed over one by one,
 about 5 µs a node on the window's thread (holding them until the content
