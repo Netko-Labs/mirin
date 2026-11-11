@@ -395,7 +395,11 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now
-  with ids on every node. An older driver never patches, so a new host takes
+  with ids on every node. A transport that knows its host says this first
+  (`spawnNativeHost`'s, `lib/handshake.ts`) holds the driver's commits until
+  the host has said it, or 250 ms have passed with nothing (a host from
+  before patches), and sends the tree once, with ids; other transports send
+  at once as above. An older driver never patches, so a new host takes
   its whole trees as before. An old host given a patch line would refuse it
   (a line it can't parse), never draw it wrong; the announcement keeps a new
   driver from sending one.
@@ -575,6 +579,13 @@ strings unchanged (`scripts/port-ui.ts` rewrites only imports).
   anchored by painted bounds.
 - `<form>` behaves like the DOM: submit and reset buttons (also through
   `form="id"`), `FormData` on submit, and named controls registering values.
+- An HTML element is two fibers, its `Box` and the host view it makes (a run
+  of text is one, the host text). What flows down like CSS inheritance (text
+  style, the parent's direction) and a child's place among its siblings
+  (`first:`/`last:`) reach a child box as props set on its element; only a
+  child that is not a box (a component, a control, an icon) reads them from
+  context, under providers that are always there, so none is added or
+  dropped above a subtree (which would remount it).
 
 Layout follows CSS where shadcn depends on it: grids are native (track lists,
 placement, `justify-*`), tables are rows sharing one grid template (pinned
@@ -1716,31 +1727,55 @@ cd ../../packages/mirin-metal && bun demo/counter.tsx
 ```
 
 Start an app's driver as a resident app wants it. The driver is the app's
-own Bun process, and two things about it are decided before its first line
+own Bun process, and three things about it are decided before its first line
 runs, so only what starts it can set them: `NODE_ENV=production` (Bun leaves
 it unset, and React then runs its development build: the example browser's
-first render takes twice the time and CPU, and 10 MB more) and
-`BUN_JSC_numberOfGCMarkers=1` (JavaScriptCore marks on one thread: for half
-a minute after an app last did something Bun collects once a second, and
-each collection wakes seven helper threads; section 5b, "The driver").
-Nothing sets them behind an app's back. Three ways, each the app's or its
-launcher's choice:
+first render takes twice the time and CPU, and 10 MB more),
+`BUN_JSC_numberOfGCMarkers=1` (JavaScriptCore marks on one thread, not
+eight) and `BUN_GC_TIMER_DISABLE=1` (for half a minute after an app last did
+something Bun collects once a second, each time waking the collector's
+threads; with the timer off the driver collects once, two seconds after its
+last commit, `lib/rest.ts`, and an app at rest wakes for nothing; section
+5b, "The driver"). Nothing sets them behind an app's back. Three ways, each
+the app's or its launcher's choice:
 
 ```sh
-bunx mirin-metal run app.tsx          # @mirinjs/metal's bin: sets both, then becomes `bun app.tsx`
-bunx mirin-metal run --dev app.tsx    # the same with React's development build
-NODE_ENV=production BUN_JSC_numberOfGCMarkers=1 bun app.tsx   # by hand, or in a desktop entry's Exec=env …
+bunx mirin-metal run app.tsx          # @mirinjs/metal's bin: sets all three, then becomes `bun app.tsx` (or its bundle)
+bunx mirin-metal run --dev app.tsx    # React's development build, always from the sources
+NODE_ENV=production BUN_JSC_numberOfGCMarkers=1 BUN_GC_TIMER_DISABLE=1 bun app.tsx   # by hand, or in a desktop entry's Exec=env …
 ```
 
 and a launcher that spawns apps itself (Dashi's shell) passes
 `driverEnv()` from `@mirinjs/metal` as the child's environment
 (`Bun.spawn([bun, "app.tsx"], { env: driverEnv() })`): the caller's
-environment with those two set, and whatever it already says kept.
+environment with those three set, and whatever it already says kept.
 `mirin-metal run` replaces its own process with the app's (`execve`), so no
 launcher stays behind; a `bunfig.toml` `define` of `process.env.NODE_ENV`
 in the app's directory (as `packages/mirin-metal-ui` has) is a fourth way
-for that one variable. An app that ships should also be bundled
-(`Bun.build`, `target: "bun"`, that `define`): section 5b has what it buys.
+for that one variable.
+
+`mirin-metal run` (not `--dev`, and with no bun flags before the entry)
+also starts the app from a bundle of itself (`lib/bundle-cache.ts`): one
+file `Bun.build` makes of the entry and everything it imports, with the
+`NODE_ENV` it runs with defined in, kept in
+`$XDG_CACHE_HOME/mirin-metal/bundles/` and keyed on the entry. It is used
+while every file it was built from, and the `tsconfig.json`,
+`jsconfig.json`, `bunfig.toml` and `package.json` above the entry, have the
+size and modification time they had (a few hundred `stat`s, under a
+millisecond); otherwise the app starts from its sources, as before, and a
+process of its own builds the bundle again a second and a half later, for
+the next start. So an edit is never slower to try, and the start after that
+is the bundle's. Each module keeps its own `import.meta.url`, `dir`,
+`path`, `dirname`, `filename` and `main`, and `__dirname` and
+`__filename` (written in as the transpiler would define them, and checked
+against it); an app that resolves a path at run time (an `import()` of a
+path it makes, `require.resolve`, `import.meta.resolve`, a `Worker`) would
+resolve it from the cache, so it is not bundled (the example browser,
+which imports its examples by name), and that verdict is kept as well.
+`Bun.main` (and `process.argv[1]`) name the bundle; the arguments after it
+are the app's, as before. `MIRIN_METAL_BUNDLE=0` always starts from the
+sources. What it buys is in
+section 5b. An app that ships can bundle the same way at build time.
 
 The host reads `MIRIN_METAL_TITLE` and `MIRIN_METAL_SIZE=1280x820`.
 `MIRIN_METAL_SURFACE=<json>` opens a Wayland layer-shell surface (a panel, a
