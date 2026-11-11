@@ -2127,6 +2127,20 @@ impl Interactivity {
         }
         let drag_cursor_style = self.base_style.as_ref().mouse_cursor;
 
+        // mirin: what a retained subtree (`elements::retained`) can't take
+        // along when its drawing is copied elsewhere: a drag, a drop and a
+        // tooltip keep the hitbox they were painted with (its bounds), and a
+        // group's style follows a hitbox that may sit outside the subtree.
+        if self.drag_listener.is_some()
+            || !self.drop_listeners.is_empty()
+            || self.tooltip_builder.is_some()
+            || self.group_hover_style.is_some()
+            || self.group_active_style.is_some()
+            || !self.group_drag_over_styles.is_empty()
+        {
+            window.pin_recordings(false);
+        }
+
         let mut drag_listener = mem::take(&mut self.drag_listener);
         let drop_listeners = mem::take(&mut self.drop_listeners);
         let click_listeners = mem::take(&mut self.click_listeners);

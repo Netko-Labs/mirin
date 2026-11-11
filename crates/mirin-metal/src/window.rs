@@ -487,7 +487,7 @@ impl Render for RootView {
         let events = self.events.clone();
         let marker = gpui::canvas(
             |_, _, _| {},
-            move |_, (), _, _| {
+            move |_, (), window, _| {
                 if first {
                     events.frame();
                 }
@@ -502,13 +502,24 @@ impl Render for RootView {
                         crate::trace::since_start_ms()
                     ));
                 }
-                let (built, reused) = crate::retain::take_counts();
+                if scene_traced() {
+                    // For a check that two hosts draw the same (`layout-check --scene`).
+                    crate::trace::log(format_args!("scene {:016x}", window.scene_digest()));
+                }
+                let drawn = crate::retain::take_counts();
                 crate::trace::log(format_args!(
                     "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms, \
-                     retained subtrees {built} built, {reused} reused",
+                     retained subtrees {} built, {} redrawn ({} apart), {} reused, {} moved, \
+                     {} skipped",
                     f32::from(size.width),
                     f32::from(size.height),
-                    started.elapsed().as_secs_f64() * 1000.0
+                    started.elapsed().as_secs_f64() * 1000.0,
+                    drawn.built,
+                    drawn.redrawn,
+                    gpui::take_built_apart(),
+                    drawn.reused,
+                    drawn.moved,
+                    drawn.skipped,
                 ));
             },
         )
@@ -521,6 +532,14 @@ impl Render for RootView {
             .children(access)
             .into_any_element()
     }
+}
+
+/// Whether each frame's trace says what it drew (`MIRIN_METAL_TRACE_SCENE=1`,
+/// with `MIRIN_METAL_TRACE=1`): a digest of the scene's primitives and
+/// hitboxes, for comparing two hosts.
+fn scene_traced() -> bool {
+    static TRACED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACED.get_or_init(|| std::env::var("MIRIN_METAL_TRACE_SCENE").is_ok_and(|value| value == "1"))
 }
 
 /// Create the editing state of a field new to the tree, or bring an existing

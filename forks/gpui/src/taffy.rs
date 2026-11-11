@@ -82,6 +82,22 @@ pub struct TaffyLayoutEngine {
     owners: Vec<Vec<LayoutId>>,
     /// Nodes of retained subtrees no longer drawn; removed at `clear`.
     released: Rc<RefCell<Vec<LayoutId>>>,
+    /// mirin: the retained subtree being built again onto the nodes it kept
+    /// (`begin_bind`).
+    bind: Option<Bind>,
+}
+
+/// mirin: a retained subtree's elements built again for the layout it
+/// kept: each node its elements ask for is the one it made last time, in
+/// the same order, so nothing is laid out again.
+struct Bind {
+    nodes: Vec<LayoutId>,
+    next: usize,
+    /// What was asked for is not what it made: it is built apart instead.
+    failed: bool,
+    /// Measured leaves (text) given a new function, which is asked what the
+    /// old one was for the layout it has.
+    measured: Vec<LayoutId>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -97,6 +113,7 @@ impl TaffyLayoutEngine {
             loose: Vec::new(),
             owners: Vec::new(),
             released: Rc::default(),
+            bind: None,
         }
     }
 
@@ -160,6 +177,95 @@ impl TaffyLayoutEngine {
         self.taffy.contains(id.into())
     }
 
+    /// mirin: how many layouts were computed; with `inner_changed_since`,
+    /// what a retained subtree checks before reusing what it drew.
+    pub fn epoch(&self) -> u32 {
+        self.taffy.layout_epoch()
+    }
+
+    /// mirin: whether a layout after `epoch` changed anything inside `id`
+    /// (taffy's `inner_changed_since`): its size, or where or how large
+    /// anything below it is. Where `id` itself sits does not count.
+    pub fn inner_changed_since(&self, id: LayoutId, epoch: u32) -> bool {
+        self.taffy.inner_changed_since(id.into(), epoch)
+    }
+
+    /// mirin: build a retained subtree's elements again onto `nodes`, the
+    /// ones it made (in that order) and kept: until `end_bind`, each layout
+    /// requested is answered with the next of them instead of a new node.
+    pub fn begin_bind(&mut self, nodes: Vec<LayoutId>) {
+        self.bind = Some(Bind {
+            nodes,
+            next: 0,
+            failed: false,
+            measured: Vec::new(),
+        });
+    }
+
+    /// mirin: give up on the subtree being bound, if one is (it asked for
+    /// something its kept layout can't answer); returns whether one was.
+    pub fn fail_bind(&mut self) -> bool {
+        match &mut self.bind {
+            Some(bind) => {
+                bind.failed = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// mirin: the kept nodes of the subtree bound since `begin_bind`, when
+    /// its elements asked for exactly them. Each measured leaf's new
+    /// function is asked what the old one was asked for the layout the node
+    /// has, so its element holds what it would after a layout.
+    pub fn end_bind(&mut self, window: &mut Window, cx: &mut App) -> Option<Vec<LayoutId>> {
+        let bind = self.bind.take()?;
+        if bind.failed || bind.next != bind.nodes.len() {
+            return None;
+        }
+        let scale_factor = window.scale_factor();
+        let mut measure = measure_with(scale_factor, window, cx);
+        for id in bind.measured {
+            let (known_dimensions, available_space) = self.taffy.final_measure_inputs(id.into())?;
+            let context = self.taffy.get_node_context_mut(id.into());
+            measure(
+                known_dimensions,
+                available_space,
+                id.into(),
+                context,
+                &taffy::style::Style::DEFAULT,
+            );
+        }
+        Some(bind.nodes)
+    }
+
+    /// mirin: the kept node that answers a layout request while a subtree is
+    /// bound (`begin_bind`): the next it made, if it has these `children`
+    /// (`None`: a measured leaf).
+    fn bound(&mut self, children: Option<&[LayoutId]>) -> Option<LayoutId> {
+        let bind = self.bind.as_mut().filter(|bind| !bind.failed)?;
+        let id = bind.nodes.get(bind.next).copied();
+        let matches = id.is_some_and(|id| {
+            self.taffy.contains(id.into())
+                && match children {
+                    Some(children) => self
+                        .taffy
+                        .child_ids(id.into())
+                        .eq(children.iter().map(|child| child.0)),
+                    None => {
+                        self.taffy.child_count(id.into()) == 0
+                            && self.taffy.get_node_context(id.into()).is_some()
+                    }
+                }
+        });
+        if !matches {
+            bind.failed = true;
+            return None;
+        }
+        bind.next += 1;
+        id
+    }
+
     pub fn request_layout(
         &mut self,
         style: Style,
@@ -167,6 +273,10 @@ impl TaffyLayoutEngine {
         scale_factor: f32,
         children: &[LayoutId],
     ) -> LayoutId {
+        // mirin: a retained subtree built onto its kept layout.
+        if let Some(id) = self.bound(Some(children)) {
+            return id;
+        }
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
         let id = if children.is_empty() {
@@ -197,6 +307,17 @@ impl TaffyLayoutEngine {
         ) -> Size<Pixels>
         + 'static,
     ) -> LayoutId {
+        // mirin: a retained subtree built onto its kept layout: the node
+        // takes the new element's function (asked at `end_bind`).
+        if let Some(id) = self.bound(None) {
+            if let Some(context) = self.taffy.get_node_context_mut(id.into()) {
+                context.measure = StackSafe::new(Box::new(measure));
+            }
+            if let Some(bind) = &mut self.bind {
+                bind.measured.push(id);
+            }
+            return id;
+        }
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
         let id = self

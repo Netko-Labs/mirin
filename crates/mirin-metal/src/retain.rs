@@ -9,11 +9,16 @@
 //! hover style changed), and otherwise keeps its layout and last frame's
 //! drawing. Trees are compared as they arrive (`Boundaries::sync`), which
 //! is linear in the tree but far cheaper than drawing it.
+//!
+//! A kept subtree that moved (it scrolled, or what is above it grew) has
+//! its drawing copied to where it is now, and one nothing shows of (rows
+//! scrolled out of a view) is not drawn at all (`Traits`).
 
 use std::collections::HashMap;
 
 use gpui::{
-    div, prelude::*, AnyElement, App, Context, ElementId, Entity, EntityId, SharedString, Window,
+    div, prelude::*, AnyElement, App, Context, ElementId, Entity, EntityId, RetainedDraw,
+    SharedString, Window,
 };
 
 use crate::patch::Document;
@@ -39,6 +44,30 @@ struct Boundary {
     path: Vec<u32>,
     /// Found in the latest sync (and only once).
     seen: bool,
+    traits: Traits,
+}
+
+/// What a subtree holds that decides how its kept drawing may be used.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Traits {
+    /// Renders from its content alone: it can be kept at all.
+    pure: bool,
+    /// No view inside watches its layout (`onLayout` hears of every move,
+    /// which a drawing copied elsewhere would not tell it of).
+    movable: bool,
+    /// No view inside reports hovers (`onHover` must hear the pointer left
+    /// though the view scrolled away from under it).
+    skippable: bool,
+}
+
+impl Traits {
+    fn and(self, other: Traits) -> Traits {
+        Traits {
+            pure: self.pure && other.pure,
+            movable: self.movable && other.movable,
+            skippable: self.skippable && other.skippable,
+        }
+    }
 }
 
 /// The retained subtrees of the current tree, by node id.
@@ -49,14 +78,13 @@ pub(crate) struct Boundaries {
     /// The tree generation the last sync saw (`patch::Document`).
     synced: u64,
     /// What each id'd view's subtree was at the last sync it was walked in
-    /// (pure, nodes): a patch walks only what changed.
-    walks: HashMap<String, (bool, usize)>,
+    /// (its traits, nodes): a patch walks only what changed.
+    walks: HashMap<String, (Traits, usize)>,
 }
 
 /// What a subtree is, as far as keeping it goes.
 struct Walk {
-    /// Renders from its content alone.
-    pure: bool,
+    traits: Traits,
     nodes: usize,
     /// Equal to the subtree it was paired with in the previous tree.
     same: bool,
@@ -113,7 +141,11 @@ impl Boundaries {
     ) -> Walk {
         let NodeSpec::View { props, children } = node else {
             return Walk {
-                pure: !matches!(node, NodeSpec::Input { .. }),
+                traits: Traits {
+                    pure: !matches!(node, NodeSpec::Input { .. }),
+                    movable: true,
+                    skippable: true,
+                },
                 nodes: 1,
                 same: old == Some(node),
             };
@@ -139,10 +171,10 @@ impl Boundaries {
         let id = props.id.as_deref();
         if let Some((id, changed)) = id.zip(changed) {
             if !changed(id) {
-                if let Some(&(pure, nodes)) = self.walks.get(id) {
+                if let Some(&(traits, nodes)) = self.walks.get(id) {
                     // Unchanged since the last sync: as it was then.
                     return Walk {
-                        pure,
+                        traits,
                         nodes,
                         same: true,
                     };
@@ -150,7 +182,11 @@ impl Boundaries {
             }
         }
         let mut walk = Walk {
-            pure: pure_view(props, children),
+            traits: Traits {
+                pure: pure_view(props, children),
+                movable: !props.on_layout,
+                skippable: !props.on_hover,
+            },
             nodes: 1,
             same: by_index && old_view.is_some_and(|(old_props, _)| old_props == props),
         };
@@ -163,21 +199,21 @@ impl Boundaries {
             path.push(index as u32);
             let child_walk = self.walk(child, paired, changed, path, duplicates, cx);
             path.pop();
-            walk.pure &= child_walk.pure;
+            walk.traits = walk.traits.and(child_walk.traits);
             walk.nodes += child_walk.nodes;
             walk.same &= child_walk.same;
         }
         if let Some(id) = id {
             match self.walks.get_mut(id) {
-                Some(entry) => *entry = (walk.pure, walk.nodes),
+                Some(entry) => *entry = (walk.traits, walk.nodes),
                 None => {
-                    self.walks.insert(id.to_owned(), (walk.pure, walk.nodes));
+                    self.walks.insert(id.to_owned(), (walk.traits, walk.nodes));
                 }
             }
         }
-        if let Some(id) = id.filter(|_| walk.pure && walk.nodes >= MIN_NODES) {
+        if let Some(id) = id.filter(|_| walk.traits.pure && walk.nodes >= MIN_NODES) {
             let same = changed.map_or(walk.same, |changed| !changed(id));
-            self.keep(id, same, path, duplicates, cx);
+            self.keep(id, same, walk.traits, path, duplicates, cx);
         }
         walk
     }
@@ -186,6 +222,7 @@ impl Boundaries {
         &mut self,
         id: &str,
         same: bool,
+        traits: Traits,
         path: &[u32],
         duplicates: &mut Vec<String>,
         cx: &mut App,
@@ -197,6 +234,7 @@ impl Boundaries {
                 return;
             }
             boundary.seen = true;
+            boundary.traits = traits;
             path.clone_into(&mut boundary.path);
             if !same {
                 self.next += 1;
@@ -211,6 +249,7 @@ impl Boundaries {
             entity: cx.new(|_| Notified),
             path: path.to_vec(),
             seen: true,
+            traits,
         };
         self.map.insert(id.to_owned(), boundary);
     }
@@ -220,20 +259,44 @@ impl Boundaries {
     }
 }
 
+/// How many retained subtrees were drawn each way (traced per frame).
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub(crate) struct Counts {
+    /// Built: their content changed or they were notified.
+    pub built: u32,
+    /// Built again for the layout they kept (they could not be copied).
+    pub redrawn: u32,
+    /// Last frame's drawing copied where it was.
+    pub reused: u32,
+    /// Last frame's drawing copied to where they moved.
+    pub moved: u32,
+    /// Not drawn: nothing of them shows.
+    pub skipped: u32,
+}
+
 thread_local! {
-    /// Retained subtrees built and reused since the last `take_counts` (traced per frame).
-    static COUNTS: std::cell::Cell<(u32, u32)> = const { std::cell::Cell::new((0, 0)) };
+    /// Since the last `take_counts`.
+    static COUNTS: std::cell::Cell<Counts> = const {
+        std::cell::Cell::new(Counts { built: 0, redrawn: 0, reused: 0, moved: 0, skipped: 0 })
+    };
 }
 
-/// How many retained subtrees were built and how many reused since the last call.
-pub(crate) fn take_counts() -> (u32, u32) {
-    COUNTS.with(|counts| counts.replace((0, 0)))
+/// How the retained subtrees were drawn since the last call.
+pub(crate) fn take_counts() -> Counts {
+    COUNTS.with(|counts| counts.replace(Counts::default()))
 }
 
-fn count(built: u32, reused: u32) {
+fn count(draw: RetainedDraw) {
     COUNTS.with(|counts| {
-        let (b, r) = counts.get();
-        counts.set((b + built, r + reused));
+        let mut now = counts.get();
+        match draw {
+            RetainedDraw::Built => now.built += 1,
+            RetainedDraw::Redrawn => now.redrawn += 1,
+            RetainedDraw::Reused => now.reused += 1,
+            RetainedDraw::Moved => now.moved += 1,
+            RetainedDraw::Skipped => now.skipped += 1,
+        }
+        counts.set(now);
     });
 }
 
@@ -284,6 +347,7 @@ pub(crate) fn boundary(
     let keeps_length = std::mem::take(&mut view.keeps_length);
     let version = boundary.version * 2 + u64::from(keeps_length);
     let (group, parent) = (boundary.group, view.group);
+    let traits = boundary.traits;
     let notified: EntityId = boundary.entity.entity_id();
     let root = cx.entity();
     let node_id: SharedString = id.to_owned().into();
@@ -298,9 +362,11 @@ pub(crate) fn boundary(
             })
         },
     )
-    .on_prepaint(move |reused, _window, _cx| {
-        layout.touch_group(group, parent, reused);
-        count(0, u32::from(reused));
+    .movable(traits.movable)
+    .skippable(traits.skippable)
+    .on_prepaint(move |draw, bounds, _window, _cx| {
+        layout.touch_group(group, parent, bounds.origin, draw.drew());
+        count(draw);
     });
     Some(element.into_any_element())
 }
@@ -314,7 +380,6 @@ fn build(
     window: &mut Window,
     cx: &mut Context<RootView>,
 ) -> AnyElement {
-    count(1, 0);
     // Shared only while it is built: a tree held past the frame makes the
     // next patch copy it whole.
     let tree = std::rc::Rc::clone(view.tree.tree());
