@@ -1543,8 +1543,10 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
     changes the whole pixels and nothing else, so a subtree with text
     moves across as it does down. Where a glyph lands is the same to a
     few float steps: a glyph within them of a quarter pixel may take the
-    variant next to the one it had (none did in the checks below, which
-    compare the drawing with `host-r3`'s).
+    variant next to the one it had, a sixteenth of a pixel over. In the
+    checks below that compare the drawing with `host-r3`'s, three glyphs
+    did, in the example browser (one of about 300 in a frame); none in
+    the grid, the scroll view or `scroll-fractional`.
   - *Distances snapped onto the grid where scaling is not exact.* A
     border is drawn four times, each in a band as deep as the border or
     the corners; a shadow sits its offset and spread from its box. At 1.1
@@ -1574,9 +1576,10 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   | stress bench (15k nodes) | host-r3 | now |
   | --- | --- | --- |
   | across, 40 px steps (`hscroll`): frame (p95) / host CPU a step | 15.0–15.5 ms (18.2–19.4) / 18.3–19.6 ms | 3.4–3.7 ms (4.8–4.9) / 5.6–5.8 ms |
-  | across at 1.25 | HSCROLL125 |
-  | down and across at 1.1, cards with a shadow (`--shadow`) | SCALE11 |
-  | down at 1.25, with a shadow | SCROLL125 |
+  | across at 1.25 (`MIRIN_METAL_SCALE`), cards with a shadow (`--shadow`) | 17.1–19.4 ms (21.3–21.5) / 21.5–22.5 ms | HSC125 |
+  | down at 1.1, cards with a shadow | 18.7–20.0 ms (23.8–25.1) / 22.7–24.4 ms | 3.7–3.9 ms (5.1–5.3) / 5.8 ms |
+  | across at 1.1, cards with a shadow | 19.4 ms (20.9–21.2) / 22.3–23.1 ms | 3.6–3.9 ms (5.3–6.1) / 6.0–6.3 ms |
+  | down at 1.25, cards with a shadow | 3.9–4.0 ms (5.6–6.3) / 6.0–6.3 ms | SC125 |
   | down, 40 px steps (`scroll`) | 3.4–3.5 ms (4.4–4.9) / 5.0–5.4 ms | 3.4–3.5 ms (5.0–5.1) / 5.6–5.8 ms |
   | select / type / hover / grow / grow and select in the scroll view, frame | 2.8–4.3 / 1.8 / 2.7–3.0 / 4.0–4.1 / 4.1–4.7 / 3.0–3.4 ms | 2.9–3.0 / 1.9 / 2.8 / 3.9–4.2 / 3.9–4.5 / 3.1–3.2 ms |
   | resize, frame | 16.0–16.7 ms | 16.3–16.8 ms |
@@ -1584,16 +1587,22 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   | example browser (`bench/native.tsx`), its list scrolled | host-r3 | now |
   | --- | --- | --- |
   | accessibility nodes made / handed over per scrolled frame | 1 / 18 | 1 / 3 |
-  | accessibility per scrolled frame | 0.2 ms | 0.1 ms |
-  | scroll frame (p95) | 1.7–1.8 ms (2.4–2.7) | 1.8 ms (2.3) |
-  | host CPU per scroll step | 3.0–3.3 ms | 3.0 ms |
+  | accessibility per scrolled frame | 0.1–0.2 ms | 0.1 ms |
+  | scroll frame (p95) | 1.6–1.8 ms (2.4–2.7) | 1.7–1.8 ms (2.0–2.6) |
+  | host CPU per scroll step | 3.0–3.3 ms | 2.8–3.3 ms |
+  | at 1.1: handed over / scroll frame (p95) / host CPU a step | 19 / 1.9–2.0 ms (2.8) / 3.3 ms | 8 / 1.8–1.9 ms (2.3–3.0) / 2.8–3.3 ms |
 
   The stress bench's new `hscroll` scenario is the same 2,500 cards in
   columns of twelve, side by side in a view that scrolls across
   (`overflow: "scroll-x"`); the simulation's `scroll` takes a `dx`. A
   scrolled frame across is now what one down is: the columns that come
   in, and copies. The list's three nodes handed over a frame are its
-  frame and the rows that come and go.
+  frame and the rows that come and go; at 1.1 the rows' places in the
+  list differ in their last digits from frame to frame (the list adds
+  its rows' heights up from where it paints the first), so a few more
+  are placed again. The scroll frame is the same with the list as one
+  group (the median of four runs each: 1.7 ms before, 1.75 now; one run
+  of the four was 2.7 ms, with every other number in it slow too).
 
   Checks. GPUI fork tests: a glyph moved by whole device pixels lands on
   the same pixel and subpixel variant (and placed the old way, it does
@@ -1614,7 +1623,9 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   Evaluated and not done: keeping a row first drawn out of view. A
   subtree drawn anew draws only what lies within 256 px of its mask, so
   a row far out of view is drawn empty, and is drawn again onto its
-  kept layout when it first shows (FIRSTSHOW). Drawing such rows whole
+  kept layout when it first shows: on the stress bench's scroll, a frame
+  in which a row first shows (29 subtrees redrawn: the row, its cards,
+  the content around them) takes 4.8 ms (median), the others 3.3 ms. Drawing such rows whole
   when they are first built would move that cost to the first frame,
   which builds every row already (160–210 ms at this size), and the
   drawings would fill the window's parking budget (24,000 primitives,

@@ -133,9 +133,9 @@ function Page() {
       {/* Long enough to be virtualized: its rows are drawn by GPUI's list. */}
       <ScrollView testID="list" style={{ height: 120 }}>
         {Array.from({ length: LIST_ROWS }, (_, row) => (
-          <Text key={row} style={{ height: 18, color: "#a1a1aa" }}>
-            item {row}
-          </Text>
+          <View key={row} testID={`item:${row}`} onPress={() => {}} style={{ height: 18 }}>
+            <Text style={{ color: "#a1a1aa" }}>item {row}</Text>
+          </View>
         ))}
       </ScrollView>
     </View>
