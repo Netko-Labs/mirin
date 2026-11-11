@@ -16,16 +16,19 @@ use super::{
 impl RetainedState {
     /// Leave it undrawn at `bounds`: nothing of it shows. Its drawing, when
     /// last frame has it, is put aside for when it shows again (`parked`).
-    pub(super) fn skip(&mut self, bounds: Bounds<Pixels>, window: &mut Window) {
+    /// `resized`: its root is another size than drawn (`Plan::SkipResized`),
+    /// so that drawing is of no use and goes; it is drawn when it shows.
+    pub(super) fn skip(&mut self, bounds: Bounds<Pixels>, resized: bool, window: &mut Window) {
         let (ranges, origin, whole) = {
             let mut drawn = self.record.drawn.borrow_mut();
             // Only a drawing with nothing left out (one made out of view
             // has little in it) that may be copied elsewhere is of use. And
             // not one the pointer is over: it may show hover styles, which
-            // no pointer move takes away while it is out of the frame.
+            // no pointer move takes away while it is out of the frame. Nor
+            // one only resized while out of view: it is stale.
             let pointer = window.mouse_position();
             let hovered = drawn.extent.is_some_and(|extent| extent.contains(&pointer));
-            let whole = drawn.valid.is_everywhere() && !drawn.pinned && !hovered;
+            let whole = drawn.valid.is_everywhere() && !drawn.pinned && !hovered && !resized;
             (drawn.ranges.take(), drawn.bounds.origin, whole)
         };
         let parked = ranges.and_then(|ranges| {
@@ -42,6 +45,14 @@ impl RetainedState {
         let mut drawn = self.record.drawn.borrow_mut();
         if parked.is_some() {
             drawn.parked = parked;
+        }
+        if resized {
+            // How far it reaches at its new size, which the next frame
+            // measures from (the layout says it changed until it is drawn
+            // again, so its size is not taken for the drawing's).
+            drawn.parked = None;
+            drawn.extent = drawn.resized_extent(bounds.size);
+            drawn.bounds.size = bounds.size;
         }
         // Where it would be drawn, and how far it would reach: what the
         // subtree around it records of it. The mask stays the one its

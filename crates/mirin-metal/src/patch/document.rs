@@ -92,6 +92,14 @@ impl Document {
         self.lookup(id, |entry| entry.own)
     }
 
+    /// Whether a node has the id `id` (any id, before the first patch after
+    /// a whole tree: nothing is indexed until then).
+    pub(crate) fn contains(&self, id: &str) -> bool {
+        self.index
+            .as_ref()
+            .is_none_or(|index| index.contains_key(id))
+    }
+
     /// The update anything in the node `id`'s subtree (itself included) last
     /// changed in; unknown ids answer the newest generation.
     pub(crate) fn subtree_generation(&self, id: &str) -> u64 {

@@ -5,7 +5,7 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use crate::{
-    AnyElement, Bounds, EntityId, LayoutId, PaintIndex, Pixels, Point, PrepaintStateIndex,
+    AnyElement, Bounds, EntityId, LayoutId, PaintIndex, Pixels, Point, PrepaintStateIndex, Size,
     TextStyle, Window, window::ElementStateScope,
 };
 
@@ -108,6 +108,19 @@ impl Drawn {
             .is_none_or(|extent| !(extent + offset).intersects(mask))
     }
 
+    /// How far it reaches once its root is `size`, everything inside laid
+    /// out as it was: what the root draws of itself (its background,
+    /// border, shadow) is as far from its edges as before, so it reaches
+    /// that much further right and down when it grew (and no further when
+    /// it shrank).
+    pub(super) fn resized_extent(&self, size: Size<Pixels>) -> Option<Bounds<Pixels>> {
+        let grown = size - self.bounds.size;
+        self.extent.map(|extent| Bounds {
+            origin: extent.origin,
+            size: extent.size + grown.max(&Size::default()),
+        })
+    }
+
     /// Whether the drawing copied `by` device pixels away (whole ones, from
     /// the grid to the grid: `Grid::whole_move`), under `mask`, is what
     /// drawing it there would give. Then every position inside lands as it
@@ -136,6 +149,9 @@ pub(super) enum Plan {
         whole: bool,
     },
     Skip,
+    /// Nothing of it shows, but its last drawing is not what it would draw
+    /// now (its root was resized): left out, and that drawing dropped.
+    SkipResized,
 }
 
 impl Plan {
@@ -145,7 +161,7 @@ impl Plan {
             Plan::Redraw => RetainedDraw::Redrawn,
             Plan::Reuse { moved: None, .. } => RetainedDraw::Reused,
             Plan::Reuse { moved: Some(_), .. } => RetainedDraw::Moved,
-            Plan::Skip => RetainedDraw::Skipped,
+            Plan::Skip | Plan::SkipResized => RetainedDraw::Skipped,
         }
     }
 }
@@ -232,16 +248,31 @@ impl RetainedState {
         let mut drawn = self.record.drawn.borrow_mut();
         // Laid out inside as it was drawn: only then is the drawing, or how
         // far it reaches, still what it would draw.
-        let same = drawn.known
+        let mask = window.content_mask().bounds;
+        let engine = window.layout_engine();
+        let below = drawn.known && !engine.below_changed_since(self.root, self.epoch);
+        let same = below
             && drawn.bounds.size == bounds.size
-            && !window
-                .layout_engine()
-                .inner_changed_since(self.root, self.epoch);
+            && !engine.inner_changed_since(self.root, self.epoch);
         if !same {
+            // Only its root was resized (a window that changed size, a row
+            // stretched to it): how far it reaches is known without drawing
+            // it, so one nothing of which shows is still left out. What is
+            // inside is where it was, so the bounds the subtrees around it
+            // keep for it are still right.
+            let offset = bounds.origin - drawn.bounds.origin;
+            let still = offset == Point::default();
+            let unseen = || {
+                drawn
+                    .resized_extent(bounds.size)
+                    .is_none_or(|extent| !(extent + offset).intersects(&mask))
+            };
+            if below && skippable && drawn.inert && (movable || still) && unseen() {
+                return Plan::SkipResized;
+            }
             return Plan::Redraw;
         }
         let grid = window.grid();
-        let mask = window.content_mask().bounds;
         // How far it is from where it was: `by` in device pixels, when
         // that is a whole number of them between two places on the grid.
         let from = |drawn: &Drawn| {

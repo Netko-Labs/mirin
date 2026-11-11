@@ -283,8 +283,8 @@ impl Element for Retained {
                 on_prepaint(plan.draw(), bounds, window, cx);
             }
             let prepaint = match plan {
-                Plan::Skip => {
-                    state.skip(bounds, window);
+                Plan::Skip | Plan::SkipResized => {
+                    state.skip(bounds, matches!(plan, Plan::SkipResized), window);
                     RetainedPrepaint::Skipped
                 }
                 Plan::Reuse { moved, whole } => {

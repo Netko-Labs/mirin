@@ -374,6 +374,20 @@ const idleCpuMs = ((ticks() - idleFrom) * 1000) / 100;
 const idleFrames = rendersAfter(idleFramesFrom).length;
 const memory = rss();
 
+// `--switches=N`: before the scroll view's scenarios, switch between the
+// two layouts N times there and back, noting resident memory after each
+// (whether memory a switch takes is kept, or taken again each time).
+const switches = option("switches", 0);
+const rssSwitched: number[] = [];
+for (let index = 0; index < switches * 2; index += 1) {
+  transport.simulate({ kind: "click", id: nodeId("layout") });
+  await Bun.sleep(2000);
+  rssSwitched.push(rss());
+}
+if (switches > 0) {
+  console.error(`switches: RSS ${rssSwitched.map((mb) => mb.toFixed(0)).join(" ")} MB`);
+}
+
 // The same grid in a scroll view: most rows are out of view.
 transport.simulate({ kind: "click", id: nodeId("layout") });
 await Bun.sleep(2500);
@@ -408,10 +422,17 @@ await scenario("select/sc", 12, async () => {
 const resizes = option("resizes", 12);
 const resizeBy = option("resize-by", 100);
 const resize: number[] = [];
+// The accessibility tree's work per resize (time, nodes handed over), and
+// resident memory before the first and after each (`rssAfter`).
+const resizeAccess: number[] = [];
+const resizePublished: number[] = [];
+const rssBeforeResize = runs("resize") ? rss() : 0;
+const rssAfter: number[] = [];
 await scenario("resize", resizes, async () => {
   for (let index = 0; index < resizes; index += 1) {
     const width = index % 2 === 0 ? 1280 - resizeBy : 1280;
     const from = trace.length;
+    const started = Date.now();
     transport.setSize(width, 800);
     for (let waited = 0; waited < 2500; waited += 4) {
       const line = trace.slice(from).find((entry) => entry.message.startsWith(`render ${width}x`));
@@ -423,6 +444,10 @@ await scenario("resize", resizes, async () => {
     }
     // Whatever follows it (the compositor's configure, a second frame).
     await Bun.sleep(300);
+    const access = accessAfter(started);
+    resizeAccess.push(access.ms);
+    resizePublished.push(access.published);
+    rssAfter.push(rss());
   }
 });
 // Resident memory after everything above: with what scrolling put aside
@@ -499,7 +524,16 @@ const result = {
 };
 // The resize scenario's frames, beside the others'.
 Object.assign(result, {
-  resize: { n: resize.length, frame: median(resize), frameP95: p95(resize), cpu: cpu.resize ?? 0 },
+  resize: {
+    n: resize.length,
+    frame: median(resize),
+    frameP95: p95(resize),
+    cpu: cpu.resize ?? 0,
+    access: median(resizeAccess),
+    accessPublished: median(resizePublished),
+    rssBeforeMb: rssBeforeResize,
+    rssAfterMb: rssAfter,
+  },
   hscroll: {
     n: hscroll.length,
     frame: median(hscroll),
@@ -550,6 +584,11 @@ if (args.includes("--json")) {
   console.log(
     `resize   ${String(resize.length).padStart(2)} frames of ${resizes} widths ${resizeBy} px apart: frame ${median(resize).toFixed(1)} ms, p95 ${p95(resize).toFixed(1)} ms, cpu ${(cpu.resize ?? 0).toFixed(1)} ms; RSS at the end ${memoryAtEnd.toFixed(0)} MB`,
   );
+  if (resize.length > 0) {
+    console.log(
+      `resize   access ${median(resizeAccess).toFixed(1)} ms, ${median(resizePublished)} handed over a resize; RSS before ${rssBeforeResize.toFixed(0)} MB, after each ${rssAfter.map((mb) => mb.toFixed(0)).join(" ")}`,
+    );
+  }
   console.log(
     `hscroll  ${String(hscroll.length).padStart(2)} frames of ${scrollSteps * 2} steps of ${step} px across: frame ${median(hscroll).toFixed(1)} ms, p95 ${p95(hscroll).toFixed(1)} ms, cpu ${(cpu.hscroll ?? 0).toFixed(1)} ms`,
   );

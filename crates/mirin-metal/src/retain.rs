@@ -87,7 +87,13 @@ pub(crate) struct Boundaries {
     /// What each id'd view's subtree was at the last sync it was walked in
     /// (its traits, nodes): a patch walks only what changed.
     walks: HashMap<String, (Traits, usize)>,
+    /// How many of those were left the last time the ones no longer in the
+    /// tree went (`prune_walks`).
+    walks_kept: usize,
 }
+
+/// The fewest walks kept before any that left the tree are looked for.
+const WALKS_PRUNED_PAST: usize = 1024;
 
 /// What a subtree is, as far as keeping it goes.
 struct Walk {
@@ -126,6 +132,9 @@ impl Boundaries {
             self.walks.clear();
         }
         self.walk(doc, old, changed, &mut path, &mut duplicates, cx);
+        if by_generation {
+            self.prune_walks(doc);
+        }
         self.synced = doc.generation();
         // After a patch, a subtree that didn't change was not walked: the
         // retained subtrees in it stay.
@@ -135,6 +144,18 @@ impl Boundaries {
         for id in duplicates {
             self.map.remove(&id);
         }
+    }
+
+    /// A patch walks only what it changed, so the walks of views it removed
+    /// would stay for as long as the window does (each new view's id added
+    /// one for good). They go once there are twice as many walks as after
+    /// the last time: a patch costs no more for it, amortized.
+    fn prune_walks(&mut self, doc: &Document) {
+        if self.walks.len() <= 2 * self.walks_kept.max(WALKS_PRUNED_PAST) {
+            return;
+        }
+        self.walks.retain(|id, _| doc.contains(id));
+        self.walks_kept = self.walks.len();
     }
 
     fn walk(
