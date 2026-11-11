@@ -254,8 +254,10 @@ impl RetainedState {
         if skippable && drawn.inert && (movable || still) && drawn.unseen(offset, &mask) {
             return Plan::Skip;
         }
+        let mut unparked = false;
         if drawn.ranges.is_none() {
             if let Some(parked) = drawn.parked.take() {
+                unparked = true;
                 // It shows again: its drawing goes back among last frame's,
                 // where it was drawn, with the ones inside it.
                 let back = parked.origin - drawn.bounds.origin;
@@ -277,12 +279,6 @@ impl RetainedState {
         if !copies || drawn.prunable {
             return Plan::Redraw;
         }
-        if still && drawn.mask == Some(mask) {
-            return Plan::Reuse {
-                moved: None,
-                whole: true,
-            };
-        }
         // A hover style is painted from what is under the pointer: where
         // the pointer is over the drawing, or would be once it is moved,
         // what is hovered may change though the pointer did not move.
@@ -290,6 +286,17 @@ impl RetainedState {
         let hovers = drawn.extent.is_some_and(|extent| {
             extent.contains(&pointer) || (extent + offset).contains(&pointer)
         });
+        // One put aside heard no pointer move meanwhile: the pointer may
+        // have come over it where it was.
+        if unparked && hovers {
+            return Plan::Redraw;
+        }
+        if still && drawn.mask == Some(mask) {
+            return Plan::Reuse {
+                moved: None,
+                whole: true,
+            };
+        }
         let by = by.filter(|by| movable && !hovers && drawn.moves(*by, &grid, &mask));
         if let Some(by) = by {
             // Nothing around it clipped it, or does where it lands.

@@ -99,3 +99,40 @@ fn drawings_put_aside_past_the_budget_are_dropped_and_built_again(cx: &mut TestA
         assert!(built(&none) > built(&tight), "with {cells} cells");
     }
 }
+
+#[gpui::test]
+fn a_row_under_the_pointer_when_it_leaves_the_view_is_not_kept_hovered(cx: &mut TestAppContext) {
+    // A row is hovered, scrolled out of view under a pointer that stays
+    // (no move tells it), the pointer moves far below, over where another
+    // row was, and both come back where they were: drawing them there shows
+    // the hover on the other one.
+    let run = |cx: &mut TestAppContext, retain: bool| {
+        let mut scene = scrolled(60, 0);
+        scene.viewport = 300.0;
+        let opened = open(cx, scene, retain);
+        let pointer = |cx: &mut gpui::VisualTestContext, y: f32| {
+            cx.simulate_mouse_move(point(px(80.0), px(y)), None, crate::Modifiers::default());
+        };
+        pointer(opened.cx, 60.0);
+        let mut frames = Vec::new();
+        for (to, at) in [
+            (0.0, None),
+            (900.0, None),
+            (900.0, Some(250.0)),
+            (0.0, None),
+        ] {
+            if let Some(at) = at {
+                pointer(opened.cx, at);
+            }
+            opened.scroll.set_offset(point(px(0.0), px(-to)));
+            draw(opened.cx);
+            frames.push(drawn(opened.cx));
+        }
+        frames
+    };
+    let kept = run(cx, true);
+    let whole = run(cx, false);
+    for (index, (kept, whole)) in kept.iter().zip(&whole).enumerate() {
+        assert_same(kept, whole, &format!("frame {index}"));
+    }
+}
