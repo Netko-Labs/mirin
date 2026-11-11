@@ -626,6 +626,8 @@ export type SimCommand =
   | { kind: "hover"; id: string; hovered: boolean }
   /** Scroll a scrollable node down by `dy` px (negative scrolls up). */
   | { kind: "scroll"; id: string; dy: number }
+  /** Give the keyboard to a field or `focusable` view, pressing nothing (a screen reader's focus). */
+  | { kind: "focus"; id: string }
   | { kind: "window"; action: "zoom" | "minimize" };
 
 /**

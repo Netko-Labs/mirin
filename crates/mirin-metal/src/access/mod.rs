@@ -2,9 +2,9 @@
 //! window. Built from the element tree and the renderer's own state
 //! (`tree.rs`), published over AT-SPI on Linux through AccessKit
 //! (`linux.rs`), and nowhere yet on other platforms. A screen reader's
-//! "press", or its "focus" on a field, comes back as a simulated click on
-//! that element (`sim.rs`), so it does exactly what the person's click does;
-//! focusing a button never presses it.
+//! "press" comes back as a simulated click on that element (`sim.rs`), so it
+//! does exactly what the person's click does; its "focus" gives the element
+//! the keyboard (`{"kind":"focus"}`) and never presses it.
 //!
 //! On by default; `MIRIN_METAL_ACCESSIBLE=0` turns it off. A driver checks
 //! the host binary for `ACCESSIBLE_MARKER` before it sends `access` props:
@@ -97,16 +97,18 @@ impl Accessibility {
         let press = {
             let targets = Arc::clone(&targets);
             move |action: Action, node: NodeId| {
-                let id = targets
-                    .lock()
-                    .ok()
-                    .and_then(|targets| targets.element_for(action, node).map(str::to_owned));
-                if let Some(id) = id {
-                    act(SimCommand::Click {
-                        id: Some(id),
-                        x: None,
-                        y: None,
-                    });
+                let command = targets.lock().ok().and_then(|targets| {
+                    targets.request(action, node).map(|request| match request {
+                        tree::Request::Click(id) => SimCommand::Click {
+                            id: Some(id.to_owned()),
+                            x: None,
+                            y: None,
+                        },
+                        tree::Request::Focus(id) => SimCommand::Focus { id: id.to_owned() },
+                    })
+                });
+                if let Some(command) = command {
+                    act(command);
                 }
             }
         };

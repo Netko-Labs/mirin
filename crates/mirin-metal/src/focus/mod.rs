@@ -56,6 +56,13 @@ pub(crate) struct FocusState {
     typing: Reported,
 }
 
+impl FocusState {
+    /// The focus handle of the `focusable` view `id`.
+    pub(crate) fn handle(&self, id: &str) -> Option<&FocusHandle> {
+        self.handles.get(id)
+    }
+}
+
 /// A yes-or-no the driver hears only when it changes; it starts at no.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Reported(bool);
