@@ -26,6 +26,7 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Input, ThemeProvider 
 | --- | --- |
 | `@mirinjs/metal-ui` | every component, `cn`/`cva`, `ThemeProvider`, themes, `tw()` |
 | `@mirinjs/metal-ui/icons` | all lucide icons under their `lucide-react` names; an icon reads its data when it first renders |
+| `@mirinjs/metal-ui/icons/create` | `createLucideIcon` alone, for an app run from source that wraps the few icons it draws over their vector data (the icons entry is a module of 6,800 exports: 13 ms and 11 MB of a start; nothing in a bundle) |
 | `@mirinjs/metal-ui/primitives` | Radix-compatible namespaces (`Dialog.Root`, …) |
 | `@mirinjs/metal-ui/charts` | the recharts subset the chart component uses |
 | `@mirinjs/metal-ui/jsx-runtime` | the JSX runtime that renders `<div>`, `<button>`, `<input>`, `<svg>`, … |

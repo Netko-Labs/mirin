@@ -1178,8 +1178,12 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
     components themselves draw carry their data in a module of their own
     (`core.generated.ts`: a process's first `require()` costs 2 to 4 ms),
     and every icon is marked pure, so a bundle keeps only the ones used. A
-    module with 6,800 exports still costs a start 10 ms and 9 MB however
-    little each does; an app that imports no icon of its own doesn't load it.
+    module with 6,800 exports still costs a start from source 13 ms and
+    11 MB however little each does (the browser's first tree goes out at
+    33 ms without it, at 48 with): an app that imports no icon of its own
+    doesn't load it, and `@mirinjs/metal-ui/icons/create` has
+    `createLucideIcon` alone, for one that wraps the few it draws over
+    their vector data (an `IconNode`, as one file of `lucide` exports).
   - *Modules.* `date-fns` came whole for six functions (250 modules: 12 ms,
     40 ms of CPU, 9 MB for any app importing `@mirinjs/metal-ui`'s entry)
     and `node:crypto` for one hash (3 ms): each function from its own file,
