@@ -2092,7 +2092,8 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.element_id_stack.push(element_id);
-        let global_id = GlobalElementId(self.element_id_stack.clone());
+        // mirin: fewer inline than the stack (`GlobalElementId`).
+        let global_id = GlobalElementId(self.element_id_stack.iter().cloned().collect());
         let result = f(&global_id, self);
         self.element_id_stack.pop();
         result

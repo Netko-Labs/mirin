@@ -272,8 +272,14 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 }
 
 /// A globally unique identifier for an element, used to track state across frames.
+// mirin: 16 ids inline, not 32 (the window's stack keeps 32). Every element
+// state is keyed by one, moved by value into maps and lists: 1.3 KB each.
+// Paths deeper than 16 go to the heap.
 #[derive(Deref, DerefMut, Default, Debug, Eq, PartialEq, Hash)]
-pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
+pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; GLOBAL_ID_INLINE]>);
+
+/// mirin: how many ids a `GlobalElementId` holds before it spills.
+const GLOBAL_ID_INLINE: usize = 16;
 
 impl Display for GlobalElementId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -353,7 +359,8 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::Start => {
                 let global_id = self.element.id().map(|element_id| {
                     window.element_id_stack.push(element_id);
-                    GlobalElementId(window.element_id_stack.clone())
+                    // mirin: fewer inline than the stack (`GlobalElementId`).
+                    GlobalElementId(window.element_id_stack.iter().cloned().collect())
                 });
 
                 let inspector_id;
@@ -361,7 +368,9 @@ impl<E: Element> Drawable<E> {
                 {
                     inspector_id = self.element.source_location().map(|source| {
                         let path = crate::InspectorElementPath {
-                            global_id: GlobalElementId(window.element_id_stack.clone()),
+                            global_id: GlobalElementId(
+                                window.element_id_stack.iter().cloned().collect(),
+                            ),
                             source_location: source,
                         };
                         window.build_inspector_element_id(path)
