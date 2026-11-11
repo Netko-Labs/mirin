@@ -15,10 +15,8 @@
  * `MIRIN_METAL_BUNDLE=0` always starts from the sources.
  */
 
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import { driverEnv } from "./launch.ts";
-import { buildBundle, cachedBundle, claimBuild } from "./lib/bundle-cache.ts";
+import { cachedBundle, claimBuild } from "./lib/bundle-cache.ts";
 
 const USAGE = "usage: mirin-metal run [--dev] [bun flags] <entry> [args…]";
 /** The builder's own verb (`mirin-metal __bundle <entry>`), started by `run`. */
@@ -47,8 +45,12 @@ async function become(command: string[], env: Record<string, string>): Promise<n
 function scriptOf(first: string | undefined): string | null {
   if (first === undefined || first.startsWith("-")) return null;
   if (!/\.[cm]?[jt]sx?$/.test(first)) return null;
-  const entry = resolve(first);
-  return existsSync(entry) ? entry : null;
+  // The file itself, made absolute (no `node:path`: a start loads as little as it can).
+  try {
+    return Bun.resolveSync(first.startsWith("/") ? first : `./${first}`, process.cwd());
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -76,6 +78,8 @@ const [verb, ...rest] = Bun.argv.slice(2);
 if (verb === BUILD) {
   const [entry = ""] = rest;
   await Bun.sleep(BUILD_DELAY_MS);
+  // Loaded here alone: a start never needs it.
+  const { buildBundle } = await import("./lib/bundle-build.ts");
   await buildBundle(entry, process.env.NODE_ENV ?? "production", process.env);
   process.exit(0);
 }
@@ -93,9 +97,12 @@ const env = driverEnv(process.env, { development });
 let command = [process.execPath, ...args];
 const entry = development || env.MIRIN_METAL_BUNDLE === "0" ? null : scriptOf(args[0]);
 if (entry && process.platform !== "win32") {
-  const cached = cachedBundle(entry, env.NODE_ENV ?? "production", env);
+  const cached = await cachedBundle(entry, env.NODE_ENV ?? "production", env);
   if (cached.state === "fresh") command = [process.execPath, cached.bundle, ...args.slice(1)];
-  else if (cached.state === "stale" && claimBuild(entry, env.NODE_ENV ?? "production", env)) {
+  else if (
+    cached.state === "stale" &&
+    (await claimBuild(entry, env.NODE_ENV ?? "production", env))
+  ) {
     await buildInBackground(entry, env);
   }
 }

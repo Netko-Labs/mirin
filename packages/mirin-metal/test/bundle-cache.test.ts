@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildBundle, cachedBundle, unbundleable, withOwnMeta } from "../src/lib/bundle-cache.ts";
+import { buildBundle, unbundleable, withOwnMeta } from "../src/lib/bundle-build.ts";
+import { cachedBundle } from "../src/lib/bundle-cache.ts";
 
 /** An app in a directory of its own, and a cache of its own. */
 function app(files: Record<string, string>): { dir: string; env: Record<string, string> } {
@@ -28,10 +29,10 @@ test("a bundle keeps each module's import.meta, and is used until a file it was 
       "export const where = () => [import.meta.dir, import.meta.url, import.meta.main];\n",
   });
   const entry = join(dir, "main.ts");
-  expect(cachedBundle(entry, "production", env).state).toBe("stale");
+  expect((await cachedBundle(entry, "production", env)).state).toBe("stale");
   const built = await buildBundle(entry, "production", env);
   expect(built.state).toBe("fresh");
-  const cached = cachedBundle(entry, "production", env);
+  const cached = await cachedBundle(entry, "production", env);
   if (cached.state !== "fresh") throw new Error("no bundle");
   // The bundle prints what the sources print, with React's production build defined in.
   const fromSource = JSON.parse(await output([process.execPath, entry])) as unknown[];
@@ -44,9 +45,9 @@ test("a bundle keeps each module's import.meta, and is used until a file it was 
     "production",
   ]);
   // Another build of React, or a file changed: built again.
-  expect(cachedBundle(entry, "development", env).state).toBe("stale");
+  expect((await cachedBundle(entry, "development", env)).state).toBe("stale");
   utimesSync(join(dir, "lib", "where.ts"), new Date(), new Date(Date.now() + 5000));
-  expect(cachedBundle(entry, "production", env).state).toBe("stale");
+  expect((await cachedBundle(entry, "production", env)).state).toBe("stale");
 });
 
 test("an app that makes a path to import at run time, or spells import.meta in a string, runs unbundled", async () => {
@@ -56,7 +57,9 @@ test("an app that makes a path to import at run time, or spells import.meta in a
   });
   const entry = join(dynamic.dir, "main.ts");
   expect((await buildBundle(entry, "production", dynamic.env)).state).toBe("unbundled");
-  expect(cachedBundle(entry, "production", dynamic.env)).toMatchObject({ state: "unbundled" });
+  expect(await cachedBundle(entry, "production", dynamic.env)).toMatchObject({
+    state: "unbundled",
+  });
 
   expect(unbundleable(`const a = require("./a.ts"); await import("./b.ts");`, "ts")).toBeNull();
   // Comments are not code.

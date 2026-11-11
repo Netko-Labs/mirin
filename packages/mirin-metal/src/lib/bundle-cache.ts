@@ -20,20 +20,34 @@
  *   resolve from the bundle's directory: an app with one is unbundled.
  * The verdict is kept as well, so an app that can't be bundled is looked at
  * once per change, not per start.
+ *
+ * This module is what a start reads, before every app `mirin-metal run`
+ * starts, so it loads nothing (Bun's own file calls, no `node:fs`, which
+ * alone takes 2 ms to load); `bundle-build.ts` builds, in the builder.
+ * Paths are absolute and POSIX: the bundle is not used on Windows.
  */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-
 /** Bumped when what is built, or how it is checked, changes. */
-const FORMAT = 1;
+export const FORMAT = 1;
 
-/** A file the bundle depends on: its path, size and modification time (-1 when it didn't exist). */
-type Input = [path: string, size: number, mtimeMs: number];
+/**
+ * A file the bundle depends on: its path, size and modification time in ms
+ * (as `Bun.file` has them; a file that doesn't exist has its own time).
+ */
+export type Input = [path: string, size: number, mtimeMs: number];
 
-interface Manifest {
+/** The directory a path is in. */
+export function dirname(path: string): string {
+  const at = path.lastIndexOf("/");
+  return at <= 0 ? "/" : path.slice(0, at);
+}
+
+/** `dir` and `name` as one path. */
+export function join(dir: string, ...names: string[]): string {
+  return [dir.endsWith("/") ? dir.slice(0, -1) : dir, ...names].join("/");
+}
+
+export interface Manifest {
   format: number;
   bun: string;
   entry: string;
@@ -53,7 +67,7 @@ export function bundleDir(
   nodeEnv: string,
   env: Record<string, string | undefined>,
 ): string {
-  const root = env.XDG_CACHE_HOME || join(env.HOME || homedir(), ".cache");
+  const root = env.XDG_CACHE_HOME || join(env.HOME || "/tmp", ".cache");
   const key = new Bun.CryptoHasher("sha256")
     .update(`${FORMAT}\0${Bun.version}\0${nodeEnv}\0${entry}`)
     .digest("hex")
@@ -61,17 +75,13 @@ export function bundleDir(
   return join(root, "mirin-metal", "bundles", key);
 }
 
-function stamp(path: string): Input {
-  try {
-    const stats = statSync(path);
-    return [path, stats.size, stats.mtimeMs];
-  } catch {
-    return [path, -1, -1];
-  }
+export function stamp(path: string): Input {
+  const file = Bun.file(path);
+  return [path, file.size, file.lastModified];
 }
 
 /** The configuration files on the way from the entry's directory to the root. */
-function configsAbove(entry: string): string[] {
+export function configsAbove(entry: string): string[] {
   const found: string[] = [];
   for (let dir = dirname(entry); ; dir = dirname(dir)) {
     for (const name of CONFIGS) found.push(join(dir, name));
@@ -79,9 +89,9 @@ function configsAbove(entry: string): string[] {
   }
 }
 
-function readManifest(dir: string): Manifest | null {
+async function readManifest(dir: string): Promise<Manifest | null> {
   try {
-    const value: unknown = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
+    const value: unknown = await Bun.file(join(dir, "manifest.json")).json();
     if (typeof value !== "object" || value === null) return null;
     const manifest = value as Partial<Manifest>;
     if (
@@ -114,13 +124,13 @@ export type CachedBundle =
   | { state: "stale" };
 
 /** The bundle to start `entry` from, if one was built from the files as they are now. */
-export function cachedBundle(
+export async function cachedBundle(
   entry: string,
   nodeEnv: string,
   env: Record<string, string | undefined>,
-): CachedBundle {
+): Promise<CachedBundle> {
   const dir = bundleDir(entry, nodeEnv, env);
-  const manifest = readManifest(dir);
+  const manifest = await readManifest(dir);
   if (!manifest || manifest.bun !== Bun.version || manifest.entry !== entry)
     return { state: "stale" };
   if (manifest.nodeEnv !== nodeEnv) return { state: "stale" };
@@ -140,171 +150,18 @@ const BUILDING_MS = 60_000;
  * Claim the build of `entry`'s bundle: false when another start claimed it
  * less than `BUILDING_MS` ago (starts in a row while it is stale build once).
  */
-export function claimBuild(
+export async function claimBuild(
   entry: string,
   nodeEnv: string,
   env: Record<string, string | undefined>,
-): boolean {
-  const dir = bundleDir(entry, nodeEnv, env);
-  const marker = join(dir, "building");
-  const [, size, mtimeMs] = stamp(marker);
-  if (size >= 0 && Date.now() - mtimeMs < BUILDING_MS) return false;
+): Promise<boolean> {
+  const marker = Bun.file(join(bundleDir(entry, nodeEnv, env), "building"));
+  if (marker.size > 0 && Date.now() - marker.lastModified < BUILDING_MS) return false;
   try {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(marker, String(process.pid));
+    // Makes the directory too.
+    await Bun.write(marker, String(process.pid));
     return true;
   } catch {
     return false;
   }
-}
-
-/** `import.meta`'s fields, as the module at `path` has them when run from its source. */
-function metaOf(path: string, entry: string): Record<string, string> {
-  const dir = JSON.stringify(dirname(path));
-  const file = JSON.stringify(path);
-  return Object.fromEntries([
-    ["import.meta.url", JSON.stringify(pathToFileURL(path).href)],
-    ["import.meta.dir", dir],
-    ["import.meta.dirname", dir],
-    ["import.meta.path", file],
-    ["import.meta.filename", file],
-    ["import.meta.main", String(path === entry)],
-    ["__dirname", dir],
-    ["__filename", file],
-  ]);
-}
-
-const META =
-  /\bimport\.meta\.(?:url|dirname|dir|path|filename|main)\b|(?<![\w$.])__(?:dirname|filename)(?![\w$])/g;
-
-/**
- * What resolves a path from the module's own place at run time: an
- * `import(` or `require(` whose argument is not a plain string, a
- * `require.resolve` or `import.meta.resolve`, a `new Worker`. In a bundle it
- * would resolve from the bundle's directory.
- */
-const RUNTIME_PATH =
-  /\b(?:import|require)\s*\(\s*(?!["'][^"'`$\\]*["']\s*[,)])|\brequire\.resolve\b|\bimport\.meta\.resolve\b|\bnew\s+Worker\b/;
-
-type Loader = "js" | "jsx" | "ts" | "tsx";
-
-function loaderOf(path: string): Loader | null {
-  if (/\.tsx$/.test(path)) return "tsx";
-  if (/\.[cm]?ts$/.test(path)) return "ts";
-  if (/\.jsx$/.test(path)) return "jsx";
-  if (/\.[cm]?js$/.test(path)) return "js";
-  return null;
-}
-
-/** Why a module stops the app from running as a bundle; null when it doesn't. */
-export function unbundleable(code: string, loader: Loader): string | null {
-  // Transpiled first: comments and types are gone, so what is left is code
-  // (and strings, which can only make this say no where yes was right).
-  const plain = new Bun.Transpiler({ loader }).transformSync(code);
-  // `import.meta.require(…)` is a `require(…)`: the same test.
-  return RUNTIME_PATH.test(plain.replace(/\bimport\.meta\.require\b/g, "require"))
-    ? "a path resolved at run time (import(), require(), require.resolve, import.meta.resolve, new Worker)"
-    : null;
-}
-
-/**
- * `code` with its module's own `import.meta` fields written in, or null
- * when that can't be done exactly: the text replaced must be the code the
- * transpiler replaces given the same values (no string spells one).
- */
-export function withOwnMeta(
-  code: string,
-  loader: Loader,
-  path: string,
-  entry: string,
-): string | null {
-  if (
-    !code.includes("import.meta") &&
-    !code.includes("__dirname") &&
-    !code.includes("__filename")
-  ) {
-    return code;
-  }
-  const meta = metaOf(path, entry);
-  const written = code.replace(META, (match) => meta[match] ?? match);
-  const defined = new Bun.Transpiler({ loader, define: meta }).transformSync(code);
-  let replaced: string;
-  try {
-    replaced = new Bun.Transpiler({ loader }).transformSync(written);
-  } catch {
-    // A value written into a string or a template can leave it unparsable.
-    return null;
-  }
-  return defined === replaced ? written : null;
-}
-
-/** Build the bundle for `entry` and write it and its manifest to the cache. */
-export async function buildBundle(
-  entry: string,
-  nodeEnv: string,
-  env: Record<string, string | undefined>,
-): Promise<CachedBundle> {
-  const dir = bundleDir(entry, nodeEnv, env);
-  let reason: string | null = null;
-  // Each module's file as it was before it was read, so a change made
-  // while this builds leaves the bundle stale.
-  const read = new Map<string, Input>();
-  const result = await Bun.build({
-    entrypoints: [entry],
-    target: "bun",
-    format: "esm",
-    minify: true,
-    metafile: true,
-    define: { "process.env.NODE_ENV": JSON.stringify(nodeEnv) },
-    plugins: [
-      {
-        name: "mirin-metal-own-meta",
-        setup(build) {
-          build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
-            const loader = loaderOf(args.path) ?? "js";
-            read.set(args.path, stamp(args.path));
-            const code = await Bun.file(args.path).text();
-            let own: string | null = code;
-            try {
-              const why = unbundleable(code, loader);
-              if (why) reason ??= `${args.path}: ${why}`;
-              own = withOwnMeta(code, loader, args.path, entry);
-              if (own === null) reason ??= `${args.path}: import.meta it can't write in`;
-            } catch (error) {
-              reason ??= `${args.path}: ${String(error)}`;
-            }
-            return { contents: own ?? code, loader };
-          });
-        },
-      },
-    ],
-  });
-  if (!result.success) reason ??= `the build failed: ${result.logs.map(String).join("; ")}`;
-  const inputs = Object.keys(result.metafile?.inputs ?? {}).map((path) => resolve(path));
-  const stamps = [...new Set([...inputs, ...configsAbove(entry)])].map(
-    (path) => read.get(path) ?? stamp(path),
-  );
-  const manifest: Manifest = {
-    format: FORMAT,
-    bun: Bun.version,
-    entry,
-    nodeEnv,
-    bundle: reason === null ? "app.js" : null,
-    ...(reason === null ? {} : { reason }),
-    inputs: stamps,
-  };
-  mkdirSync(dir, { recursive: true });
-  // Written beside and renamed over, so a start never reads half of either.
-  const unique = `${process.pid}-${Date.now()}`;
-  const output = result.outputs[0];
-  if (manifest.bundle && output) {
-    writeFileSync(join(dir, `app.js.${unique}`), await output.text());
-    renameSync(join(dir, `app.js.${unique}`), join(dir, "app.js"));
-  }
-  writeFileSync(join(dir, `manifest.json.${unique}`), JSON.stringify(manifest));
-  renameSync(join(dir, `manifest.json.${unique}`), join(dir, "manifest.json"));
-  rmSync(join(dir, "building"), { force: true });
-  return manifest.bundle
-    ? { state: "fresh", bundle: join(dir, "app.js") }
-    : { state: "unbundled", reason: manifest.reason ?? "" };
 }
