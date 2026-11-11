@@ -53,7 +53,12 @@ impl RootView {
             return;
         }
         let icon = files.icon.as_deref().map(Path::new);
-        if !window.start_file_drag(&paths, icon, files.icon_size.unwrap_or(ICON_SIZE)) {
+        if !crate::gpui_api::start_file_drag(
+            window,
+            &paths,
+            icon,
+            files.icon_size.unwrap_or(ICON_SIZE),
+        ) {
             eprintln!("[mirin-metal] dragFiles: this platform can't start a drag");
         }
     }

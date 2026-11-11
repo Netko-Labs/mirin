@@ -115,6 +115,8 @@ fn a_box_narrower_than_the_ellipsis_shows_nothing(cx: &mut TestAppContext) {
     assert_eq!(layout.text(), "");
 }
 
+// The fork's `cut_line`; upstream cuts from a copy inside `truncate_line`.
+#[cfg(not(feature = "gpui-next"))]
 #[gpui::test]
 fn a_line_cut_twice_keeps_its_runs_whole(cx: &mut TestAppContext) {
     // Taffy measures a one-line text at its whole width and then at its box's:

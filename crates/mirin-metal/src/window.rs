@@ -365,8 +365,14 @@ impl RootView {
     /// Move focus from the field `from` to the next (`+1`) or previous
     /// (`-1`) field or focusable view in the Tab order (`focus/`), wrapping
     /// around. Tab / Shift+Tab.
-    pub(crate) fn focus_neighbor(&mut self, from: &str, step: isize, window: &mut Window) {
-        self.tab_from(Some(from), step < 0, window);
+    pub(crate) fn focus_neighbor(
+        &mut self,
+        from: &str,
+        step: isize,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.tab_from(Some(from), step < 0, window, cx);
     }
 
     /// The field or key-taking view with the keyboard, and what is typed in a field.
@@ -430,12 +436,12 @@ impl RootView {
     }
 
     /// Honour pending `autofocus` requests. Runs outside of rendering.
-    pub(crate) fn apply_pending_focus(&mut self, window: &mut Window) {
-        self.focus_window_if_asked(window);
+    pub(crate) fn apply_pending_focus(&mut self, window: &mut Window, cx: &mut App) {
+        self.focus_window_if_asked(window, cx);
         for target in self.key_targets.values_mut() {
             if target.wants_focus {
                 target.wants_focus = false;
-                window.focus(&target.focus);
+                crate::gpui_api::focus(window, &target.focus, cx);
             }
         }
         // Several new fields asking at once: one wins, the same one every time (focus/order.rs).
@@ -450,9 +456,9 @@ impl RootView {
             state.wants_focus = false;
         }
         if let Some(state) = chosen.and_then(|id| self.inputs.get(&id)) {
-            window.focus(&state.focus);
+            crate::gpui_api::focus(window, &state.focus, cx);
         }
-        self.settle_focus(window);
+        self.settle_focus(window, cx);
     }
 }
 

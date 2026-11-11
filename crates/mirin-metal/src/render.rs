@@ -8,10 +8,11 @@ use std::sync::OnceLock;
 use gpui::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
     ElementId, FontWeight, HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
-    ScrollWheelEvent, SharedString, Stateful, Window,
+    SharedString, Stateful, Window,
 };
 
 use crate::edges::{apply_box_edges, shadow_preset};
+use crate::gpui_api::ScrollWheelEvent;
 use crate::input::render_input;
 use crate::media::{render_image, render_svg};
 use crate::tree::{
@@ -350,8 +351,8 @@ fn render_view_content(
                 .track_focus(&focus)
                 .on_mouse_down(
                     MouseButton::Left,
-                    move |_event: &MouseDownEvent, window: &mut Window, _cx: &mut App| {
-                        window.focus(&press_focus);
+                    move |_event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+                        crate::gpui_api::focus(window, &press_focus, cx);
                     },
                 )
                 .on_key_down(
@@ -377,7 +378,8 @@ fn render_view_content(
     if props.on_wheel {
         let wheel_id = id.to_string();
         let events = view.events.clone();
-        element = element.on_scroll_wheel(
+        element = crate::gpui_api::on_wheel(
+            element,
             move |event: &ScrollWheelEvent, window: &mut Window, _cx: &mut App| {
                 let (dx, dy) = match event.delta {
                     ScrollDelta::Lines(lines) => (lines.x, lines.y),
@@ -746,11 +748,15 @@ mod tests {
         assert_eq!(gpui::ink_end_x(px(20.0), before, text), px(20.0));
     }
 
+    // The fork's helper; upstream reuses a layout only for the same
+    // truncation width in its own way (`elements/text.rs`).
+    #[cfg(not(feature = "gpui-next"))]
     use gpui::reuses_layout;
 
     // `numberOfLines: 1` (`render_text`'s `truncate`) is cut with an ellipsis at
     // the width layout finds. Taffy asks a flex item's text for its whole line
     // first, then at its width: the second answer must not be the first one.
+    #[cfg(not(feature = "gpui-next"))]
     #[test]
     fn a_line_cut_to_its_width_is_not_the_whole_line_kept() {
         assert!(!reuses_layout((None, None), (None, Some(px(120.)))));
@@ -761,6 +767,7 @@ mod tests {
         ));
     }
 
+    #[cfg(not(feature = "gpui-next"))]
     #[test]
     fn the_same_query_keeps_its_layout() {
         assert!(reuses_layout(

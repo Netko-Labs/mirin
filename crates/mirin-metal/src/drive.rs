@@ -14,8 +14,8 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
 
 use gpui::{
-    prelude::*, px, size, App, Application, AsyncApp, Bounds, TitlebarOptions,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions,
+    prelude::*, px, size, App, AsyncApp, Bounds, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 
 use crate::access::Accessibility;
@@ -68,7 +68,7 @@ pub fn run(
     updates: mpsc::Receiver<DriverMessage>,
     events: mpsc::Sender<NativeUiEvent>,
 ) {
-    Application::new()
+    crate::gpui_api::application()
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
             let (access, asked) = futures::channel::mpsc::unbounded();
@@ -91,21 +91,19 @@ pub fn run(
                 for reason in std::mem::take(&mut first.resyncs) {
                     ask_resync(&events, reason);
                 }
-                let opened = cx
-                    .update(|cx| {
-                        open_window(
-                            cx,
-                            &options,
-                            tree,
-                            placeholder,
-                            events.clone(),
-                            access.clone(),
-                        )
-                    })
-                    .ok()
-                    .flatten();
+                let opened = crate::gpui_api::update(cx, |cx| {
+                    open_window(
+                        cx,
+                        &options,
+                        tree,
+                        placeholder,
+                        events.clone(),
+                        access.clone(),
+                    )
+                })
+                .flatten();
                 let Some(window) = opened else {
-                    let _ = cx.update(|cx| cx.quit());
+                    crate::gpui_api::update(cx, |cx| cx.quit());
                     return;
                 };
                 let mut drive = Drive::new(Some(window), events, None, access);
@@ -204,14 +202,14 @@ pub fn run_deferred(
     messages: mpsc::Receiver<HostMessage>,
     events: mpsc::Sender<NativeUiEvent>,
 ) {
-    Application::new()
+    crate::gpui_api::application()
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
             // A hide closes the last window; the loop must go on without one.
-            gpui::set_quit_when_last_window_closes(false);
+            crate::gpui_api::keep_running_without_windows(cx);
             let hiding = Rc::new(Cell::new(false));
             let watch = hiding.clone();
-            cx.on_window_closed(move |cx| {
+            crate::gpui_api::on_window_closed(cx, move |cx| {
                 if !watch.replace(false) {
                     cx.quit();
                 }
@@ -291,11 +289,6 @@ fn open_window(
         } else {
             WindowBackgroundAppearance::Opaque
         },
-        layer_shell: match &options.surface {
-            Some(Surface::Layer(layer)) => Some(layer.clone()),
-            _ => None,
-        },
-        session_lock: matches!(options.surface, Some(Surface::Lock)),
         app_id: options.app_id.clone(),
         // The app's own floor (`MIRIN_METAL_MIN_SIZE`): the compositor keeps
         // the window from being made smaller.
@@ -305,13 +298,21 @@ fn open_window(
             .map(|(width, height)| size(px(width), px(height))),
         ..Default::default()
     };
+    let window_options = crate::gpui_api::with_surface(
+        window_options,
+        match &options.surface {
+            Some(Surface::Layer(layer)) => Some(layer),
+            _ => None,
+        },
+        matches!(options.surface, Some(Surface::Lock)),
+    );
     let layout = LayoutMap::default();
     let event_sender = EventSender::new(events, layout.clone());
     let chrome_events = event_sender.clone();
     let close_events = event_sender.clone();
     let visibility_events = event_sender.clone();
     let opened = cx.open_window(window_options, |window, cx| {
-        window.set_scroll_snap(scroll_snap());
+        crate::gpui_api::set_scroll_snap(window, scroll_snap());
         cx.new(|cx| RootView::new(tree, placeholder, event_sender, layout, cx))
     });
     let window = match opened {
@@ -353,10 +354,10 @@ fn open_window(
         }
     })
     .detach();
-    let _ = window.update(cx, |view, window, _cx| {
+    let _ = window.update(cx, |view, window, cx| {
         window.set_window_title(&title);
         view.access = tree_access;
-        view.apply_pending_focus(window);
+        view.apply_pending_focus(window, cx);
     });
     // Report the chrome now and whenever the compositor moves or
     // drops its window controls (it runs once on registering).
@@ -366,17 +367,15 @@ fn open_window(
         TitleBar::Standard
     };
     let _ = window.update(cx, |_view, window, _cx| {
-        window
-            .observe_window_chrome(move |window, _cx| {
-                let controls = window.chrome_controls().map(|bounds| Controls {
-                    x: f32::from(bounds.origin.x),
-                    y: f32::from(bounds.origin.y),
-                    width: f32::from(bounds.size.width),
-                    height: f32::from(bounds.size.height),
-                });
-                chrome_events.chrome(Chrome::effective(requested, controls));
-            })
-            .detach();
+        crate::gpui_api::observe_chrome(window, move |controls| {
+            let controls = controls.map(|bounds| Controls {
+                x: f32::from(bounds.origin.x),
+                y: f32::from(bounds.origin.y),
+                width: f32::from(bounds.size.width),
+                height: f32::from(bounds.size.height),
+            });
+            chrome_events.chrome(Chrome::effective(requested, controls));
+        });
     });
     // A driver that answers closes itself: the window stays, and the
     // driver hears of it (it ends the host to close, or asks first).
@@ -395,15 +394,12 @@ fn open_window(
             "{FOCUS_MARKER}: focus, press modifiers and visibility"
         ));
         let mut visible = true;
-        window
-            .observe_window_suspended(move |window, _cx| {
-                let now = !window.is_window_suspended();
-                if now != visible {
-                    visible = now;
-                    visibility_events.visibility(now);
-                }
-            })
-            .detach();
+        crate::gpui_api::observe_visibility(window, move |now| {
+            if now != visible {
+                visible = now;
+                visibility_events.visibility(now);
+            }
+        });
     });
     Some(window)
 }
@@ -576,7 +572,7 @@ impl Drive {
                         // The driver went away: a shown window keeps its last
                         // tree; a host with none has nothing left to show.
                         if self.window.is_none() {
-                            let _ = cx.update(|cx| cx.quit());
+                            crate::gpui_api::update(cx, |cx| cx.quit());
                         }
                         return;
                     }
@@ -632,11 +628,13 @@ impl Drive {
                 eprintln!("[mirin-metal-host] rejected line: unlock needs a shown lock surface");
                 return true;
             };
-            let _ = window.update(cx, |_view, window, _cx| window.unlock_session());
+            let _ = window.update(cx, |_view, window, _cx| {
+                crate::gpui_api::unlock_session(window)
+            });
             // Give the event loop a moment to send the unlock
             // before the process goes.
             cx.background_executor().timer(UNLOCK_FLUSH).await;
-            let _ = cx.update(|cx| cx.quit());
+            crate::gpui_api::update(cx, |cx| cx.quit());
             return false;
         }
         self.apply(turn, cx)
@@ -714,7 +712,7 @@ impl Drive {
                 for error in failed {
                     ask_resync(&view.events.sender(), error.to_string());
                 }
-                view.apply_pending_focus(window);
+                view.apply_pending_focus(window, cx);
                 cx.notify();
             }
             let actions: Vec<_> = sims
@@ -755,17 +753,17 @@ impl Drive {
             None => (Document::new((resident.initial_for)(&options)), true),
         };
         let events = self.events.clone();
-        let opened = cx
-            .update(|cx| open_window(cx, &options, tree, placeholder, events, self.access.clone()))
-            .ok()
-            .flatten();
+        let opened = crate::gpui_api::update(cx, |cx| {
+            open_window(cx, &options, tree, placeholder, events, self.access.clone())
+        })
+        .flatten();
         match opened {
             Some(window) => {
                 self.window = Some(window);
                 true
             }
             None => {
-                let _ = cx.update(|cx| cx.quit());
+                crate::gpui_api::update(cx, |cx| cx.quit());
                 false
             }
         }

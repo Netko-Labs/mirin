@@ -1511,6 +1511,12 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   three went (a card left out is no longer looked up at paint); the rest
   is open, below.
 
+Open, on upstream GPUI (`docs/metal/gpui-next.md` section 6): retained
+subtrees there are copied in place only; a subtree that moves or that
+nothing of shows is drawn again (moves, skips, parked drawings and building
+onto kept nodes are the next steps), and text boxes lay out a pixel taller
+than on the fork (upstream rounds a measured size up).
+
 Open: React work per update (the demo re-renders its whole list on select);
 a scale factor that is not a multiple of 1/8 (1.1, 1.2) moves only what
 is laid out, not what sits a logical distance from it (a shadow's offset):
@@ -1700,6 +1706,14 @@ Zed's tree. [`docs/metal/gpui-next.md`](metal/gpui-next.md) is a spike on
 moving it onto current upstream (what upstream has absorbed, what ports, how
 it measures, and the order of a migration); `spikes/gpui-next/` builds this
 crate against upstream to repeat it.
+
+The migration has started (round 4, section 6 of that doc): upstream's GPUI
+crates are forks in the tree (`forks/zed`, at zed `f8cfc7ed`, and
+`forks/taffy-next`, taffy 0.15.0), and the same sources build on them with
+`cd crates/mirin-metal/next && cargo build --release --bin mirin-metal-host`
+(`cargo test --lib`, `cargo clippy --all-targets -- -D warnings` there too).
+`src/gpui_api/` is where the two GPUIs differ in shape. The default build is
+still the 0.2.2 fork.
 
 The TypeScript packages are checked with the rest of the repository
 (`bun run fmt-lint`, `bun run typecheck`, `bun run test`). The root `test`

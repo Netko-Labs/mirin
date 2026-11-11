@@ -13,8 +13,13 @@ changed code carries a `// mirin:` comment.
 | `taffy` | `taffy` 0.9.0 (DioxusLabs, MIT), the version GPUI pins | `forks/gpui` |
 | `blade-graphics` | `blade-graphics` 0.7.1 (Dzmitry Malyshau, MIT), the version GPUI pins | `forks/gpui` |
 | `accesskit_unix` | `accesskit_unix` 0.24.1 (AccessKit, MIT OR Apache-2.0) | `crates/mirin-metal` |
+| `zed` | the GPUI crates of the zed repository at `f8cfc7ed` (2026-11-10; Zed Industries, every crate Apache-2.0) | `crates/mirin-metal/next` (the build on upstream GPUI) |
+| `taffy-next` | `taffy` 0.15.0 (DioxusLabs, MIT), the version upstream GPUI pins | `forks/zed` |
 
-`crates/mirin-metal/Cargo.toml` points `[patch.crates-io]` here. The forks are
+`crates/mirin-metal/Cargo.toml` points `[patch.crates-io]` here (`gpui`,
+`taffy`, `blade-graphics`, `accesskit_unix`); `crates/mirin-metal/next/Cargo.toml`
+builds the same sources on `zed` and `taffy-next` instead
+(`docs/metal/gpui-next.md`). The forks are
 excluded from the root Cargo workspace; each builds alone with mirin-metal's
 lockfile (`forks/gpui/MIRIN.md`).
 
@@ -34,3 +39,43 @@ cd - && git merge forks-upstream    # resolve conflicts against MIRIN.md
 
 Then update the fork's `MIRIN.md` (version, changes that upstream absorbed)
 and run its tests and mirin-metal's.
+
+## `zed/`: GPUI from the zed repository
+
+`zed/` mirrors the zed repository's layout, pruned to what a build resolves:
+the root `Cargo.toml` (the crates inherit their edition, dependencies and
+lints from it; cargo reads it for a path dependency and does not load the
+other members it lists), `LICENSE-APACHE`, `rust-toolchain.toml`, and
+`crates/<name>` for the 20 crates mirin-metal's build resolves on any target
+(`gpui`, `gpui_platform`, `gpui_linux`, `gpui_wgpu`, `gpui_macos`,
+`gpui_windows`, `gpui_web`, `gpui_ios`, `gpui_apple`, `gpui_macros`,
+`gpui_util`, `gpui_shared_string`, `collections`, `refineable` with
+`derive_refineable`, `sum_tree`, `scheduler`, `http_client`, `ztracing`,
+`ztracing_macro`, `bench_metrics`), each without `examples/`. Every one is
+`Apache-2.0` in its manifest (`license = "Apache-2.0"`, its `LICENSE-APACHE`
+a link to the root's); none of zed's GPL crates is imported. Changed files
+say so with `// mirin:` comments and rows in `zed/MIRIN.md`, as Apache-2.0
+asks.
+
+Re-sync to a newer zed commit (a stable release's, about monthly):
+
+```sh
+git worktree add ../forks-upstream-next forks-upstream-next
+cd ../forks-upstream-next
+REV=<zed commit>
+git clone --filter=blob:none --no-checkout https://github.com/zed-industries/zed /tmp/zed
+git -C /tmp/zed archive "$REV" Cargo.toml LICENSE-APACHE rust-toolchain.toml \
+    $(for c in <the crates above>; do echo crates/$c; done) | (rm -rf forks/zed && mkdir forks/zed && tar -x -C forks/zed)
+find forks/zed -type d -name examples -prune -exec rm -rf {} +
+git add -A forks/zed && git commit -m "chore(forks): zed GPUI crates at <rev>"
+cd - && git merge forks-upstream-next    # resolve conflicts against zed/MIRIN.md
+```
+
+If the new commit pins another taffy, replace `taffy-next/` the same way.
+Then check that `cargo metadata` in `crates/mirin-metal/next` lists no
+crate from `forks/zed` that is missing (a new dependency of GPUI's means one
+more `crates/<name>`), refresh `crates/mirin-metal/next/Cargo.lock` from the
+new commit's `Cargo.lock` for the versions upstream tests, repeat any new
+`[patch.crates-io]` entries of zed's root manifest in the next manifest
+(a workspace's patches do not reach a dependent outside it), and run the
+checks in `zed/MIRIN.md`.

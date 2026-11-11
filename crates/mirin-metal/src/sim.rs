@@ -149,7 +149,7 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             );
             None
         }
-        SimCommand::Key { keystroke } => match Keystroke::parse(keystroke) {
+        SimCommand::Key { keystroke } => match crate::gpui_api::parse_keystroke(keystroke) {
             Ok(keystroke) => Some(SimAction::Keystrokes(vec![keystroke.with_simulated_ime()])),
             Err(error) => {
                 eprintln!("[mirin-metal] sim key {keystroke:?}: {error:?}");
@@ -266,7 +266,7 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
 /// Dispatch a resolved action with the window leased but not the view.
 pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Window, cx: &mut App) {
     match action {
-        SimAction::Focus(handle) => window.focus(&handle),
+        SimAction::Focus(handle) => crate::gpui_api::focus(window, &handle, cx),
         SimAction::Press(id) => events.press(&id, Held::default()),
         SimAction::Keystrokes(keystrokes) => {
             for keystroke in keystrokes {
@@ -299,7 +299,7 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
         SimAction::Scroll(ScrollTarget::View(handle), dy) => {
             // GPUI offsets are negative once scrolled: content moves up.
             let offset = handle.offset();
-            let max = handle.max_offset();
+            let max = crate::gpui_api::scroll_max(&handle);
             let y = (offset.y - px(dy)).clamp(-max.height, px(0.0));
             handle.set_offset(point(offset.x, y));
             window.refresh();

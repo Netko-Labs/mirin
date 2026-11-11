@@ -23,6 +23,7 @@ mod focus;
 mod follow;
 #[cfg(target_os = "linux")]
 pub mod gpu;
+mod gpui_api;
 mod grid;
 mod height;
 mod idle;

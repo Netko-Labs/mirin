@@ -8,6 +8,11 @@ numbers are in [`docs/metal/gpui-next.md`](../../docs/metal/gpui-next.md).
 
 Nothing here changes `crates/mirin-metal`, `forks/`, or any default build.
 
+Superseded for building (round 4): upstream's crates are now forks in the
+tree (`forks/zed`, `forks/taffy-next`) and `crates/mirin-metal/next/Cargo.toml`
+builds the real sources on them (`docs/metal/gpui-next.md`, section 6).
+This directory stays for repeating the spike's numbers.
+
 ## What is here
 
 | File | What it is |
