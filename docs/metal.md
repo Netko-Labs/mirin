@@ -1499,12 +1499,17 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
     1,859 (card), 4,317 → 2,182 (table). A box also no longer adds or
     drops a provider above its view when what it hands down starts or
     stops differing, which remounted its whole subtree (a cmdk group
-    filtered out and back). Main-thread time per interaction on the
-    stand-in (sampled, 80 rounds): switching example 6.2 → 5.1 ms
-    (badge/button) and 5.7 → 4.7 (card/table), a character typed 2.8 →
-    2.7, the theme toggled 5.7 → 5.0; React's own share of the
-    badge/button switch 2.7 → 1.1 ms. The stand-in's start (the example
-    sent, medians of four interleaved rounds of nine) 76 → 69 ms, CPU 138
+    filtered out and back). What it buys per interaction is within this
+    machine's noise for most: main-thread time sampled over 80 rounds on
+    the stand-in, two interleaved rounds, switching example 6.2, 5.6 →
+    5.1, 5.9 ms (badge/button) and 5.7, 5.9 → 4.7, 6.9 (card/table), a
+    character typed 2.8, 3.0 → 2.7, 3.6, the theme toggled 5.7, 5.9 →
+    5.0, 6.7; React's own share of the badge/button switch, the steadiest
+    part of a profile, 2.7 → 1.1 ms. The whole wire-record session (243
+    examples opened, pressed and typed in, deterministic) takes 7.23, 7.20,
+    7.23 s of CPU before and 7.05, 6.86, 7.06 now. The stand-in's start
+    (the example sent, medians of four interleaved rounds of nine) 76 → 69
+    ms, CPU 138
     → 122 ms. The session's wire record now differs from
     round 3's there, a set where it had a remove and an insert, 20 KB less
     in all, and the host's tree after every one of its 826 lines is the
