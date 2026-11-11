@@ -254,6 +254,55 @@ fn the_end_stays_in_reach_and_in_range_as_the_window_changes(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn a_view_scrolled_between_pixels_paints_on_them_and_keeps_its_offset(cx: &mut TestAppContext) {
+    // The second row is a scroll view itself: where it is painted says
+    // where the page painted its rows. A test window draws two device
+    // pixels to a logical one.
+    let spec = Spec {
+        inner: Some((120.0, 6)),
+        ..Spec::default()
+    };
+    let (_, outer, inner, cx) = open(cx, spec, 400.0, 300.0);
+    cx.update(|window, _| window.set_scroll_snap(true));
+    let at = point(px(100.0), px(20.0));
+    let painted = |inner: &ScrollHandle| f32::from(inner.bounds().top());
+    let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+    assert_eq!(painted(&inner), 50.0);
+
+    // A touchpad's small steps add up in the offset, which the scroll bar
+    // reads; the rows move by a device pixel at a time.
+    for (step, top) in [
+        (1, 50.0),
+        (2, 49.5),
+        (3, 49.5),
+        (4, 49.0),
+        (5, 49.0),
+        (6, 49.0),
+    ] {
+        wheel(cx, at, -0.2);
+        assert!(near(scrolled(&outer), 0.2 * step as f32), "step {step}");
+        assert!(near(down(&outer).geometry().scrolled.1, 0.2 * step as f32));
+        assert_eq!(painted(&inner), top, "step {step}");
+    }
+
+    // The end is where it was (taffy lays out in device pixels, so it is
+    // on one); a little back from it, the rows are on the nearest pixel.
+    resize(cx, 400.0, 333.5);
+    assert_eq!(max(&outer), 236.5);
+    wheel(cx, at, -10_000.0);
+    assert_eq!(scrolled(&outer), 236.5);
+    assert_eq!(painted(&inner), 50.0 - 236.5);
+    wheel(cx, at, 0.3);
+    assert!(near(scrolled(&outer), 236.2));
+    assert_eq!(painted(&inner), 50.0 - 236.0);
+
+    // Without it (`MIRIN_METAL_SCROLL_SNAP=0`), painted at the offset.
+    cx.update(|window, _| window.set_scroll_snap(false));
+    draw(cx);
+    assert!(near(painted(&inner), 50.0 - 236.2));
+}
+
+#[gpui::test]
 fn content_that_grows_later_scrolls_further(cx: &mut TestAppContext) {
     let (spec, outer, _, cx) = open(cx, Spec::default(), 400.0, 300.0);
     spec.borrow_mut().rows = 20;

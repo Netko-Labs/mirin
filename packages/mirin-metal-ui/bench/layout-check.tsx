@@ -21,6 +21,11 @@
  * which a host from before that does not, so it is for comparing one host
  * with itself: `--scene --env-b=MIRIN_METAL_RETAIN=0`, and at another scale
  * factor with `--env-a=MIRIN_METAL_SCALE=1.5 --env-b=MIRIN_METAL_SCALE=1.5`.
+ * There, pass `--bounds-digits=3` too: bounds are then compared to that many
+ * decimals. What is drawn is the same to the bit (`--scene`), but the layout
+ * map moves a copied subtree's nodes by a logical distance, which at a
+ * scale factor that is not a power of two differs from laying them out
+ * there in the last digits a float holds.
  *
  * `--scene` also compares what each host drew after every step: a digest of
  * the frame's primitives and hitboxes, which a host traces with
@@ -57,6 +62,14 @@ if (!app || !hostA || !hostB || !["browser", "grid", "scroll", "scroll-fractiona
   process.exit(2);
 }
 const scene = args.includes("--scene");
+/** `--bounds-digits=N`: compare bounds to N decimals (see above); exact without. */
+const boundsDigits = args.find((arg) => arg.startsWith("--bounds-digits="))?.split("=")[1];
+const bound = (value: number): string => {
+  if (boundsDigits === undefined) return String(value);
+  const unit = 10 ** Number(boundsDigits);
+  // `+ 0`: a rounded -0 is 0.
+  return String(Math.round(value * unit) / unit + 0);
+};
 /** `--env-a=NAME=value` (or `-b`): the environment of that host alone. */
 const hostEnv = (host: "a" | "b"): Record<string, string> =>
   Object.fromEntries(
@@ -340,7 +353,10 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
     for (let waited = 0; layout === null && waited < 3000; waited += 20) await Bun.sleep(20);
     const nodes: LayoutNode[] = layout ?? [];
     const snapshot = new Map(
-      nodes.map((node) => [node.id, `${node.x},${node.y} ${node.width}x${node.height}`]),
+      nodes.map((node) => [
+        node.id,
+        `${bound(node.x)},${bound(node.y)} ${bound(node.width)}x${bound(node.height)}`,
+      ]),
     );
     snapshot.set("(heard)", heard.join(", "));
     heard = [];
@@ -392,7 +408,9 @@ async function recorded(
       binary,
       "-",
       `--record=${path}`,
-      ...args.filter((arg) => arg === "--visible" || arg === "--scene"),
+      ...args.filter(
+        (arg) => arg === "--visible" || arg === "--scene" || arg.startsWith("--bounds-digits="),
+      ),
       // The child runs it as its first host.
       ...Object.entries(hostEnv(host)).map(([name, value]) => `--env-a=${name}=${value}`),
     ],

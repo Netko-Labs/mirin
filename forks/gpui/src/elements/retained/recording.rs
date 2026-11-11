@@ -218,9 +218,14 @@ impl Window {
     /// narrows where its drawing is whole.
     pub(crate) fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
+        let grid = self.grid();
+        if self.recordings.is_empty() && grid.is_exact() {
+            self.next_frame.scene.insert_primitive(primitive);
+            return;
+        }
         // Settled whether or not anything is recorded: a drawing is the
         // same with retained subtrees and without.
-        let on = primitive.settle(&self.grid());
+        let on = primitive.settle(&grid);
         if self.recordings.is_empty() {
             self.next_frame.scene.insert_primitive(primitive);
             return;

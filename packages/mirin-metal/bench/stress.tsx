@@ -401,6 +401,9 @@ await scenario("resize", resizes, async () => {
     await Bun.sleep(300);
   }
 });
+// Resident memory after everything above: with what scrolling put aside
+// (the drawings of rows that left the view).
+const memoryAtEnd = rss();
 
 // `--trace=<path>`: the host's whole trace log, for a closer look at a run.
 const tracePath = args.find((arg) => arg.startsWith("--trace="))?.slice("--trace=".length);
@@ -455,6 +458,7 @@ const result = {
 // The resize scenario's frames, beside the others'.
 Object.assign(result, {
   resize: { n: resize.length, frame: median(resize), frameP95: p95(resize), cpu: cpu.resize ?? 0 },
+  rssAtEndMb: memoryAtEnd,
 });
 if (args.includes("--json")) {
   console.log(JSON.stringify(result));
@@ -496,7 +500,7 @@ if (args.includes("--json")) {
     `idle: ${idleCpuMs.toFixed(0)} ms CPU / 3 s, ${idleFrames} frames; RSS ${memory.toFixed(0)} MB`,
   );
   console.log(
-    `resize   ${String(resize.length).padStart(2)} frames of ${resizes} widths ${resizeBy} px apart: frame ${median(resize).toFixed(1)} ms, p95 ${p95(resize).toFixed(1)} ms, cpu ${(cpu.resize ?? 0).toFixed(1)} ms`,
+    `resize   ${String(resize.length).padStart(2)} frames of ${resizes} widths ${resizeBy} px apart: frame ${median(resize).toFixed(1)} ms, p95 ${p95(resize).toFixed(1)} ms, cpu ${(cpu.resize ?? 0).toFixed(1)} ms; RSS at the end ${memoryAtEnd.toFixed(0)} MB`,
   );
 }
 process.exit(0);

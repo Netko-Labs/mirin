@@ -324,6 +324,11 @@ impl Element for Retained {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Left out: nothing to paint, and its state (which layout and
+        // prepaint already carried into this frame) need not be looked up.
+        if matches!(prepaint, RetainedPrepaint::Skipped) {
+            return;
+        }
         let global_id = global_id.expect("a retained subtree has an id");
         let (view, skippable) = (self.view, self.skippable);
         window.with_element_state::<RetainedState, _>(global_id, |state, window| {
