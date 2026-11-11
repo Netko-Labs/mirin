@@ -578,7 +578,7 @@ fn scene_traced() -> Option<Option<&'static std::path::Path>> {
         .get_or_init(|| {
             let value = std::env::var("MIRIN_METAL_TRACE_SCENE").ok()?;
             if std::env::var("MIRIN_METAL_TRACE_SCENE_GLYPHS").is_ok_and(|glyphs| glyphs == "1") {
-                gpui::describe_glyph_variants(true);
+                crate::gpui_api::describe_glyph_variants(true);
             }
             Some((value != "1").then(|| value.into()))
         })

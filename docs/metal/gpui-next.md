@@ -526,9 +526,11 @@ the spike; this one is what is real now, and replaces the spike's
   point, `ShapedLine::paint`'s alignment, `BoxShadow::inset`, keystroke
   parsing, `on_scroll`, layer-shell options as a window kind, visibility for
   suspension. What upstream lacks altogether is ported into `forks/zed` with
-  the fork's API instead, and the shim goes; 8 stand-ins marked `GAP` remain
+  the fork's API instead, and the shim goes; 10 stand-ins marked `GAP` remain
   (Dashi chrome, session lock, file drag-out, per-paragraph sizes; the
-  screen a layer surface names). Tests that need a fork-only feature are
+  screen a layer surface names; and from round 4's lists lane, a list's
+  content origin, without which its rows each move on their own as before
+  that lane, and glyph variants in scene traces). Tests that need a fork-only feature are
   `cfg`'d with a comment: the fork's three helper tests (`reuses_layout`,
   `cut_line`, `ink_end_x`), the scroll-snap switch, and the moved-count
   assertion. mirin-metal's source grew by 564 lines and lost 117, most of
@@ -537,7 +539,7 @@ the spike; this one is what is real now, and replaces the spike's
   ```sh
   cd crates/mirin-metal/next
   cargo build --release --bin mirin-metal-host    # ~2 min from cold
-  cargo test --lib                                 # 188 pass, 1 ignored
+  cargo test --lib                                 # 189 pass, 1 ignored
   cargo clippy --all-targets -- -D warnings
   ```
 

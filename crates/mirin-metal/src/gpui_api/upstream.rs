@@ -227,3 +227,18 @@ pub(crate) fn line_height_at(layout: &TextLayout, _index: usize) -> Pixels {
 pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear(cx);
 }
+
+/// GAP: upstream's list does not say where it paints its content, so its rows
+/// stay in the group around it and each moves on its own (`list.rs`).
+pub(crate) const LIST_CONTENT_ORIGIN: bool = false;
+
+/// GAP: never called upstream (`LIST_CONTENT_ORIGIN` is false).
+pub(crate) fn on_list_content_origin(
+    list: gpui::List,
+    _listener: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+) -> gpui::List {
+    list
+}
+
+/// GAP: upstream's scene traces have no glyph variants; this does nothing.
+pub(crate) fn describe_glyph_variants(_on: bool) {}

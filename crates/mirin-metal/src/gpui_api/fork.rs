@@ -155,3 +155,20 @@ pub(crate) fn line_height_at(layout: &TextLayout, index: usize) -> Pixels {
 pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear();
 }
+
+/// A list tells where it paints its rows' content, so they can move as one
+/// group of the layout map (`list.rs`).
+pub(crate) const LIST_CONTENT_ORIGIN: bool = true;
+
+/// Call `listener` with where `list` paints its content, every frame.
+pub(crate) fn on_list_content_origin(
+    list: gpui::List,
+    listener: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+) -> gpui::List {
+    list.on_content_origin(listener)
+}
+
+/// Scene traces name each glyph's atlas tile (pixel and subpixel variant).
+pub(crate) fn describe_glyph_variants(on: bool) {
+    gpui::describe_glyph_variants(on);
+}
