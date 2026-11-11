@@ -1,0 +1,512 @@
+# Metal on current upstream GPUI: spike findings
+
+Date: 2026-11-10. Branch `perf-gpui-next`. Spike code: `spikes/gpui-next/`
+(its README says how to build it and repeat the numbers).
+
+Metal's GPUI fork (`forks/gpui`) is the crates.io release gpui 0.2.2 plus 29
+mirin changes (about 3,070 added lines over 23 files, `forks/gpui/MIRIN.md`),
+on a taffy 0.9.0 fork with 9 more (480 lines, `forks/taffy/MIRIN.md`). gpui
+0.2.2 was published on 2025-10-22 and is still the newest release on
+crates.io; Zed's own tree (commit `f8cfc7ed`, 2026-11-10) is a year further
+on: GPUI is split into platform crates, the blade renderer is replaced by
+wgpu, layout is on taffy 0.15, and it has gained accessibility, native popups
+and layer shell.
+This spike built `crates/mirin-metal` against that tree to answer whether and
+how to move.
+
+## Recommendation
+
+**Migrate, as the next piece of work after round 2 lands. Not in the middle
+of round 2, and not never.**
+
+- It works today with a small port: 291 lines added and 122 removed in
+  `crates/mirin-metal/src` (of 15,870), tests included. The host runs the
+  counter demo, the example browser and the 15k-node stress bench on
+  upstream, and 164 of mirin-metal's 169 tests pass.
+- Upstream already has 11 of the fork's 29 GPUI changes, among them the
+  three largest platform ones (layer shell with a screen per surface, idle
+  windows that stop committing, text input gating). 15 more port
+  mechanically (about 900 lines). 3 need redesign, and they are round 1's
+  performance work: retained subtrees and the layout tree kept across frames.
+- By itself upstream is not slower per frame: a whole-tree frame of the
+  15k-node stress app took 96–126 ms on upstream and 113–145 ms on round 1's
+  host with retention off, at comparable load. It uses less memory on a large
+  tree (230 MB against 293 MB). A small app costs more as upstream comes:
+  the counter's host is 101 MB RSS against 77–80 MB (PSS 58 against 44–47)
+  and paints its first content frame ~95 ms after it starts against 55–72
+  ms. Nearly all of that is wgpu loading the GL driver beside Vulkan; built
+  to ask for Vulkan only (one line) it is 83 MB, PSS 51, and 65 ms.
+- What blocks switching now: without retained subtrees a 15k-node frame is
+  ~100 ms, where round 1's host draws it in ~4.5 ms. The switch can only
+  happen once retention is ported, and that port is a redesign (section 4).
+- Layout is not pixel-identical: upstream snaps text line heights and box
+  edges to device pixels, so on the stress grid 2,990 of 3,044 checked nodes
+  sit 1 px taller or a few px lower than on the fork. Every Dashi app needs a
+  look after the switch.
+- What argues against waiting long: every week on 0.2.2 adds fork changes in
+  code upstream has since replaced. Round 2's footprint lane is changing the
+  blade renderer (`forks/gpui/src/platform/blade/*`, a blade-graphics fork);
+  upstream has no blade any more, so that work does not carry over. Fork work
+  on the Wayland frame loop, the text-input path or the window options meets
+  code upstream rewrote.
+
+The order and effort are in section 5: 23 to 34 working days of one
+engineer (five to seven weeks), less with parallel lanes since three of the
+steps are independent. The retained port and checking Dashi's apps for layout
+changes are the large and uncertain parts.
+
+## 1. Does mirin-metal build and run on upstream GPUI?
+
+Yes. `spikes/gpui-next/` is a standalone package that compiles a copy of
+`crates/mirin-metal/src` (as of `5fbcfb7`) with `port.patch` applied (291
+lines added, 122 removed, in 21 files; `cargo fmt` and `cargo clippy
+--all-targets -- -D warnings` clean), against
+`zed/crates/gpui` by path (a sparse checkout made by `fetch-zed.sh`; upstream's
+sources are not in the repo). `cargo build --release --bin mirin-metal-host`
+takes about 1 min 45 s here. The resulting host speaks the same protocol, so
+the demos and benches run on it unchanged.
+
+What ran: `demo/counter.tsx` (first content frame, clicks), `bench/stress.tsx`
+(select, type and hover, all three), `bench/native.tsx` (clicks, list scroll,
+maximize), `bench/layout-check.tsx`. No bench scenario was missing a sim
+command or failed to run.
+
+mirin-metal's own tests, on upstream (`cargo test --lib` in the spike): 164
+pass, 5 fail, 1 is ignored as before, and 4 that test fork-private helpers
+(`ink_end_x`, `reuses_layout`, `cut_line`) are left out. The five failures
+are each a fork change upstream lacks, which checks the reading in section 3
+from the other side:
+
+| Failing test | Fork change it needs |
+| --- | --- |
+| `one_line_tests::a_box_narrower_than_the_ellipsis_shows_nothing` | a line narrower than its ellipsis draws nothing |
+| `scroll_tests::its_last_rows_margin_and_its_border_count`, `its_padding_counts_once` | scroll by taffy's content size |
+| `scroll_tests::the_wheel_scrolls_the_innermost_view_then_the_one_around_it` | the wheel scrolls the innermost view that can move |
+| `retain::tests::only_subtrees_that_render_from_their_content_alone_are_kept` | retained subtrees (off in the spike) |
+
+The truncation tests (`a_one_line_text_its_box_cuts_ends_in_an_ellipsis` and
+three more of `one_line_tests`) and the other 10 scroll tests pass without the
+fork.
+
+Layout against round 1's host (`bench/layout-check.tsx`, retention off,
+every id'd node's bounds after each step):
+
+| App | Result | What differs |
+| --- | --- | --- |
+| Card grid (40×25) | 2,990 of 3,044 nodes differ at every step | a text line is 15 px tall where the fork gives 14 (upstream snaps line height to device pixels, `elements/text.rs:611`), so each card is 1 px taller and the rows under it sit lower (4–5 px midway down the grid) |
+| Example browser, most steps | 1 of 52–60 nodes | 1 px |
+| Example browser, accordion and list steps | 13 of 63–67 | 1 px |
+| Example browser, card example | 20 of 69 | real: its `grid-cols-[1fr_auto]` is the track-list stub (equal columns) |
+| Example browser, typing in search | 38 of 59 | up to 3 px (accumulated 1 px line heights) |
+
+So the spike host is usable for measuring, and it is not a drop-in: layouts
+move by a pixel wherever text sets a height.
+
+Not done: macOS was not built, and nothing was checked by eye.
+
+### API differences mirin-metal had to adapt to
+
+| Area | gpui 0.2.2 (fork) | Upstream | Size in mirin-metal |
+| --- | --- | --- | --- |
+| Crates | one `gpui` crate with its platforms | `gpui` (core) + `gpui_platform` (picks `gpui_linux` / `gpui_macos` / `gpui_windows` / `gpui_web`) + `gpui_wgpu` (renderer and Linux text system) | manifest: one more dependency |
+| Starting the app | `Application::new()` | `gpui_platform::application()` | 2 lines |
+| Async app | `AsyncApp::update` returns `Result<R>` | returns `R` | 2 call sites that used the `Result` |
+| Quit on last window | fork's `set_quit_when_last_window_closes(false)` | `cx.set_quit_mode(QuitMode::Explicit)` | 1 line |
+| Window closed | `on_window_closed(\|cx\| …)` | `on_window_closed(\|cx, window_id\| …)` | 1 line |
+| Focus | `window.focus(&handle)` | `window.focus(&handle, cx)` | 9 call sites, and `cx` passed down through 7 functions (about 40 lines) |
+| Drawing in tests | `window.draw(cx).clear()` | `.clear(cx)` | 2 lines |
+| Layer shell | fork's `WindowOptions::layer_shell` | `WindowOptions::kind = WindowKind::LayerShell(..)`; anchor is bitflags, zone and margins are `Pixels`, no `output` | a 60-line adapter (`src/upstream.rs`) |
+| Suspended | fork's `observe_window_suspended` / `is_window_suspended` | `observe_window_visibility(\|visibility, …\|)` | 3 lines |
+| Scroll | `ScrollHandle::max_offset()` is a `Size`; `ScrollWheelEvent`, `on_scroll_wheel` | a `Point`; `ScrollEvent`, `on_scroll` (old names deprecated) | 6 lines |
+| Text painting | `ShapedLine::paint(origin, line_height, window, cx)` | two more arguments (`align`, `align_width`) | 1 call |
+| Box shadow | 4 fields | `inset: bool` added | 1 line |
+| Keystrokes | `Keystroke::parse(&str)` | `parse` takes `&'static str`; `parse_with_os(&str, os)` for dynamic input | 1 call |
+| Layout engine | taffy 0.9.0 (fork) | taffy 0.15.0, rounding done by GPUI in device pixels | none in mirin-metal (it never names taffy) |
+| Text stack | cosmic-text 0.14 in `gpui` | cosmic-text 0.19 in `gpui_wgpu` | none |
+| Accessibility crates | none in GPUI; mirin-metal has accesskit 0.25 + accesskit_unix 0.24 (fork) | GPUI brings accesskit 0.24 + accesskit_unix 0.22 | two copies in the build until mirin-metal's `access/` moves onto GPUI's |
+| Toolchain | Rust 2021 | edition 2024, Rust 1.98.1 pinned | none |
+
+The `Element`, `Render`, `InputHandler`, `div`/`canvas`/`list`/`img`/`svg`
+and `Styled` surface mirin-metal uses compiled unchanged.
+
+### Stubbed or off in the spike (fork-only API)
+
+| Fork API mirin-metal uses | In the spike | To make real |
+| --- | --- | --- |
+| `gpui::retained`, `Retained::on_prepaint` | off: `retain::enabled()` is false, every frame is drawn whole | section 4 |
+| `grid_template_columns/rows`, `GridTrack`, `TrackBreadth` | stub: N tracks become `repeat(N, minmax(0, 1fr))` | port the fork change (~95 lines) |
+| `justify_items`, `justify_self` | ignored | ~8 lines |
+| `WindowOptions::session_lock`, `Window::unlock_session` | a lock surface opens as a plain window | port (~150 lines in `gpui_linux`) |
+| `LayerShellOptions::output` (screen by name) | ignored: the compositor picks | map the name to a `DisplayId` (upstream picks the output from `WindowOptions::display_id`) |
+| `observe_window_chrome`, `chrome_controls` (Dashi's unified title bar) | never granted; standard title bar reported | port (~165 lines + the protocol XML, `gpui_linux`) |
+| `Window::set_window_min_size` | ignored after open | port (~30 lines) |
+| `Window::start_file_drag` (drag files out, with an icon) | off | upstream has drag-out with another shape (`external_drag_payload`), no icon surface |
+| `StyledText::with_paragraph_sizes`, `TextLayout::line_height_for_index` | one size per text | port (~110 lines, re-applied on changed internals) |
+
+One thing runs twice rather than not at all: accessibility. Upstream GPUI
+publishes its own AccessKit tree over AT-SPI when a screen reader listens
+("Accessibility activated" in its log), and mirin-metal's `access/` publishes
+its tree as before, so the spike host shows up twice on the accessibility
+bus. GPUI's tree is nearly empty here (it lists elements that have a `role`,
+and mirin-metal sets none). Step 6 in section 5 decides which one stays.
+
+## 2. Is upstream faster or slower, lighter or heavier?
+
+Compared like with like: round 1's host (`/tmp/claude-1000/host-r1`) with
+`MIRIN_METAL_RETAIN=0` against the spike host, both taking patches, release
+builds with the same profile, back to back in a nested dashi-comp
+(`runbench.sh`). Three other agents were compiling on the machine, so a run's
+load varies up to 2x; `render` (mirin-metal building its elements, the same
+code on both hosts) is shown as the yardstick for that, and `frame / render`
+is the figure to compare.
+
+**Stress bench** (`packages/mirin-metal/bench/stress.tsx`, ~15k nodes, one
+card or one text changed per update; four runs per host, alternating). Each
+cell is a run's median over its ~50 frames (`frame-ratio.sh` on the traces):
+
+| Run | round 1, retention off: render / frame / ratio | upstream: render / frame / ratio |
+| --- | --- | --- |
+| 1 | 21.2 ms / 173.0 ms / 9.1 | 11.5 ms / 95.5 ms / 8.4 |
+| 2 | 13.5 ms / 118.1 ms / 8.8 | 24.6 ms / 219.5 ms / 8.7 |
+| 3 | 15.5 ms / 144.8 ms / 9.0 | 12.1 ms / 97.9 ms / 8.9 |
+| 4 | 14.2 ms / 112.9 ms / 8.1 | 12.2 ms / 126.2 ms / 10.1 |
+| median ratio | 8.9 | 8.8 |
+| frame in the three runs at similar load | 113–145 ms | 96–126 ms |
+
+| | round 1, retention off | upstream | round 1 as shipped (retention on) |
+| --- | --- | --- | --- |
+| select: frame, per-run medians | 111–261 ms | 96–204 ms | 12.4 ms in this session (4.5–5.8 ms on a quiet machine, `docs/metal.md` 5b) |
+| type: frame | 119–170 ms | 98–246 ms | 9.3 ms |
+| hover: frame | 113–139 ms | 96–239 ms | 11.7 ms |
+| patch parse + apply | 0.1 ms | 0.1 ms | 1.1 ms (with the retained sync) |
+| sent per update | 0.2–0.3 KB | 0.2–0.3 KB | 0.2–0.3 KB |
+| RSS | 289–298 MB | 229–233 MB | 267 MB |
+| idle, 3 s | 0 frames, 0 ms CPU | 0 frames, 0 ms CPU | 0 frames, 0 ms CPU |
+
+Read: per whole-tree frame upstream is between equal and about 15% faster,
+not slower (the ratios overlap; `render` itself ran a little faster on
+upstream in the quieter runs, so the ratio may understate it). It holds 60 MB
+less for the same tree. Neither is near what retention gives.
+
+**Example browser** (`packages/mirin-metal-ui/bench/native.tsx`, ~900
+nodes; four runs per host, alternating; per-run medians):
+
+| | round 1, retention off | upstream |
+| --- | --- | --- |
+| full frame (all frames) | 1.7, 3.5, 2.2, 1.9 ms | 2.9, 1.7, 1.7, 1.5 ms |
+| scroll frame | 3.7, 4.0, 2.3, 3.4 ms | 2.5, 2.7, 2.6, 2.5 ms |
+| tree → elements | 0.1 ms | 0.1 ms |
+| patch apply | 0.5–1.1 ms | 0.5–1.1 ms |
+
+The scroll figure rests on two or three frames a run (the nested compositor
+sends a frame callback once a second, so 120 simulated wheel steps draw two
+frames); it says "not slower", no more.
+
+**Counter demo** (`packages/mirin-metal/demo/counter.tsx`, 800×600;
+`bench/footprint.tsx`, three runs of three starts per host, hosts
+alternating, every binary run from disk; the last column is the spike host built with
+`Backends::VULKAN` alone in `gpui_wgpu/src/wgpu_context.rs`):
+
+| | round 1 | upstream | upstream, Vulkan only |
+| --- | --- | --- | --- |
+| host start → first content frame, per-run medians | 55, 72, 61 ms | 96, 94, 108 ms | 65, 64, 70 ms |
+| host CPU by then | 40–60 ms | 80–100 ms | 60–70 ms |
+| window opened at | ~30 ms | ~12 ms | ~10 ms |
+| host RSS | 76.8–79.8 MB | 100.8–101.5 MB | 83.1–83.5 MB |
+| host PSS | 44.4–47.3 MB | 58.1–58.9 MB | 50.6–51.0 MB |
+| host anonymous memory | 12.0 MB | 17.4 MB | 12.8 MB |
+| of RSS: the binary / GPU driver mappings | 16–19 / 30.7 MB | 22.1 / 45.6 MB | 22.3 / 30.6 MB |
+| GPU memory (`gtt`, not in RSS) | 68 MB | 52 MB | 47–48 MB |
+| threads | 35 | 45 | 38 |
+| idle wakeups per 5 s | 10 | 0 | 0 |
+| host binary (stripped) | 33.1 MB (25.1) | 44.2 MB (33.5) | same |
+
+Read: a small app is heavier on upstream as it comes: +22 MB RSS, +12 MB
+PSS, about +30 ms to the first frame. Upstream opens its window sooner and
+then spends longer before the first frame, in wgpu's adapter search (it
+enumerates and loads GL as well as Vulkan). Asking wgpu for Vulkan only gives
+nearly all of it back: +5 MB RSS and +5 MB PSS over round 1 (the larger
+binary), the same startup within noise, and 20 MB less GPU memory.
+
+An earlier set of four runs with round 1's host on `/tmp` (tmpfs) read 71–72
+MB for it; 13.5 MB of its binary was swapped out. Those are not used.
+
+Renderer: blade (0.2.2) draws through Vulkan only. Upstream's wgpu asks for
+`Backends::VULKAN | Backends::GL` on Linux. Here it found two adapters,
+`AMD Radeon 890M (RADV STRIX1)` on Vulkan and the same GPU through radeonsi on
+GL, tested the Vulkan one and took it ("Selected GPU adapter … (Vulkan)",
+`MIRIN_METAL_GPUI_LOG=1`). Upstream also reads the compositor's GPU from
+`linux-dmabuf` feedback to pick the adapter ("Compositor GPU hint:
+vendor=0x1002, device=0x150e"), which is what mirin's `gpu.rs` does by hand
+for blade; mirin's `VK_LOADER_DRIVERS_SELECT` filter still applied in the
+spike and is still worth keeping (it keeps the loader from mapping the other
+GPU's driver at all). Enumerating GL is what loads `libgallium` and a GL
+thread into every app: the memory, the 7 threads and most of the startup in
+the last column above. A machine without Vulkan would get a working window
+from GL, which blade could not give; the change worth making (and offering
+upstream) is to try Vulkan first and load GL only when there is none.
+
+Idle behaviour is the same: 0 frames and 0 ms of host CPU over 3 s on the
+stress app for both, and the idle counter host made no wakeups in 5 s
+(round 1: 10).
+
+## 3. Which fork changes has upstream absorbed?
+
+Classes: **a** upstream has it; **b** ports mechanically; **c** needs
+redesign. Upstream paths are relative to the zed checkout. Sizes for b and c
+are the fork's diff against the `forks-upstream` branch.
+
+### GPUI (`forks/gpui/MIRIN.md`, 29 rows)
+
+| Fork change | Class | Upstream evidence | Port |
+| --- | --- | --- | --- |
+| Explicit grid track lists | b | only `GridTemplate { repeat, min_size }`, `crates/gpui/src/style.rs:145-175`; `to_grid_repeat`, `taffy.rs:463` | ~95 lines; lengths go through upstream's device-pixel rounding |
+| `justify_items` / `justify_self` | b | not in `Style` or `to_taffy` | ~8 lines |
+| Text min-content width is the widest word | b | `elements/text.rs:626-633` still gives no wrap width for min-content | ~40 lines |
+| Layer-shell surfaces | a | `WindowKind::LayerShell(LayerShellOptions)`, `platform.rs:2889`, `platform/layer_shell.rs`, `gpui_linux/src/linux/wayland/window.rs:164-208` | adapter only; differences below |
+| Typed float literals | a | `taffy.rs:472` | nothing |
+| Session-lock surfaces | b | no `ext_session_lock` anywhere | ~150 lines: one more `WaylandSurfaceState` variant |
+| Layer surface on a chosen screen | a | `display_id` → `wl_output`, `wayland/client.rs:1322-1329`, with the startup roundtrip (`client.rs:1205`) | by `DisplayId`, not connector name |
+| Idle windows stop committing, wake on dirty | a | `FrameLoop::Parked`, `wayland/window.rs:755-765, 975-1017`; `PlatformWindow::schedule_frame` | nothing; upstream keeps presenting for 1 s after fast input |
+| Loop outlives its last window | a | `QuitMode::Explicit`, `app.rs:526` | nothing |
+| Text input only while a field takes text; caret as the IME area | a | `update_ime_enabled`, `wayland/window.rs:1072-1096`; `InputHandler::accepts_text_input` | nothing; a handler can also refuse (a password field) |
+| Dashi's unified title bar | b | none (Dashi-private) | ~165 lines + XML, in a `gpui_linux` fork; there is no extension point |
+| Toplevel suspended state | a | `xdg_wm_base` v6, `State::Suspended → WindowVisibility::Hidden`, `wayland/window.rs:1255` | nothing |
+| Layout reused only for the same truncation width | a | `elements/text.rs:654-669` | nothing |
+| Per-paragraph font sizes | b | one `line_height` per layout | ~110 lines, re-applied (painting was restructured) |
+| A truncated line is cut where it is drawn (`fit_to`) | b | cache half upstream; prepaint re-cut not | ~80 lines |
+| Resize while maximized keeps the size | b | `resize`, `wayland/window.rs:1759` has no guard | ~32 lines |
+| A line narrower than its ellipsis draws nothing | b | `truncate_line` still keeps the suffix | ~9 lines |
+| A line is cut from a copy of its runs | a | `truncate_line` returns `Cow<[TextRun]>` | nothing |
+| Least size after open (`set_min_size`) | b | none | ~30 lines |
+| Wrapped line aligned by its ink end | b | `aligned_origin_x`, `text_system/line.rs:1003` | ~65 lines |
+| No-break space, word joiner, quotes | a | UAX #14 through `icu_segmenter`, `line_wrapper.rs:545`; tested for U+00A0/U+202F | keep mirin's tests for quotes and U+2060 |
+| Scroll by taffy's content size | b | `content_size = child_max - child_min`, `elements/div.rs:2092` | ~45 lines; taffy 0.15 calls it `scrollable_overflow_rect` |
+| Wheel scrolls the innermost view that can move | b | `div.rs:3444-3490` adds the delta unclamped | ~50 lines |
+| List scroll bar range counts padding | b | `max_scroll_offset`, `list.rs:848` | ~7 lines |
+| Retained subtrees | c | only `AnyView::cached`, `view.rs:46`; `reuse_prepaint`/`reuse_paint`, `window.rs:4244` | ~850 lines with tests; section 4 |
+| Element states of a retained subtree | c | `Frame::finish` still moves each state, `window.rs:1199` | ~45 lines; follows the retained port |
+| Layout tree kept across frames | c | `clear()` drops the tree, `taffy.rs:53` | ~115 lines; section 4 |
+| Taffy fork by path | b | `taffy = "=0.15.0"` | a `[patch.crates-io]` entry |
+| `DispatchEventResult` public | a | `window.rs:2446` | nothing |
+
+Counts: 11 a, 15 b (about 900 lines), 3 c. Two fork changes have no MIRIN.md
+row: `Window::start_file_drag` with `wayland/drag_icon.rs` (drag files out
+with an icon), which upstream covers differently (`external_drag_payload`,
+no icon), and a `refresh()` on a file drop leaving, which upstream has.
+
+### taffy (`forks/taffy/MIRIN.md`, 9 rows, against taffy 0.15.0)
+
+| Fork change | Class | taffy 0.15 | Port |
+| --- | --- | --- | --- |
+| Container at its min/max width lays its children out again | b | not fixed (`compute_flexbox_layout`, one preliminary pass) | ~16 lines + test |
+| Negative margin with `flex-shrink: 0` | a | fixed differently (`flexbox.rs:1619, 1655`) | keep the test |
+| Fit-content cross size for the base size (column) | b | not fixed | ~42 lines |
+| Fit-content hypothetical cross size (column) | b | not fixed | ~28 lines |
+| End margins count toward content size | b | not fixed; the accumulator is now a `Rect` (`scrollable_overflow.rs`) | ~12 lines, reshaped |
+| Incremental rounding (`round_changed`) | drop | upstream GPUI calls `disable_rounding()` and snaps edges itself (`crates/gpui/src/taffy.rs:39, 356-390`) | nothing to port; the same saving has to be made in GPUI's own snapping |
+| `remove` keeps a re-parented child, drops the context | a / b | context dropped; parent still cleared | ~6 lines |
+| `contains` | b | none | ~4 lines |
+| Detached layout | c | none; out-of-flow boxes are now hoisted and placed in a last pass | rewrite |
+
+So a taffy fork is still needed on upstream (four flexbox fixes that shadcn
+layouts hit, plus what retention needs), now of 0.15.
+
+### The ones that matter most
+
+**Layer shell.** Upstream's is a superset in most ways and differs in shape:
+
+| | mirin fork | upstream |
+| --- | --- | --- |
+| Where | `WindowOptions::layer_shell` | `WindowOptions::kind = WindowKind::LayerShell(..)` |
+| Layer default | `Top` | `Overlay` |
+| Anchor | four bools | bitflags |
+| Exclusive zone | `i32` | `Option<Pixels>`, plus `exclusive_edge` |
+| Margin | four `i32` | `Option<(Pixels × 4)>` |
+| Keyboard default | `None` | `OnDemand` |
+| Screen | `output: Option<String>` (connector name) | `WindowOptions::display_id` |
+| After creation | size only | size, `Window::set_exclusive_zone`, `set_exclusive_edge`, `set_input_region` |
+| Popups | none | `WindowKind::AnchoredPopup` (xdg_popup), also from a layer surface |
+| Stretching | sends 0 on an axis anchored to both edges | sends the window's size; a bar gets its size from `window_bounds` |
+
+Two things to add for Dashi: a way to name the screen (a `PlatformDisplay`
+has no connector name; its `uuid()` is derived from it), and the 0-size
+request for a stretched axis so a bar follows its output's width. Both are
+small `gpui_linux` changes and upstreamable.
+
+**Session lock.** Not upstream. The port is a third surface role beside xdg
+and layer surfaces; upstream's `target_output` would let it lock a chosen
+screen instead of the first.
+
+**Frame callbacks and idle.** Upstream's Wayland window now parks when a
+frame had nothing to draw and asks for a frame callback only when it draws,
+which is the fork's change. Wake-up is `PlatformWindow::schedule_frame`
+(called when a window becomes dirty) instead of the fork's `redraw_waker`.
+Measured: 0 frames while idle on both.
+
+**Text input gating.** Upstream enables `zwp_text_input_v3` only while the
+window is active, an input handler is set, and the handler accepts text; the
+candidate area with nothing composed is the selection head. Same as the
+fork, plus the handler's own veto.
+
+**Taffy.** Upstream GPUI lays out in device pixels with taffy's rounding
+off, and snaps each node's absolute edges afterwards. The fork's incremental
+rounding lives in taffy and has no place there.
+
+## 4. How would round 1's performance work port?
+
+What upstream has today, compared with 0.2.2:
+
+| Mechanism | 0.2.2 | Upstream | Same? |
+| --- | --- | --- | --- |
+| `Window::draw` | request layout, prepaint, paint of the whole tree; `layout_engine.clear()`; `next_frame.finish()` | the same sequence (`window.rs:3660-3800`), plus accessibility and a frame pacer | yes |
+| Layout tree | a new taffy tree every frame | the same (`taffy.rs:53`) | yes: no persistent tree |
+| Layout cache | taffy's per-node cache, lost with the tree | the same | yes |
+| Rounding | taffy rounds the whole tree | GPUI snaps absolute edges per node on demand, cached per frame | different |
+| Element state | `Frame::element_states`, moved key by key each frame | the same (`window.rs:1044, 1199`) | yes |
+| View reuse | `AnyView::cached(style)`: size from outside, reuse when bounds, mask and text style match | the same rule (`view.rs`, `prepaint_view`), now also through a `View` trait | yes |
+| `reuse_prepaint` / `reuse_paint` | copy ranges of last frame's lists | the same, with one more index in test builds | yes |
+| Dispatch tree | `reuse_subtree` | the same | yes |
+
+So upstream has no equivalent of round 1's work: no persistent layout tree,
+no reuse for a subtree that sizes itself from its content, no cheaper
+element-state carry. The gap the fork closed is still open upstream, and the
+stress bench shows it: ~100 ms a frame on upstream against ~4.5 ms
+with retention.
+
+What lives in mirin-metal carries over as it is, and ran in the spike: the
+patch protocol (0.1 ms parse and apply, 0.2 KB per update), the document's
+generations, and giving a GPUI element id only to views that interact.
+
+What the port needs:
+
+- **`elements/retained.rs` (541 lines + tests).** The element, its range
+  bookkeeping and `ElementStateScope` sit on parts of `Window` and `Frame`
+  that did not change shape (`PrepaintStateIndex`, `PaintIndex`, the
+  `Element` trait), so about two thirds ports as it is.
+- **Moved subtrees.** The fork rebuilds a subtree that moved and lays it out
+  detached "as its kept nodes sit", relying on taffy rounding relative to the
+  parent. Upstream snaps to absolute device pixels, so a subtree that moves by
+  a fractional amount can change its inner geometry by a pixel. The reuse test
+  has to compare device-pixel bounds, and the detached layout has to be told
+  the twin's absolute origin.
+- **Persistent tree (`taffy.rs`, ~115 lines in the fork).** Upstream's engine
+  keeps two per-frame maps beside the tree (`absolute_layout_bounds`,
+  `absolute_outer_origins`); a kept subtree needs its entries kept or
+  recomputed, and that is where the fork's incremental-rounding saving has to
+  be made again.
+- **taffy 0.15.** `contains`, the `remove` fix and the detached layout are
+  needed again; the detached layout is a rewrite for the new measure
+  signature and the out-of-flow pass.
+- **Accessibility.** Upstream builds an AccessKit tree during the frame. A
+  subtree that is copied instead of drawn must carry its accessibility nodes
+  too; `AnyView::cached` is the precedent to read.
+
+Estimate: 6 to 10 working days, most of it the moved-subtree case and making
+the fork's `retained` test (same quads, glyphs and hitboxes as drawing
+everything) pass on upstream. It is also the part most worth offering
+upstream, since Zed has the same full-tree frame.
+
+## 5. Maintenance model and migration order
+
+### What to fork
+
+On Linux the build takes 14 crates from the zed repository, all Apache-2.0:
+
+| Crate | Lines (src) | Fork it? |
+| --- | --- | --- |
+| `gpui` | 92,700 | yes: layout, text, retained, grid |
+| `gpui_linux` | 17,475 | yes: session lock, Dashi chrome, layer-shell additions, min size |
+| `gpui_wgpu` | 6,249 | one small change: try Vulkan first and load GL only when there is none (section 2); upstreamable |
+| `gpui_platform`, `gpui_macros`, `gpui_util`, `gpui_shared_string`, `collections`, `refineable` (+ derive), `sum_tree`, `scheduler`, `http_client`, `ztracing` (+ macro) | 14,000 together | no, but they must come from the same commit |
+
+`gpui_macos` and `gpui_windows` join when those platforms do. The dependency
+closure is 536 packages on Linux (the fork's build: 573). None is GPL-only;
+zed's GPL crates (the editor, workspace, and so on) are not in it. `self_cell`
+is `Apache-2.0 OR GPL-2.0-only` (taken as Apache) and `option-ext` is MPL-2.0;
+both are in the fork's build today as well. Upstream pins several
+dependencies to git commits of its own forks
+(`async-task`, `async-process`, `calloop`, `khronos-egl`, `font-kit`, `oo7`,
+`xim`) and wgpu to an unreleased commit; a dependent has to repeat the four
+`[patch.crates-io]` entries GPUI's crates need, because a workspace's patches
+do not reach packages outside it (`spikes/gpui-next/Cargo.toml`).
+
+Apache-2.0 asks that changed files say so and that the license travels with
+the source: `MIRIN.md` and the `// mirin:` comments already do the first.
+
+### How to track it
+
+Keep the scheme `forks/README.md` describes, with one directory for the
+whole set instead of one per crate:
+
+- `forks/zed/` mirrors the zed repository's layout, pruned: `Cargo.toml`
+  (upstream's workspace root, kept because the crates inherit their edition,
+  dependencies and lints from it), `Cargo.lock`, `LICENSE-APACHE`,
+  `rust-toolchain.toml`, and `crates/<the 14 above>` (plus the rest of
+  `crates/gpui*` and `bench_metrics`, which cargo must be able to read to
+  resolve even where they are not built). This is exactly the spike's `zed/`
+  directory, 14 MB of files; the spike shows cargo is content with it (a
+  path dependency reads the root manifest for inheritance and does not load
+  the other members). Running GPUI's own tests from there was not tried: it
+  needs the root manifest's member list cut to the kept crates and a few more
+  of them (`reqwest_client`, `util_macros`, `tooling/perf`).
+- The `forks-upstream` branch holds that directory as upstream has it at one
+  commit; a sync replaces it with a newer commit's and merges the branch, as
+  now. `fetch-zed.sh` is that step's first half.
+- Sync to the commit of a stable Zed release, about monthly, so each merge
+  is small. Upstream moves fast in these crates; a year of drift is how the
+  fork got here.
+- `crates/mirin-metal` depends on `forks/zed/crates/gpui` and
+  `gpui_platform` by path and patches taffy to `forks/taffy` (0.15).
+
+Why snapshots and not history: `git subtree` or a filtered history of these
+paths drags thousands of zed commits into mirin for little gain; merges of
+monthly snapshots already carry mirin's changes forward. A GitHub fork of zed
+is still worth having for one purpose, sending changes upstream: 22 of the
+fork's 29 rows are marked upstreamable (some "in spirit"), 11 are upstream
+already in some form, and each one accepted leaves the fork for good.
+Depending on that fork by git instead of an in-repo directory would
+make every build clone zed and split changes that touch GPUI and mirin-metal
+together into two repositories.
+
+### Migration order
+
+| Step | What | Effort |
+| --- | --- | --- |
+| 0 | Now, during round 2: stop adding fork changes to code upstream replaced (blade renderer, Wayland frame loop, text input enabling) unless they are needed before the switch | none |
+| 1 | `forks/zed/` snapshot and the `forks-upstream` scheme; taffy 0.15 on `forks-upstream`; mirin-metal builds on both through a `gpui-next` cargo feature and a `upstream.rs`-style shim (the spike's patch is the start), so benches and `layout-check` compare the two hosts until the switch | 2 days |
+| 2 | Class b in `gpui` core: grid tracks, `justify_*`, text min-content, per-paragraph sizes, `fit_to`, ink-end alignment, narrow ellipsis, scroll extent, wheel, list padding (~500 lines), with their tests | 4–6 days |
+| 3 | taffy 0.15 fork: four flexbox fixes, `contains`, `remove` (~110 lines); run mirin-metal's layout tests | 2 days |
+| 4 | `gpui_linux`: session lock, Dashi chrome, screen by name and stretched layer surfaces, `set_min_size`, resize while maximized, file drag icon (~450 lines) | 3–4 days |
+| 5 | Retained subtrees and the persistent layout tree (section 4) | 6–10 days |
+| 6 | mirin-metal: port its tests, decide accessibility (GPUI's built-in AccessKit tree could replace `access/` and the accesskit_unix fork), limit wgpu to Vulkan where it is present | 3–5 days |
+| 7 | Check every Dashi app and the example browser for layout and text changes (taffy 0.9 → 0.15, device-pixel snapping, cosmic-text 0.14 → 0.19), benches, footprint; switch the default; delete `forks/gpui` | 3–5 days |
+| alongside | Send the upstreamable rows to Zed, smallest first | per PR |
+
+Steps 2, 3 and 4 are independent of each other; 5 needs 1 and 3.
+
+Risks: layout or text differences across Dashi's apps that only show on
+screen (step 7 is there for that); the retained port taking longer than
+estimated, during which the old fork stays the default; upstream changing the
+frame internals under the port (sync before starting step 5, not during).
+
+## How this was measured
+
+- Hosts: `/tmp/claude-1000/host-r1` (round 1, `5fbcfb7`) and
+  `spikes/gpui-next/target/release/mirin-metal-host`, both `cargo build
+  --release` with the default release profile. For the counter's memory both
+  were copied to the same disk directory first (see the note under its
+  table); the stress and browser runs used round 1's host from `/tmp`, so its
+  RSS there may read low by up to 13 MB.
+- Every run through `/tmp/claude-1000/runbench.sh` (a nested dashi-comp,
+  one bench at a time machine-wide), alternating hosts, on an AMD Radeon 890M
+  laptop while other builds ran. Medians per run; ranges are across runs.
+- `total` (input to painted frame) is the nested compositor's once-a-second
+  frame callback (`docs/metal.md`, 5b) and is left out.
+- Counter startup and memory: `bench/footprint.tsx` from the footprint lane
+  (`perf-footprint`, `4dbca91`), three starts per run.
+- Tests: `cargo test --lib` in `spikes/gpui-next` (GPUI's test platform, no
+  GPU).
+- Fork-change classification: read against the upstream checkout and the
+  taffy 0.15.0 source, not run; sizes are the fork's diff against
+  `forks-upstream`.

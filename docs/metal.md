@@ -990,6 +990,12 @@ cd ../../forks/gpui && cp ../../crates/mirin-metal/Cargo.lock . \
   rm Cargo.lock
 ```
 
+The GPUI fork is gpui 0.2.2, the newest release on crates.io, a year behind
+Zed's tree. [`docs/metal/gpui-next.md`](metal/gpui-next.md) is a spike on
+moving it onto current upstream (what upstream has absorbed, what ports, how
+it measures, and the order of a migration); `spikes/gpui-next/` builds this
+crate against upstream to repeat it.
+
 The TypeScript packages are checked with the rest of the repository
 (`bun run fmt-lint`, `bun run typecheck`, `bun run test`). The root `test`
 script runs `@mirinjs/metal-ui`'s tests from their package directory, because
