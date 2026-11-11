@@ -1576,10 +1576,10 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   | stress bench (15k nodes) | host-r3 | now |
   | --- | --- | --- |
   | across, 40 px steps (`hscroll`): frame (p95) / host CPU a step | 15.0–15.5 ms (18.2–19.4) / 18.3–19.6 ms | 3.4–3.7 ms (4.8–4.9) / 5.6–5.8 ms |
-  | across at 1.25 (`MIRIN_METAL_SCALE`), cards with a shadow (`--shadow`) | 17.1–19.4 ms (21.3–21.5) / 21.5–22.5 ms | HSC125 |
+  | across at 1.25 (`MIRIN_METAL_SCALE`), cards with a shadow (`--shadow`) | 17.1–19.4 ms (21.3–21.5) / 21.5–22.5 ms | 3.7–4.0 ms (5.0–8.3) / 6.5–7.3 ms |
   | down at 1.1, cards with a shadow | 18.7–20.0 ms (23.8–25.1) / 22.7–24.4 ms | 3.7–3.9 ms (5.1–5.3) / 5.8 ms |
   | across at 1.1, cards with a shadow | 19.4 ms (20.9–21.2) / 22.3–23.1 ms | 3.6–3.9 ms (5.3–6.1) / 6.0–6.3 ms |
-  | down at 1.25, cards with a shadow | 3.9–4.0 ms (5.6–6.3) / 6.0–6.3 ms | SC125 |
+  | down at 1.25, cards with a shadow | 3.9–4.0 ms (5.6–6.3) / 6.0–6.3 ms | 4.0–4.1 ms (5.7–9.7) / 6.3–6.9 ms |
   | down, 40 px steps (`scroll`) | 3.4–3.5 ms (4.4–4.9) / 5.0–5.4 ms | 3.4–3.5 ms (5.0–5.1) / 5.6–5.8 ms |
   | select / type / hover / grow / grow and select in the scroll view, frame | 2.8–4.3 / 1.8 / 2.7–3.0 / 4.0–4.1 / 4.1–4.7 / 3.0–3.4 ms | 2.9–3.0 / 1.9 / 2.8 / 3.9–4.2 / 3.9–4.5 / 3.1–3.2 ms |
   | resize, frame | 16.0–16.7 ms | 16.3–16.8 ms |
@@ -1615,10 +1615,24 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   which the retained tests always use. `layout-check.tsx` has an `across`
   app (the cards in columns scrolled across by whole and half pixels,
   under centered and right-aligned captions, with a strip before them
-  that widens, presses and pointer moves): LCSELF. Against `host-r3`:
-  LCR3. `bench/a11y/extents.tsx` (which now also scrolls a virtualized
-  list): EXTENTS. MIRIN_METAL_ACCESS_CHECK on the whole stress bench:
-  ACCESSCHECK.
+  that widens, presses and pointer moves). With `--scene`, the glyphs'
+  variants and `MIRIN_METAL_RETAIN=0` on one side, this host draws the
+  same to the bit with retained subtrees and without on `across` (at 1,
+  1.5 and 1.1), `grid`, `browser`, `scroll` and `scroll-fractional` (at
+  1 and 1.5), and the bounds are the same at 1.5 without
+  `--bounds-digits` (the layout map change above). Against `host-r3`:
+  `grid` identical; `scroll` and `scroll-fractional` draw the same at
+  every step, and differ only in the two children of the scroll view
+  having bounds; `browser` the same, with the content's child in its
+  scroll view having bounds (and, once a search leaves the list short
+  enough not to be virtualized, its rows), and the three glyphs above.
+  `bench/a11y/extents.tsx` (which now also scrolls a virtualized list of
+  pressable rows) reads the same AT-SPI tree from both hosts at every
+  step but for the scroll view's children, which now have extents where
+  they had none: the list's rows have the same extents with the list as
+  one frame as each on its own. `MIRIN_METAL_ACCESS_CHECK=1` on the
+  whole stress bench: no complaint. A scroll and a scroll across send no
+  `object:bounds-changed` (`bench/a11y/signals.sh`).
 
   Evaluated and not done: keeping a row first drawn out of view. A
   subtree drawn anew draws only what lies within 256 px of its mask, so

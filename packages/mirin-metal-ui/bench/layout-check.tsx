@@ -29,11 +29,12 @@
  * which a host from before that does not, so it is for comparing one host
  * with itself: `--scene --env-b=MIRIN_METAL_RETAIN=0`, and at another scale
  * factor with `--env-a=MIRIN_METAL_SCALE=1.5 --env-b=MIRIN_METAL_SCALE=1.5`.
- * There, pass `--bounds-digits=3` too: bounds are then compared to that many
- * decimals. What is drawn is the same to the bit (`--scene`), but the layout
- * map moves a copied subtree's nodes by a logical distance, which at a
- * scale factor that is not a power of two differs from laying them out
- * there in the last digits a float holds.
+ * A host from round 3 needs `--bounds-digits=3` there (bounds compared to
+ * that many decimals): its layout map moved a copied subtree's nodes by a
+ * logical distance, which at a scale factor that is not a power of two
+ * differs from laying them out there in the last digits a float holds.
+ * Since round 4 it moves them on the device grid, and they are the same
+ * to the bit.
  *
  * `--scene` also compares what each host drew after every step: a digest of
  * the frame's primitives and hitboxes, which a host traces with
