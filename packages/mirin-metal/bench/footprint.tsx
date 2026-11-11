@@ -29,7 +29,9 @@
 import { existsSync } from "node:fs";
 import { startHeadlessDisplay } from "../src/index.ts";
 import {
+  type Activity,
   activity,
+  activityBetween,
   childRunning,
   cpuMs,
   type Group,
@@ -116,8 +118,8 @@ interface Run {
   driver: ProcessReport;
 }
 
-function report(pid: number, before: ReturnType<typeof activity>): ProcessReport | null {
-  const after = activity(pid);
+function report(pid: number, before: Activity): ProcessReport | null {
+  const idle = activityBetween(before, activity(pid));
   const memory = memoryRollup(pid);
   if (!memory) return null;
   const all = mappings(pid);
@@ -126,8 +128,8 @@ function report(pid: number, before: ReturnType<typeof activity>): ProcessReport
     categories: groupBy(all, (mapping) => mapping.category),
     largest: groupBy(all, (mapping) => mapping.name || `(${mapping.category})`).slice(0, 14),
     threads: threads(pid),
-    idleCpuMs: after.runMs - before.runMs,
-    idleWakeups: after.wakeups - before.wakeups,
+    idleCpuMs: idle.runMs,
+    idleWakeups: idle.wakeups,
   };
 }
 
@@ -197,8 +199,9 @@ async function runOnce(app: AppCommand): Promise<Run> {
       .find((line) => line.message.startsWith("render"))
       ?.message.match(/render (\d+x\d+)/)?.[1] ?? "";
 
-  // Let startup work finish (caches written, threads parked), then watch it idle.
-  await Bun.sleep(3000);
+  // Let startup work finish (caches written, threads parked, the heap
+  // trimmed three seconds after the last frame), then watch it idle.
+  await Bun.sleep(6000);
   const hostBefore = activity(host);
   const driverBefore = activity(driver.pid);
   await Bun.sleep(idleMs);

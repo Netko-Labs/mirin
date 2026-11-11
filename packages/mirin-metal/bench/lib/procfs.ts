@@ -4,7 +4,7 @@
  * its DRM clients hold (`fdinfo`). Used by `bench/footprint.tsx`.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync } from "node:fs";
 
 /** Sizes in kB, as `smaps` reports them. */
 export interface MemoryKb {
@@ -92,25 +92,30 @@ function categorize(name: string, afterGuard: boolean, binary: string): string {
 
 /**
  * Every mapping of the process with what it holds resident. An unnamed
- * read-write mapping right after an inaccessible one (a guard page) is
- * counted as a thread stack: that is how pthreads lays them out.
+ * read-write mapping right after a small inaccessible one (a guard page) is
+ * counted as a thread stack: that is how pthreads lays them out. The rest of
+ * the unnamed ones are malloc's arenas and other private memory (`anon`).
  */
 export function mappings(pid: number): Mapping[] {
   const text = read(`/proc/${pid}/smaps`);
   if (text === null) return [];
   let binary = "";
   try {
-    binary = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[0] ?? "";
+    binary = readlinkSync(`/proc/${pid}/exe`);
   } catch {}
   const found: Mapping[] = [];
   let current: Mapping | null = null;
   let previousEnd = "";
   let previousPerms = "";
+  let previousSizeKb = 0;
   for (const line of text.split("\n")) {
     const header = line.match(/^([0-9a-f]+)-([0-9a-f]+) (\S{4}) \S+ \S+ \S+\s*(.*)$/);
     if (header) {
       const [, start = "", end = "", perms = "", name = ""] = header;
-      const afterGuard = previousEnd === start && previousPerms.startsWith("---");
+      // A stack's guard is a page or a few; a malloc arena's unused reserve is
+      // inaccessible too, and tens of megabytes.
+      const afterGuard =
+        previousEnd === start && previousPerms.startsWith("---") && previousSizeKb <= 64;
       current = {
         ...EMPTY,
         name,
@@ -120,6 +125,7 @@ export function mappings(pid: number): Mapping[] {
       found.push(current);
       previousEnd = end;
       previousPerms = perms;
+      previousSizeKb = (Number.parseInt(end, 16) - Number.parseInt(start, 16)) / 1024;
       continue;
     }
     const match = line.match(/^(\w+):\s+(\d+) kB/);
@@ -177,21 +183,41 @@ export function cpuMs(pid: number): { own: number; withChildren: number } | null
   return { own, withChildren: own + children };
 }
 
-/**
- * Time on a CPU and voluntary context switches (a thread that slept and was
- * woken) summed over the live threads: precise enough to see an idle process.
- */
-export function activity(pid: number): { runMs: number; wakeups: number } {
-  let runNs = 0;
-  let wakeups = 0;
+/** Per thread: time on a CPU (ms) and voluntary context switches so far. */
+export type Activity = Map<string, { runMs: number; wakeups: number }>;
+
+/** What each live thread has done so far. */
+export function activity(pid: number): Activity {
+  const byThread: Activity = new Map();
   try {
     for (const task of readdirSync(`/proc/${pid}/task`)) {
-      runNs += Number(read(`/proc/${pid}/task/${task}/schedstat`)?.split(" ")[0] ?? 0);
+      const runNs = Number(read(`/proc/${pid}/task/${task}/schedstat`)?.split(" ")[0] ?? 0);
       const status = read(`/proc/${pid}/task/${task}/status`) ?? "";
-      wakeups += Number(status.match(/voluntary_ctxt_switches:\s+(\d+)/)?.[1] ?? 0);
+      const wakeups = Number(status.match(/voluntary_ctxt_switches:\s+(\d+)/)?.[1] ?? 0);
+      byThread.set(task, { runMs: runNs / 1e6, wakeups });
     }
   } catch {}
-  return { runMs: runNs / 1e6, wakeups };
+  return byThread;
+}
+
+/**
+ * CPU time and wakeups (a thread that slept and was woken) between two
+ * readings, over the threads alive at both: precise enough to see an idle
+ * process, and a thread that ended in between doesn't count backwards.
+ */
+export function activityBetween(
+  before: Activity,
+  after: Activity,
+): { runMs: number; wakeups: number } {
+  let runMs = 0;
+  let wakeups = 0;
+  for (const [task, now] of after) {
+    const then = before.get(task);
+    if (!then) continue;
+    runMs += now.runMs - then.runMs;
+    wakeups += now.wakeups - then.wakeups;
+  }
+  return { runMs, wakeups };
 }
 
 /**
