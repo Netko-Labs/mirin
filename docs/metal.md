@@ -1159,6 +1159,7 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   | type a character in the search field | 1.9 ms | 1.6 ms |
   | toggle the theme (every node set, 89 KB) | 7.9 ms | 4.8 ms |
   | window resized by a pixel | 6.3 ms | 0.24 ms |
+  | with the real host (`bench/native.tsx`): press → last patch sent | 7.0 ms | 6.0 ms |
   | with the real host: spawn → first content frame | 97 ms | 77 ms |
   | with the real host: driver CPU by that frame | 210 ms | 130 ms |
   | with the real host: driver RSS / PSS / anonymous | 71 / 49 / 40 MB | 62 / 40 / 32 MB |
@@ -1217,6 +1218,11 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
     so 2,500 rows appended to 2,500 in one commit take 15 ms and 5,000 to
     5,000 take 45, more than half of it there, and swapping two rows 2,480
     apart is 2,480 moves, 12 ms of it and 145 KB of patch.
+  - *Whole trees.* A whole tree (the start's three, a resync, every commit
+    for a host without patches) writes a view's or an input's head again
+    only for props React has replaced since it last did: the browser's
+    92 KB with nothing changed, 2.3 → 1.3 ms. `lastTree()` still works
+    every head out, so the tests' check against it reads no kept copy.
   - *The start's environment.* `driverEnv()` and `mirin-metal run`
     (section 6): React's production build for an app outside this
     repository (its development build takes a third longer and 40% more

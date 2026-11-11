@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createElement, Fragment, type ReactNode, useState } from "react";
+import { createElement, Fragment, memo, type ReactNode, useState } from "react";
 import { Text, TextInput, View } from "../src/components.ts";
 import { createPortal, render } from "../src/render.ts";
 import type { NativeEvent, NativeRoot, NativeTransport } from "../src/types.ts";
@@ -407,5 +407,65 @@ describe("hosts without patches", () => {
     expect(tree.children?.[0]).toEqual({ type: "text", props: {}, children: ["1"] });
     expect(root.lastTree()).toBe(sent.at(-1) ?? null);
     root.unmount();
+  });
+
+  test("a whole tree after changes is the tree an app mounted that way sends", async () => {
+    interface Shape {
+      rows: string[];
+      wide: string;
+      value: string;
+    }
+    const shape = control<Shape>({ rows: ["a", "b", "c"], wide: "b", value: "" });
+    const seen: Shape[] = [];
+    function App({ fixed }: { fixed?: Shape }) {
+      const live = shape.use();
+      const { rows, wide, value } = fixed ?? live;
+      return createElement(
+        View,
+        { style: { padding: rows.length } },
+        createElement(TextInput, { value, onChangeText() {} }),
+        // Memoized: a row that didn't change keeps its props, and so its kept head.
+        rows.map((key) => createElement(Row, { key, name: key, wide: key === wide })),
+      );
+    }
+    const Row = memo(function Row({ name, wide }: { name: string; wide: boolean }) {
+      return createElement(
+        View,
+        { style: { padding: 4, width: wide ? 200 : 100 }, onPress: wide ? () => {} : undefined },
+        createElement(Text, null, name),
+      );
+    });
+    const transport = (lines: string[]): NativeTransport => ({
+      send: (line) => lines.push(line),
+      onEvent() {},
+      onClose() {},
+      simulate() {},
+      close() {},
+    });
+    const sent: string[] = [];
+    const root = render(createElement(App), transport(sent));
+    await nextCommit();
+    for (const next of [
+      { rows: ["a", "b", "c"], wide: "c", value: "" },
+      { rows: ["a", "b", "c"], wide: "c", value: "typed" },
+      { rows: ["c", "a", "d", "b"], wide: "a", value: "typed" },
+      { rows: ["d"], wide: "d", value: "" },
+      { rows: ["d"], wide: "d", value: "" },
+    ]) {
+      seen.push(next);
+      shape.set(next);
+      await nextCommit();
+    }
+    root.unmount();
+    // The same shapes, each mounted from nothing: only the ids differ.
+    const bare = (line: string) => line.replace(/"id":"\d+"/g, '"id":"?"');
+    expect(sent).toHaveLength(seen.length + 1);
+    for (const [index, fixed] of seen.entries()) {
+      const lines: string[] = [];
+      const fresh = render(createElement(App, { fixed }), transport(lines));
+      await nextCommit();
+      expect(bare(sent[index + 1] ?? "")).toBe(bare(lines[0] ?? ""));
+      fresh.unmount();
+    }
   });
 });
