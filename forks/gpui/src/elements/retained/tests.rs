@@ -63,7 +63,9 @@ fn row(index: usize, row: Row, cells: Vec<AnyElement>) -> AnyElement {
         .bg(rgb(row.color))
         .hover(|style| style.bg(rgb(0xff0000)))
         .child(format!("row {index}"))
-        .child(div().size(px(6.0)).bg(rgb(0x00ff00)))
+        // A shadow is painted before a quad of the same draw order: this
+        // one must come after the row's background all the same.
+        .child(div().size(px(6.0)).bg(rgb(0x00ff00)).shadow_sm())
         .children(cells)
         .into_any_element()
 }
@@ -224,10 +226,11 @@ fn draw(cx: &mut VisualTestContext) {
     });
 }
 
-/// What the last frame drew: its quads and glyphs, and the hitboxes that
-/// can be hit (one wholly clipped never is, and a subtree left undrawn has
-/// none).
-fn drawn(cx: &mut VisualTestContext) -> (String, String, String) {
+/// What the last frame drew: every primitive with the ones painted under
+/// it (`Scene::stacking`: draw orders may be other numbers, what is painted
+/// over what may not), and the hitboxes that can be hit (one wholly clipped
+/// never is, and a subtree left undrawn has none).
+fn drawn(cx: &mut VisualTestContext) -> (Vec<String>, String) {
     cx.update(|window, _| {
         let frame = &window.rendered_frame;
         let hitboxes: Vec<_> = frame
@@ -241,11 +244,7 @@ fn drawn(cx: &mut VisualTestContext) -> (String, String, String) {
             })
             .map(|hitbox| (hitbox.bounds, hitbox.content_mask.clone()))
             .collect();
-        (
-            format!("{:?}", frame.scene.quads),
-            format!("{:?}", frame.scene.monochrome_sprites),
-            format!("{hitboxes:?}"),
-        )
+        (frame.scene.stacking(), format!("{hitboxes:?}"))
     })
 }
 
@@ -311,9 +310,8 @@ fn compare(
     let (kept, draws) = run(cx, true);
     let (whole, _) = run(cx, false);
     for (index, (kept, whole)) in kept.iter().zip(&whole).enumerate() {
-        assert_eq!(kept.0, whole.0, "quads of frame {index}");
-        assert_eq!(kept.1, whole.1, "glyphs of frame {index}");
-        assert_eq!(kept.2, whole.2, "hitboxes of frame {index}");
+        assert_eq!(kept.0, whole.0, "primitives of frame {index}");
+        assert_eq!(kept.1, whole.1, "hitboxes of frame {index}");
     }
     draws
 }
@@ -435,10 +433,11 @@ fn what_is_under_the_pointer_is_drawn_again_when_rows_move(cx: &mut TestAppConte
     };
     let (kept, draws) = run(cx, true);
     let (whole, _) = run(cx, false);
-    assert!(
-        kept[0].0.contains("h: 0.0, s: 1.0, l: 0.5"),
-        "a row is hovered"
-    );
+    let hovered = |frame: &(Vec<String>, String)| {
+        let red = "h: 0.0, s: 1.0, l: 0.5";
+        frame.0.iter().any(|drawn| drawn.contains(red))
+    };
+    assert!(hovered(&kept[0]), "a row is hovered");
     assert_eq!(kept, whole);
     assert!(draws[&RetainedDraw::Moved] > 10, "{draws:?}");
 }

@@ -2555,16 +2555,18 @@ impl Window {
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
         // mirin: through `reuse_paint_moved`.
-        self.reuse_paint_moved(range, None);
+        self.reuse_paint_moved(range, None, false);
     }
 
     /// mirin: `reuse_paint`, for a retained subtree (`elements::retained`)
     /// that may have moved: with `moved`, every primitive is `moved` away
     /// from where it was, under the content mask it would have there.
+    /// `whole`: what shows of it is what did (`Scene::replay_moved`).
     pub(crate) fn reuse_paint_moved(
         &mut self,
         range: Range<PaintIndex>,
         moved: Option<Point<Pixels>>,
+        whole: bool,
     ) {
         let masks = self.reuse_masks(
             range.start.content_masks_index..range.end.content_masks_index,
@@ -2612,6 +2614,7 @@ impl Window {
                 });
                 (masks.id(mask_id), content_mask)
             },
+            whole,
         );
     }
 
@@ -3698,12 +3701,29 @@ impl Window {
     ) -> LayoutId {
         self.invalidator.debug_assert_prepaint();
 
+        self.request_measured_layout_keeping(style, None, measure).0
+    }
+
+    /// mirin: `request_measured_layout`, leaving `kept` on the node for the
+    /// element built for the same node later: when a retained subtree's
+    /// elements are built again for the layout it kept
+    /// (`elements::retained`), what the element before this one left comes
+    /// back (a text takes over the lines it shaped).
+    pub(crate) fn request_measured_layout_keeping<
+        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+            + 'static,
+    >(
+        &mut self,
+        style: Style,
+        kept: Option<Rc<dyn Any>>,
+        measure: F,
+    ) -> (LayoutId, Option<Rc<dyn Any>>) {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(style, rem_size, scale_factor, kept, measure)
     }
 
     /// Compute the layout for the given id within the given available space.

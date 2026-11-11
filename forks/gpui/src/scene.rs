@@ -139,6 +139,8 @@ impl Scene {
 
         if clipped_bounds.is_empty() {
             if keep_hidden {
+                // No order: it is not drawn.
+                primitive.set_order(0);
                 self.paint_operations
                     .push(PaintOperation::Primitive(primitive));
                 self.operation_masks.push(self.mask_id);
@@ -196,29 +198,91 @@ impl Scene {
     /// frame's list and, when it changed, the mask itself. A primitive that
     /// is hidden where it lands is kept, hidden, and one that was hidden is
     /// drawn where it now shows.
+    ///
+    /// `whole`: the same primitives show as did, each as much of it (the
+    /// drawing is where it was, or nothing around it clips it before or
+    /// after). They are then replayed as one: they keep their draw order
+    /// among themselves, above what was drawn under their bounds, instead
+    /// of each being placed among everything drawn so far (most of a
+    /// replay's time). What overlaps is painted in the same order either
+    /// way; only the order's numbers differ.
     pub fn replay_moved(
         &mut self,
         range: Range<usize>,
         prev_scene: &Scene,
         offset: Option<Point<ScaledPixels>>,
         mask: impl Fn(u32) -> (u32, Option<ContentMask<ScaledPixels>>),
+        whole: bool,
     ) {
         let outer = self.mask_id;
         let operations = &prev_scene.paint_operations[range.clone()];
         let masks = &prev_scene.operation_masks[range];
+        let placed = |primitive: &Primitive, old_mask: u32| {
+            let mut primitive = primitive.clone();
+            if let Some(offset) = offset {
+                primitive.move_by(offset);
+            }
+            if let Some(content_mask) = mask(old_mask).1 {
+                primitive.set_content_mask(content_mask);
+            }
+            primitive
+        };
+        // As one: where they all show, and the span of their draw orders.
+        let mut unit: Option<(Bounds<ScaledPixels>, DrawOrder, DrawOrder)> = None;
+        if whole && self.layer_stack.is_empty() {
+            for (operation, old_mask) in operations.iter().zip(masks) {
+                let PaintOperation::Primitive(primitive) = operation else {
+                    continue;
+                };
+                let order = primitive.order();
+                if order == 0 {
+                    continue;
+                }
+                let mut bounds = *primitive.bounds();
+                if let Some(offset) = offset {
+                    bounds.origin += offset;
+                }
+                let shown = match mask(*old_mask).1 {
+                    Some(content_mask) => bounds.intersect(&content_mask.bounds),
+                    None => bounds.intersect(&primitive.content_mask().bounds),
+                };
+                unit = Some(match unit {
+                    Some((bounds, first, last)) => {
+                        (bounds.union(&shown), first.min(order), last.max(order))
+                    }
+                    None => (shown, order, order),
+                });
+            }
+        }
+        let rebase = match unit {
+            Some((bounds, first, last)) if whole => {
+                let base = self.primitive_bounds.insert_spanning(bounds, last - first);
+                Some((base, first))
+            }
+            _ => None,
+        };
+        let as_one = whole && self.layer_stack.is_empty();
         for (operation, old_mask) in operations.iter().zip(masks) {
             let (mask_id, content_mask) = mask(*old_mask);
             self.mask_id = mask_id;
             match operation {
                 PaintOperation::Primitive(primitive) => {
-                    let mut primitive = primitive.clone();
-                    if let Some(offset) = offset {
-                        primitive.move_by(offset);
+                    let primitive = placed(primitive, *old_mask);
+                    match rebase {
+                        Some((base, first)) if primitive.order() != 0 => {
+                            let order = base + (primitive.order() - first);
+                            self.push_ordered(primitive, order);
+                        }
+                        _ if as_one => {
+                            // Hidden as it was.
+                            self.paint_operations
+                                .push(PaintOperation::Primitive(primitive));
+                            self.operation_masks.push(mask_id);
+                        }
+                        _ => {
+                            self.insert(primitive, true);
+                        }
                     }
-                    if let Some(content_mask) = content_mask {
-                        primitive.set_content_mask(content_mask);
-                    }
-                    self.insert(primitive, true);
                 }
                 PaintOperation::StartLayer {
                     bounds,
@@ -229,13 +293,50 @@ impl Scene {
                         bounds.origin += offset;
                     }
                     let content_mask = content_mask.unwrap_or_else(|| old_mask.clone());
-                    let clipped = bounds.intersect(&content_mask.bounds);
-                    self.start_layer(bounds, content_mask, clipped, true);
+                    if as_one {
+                        // Its primitives carry its order already.
+                        self.paint_operations.push(PaintOperation::StartLayer {
+                            bounds,
+                            content_mask,
+                        });
+                        self.operation_masks.push(mask_id);
+                    } else {
+                        let clipped = bounds.intersect(&content_mask.bounds);
+                        self.start_layer(bounds, content_mask, clipped, true);
+                    }
                 }
-                PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::EndLayer => {
+                    if as_one {
+                        self.paint_operations.push(PaintOperation::EndLayer);
+                        self.operation_masks.push(mask_id);
+                    } else {
+                        self.pop_layer();
+                    }
+                }
             }
         }
         self.mask_id = outer;
+    }
+
+    /// mirin: put a primitive in the scene at a draw order already worked
+    /// out (`replay_moved`).
+    fn push_ordered(&mut self, mut primitive: Primitive, order: DrawOrder) {
+        primitive.set_order(order);
+        match &mut primitive {
+            Primitive::Shadow(shadow) => self.shadows.push(shadow.clone()),
+            Primitive::Quad(quad) => self.quads.push(quad.clone()),
+            Primitive::Path(path) => {
+                path.id = PathId(self.paths.len());
+                self.paths.push(path.clone());
+            }
+            Primitive::Underline(underline) => self.underlines.push(underline.clone()),
+            Primitive::MonochromeSprite(sprite) => self.monochrome_sprites.push(sprite.clone()),
+            Primitive::PolychromeSprite(sprite) => self.polychrome_sprites.push(sprite.clone()),
+            Primitive::Surface(surface) => self.surfaces.push(surface.clone()),
+        }
+        self.paint_operations
+            .push(PaintOperation::Primitive(primitive));
+        self.operation_masks.push(self.mask_id);
     }
 
     /// mirin: every primitive the scene draws so far (not the hidden ones
@@ -255,6 +356,60 @@ impl Scene {
             })
             .map(Primitive::describe)
             .collect()
+    }
+
+    /// mirin: what the finished scene paints over what, whatever numbers
+    /// the draw orders are: per primitive, what it is and the primitives
+    /// painted before it that it overlaps, sorted. Two scenes with the same
+    /// answer paint the same pixels (`elements::retained`'s tests).
+    #[cfg(test)]
+    pub(crate) fn stacking(&self) -> Vec<String> {
+        let mut painted: Vec<Primitive> = Vec::new();
+        for batch in self.batches() {
+            match batch {
+                PrimitiveBatch::Shadows(shadows) => {
+                    painted.extend(shadows.iter().cloned().map(Primitive::Shadow))
+                }
+                PrimitiveBatch::Quads(quads) => {
+                    painted.extend(quads.iter().cloned().map(Primitive::Quad))
+                }
+                PrimitiveBatch::Paths(paths) => {
+                    painted.extend(paths.iter().cloned().map(Primitive::Path))
+                }
+                PrimitiveBatch::Underlines(underlines) => {
+                    painted.extend(underlines.iter().cloned().map(Primitive::Underline))
+                }
+                PrimitiveBatch::MonochromeSprites { sprites, .. } => {
+                    painted.extend(sprites.iter().cloned().map(Primitive::MonochromeSprite))
+                }
+                PrimitiveBatch::PolychromeSprites { sprites, .. } => {
+                    painted.extend(sprites.iter().cloned().map(Primitive::PolychromeSprite))
+                }
+                PrimitiveBatch::Surfaces(surfaces) => {
+                    painted.extend(surfaces.iter().cloned().map(Primitive::Surface))
+                }
+            }
+        }
+        let shown = |primitive: &Primitive| {
+            primitive
+                .bounds()
+                .intersect(&primitive.content_mask().bounds)
+        };
+        let mut stacking: Vec<String> = painted
+            .iter()
+            .enumerate()
+            .map(|(index, primitive)| {
+                let mut under: Vec<String> = painted[..index]
+                    .iter()
+                    .filter(|earlier| shown(earlier).intersects(&shown(primitive)))
+                    .map(Primitive::describe)
+                    .collect();
+                under.sort_unstable();
+                format!("{} over {under:?}", primitive.describe())
+            })
+            .collect();
+        stacking.sort_unstable();
+        stacking
     }
 
     pub fn finish(&mut self) {
@@ -428,6 +583,31 @@ impl Primitive {
                 surface.order = 0;
                 format!("{surface:?}")
             }
+        }
+    }
+
+    // mirin: the draw order it was given (0: none, it is not drawn).
+    fn order(&self) -> DrawOrder {
+        match self {
+            Primitive::Shadow(shadow) => shadow.order,
+            Primitive::Quad(quad) => quad.order,
+            Primitive::Path(path) => path.order,
+            Primitive::Underline(underline) => underline.order,
+            Primitive::MonochromeSprite(sprite) => sprite.order,
+            Primitive::PolychromeSprite(sprite) => sprite.order,
+            Primitive::Surface(surface) => surface.order,
+        }
+    }
+
+    fn set_order(&mut self, order: DrawOrder) {
+        match self {
+            Primitive::Shadow(shadow) => shadow.order = order,
+            Primitive::Quad(quad) => quad.order = order,
+            Primitive::Path(path) => path.order = order,
+            Primitive::Underline(underline) => underline.order = order,
+            Primitive::MonochromeSprite(sprite) => sprite.order = order,
+            Primitive::PolychromeSprite(sprite) => sprite.order = order,
+            Primitive::Surface(surface) => surface.order = order,
         }
     }
 

@@ -33,9 +33,18 @@ where
     }
 
     pub fn insert(&mut self, new_bounds: Bounds<U>) -> u32 {
+        self.insert_spanning(new_bounds, 0)
+    }
+
+    /// mirin: `insert`, for bounds that stand for several primitives drawn
+    /// one over another (a retained subtree's drawing replayed as one,
+    /// `Scene::replay_moved`): the first of them gets the order returned,
+    /// the last one `span` more, and whatever is inserted later over these
+    /// bounds comes after them all.
+    pub fn insert_spanning(&mut self, new_bounds: Bounds<U>, span: u32) -> u32 {
         // If the tree is empty, make the root the new leaf.
         if self.root.is_none() {
-            let new_node = self.push_leaf(new_bounds, 1);
+            let new_node = self.push_leaf(new_bounds, 1 + span);
             self.root = Some(new_node);
             return 1;
         }
@@ -91,7 +100,9 @@ where
             max_intersecting_ordering = cmp::max(max_intersecting_ordering, *sibling_ordering);
         }
 
-        let ordering = max_intersecting_ordering + 1;
+        let first = max_intersecting_ordering + 1;
+        // mirin: the leaf stands for every order from `first` to this one.
+        let ordering = first + span;
         let new_node = self.push_leaf(new_bounds, ordering);
         let new_parent = self.push_internal(sibling, new_node);
 
@@ -125,7 +136,7 @@ where
             *max_ordering = ordering;
         }
 
-        ordering
+        first
     }
 
     fn find_max_ordering(&self, index: usize, bounds: &Bounds<U>, mut max_ordering: u32) -> u32 {

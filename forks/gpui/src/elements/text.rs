@@ -334,6 +334,8 @@ impl IntoElement for StyledText {
 #[derive(Default, Clone)]
 pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
 
+// mirin: `Clone`, for a text built again on a kept layout (`layout_sized`).
+#[derive(Clone)]
 struct TextLayoutInner {
     len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
@@ -506,7 +508,14 @@ impl TextLayout {
                 })
             });
 
-        window.request_measured_layout(Default::default(), {
+        // mirin: the text and its layout stay on the node. Built again for
+        // a layout a retained subtree kept (`elements::retained`), this
+        // element takes over what the one before it shaped: the node is then
+        // asked what it was for that layout, which the lines it has answer.
+        let kept: Rc<dyn std::any::Any> = Rc::new((text.clone(), self.clone()));
+        let source = text.clone();
+        let (layout_id, before) =
+            window.request_measured_layout_keeping(Default::default(), Some(kept), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
@@ -670,7 +679,19 @@ impl TextLayout {
 
                 size
             }
-        })
+        });
+        if let Some((text, before)) = before
+            .as_deref()
+            .and_then(|before| before.downcast_ref::<(SharedString, TextLayout)>())
+            && *text == source
+            && let Some(inner) = before.0.borrow().as_ref()
+        {
+            self.0.borrow_mut().replace(TextLayoutInner {
+                bounds: None,
+                ..inner.clone()
+            });
+        }
+        layout_id
     }
 
     // mirin: a truncated line is cut where it is drawn.

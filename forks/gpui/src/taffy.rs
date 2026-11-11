@@ -26,6 +26,10 @@ type NodeMeasureFn = StackSafe<
 
 struct NodeContext {
     measure: NodeMeasureFn,
+    // mirin: what the element that made the node keeps on it for the one
+    // built for the same node later (`request_measured_layout`): a text's
+    // shaped lines.
+    kept: Option<Rc<dyn std::any::Any>>,
 }
 
 /// The measure function taffy calls for a measured leaf (text): device
@@ -294,11 +298,15 @@ impl TaffyLayoutEngine {
         self.track(id)
     }
 
+    // mirin: `kept` stays on the node; when the node is one a retained
+    // subtree kept and its elements are built again for (`begin_bind`), what
+    // the element before this one left there comes back.
     pub fn request_measured_layout(
         &mut self,
         style: Style,
         rem_size: Pixels,
         scale_factor: f32,
+        kept: Option<Rc<dyn std::any::Any>>,
         measure: impl FnMut(
             Size<Option<Pixels>>,
             Size<AvailableSpace>,
@@ -306,17 +314,19 @@ impl TaffyLayoutEngine {
             &mut App,
         ) -> Size<Pixels>
         + 'static,
-    ) -> LayoutId {
+    ) -> (LayoutId, Option<Rc<dyn std::any::Any>>) {
         // mirin: a retained subtree built onto its kept layout: the node
         // takes the new element's function (asked at `end_bind`).
         if let Some(id) = self.bound(None) {
+            let mut before = None;
             if let Some(context) = self.taffy.get_node_context_mut(id.into()) {
                 context.measure = StackSafe::new(Box::new(measure));
+                before = std::mem::replace(&mut context.kept, kept);
             }
             if let Some(bind) = &mut self.bind {
                 bind.measured.push(id);
             }
-            return id;
+            return (id, before);
         }
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
@@ -326,11 +336,12 @@ impl TaffyLayoutEngine {
                 taffy_style,
                 NodeContext {
                     measure: StackSafe::new(Box::new(measure)),
+                    kept,
                 },
             )
             .expect(EXPECT_MESSAGE)
             .into();
-        self.track(id)
+        (self.track(id), None)
     }
 
     // Used to understand performance

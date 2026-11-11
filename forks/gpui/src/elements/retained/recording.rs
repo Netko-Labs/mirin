@@ -7,9 +7,8 @@
 //! - Content masks. A primitive or hitbox keeps the mask it was drawn
 //!   under, already intersected with every mask around it. Moved, the masks
 //!   pushed inside the subtree move along and the ones around it don't, so
-//!   the frame keeps every mask as it was given, with the one around it
-//!   ([`MaskNode`]); a moved drawing's masks are worked out again from those
-//!   ([`MaskMap`]).
+//!   the frame keeps every mask as it was given, with the one around it;
+//!   a moved drawing's masks are worked out again from those (`masks`).
 //! - What was left out. Elements skip what their content mask hides
 //!   (glyphs, primitives). While a subtree is drawn anew they cull against a
 //!   region around its mask instead (`Window::cull_mask`), and a primitive
@@ -20,7 +19,7 @@
 //!   own position, so a subtree with text is only moved along the other
 //!   axis, or not at all when a glyph sits within rounding of a pixel edge.
 
-use std::{ops::Range, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     Bounds, Pixels, Point, ScaledPixels, TransformationMatrix, Window, point, px,
@@ -28,7 +27,7 @@ use crate::{
     size,
 };
 
-use super::RetainedRecord;
+use super::{RetainedRecord, masks::MaskNode, region::Region};
 
 /// How far past its content mask a subtree drawn anew keeps what it draws
 /// (hidden): one scrolled into view by less than this is whole already.
@@ -38,174 +37,6 @@ const KEEP_MARGIN: Pixels = px(256.);
 /// snaps to not to depend on rounding: far more than `f32` loses at any
 /// position a window has.
 const EDGE: f32 = 1. / 128.;
-
-/// A content mask as it was pushed (not yet intersected with the ones
-/// around it), and the one around it: its place in the frame's list, from
-/// 1; 0 for none.
-#[derive(Clone, Copy)]
-pub(crate) struct MaskNode {
-    pub(crate) bounds: Bounds<Pixels>,
-    pub(crate) parent: u32,
-}
-
-/// Where the content masks pushed inside a reused drawing landed in this
-/// frame's list, and (for a moved drawing) what each now clips to.
-pub(crate) struct MaskMap {
-    old: Range<usize>,
-    new_start: usize,
-    /// The mask around the drawing in this frame.
-    outer_id: u32,
-    outer: Bounds<Pixels>,
-    /// Per mask of `old`, moved and intersected with the ones around it.
-    clips: Vec<Bounds<Pixels>>,
-}
-
-impl MaskMap {
-    pub(crate) fn new(
-        old: Range<usize>,
-        new_start: usize,
-        outer_id: u32,
-        outer: Bounds<Pixels>,
-    ) -> Self {
-        Self {
-            old,
-            new_start,
-            outer_id,
-            outer,
-            clips: Vec::new(),
-        }
-    }
-
-    /// A mask pushed inside the drawing, by its old place; `None` for one
-    /// around the drawing.
-    fn inner(&self, id: u32) -> Option<usize> {
-        let index = (id as usize).checked_sub(1)?;
-        self.old.contains(&index).then(|| index - self.old.start)
-    }
-
-    /// The place in this frame's list of the mask at `id` in last frame's.
-    pub(crate) fn id(&self, id: u32) -> u32 {
-        match self.inner(id) {
-            Some(index) => (self.new_start + index + 1) as u32,
-            None => self.outer_id,
-        }
-    }
-
-    /// What the mask at `id` in last frame's list clips to in this frame
-    /// (for a moved drawing).
-    pub(crate) fn mask(&self, id: u32) -> Bounds<Pixels> {
-        self.inner(id)
-            .and_then(|index| self.clips.get(index).copied())
-            .unwrap_or(self.outer)
-    }
-
-    /// The next mask of the old range as it goes into this frame's list.
-    pub(crate) fn push(&mut self, node: &MaskNode, moved: Option<Point<Pixels>>) -> MaskNode {
-        let mut bounds = node.bounds;
-        if let Some(moved) = moved {
-            bounds.origin += moved;
-            // Masks are listed in the order they were pushed: the one
-            // around this one is already in.
-            let clip = bounds.intersect(&self.mask(node.parent));
-            self.clips.push(clip);
-        }
-        MaskNode {
-            bounds,
-            parent: self.id(node.parent),
-        }
-    }
-}
-
-/// A region of the window, by its edges. `Region::everywhere` stands for
-/// no limit.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) struct Region {
-    left: f32,
-    top: f32,
-    right: f32,
-    bottom: f32,
-}
-
-/// Far past any window, and exact in `f32` however it is moved.
-const FAR: f32 = 4_000_000.;
-
-impl Region {
-    pub(crate) const fn everywhere() -> Self {
-        Self {
-            left: -FAR,
-            top: -FAR,
-            right: FAR,
-            bottom: FAR,
-        }
-    }
-
-    pub(crate) fn is_everywhere(&self) -> bool {
-        *self == Self::everywhere()
-    }
-
-    fn of(bounds: &Bounds<Pixels>) -> Self {
-        Self {
-            left: bounds.left().0,
-            top: bounds.top().0,
-            right: bounds.right().0,
-            bottom: bounds.bottom().0,
-        }
-    }
-
-    pub(crate) fn moved(&self, by: Point<Pixels>) -> Self {
-        if self.is_everywhere() {
-            return *self;
-        }
-        Self {
-            left: self.left + by.x.0,
-            top: self.top + by.y.0,
-            right: self.right + by.x.0,
-            bottom: self.bottom + by.y.0,
-        }
-    }
-
-    pub(crate) fn covers(&self, bounds: &Bounds<Pixels>) -> bool {
-        let other = Self::of(bounds);
-        self.left <= other.left
-            && self.top <= other.top
-            && self.right >= other.right
-            && self.bottom >= other.bottom
-    }
-
-    fn intersect(&mut self, other: &Self) {
-        self.left = self.left.max(other.left);
-        self.top = self.top.max(other.top);
-        self.right = self.right.min(other.right);
-        self.bottom = self.bottom.min(other.bottom);
-    }
-
-    /// Narrow the region so it leaves `hole` out, keeping `mask` (which
-    /// `hole` lies outside of) in: cut on the side where `hole` is farthest
-    /// from `mask`.
-    fn leave_out(&mut self, hole: &Bounds<Pixels>, mask: &Bounds<Pixels>) {
-        let (hole, mask) = (Self::of(hole), Self::of(mask));
-        let gaps = [
-            mask.top - hole.bottom,
-            hole.top - mask.bottom,
-            mask.left - hole.right,
-            hole.left - mask.right,
-        ];
-        let side = (0..4)
-            .max_by(|a, b| gaps[*a].total_cmp(&gaps[*b]))
-            .unwrap_or(0);
-        if gaps[side] < 0. {
-            // Not outside the mask after all: whole only where it was drawn.
-            self.intersect(&mask);
-            return;
-        }
-        match side {
-            0 => self.top = self.top.max(hole.bottom),
-            1 => self.bottom = self.bottom.min(hole.top),
-            2 => self.left = self.left.max(hole.right),
-            _ => self.right = self.right.min(hole.left),
-        }
-    }
-}
 
 /// What a retained subtree being drawn anew has recorded so far. It is
 /// started in prepaint and carried on in paint.

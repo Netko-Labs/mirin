@@ -46,14 +46,18 @@ use crate::{
     IntoElement, LayoutId, Pixels, Point, Window, window::ElementStateBox,
 };
 
+mod draw;
+mod masks;
 mod moved;
 mod recording;
+mod region;
 mod state;
 
-pub(crate) use recording::{MaskMap, MaskNode, Recording};
-pub(crate) use state::Drawn;
 #[doc(hidden)]
-pub use state::take_built_apart;
+pub use draw::take_built_apart;
+pub(crate) use masks::{MaskMap, MaskNode};
+pub(crate) use recording::Recording;
+pub(crate) use state::Drawn;
 use state::{Plan, RetainedState, Statics};
 
 type Build = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
@@ -166,8 +170,11 @@ pub enum RetainedPrepaint {
     /// Drawn this frame.
     Drawn(AnyElement),
     /// Last frame's drawing is copied, this far from where it was (`None`:
-    /// as it is).
-    Reused(Option<Point<Pixels>>),
+    /// as it is); `whole`: what shows of it is what did.
+    Reused {
+        moved: Option<Point<Pixels>>,
+        whole: bool,
+    },
     Skipped,
 }
 
@@ -199,7 +206,6 @@ impl Element for Retained {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let global_id = global_id.expect("a retained subtree has an id");
-        let statics = Statics::of(window);
         let detached = window.retained_detached > 0;
         let binding = window.retained_binding;
         let (view, version) = (self.view, self.version);
@@ -221,7 +227,7 @@ impl Element for Retained {
                         state => {
                             window.layout_engine().fail_bind();
                             let (root, element, state) =
-                                state::build_layout(state, view, version, &build, true, window, cx);
+                                draw::build_layout(state, view, version, &build, true, window, cx);
                             ((root, Some(element)), state)
                         }
                     };
@@ -229,16 +235,16 @@ impl Element for Retained {
                 let reusable = kept
                     && !detached
                     && state.as_ref().is_some_and(|state| {
-                        state.statics.as_ref() == Some(&statics)
-                            && state.record.drawn.borrow().known
+                        state.record.drawn.borrow().known
                             && !state.is_dirty(view, window)
+                            && state.statics.as_ref() == Some(&Statics::of(window))
                     });
                 match state {
                     // Clean: its kept nodes go into this frame's tree as they are.
                     Some(state) if reusable => ((state.root, None), state),
                     state => {
                         let (root, element, state) =
-                            state::build_layout(state, view, version, &build, detached, window, cx);
+                            draw::build_layout(state, view, version, &build, detached, window, cx);
                         ((root, Some(element)), state)
                     }
                 }
@@ -276,9 +282,9 @@ impl Element for Retained {
                     state.skip(bounds, window);
                     RetainedPrepaint::Skipped
                 }
-                Plan::Reuse(moved) => {
+                Plan::Reuse { moved, whole } => {
                     state.reuse_prepaint(bounds, moved, window);
-                    RetainedPrepaint::Reused(moved)
+                    RetainedPrepaint::Reused { moved, whole }
                 }
                 Plan::Draw(mut element) => {
                     state.draw_prepaint(&mut element, bounds, None, view, window, cx);
@@ -321,7 +327,9 @@ impl Element for Retained {
                 RetainedPrepaint::Drawn(element) => {
                     state.draw_paint(element, skippable, view, window, cx)
                 }
-                RetainedPrepaint::Reused(moved) => state.reuse_paint(*moved, window),
+                RetainedPrepaint::Reused { moved, whole } => {
+                    state.reuse_paint(*moved, *whole, window)
+                }
                 RetainedPrepaint::Skipped => {}
             }
             ((), state)

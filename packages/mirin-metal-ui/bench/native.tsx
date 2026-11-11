@@ -115,15 +115,22 @@ for (let index = 0; index < clicks; index += 1) {
 // Scroll the example list down and back up, one wheel step per frame.
 const list = root.nodeId("example-list");
 if (!list) throw new Error("no example list");
-const scrollStart = Date.now();
-for (let step = 0; step < 120; step += 1) {
-  transport.simulate({ kind: "scroll", id: list, dy: step < 60 ? 40 : -40 });
-  await Bun.sleep(16);
+// Each step waits for its frame (a nested compositor out of sight asks for
+// one a second, which would merge the steps into a few frames).
+const scrollSteps = 40;
+const scrollFrames: number[] = [];
+for (let step = 0; step < scrollSteps; step += 1) {
+  const from = trace.length;
+  transport.simulate({ kind: "scroll", id: list, dy: step < scrollSteps / 2 ? 40 : -40 });
+  for (let waited = 0; waited < 2500; waited += 4) {
+    const frame = trace.slice(from).find((line) => line.message.startsWith("render"));
+    if (frame) {
+      scrollFrames.push(Number(frame.message.match(/frame ([\d.]+)ms/)?.[1] ?? 0));
+      break;
+    }
+    await Bun.sleep(4);
+  }
 }
-await Bun.sleep(300);
-const scrollFrames = trace
-  .filter((line) => line.at >= scrollStart && line.message.startsWith("render"))
-  .map((line) => Number(line.message.match(/frame ([\d.]+)ms/)?.[1] ?? 0));
 
 // Maximize and restore: time from the request to the last frame at the new
 // size once the driver has re-rendered for the new viewport (breakpoints).
@@ -184,7 +191,7 @@ const rows: Array<[string, number]> = [
 ];
 console.log(`host: ${binary}`);
 console.log(
-  `samples: ${samples.length}/${clicks}, frames: ${renders.length}, scroll frames: ${scrollFrames.length}/120`,
+  `samples: ${samples.length}/${clicks}, frames: ${renders.length}, scroll frames: ${scrollFrames.length}/${scrollSteps}`,
 );
 for (const [label, value] of rows) {
   console.log(`${label.padEnd(38)} ${value.toFixed(1)}${label.endsWith("(KB)") ? "" : " ms"}`);

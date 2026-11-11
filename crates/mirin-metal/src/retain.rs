@@ -17,9 +17,12 @@
 use std::collections::HashMap;
 
 use gpui::{
-    div, prelude::*, AnyElement, App, Context, ElementId, Entity, EntityId, RetainedDraw,
-    SharedString, Window,
+    div, prelude::*, AnyElement, App, Context, ElementId, Entity, EntityId, SharedString, Window,
 };
+
+mod counts;
+
+pub(crate) use counts::take_counts;
 
 use crate::patch::Document;
 use crate::render::render_view;
@@ -259,47 +262,6 @@ impl Boundaries {
     }
 }
 
-/// How many retained subtrees were drawn each way (traced per frame).
-#[derive(Clone, Copy, Default, Debug, PartialEq)]
-pub(crate) struct Counts {
-    /// Built: their content changed or they were notified.
-    pub built: u32,
-    /// Built again for the layout they kept (they could not be copied).
-    pub redrawn: u32,
-    /// Last frame's drawing copied where it was.
-    pub reused: u32,
-    /// Last frame's drawing copied to where they moved.
-    pub moved: u32,
-    /// Not drawn: nothing of them shows.
-    pub skipped: u32,
-}
-
-thread_local! {
-    /// Since the last `take_counts`.
-    static COUNTS: std::cell::Cell<Counts> = const {
-        std::cell::Cell::new(Counts { built: 0, redrawn: 0, reused: 0, moved: 0, skipped: 0 })
-    };
-}
-
-/// How the retained subtrees were drawn since the last call.
-pub(crate) fn take_counts() -> Counts {
-    COUNTS.with(|counts| counts.replace(Counts::default()))
-}
-
-fn count(draw: RetainedDraw) {
-    COUNTS.with(|counts| {
-        let mut now = counts.get();
-        match draw {
-            RetainedDraw::Built => now.built += 1,
-            RetainedDraw::Redrawn => now.redrawn += 1,
-            RetainedDraw::Reused => now.reused += 1,
-            RetainedDraw::Moved => now.moved += 1,
-            RetainedDraw::Skipped => now.skipped += 1,
-        }
-        counts.set(now);
-    });
-}
-
 /// Whether subtrees are kept (`MIRIN_METAL_RETAIN=0` draws every frame
 /// whole, as before: for comparing the two).
 fn enabled() -> bool {
@@ -366,7 +328,7 @@ pub(crate) fn boundary(
     .skippable(traits.skippable)
     .on_prepaint(move |draw, bounds, _window, _cx| {
         layout.touch_group(group, parent, bounds.origin, draw.drew());
-        count(draw);
+        counts::count(draw);
     });
     Some(element.into_any_element())
 }

@@ -286,7 +286,7 @@ for (let index = 0; runs("hover") && index < 20; index += 1) {
   if (sample) hover.push(sample);
 }
 
-const grow = runs("grow") ? await presses("banner", 12) : [];
+const grow = runs("grow") ? await presses("banner", option("grows", 12)) : [];
 
 // Idle: host CPU over 3 s with nothing changing, and resident memory.
 const ticks = () => {
