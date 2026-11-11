@@ -4,7 +4,7 @@ members = ["crates/mirin-codec", "crates/mirin-core", "crates/mirin-helper"]
 # mirin-metal (the CEF-free, GPUI-rendered flavor) is an alpha with its own heavy
 # dependency tree and GPU platform requirements; it builds standalone from its
 # directory (own lockfile) and stays out of workspace-wide build/clippy/test until
-# it graduates. See docs/metal.md.
+# it graduates; CI checks it in its own `metal` job. See docs/metal.md.
 exclude = ["crates/mirin-metal"]
 
 [workspace.package]

@@ -1,7 +1,8 @@
 # Alpha crate, intentionally excluded from the root workspace (see the root
 # Cargo.toml `exclude`): gpui's dependency tree is large and its platform
-# requirements (Vulkan on Linux, Metal on macOS, DirectX on Windows) are not yet
-# part of mirin's CI. Build it standalone: `cargo build` from this directory.
+# requirements (Vulkan on Linux, Metal on macOS, DirectX on Windows) differ from
+# the CEF core's. Build it standalone: `cargo build` from this directory. CI's
+# `metal` job (.github/workflows/ci.yml) checks it on its own.
 [package]
 name = "mirin-metal"
 version = "0.1.0-alpha.1"
