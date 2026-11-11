@@ -653,7 +653,23 @@ impl super::Context {
             let memory_types =
                 &mem_properties.memory_types[..mem_properties.memory_type_count as usize];
             let limits = &capabilities.properties.limits;
-            let config = gpu_alloc::Config::i_am_prototyping(); //TODO?
+            // mirin: a desktop app's sizes, not a game's. The prototyping
+            // preset (8 MiB first chunks, everything under 32 MiB from a
+            // buddy allocator) rounded each texture up to a power of two and
+            // then took a chunk of twice that: a window's 8.2 MiB multisampled
+            // target held 32 MiB, and a counter app 70 MiB of GPU memory for
+            // the ~20 it used. Now anything of 256 KiB or more is its own
+            // allocation of its own size, given back when it is freed, and
+            // only small buffers share chunks, which start at 256 KiB.
+            let config = gpu_alloc::Config {
+                dedicated_threshold: 256 << 10,
+                preferred_dedicated_threshold: 256 << 10,
+                transient_dedicated_threshold: 256 << 10,
+                starting_free_list_chunk: 256 << 10,
+                final_free_list_chunk: 4 << 20,
+                minimal_buddy_size: 1 << 10,
+                initial_buddy_dedicated_size: 256 << 10,
+            };
 
             let properties = gpu_alloc::DeviceProperties {
                 max_memory_allocation_count: limits.max_memory_allocation_count,

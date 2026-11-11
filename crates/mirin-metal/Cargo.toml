@@ -51,12 +51,13 @@ gpui = { version = "0.2", features = ["test-support"] }
 [features]
 profiling = ["dep:pprof"]
 
-# mirin's forks: gpui 0.2.2 and the taffy 0.9.0 it pins, and AccessKit's
-# Unix adapter, forked in the monorepo with documented changes (forks/*/MIRIN.md).
-# Keep versions in sync with upstream.
+# mirin's forks: gpui 0.2.2, the taffy 0.9.0 and the blade-graphics 0.7.1 it
+# pins, and AccessKit's Unix adapter, forked in the monorepo with documented
+# changes (forks/*/MIRIN.md). Keep versions in sync with upstream.
 [patch.crates-io]
 gpui = { path = "../../forks/gpui" }
 taffy = { path = "../../forks/taffy" }
+blade-graphics = { path = "../../forks/blade-graphics" }
 accesskit_unix = { path = "../../forks/accesskit_unix" }
 
 # GPUI, taffy, and the text stack are unusably slow unoptimized; optimize

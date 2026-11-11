@@ -11,6 +11,7 @@ changed code carries a `// mirin:` comment.
 | --- | --- | --- |
 | `gpui` | `gpui` 0.2.2 (Zed Industries, Apache-2.0) | `crates/mirin-metal` |
 | `taffy` | `taffy` 0.9.0 (DioxusLabs, MIT), the version GPUI pins | `forks/gpui` |
+| `blade-graphics` | `blade-graphics` 0.7.1 (Dzmitry Malyshau, MIT), the version GPUI pins | `forks/gpui` |
 | `accesskit_unix` | `accesskit_unix` 0.24.1 (AccessKit, MIT OR Apache-2.0) | `crates/mirin-metal` |
 
 `crates/mirin-metal/Cargo.toml` points `[patch.crates-io]` here. The forks are

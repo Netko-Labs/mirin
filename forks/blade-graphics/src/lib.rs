@@ -13,6 +13,10 @@
     clippy::vec_init_then_push,
     // This is the land of unsafe.
     clippy::missing_safety_doc,
+    // mirin: lints newer than the crate (crates.io dependencies are built
+    // with lints capped; a path dependency isn't).
+    mismatched_lifetime_syntaxes,
+    deprecated,
 )]
 #![warn(
     trivial_numeric_casts,
