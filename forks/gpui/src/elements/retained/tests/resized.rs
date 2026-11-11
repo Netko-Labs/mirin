@@ -70,9 +70,20 @@ fn rows_resized_out_of_view_are_left_out_and_drawn_when_they_show(cx: &mut TestA
     // view shows) and some of the cells in them, not all 30 rows.
     for (index, step) in STEPS.iter().enumerate() {
         if let Step::Width(_) = step {
-            let drew = steps[index].get(&RetainedDraw::Redrawn).copied().unwrap_or(0);
-            assert!(drew < 20, "step {index} drew {drew} rows: {:?}", steps[index]);
-            assert!(steps[index][&RetainedDraw::Skipped] >= 20, "step {index}: {:?}", steps[index]);
+            let drew = steps[index]
+                .get(&RetainedDraw::Redrawn)
+                .copied()
+                .unwrap_or(0);
+            assert!(
+                drew < 20,
+                "step {index} drew {drew} rows: {:?}",
+                steps[index]
+            );
+            assert!(
+                steps[index][&RetainedDraw::Skipped] >= 20,
+                "step {index}: {:?}",
+                steps[index]
+            );
         }
     }
 }
