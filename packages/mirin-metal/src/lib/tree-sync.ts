@@ -227,10 +227,11 @@ export class TreeSync {
   /**
    * A view's children in their new order, from the order the host holds
    * (`before`, less what this commit removed), in the fewest moves: those on
-   * a longest run already in order stay, each other one moves before the
-   * child that follows it now, and new ones go in there, last to first. React
-   * moves every row between two it swaps; this sends two. False when a held
-   * child came from another parent (React never moves one there).
+   * a longest run already in order stay (`lib/order.ts`), each other one
+   * moves (a new one goes in) at the end, when no child that stays follows
+   * it, or else before the child that follows it now. React moves every row
+   * between two it swaps; this sends two. False when a held child came from
+   * another parent (React never moves one there).
    */
   private reorder(
     parent: ViewInstance,
@@ -253,19 +254,30 @@ export class TreeSync {
     }
     const stays = longestIncreasing(order.subarray(0, held), before.length);
     const parentId = `"${parent.key}"`;
-    let next: HostNode | null = null;
-    for (let index = children.length - 1; index >= 0; index -= 1) {
-      const node = children[index] as HostNode;
+    const place = (node: HostNode, next: HostNode | null): void => {
       const where = next ? `,"before":"${next.key}"` : "";
       if (!this.holds(node)) {
         const json = this.freshJson(node, parent, fresh);
         ops.push(`{"op":"insert","parent":${parentId}${where},"node":${json}}`);
-      } else if (stays[node.slot] !== 1) {
-        ops.push(`{"op":"move","id":"${node.key}","parent":${parentId}${where}}`);
-      }
-      next = node;
+      } else ops.push(`{"op":"move","id":"${node.key}","parent":${parentId}${where}}`);
+    };
+    // Those after the last that stays go to the end, in order; the others
+    // before the child that follows them, last to first.
+    let last = children.length - 1;
+    while (last >= 0 && !this.stays(children[last] as HostNode, stays)) last -= 1;
+    for (let index = last + 1; index < children.length; index += 1) {
+      place(children[index] as HostNode, null);
+    }
+    for (let index = last - 1; index >= 0; index -= 1) {
+      const node = children[index] as HostNode;
+      if (!this.stays(node, stays)) place(node, children[index + 1] as HostNode);
     }
     return true;
+  }
+
+  /** Whether a child the host holds keeps its place in a reorder (`stays`: by its old slot). */
+  private stays(node: HostNode, stays: Uint8Array): boolean {
+    return this.holds(node) && stays[node.slot] === 1;
   }
 
   /** A `set` op when the node's head is not what the host has. */

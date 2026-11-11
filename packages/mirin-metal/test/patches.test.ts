@@ -319,6 +319,11 @@ describe("tree patches", () => {
     // The last row first: React moves the other 199.
     expect(await ops([base[199] as string, ...base.slice(0, 199)])).toHaveLength(1);
     expect(await ops(base)).toHaveLength(1);
+    // Reversed: every row but one moves, each to the end (no sibling to find).
+    const reversed = await ops([...base].reverse());
+    expect(reversed).toHaveLength(199);
+    expect(reversed.every((op) => op.op === "move" && op.before === undefined)).toBe(true);
+    await ops(base);
     // Moves beside new and removed rows, in one commit.
     const mixed = [...keys(500, 3), ...swapped.filter((_, index) => index % 50 !== 1), "k600"];
     const sent = await ops(mixed);
