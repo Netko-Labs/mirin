@@ -67,12 +67,27 @@ struct Built {
 }
 
 impl Built {
-    fn same(&self, other: &Self) -> bool {
+    /// Built from the same tree, focus, window state and title: only the
+    /// bounds may differ.
+    fn same_but_layout(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.tree, &other.tree)
-            && self.layout == other.layout
             && self.focused == other.focused
             && self.window_active == other.window_active
             && self.title == other.title
+    }
+}
+
+/// Whether `now` needs the tree built again after `last`. Bounds that moved
+/// alone (every frame of a scroll or a resize) matter only to a screen reader
+/// that is listening: rebuilding the whole tree for each of those frames cost
+/// a host about half again its CPU while scrolling a long list, with nobody
+/// to hear it. A screen reader that starts later gets the last tree built,
+/// and fresh bounds at the next frame painted.
+fn needs_build(last: Option<&Built>, now: &Built, listening: bool) -> bool {
+    match last {
+        None => true,
+        Some(last) if last.same_but_layout(now) => listening && last.layout != now.layout,
+        Some(_) => true,
     }
 }
 
@@ -132,6 +147,14 @@ impl Accessibility {
         })
     }
 
+    /// Whether a screen reader is listening to this window's tree now.
+    fn listening(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return self.publisher.listening();
+        #[cfg(not(target_os = "linux"))]
+        false
+    }
+
     pub(crate) fn retitle(&mut self, title: &str) {
         title.clone_into(&mut self.title);
     }
@@ -152,7 +175,7 @@ impl Accessibility {
             window_active,
             title: self.title.clone(),
         };
-        if self.last.as_ref().is_some_and(|last| last.same(&now)) {
+        if !needs_build(self.last.as_ref(), &now, self.listening()) {
             return;
         }
         let bounds = |id: &str| {
@@ -193,7 +216,59 @@ impl Accessibility {
 
 #[cfg(test)]
 mod tests {
-    use super::app_name;
+    use std::rc::Rc;
+
+    use super::{app_name, needs_build, Built};
+    use crate::tree::{parse_tree, NodeSpec};
+
+    fn built(tree: &Rc<NodeSpec>, layout: u64) -> Built {
+        Built {
+            tree: Rc::clone(tree),
+            layout,
+            focused: None,
+            window_active: true,
+            title: "Files".to_owned(),
+        }
+    }
+
+    fn a_tree() -> Rc<NodeSpec> {
+        Rc::new(parse_tree(r#"{"type":"view","props":{"id":"1"},"children":[]}"#).expect("a tree"))
+    }
+
+    #[test]
+    fn bounds_that_moved_alone_build_nothing_while_nobody_listens() {
+        let tree = a_tree();
+        let last = built(&tree, 1);
+        assert!(
+            !needs_build(Some(&last), &built(&tree, 2), false),
+            "a scroll, no screen reader"
+        );
+        assert!(
+            needs_build(Some(&last), &built(&tree, 2), true),
+            "a scroll, a screen reader listening"
+        );
+        assert!(
+            !needs_build(Some(&last), &built(&tree, 1), true),
+            "nothing changed"
+        );
+    }
+
+    #[test]
+    fn a_new_tree_or_focus_always_builds() {
+        let tree = a_tree();
+        let last = built(&tree, 1);
+        assert!(needs_build(None, &last, false), "the first frame");
+        assert!(
+            needs_build(Some(&last), &built(&a_tree(), 1), false),
+            "a new tree"
+        );
+        let mut away = built(&tree, 1);
+        away.window_active = false;
+        assert!(
+            needs_build(Some(&last), &away, false),
+            "the window lost the keyboard"
+        );
+    }
 
     #[test]
     fn the_driver_names_the_app() {
