@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { CircleIcon } from "../icons/index.ts";
+import { CircleIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { RadioGroup as RadioGroupPrimitive } from "../primitives/radio-group.tsx";
 

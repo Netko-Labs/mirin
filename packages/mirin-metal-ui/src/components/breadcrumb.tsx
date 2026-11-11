@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { ChevronRight, MoreHorizontal } from "../icons/index.ts";
+import { ChevronRight, MoreHorizontal } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { Slot } from "../primitives/slot.tsx";
 

@@ -115,6 +115,8 @@ export function ownVars(
   inherited: CssVars,
   theme: ThemeTokens,
 ): Record<string, string> | null {
+  // Most elements define none: nothing to make for them.
+  if (!style && !className?.includes("[--")) return null;
   let out: Record<string, string> | null = null;
   const define = (name: string, value: string) => {
     const resolved = resolveValue(value, { ...inherited, ...out }, theme);

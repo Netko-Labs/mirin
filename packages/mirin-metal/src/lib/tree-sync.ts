@@ -10,7 +10,7 @@
 import { type CommitLog, takeLog } from "./commit-log.ts";
 import type { FieldTexts } from "./field-texts.ts";
 import type { Container, HostInstance, HostNode } from "./instances.ts";
-import { headJson, nodeKey } from "./serialize.ts";
+import { headJson } from "./serialize.ts";
 
 /** The patch protocol this driver speaks (crates/mirin-metal `PATCH_PROTOCOL`). */
 export const PATCH_PROTOCOL = 1;
@@ -82,7 +82,7 @@ export class TreeSync {
     const visit = (node: HostNode): void => {
       if (node.kind === "raw") return;
       if ((node.kind === "view" || node.kind === "input") && node.props.testID === testID) {
-        found = String(node.id);
+        found = node.key;
       }
       for (const child of node.children) visit(child);
     };
@@ -103,12 +103,25 @@ export class TreeSync {
 
   /** A node and its subtree as JSON; with `fields`, also what the host now holds. */
   private wholeJson(node: HostNode, parent: HostInstance | null, fields: FieldList | null): string {
-    const wire = headJson(node, parent, { ids: this.patching, root: node === this.root });
+    const root = node === this.root;
+    // A view's or an input's head is its props and nothing else (the root's
+    // also says it fills the window): one written from these very props is
+    // still right. Only a tree that is sent reads it; `lastTree()` works
+    // every head out again, so a check against it reads no kept copy.
+    const kept = !root && (node.kind === "view" || node.kind === "input") ? node : null;
+    const wire =
+      fields && kept && kept.head !== undefined && kept.headProps === kept.props
+        ? kept.head
+        : headJson(node, parent, { ids: this.patching, root });
     if (fields) {
+      if (kept) {
+        kept.head = wire;
+        kept.headProps = kept.props;
+      }
       if (this.patching) node.wire = wire;
-      this.nodes.set(nodeKey(node), node);
+      this.nodes.set(node.key, node);
       if (node.kind === "input" && node.props.onSelectionChange) {
-        fields.set(String(node.id), {
+        fields.set(node.key, {
           value: node.props.value,
           revision: node.props.valueRevision,
         });
@@ -132,20 +145,19 @@ export class TreeSync {
       // A parent the host doesn't hold is gone, or new with its children in its insert.
       if (parent.kind !== "view" || !this.holds(parent) || fresh.has(parent)) continue;
       const { child } = mutation;
-      const parentId = JSON.stringify(nodeKey(parent));
+      // Ids are digits, or "r" and digits: nothing in them to escape.
+      const parentId = `"${parent.key}"`;
       if (mutation.kind === "remove") {
         if (!this.holds(child)) continue;
-        ops.push(`{"op":"remove","id":${JSON.stringify(nodeKey(child))}}`);
+        ops.push(`{"op":"remove","id":"${child.key}"}`);
         this.forget(child);
         continue;
       }
       const { before } = mutation;
       if (before && !this.holds(before)) return null;
-      const where = before ? `,"before":${JSON.stringify(nodeKey(before))}` : "";
+      const where = before ? `,"before":"${before.key}"` : "";
       if (this.holds(child)) {
-        ops.push(
-          `{"op":"move","id":${JSON.stringify(nodeKey(child))},"parent":${parentId}${where}}`,
-        );
+        ops.push(`{"op":"move","id":"${child.key}","parent":${parentId}${where}}`);
       } else {
         const node = this.freshJson(child, parent, fresh);
         ops.push(`{"op":"insert","parent":${parentId}${where},"node":${node}}`);
@@ -169,7 +181,7 @@ export class TreeSync {
     if (node.kind === "input") this.followField(node);
     if (wire === node.wire) return;
     node.wire = wire;
-    ops.push(`{"op":"set","id":${JSON.stringify(nodeKey(node))},"node":${wire}}`);
+    ops.push(`{"op":"set","id":"${node.key}","node":${wire}}`);
   }
 
   /** A new subtree as JSON, now held by the host. */
@@ -177,7 +189,7 @@ export class TreeSync {
     fresh.add(node);
     const wire = headJson(node, parent, { ids: true, root: false });
     node.wire = wire;
-    this.nodes.set(nodeKey(node), node);
+    this.nodes.set(node.key, node);
     if (node.kind === "input") this.followField(node);
     if (node.kind !== "view") return wire;
     const children = node.children.map((child) => this.freshJson(child, node, fresh));
@@ -186,7 +198,7 @@ export class TreeSync {
 
   /** A subtree the host no longer holds. */
   private forget(node: HostNode): void {
-    const id = nodeKey(node);
+    const id = node.key;
     if (this.nodes.get(id) === node) this.nodes.delete(id);
     if (node.kind === "raw") return;
     if (node.kind === "input") this.fields.forget(id);
@@ -194,14 +206,14 @@ export class TreeSync {
   }
 
   private followField(node: HostInstance & { kind: "input" }): void {
-    const id = String(node.id);
+    const id = node.key;
     if (node.props.onSelectionChange) {
       this.fields.field(id, node.props.value, node.props.valueRevision);
     } else this.fields.forget(id);
   }
 
   private holds(node: HostNode): boolean {
-    return this.nodes.get(nodeKey(node)) === node;
+    return this.nodes.get(node.key) === node;
   }
 }
 

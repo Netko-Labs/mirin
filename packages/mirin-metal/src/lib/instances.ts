@@ -6,11 +6,20 @@ import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from 
 interface InstanceBase {
   /** Stable per-mount identity; keys events across the boundary. */
   id: number;
+  /** The id as the tree and its events spell it (`String(id)`), made once. */
+  key: string;
   children: HostNode[];
   /** The instance or container it is attached to; null while detached. */
   parent: HostParent | null;
   /** Its head (`lib/serialize.ts`) as a patching host last got it. */
   wire?: string;
+  /**
+   * A view's or an input's head as a whole tree last wrote it, and the props
+   * it was written from: their head says nothing but their props, so the
+   * next whole tree writes it again only for props React has replaced.
+   */
+  head?: string;
+  headProps?: object;
 }
 
 export interface ViewInstance extends InstanceBase {
@@ -65,18 +74,58 @@ export interface Container {
   onCommit: () => void;
 }
 
+/**
+ * Where a child was last taken out of a list, and where one was last put
+ * in. A commit's mutations mostly walk one list in order (rows removed one
+ * after the other, rows inserted before the same sibling, a reorder), so the
+ * next child is nearly always beside the last one: looking there first keeps
+ * a commit of n mutations from searching the list n times.
+ */
+interface Hint {
+  list: HostNode[] | null;
+  index: number;
+}
+const taken: Hint = { list: null, index: 0 };
+const put: Hint = { list: null, index: 0 };
+
+function indexNear(list: HostNode[], node: HostNode, hint: Hint): number {
+  if (hint.list === list) {
+    const at = hint.index;
+    if (list[at] === node) return at;
+    if (list[at + 1] === node) return at + 1;
+    if (at > 0 && list[at - 1] === node) return at - 1;
+  }
+  return list.indexOf(node);
+}
+
+/** Drop the hints (a commit is over; its lists may be gone). */
+export function forgetHints(): void {
+  taken.list = null;
+  put.list = null;
+}
+
 export function removeNode(list: HostNode[], child: HostNode): void {
-  const index = list.indexOf(child);
+  const index = indexNear(list, child, taken);
   if (index >= 0) {
     list.splice(index, 1);
+    taken.list = list;
+    taken.index = index;
   }
 }
 
-export function insertNodeBefore(list: HostNode[], child: HostNode, before: HostNode): void {
-  removeNode(list, child);
-  const index = list.indexOf(before);
+/** Put `child` before `before`; `attached` says it is in the list already (a move). */
+export function insertNodeBefore(
+  list: HostNode[],
+  child: HostNode,
+  before: HostNode,
+  attached: boolean,
+): void {
+  if (attached) removeNode(list, child);
+  const index = indexNear(list, before, put);
   if (index >= 0) {
     list.splice(index, 0, child);
+    put.list = list;
+    put.index = index;
   } else {
     list.push(child);
   }

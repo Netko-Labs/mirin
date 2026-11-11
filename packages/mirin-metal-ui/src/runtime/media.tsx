@@ -4,14 +4,13 @@
  * back to markup and drawn as icons tinted with the current text color.
  */
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Image, Svg } from "@mirinjs/metal";
 import { isValidElement, type ReactNode, useEffect, useMemo, useState } from "react";
-import { useTheme } from "../theme.ts";
-import { translate } from "../tw/index.ts";
+import { useStyleTheme } from "../theme.ts";
+import { styleFor } from "../tw/index.ts";
 import { Box, collectAttrs } from "./box.tsx";
 import { useInherited } from "./context.ts";
 import { useHasRegistration } from "./has.ts";
@@ -31,7 +30,8 @@ export function resolveImage(src: string): Promise<string | null> {
   const cached = inflight.get(src);
   if (cached) return cached;
   const job = (async () => {
-    const hash = createHash("sha256").update(src).digest("hex").slice(0, 32);
+    // Bun's hasher: `node:crypto` loads the streams with it (4 ms of every start).
+    const hash = new Bun.CryptoHasher("sha256").update(src).digest("hex").slice(0, 32);
     const ext = src.match(/\.(png|jpe?g|gif|webp|svg)(?:[?#]|$)/i)?.[1]?.toLowerCase() ?? "img";
     const path = join(CACHE_DIR, `${hash}.${ext}`);
     if (existsSync(path)) return path;
@@ -65,14 +65,14 @@ export function useImage(src: string | undefined): string | null {
 }
 
 export function HtmlImage(props: Record<string, unknown>) {
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const inherited = useInherited();
   const src = typeof props.src === "string" ? props.src : undefined;
   const className = typeof props.className === "string" ? props.className : undefined;
   const path = useImage(src);
   const tw = useMemo(
     () =>
-      translate(className, theme.colors, theme.radius, {
+      styleFor(className, theme.colors, theme.radius, {
         attrs: collectAttrs(props),
         groups: {},
         dark: theme.mode === "dark",
@@ -162,12 +162,12 @@ const NO_ATTRS = {};
 
 export function HtmlSvg(props: Record<string, unknown>) {
   useHasRegistration("svg", NO_ATTRS, "");
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const inherited = useInherited();
   const className = typeof props.className === "string" ? props.className : undefined;
   const tw = useMemo(
     () =>
-      translate(className, theme.colors, theme.radius, {
+      styleFor(className, theme.colors, theme.radius, {
         attrs: {},
         groups: {},
         dark: theme.mode === "dark",

@@ -62,37 +62,45 @@ const MODULES: Record<string, string> = {
 };
 
 export function rewrite(code: string): string {
-  return code
-    .replace(/^"use (client|server)"\n+/m, "")
-    .replace(
-      /import\s*(type\s+)?\{([^}]*)\}\s*from\s*"radix-ui"/g,
-      (_, typeOnly: string | undefined, specifiers: string) =>
-        specifiers
-          .split(",")
-          .map((part) => part.trim())
-          .filter(Boolean)
-          .map((part) => {
-            const name = part.replace(/^type\s+/, "").split(/\s+as\s+/)[0] ?? part;
-            return `import ${typeOnly ?? ""}{ ${part} } from "${lib}/primitives/${primitiveFile(name)}.tsx"`;
-          })
-          .join("\n"),
-    )
-    .replace(/from "cn"/g, `from "${lib}/lib/cn.ts"`)
-    .replace(/from "@\/lib\/utils"/g, `from "${lib}/lib/cn.ts"`)
-    .replace(/from "class-variance-authority"/g, `from "${lib}/lib/cn.ts"`)
-    .replace(/from "lucide-react"/g, `from "${lib}/icons/index.ts"`)
-    .replace(/from "([^"]+)"/g, (whole, module: string) =>
-      MODULES[module] ? `from "${lib}/${MODULES[module]}"` : whole,
-    )
-    .replace(
-      /from "@\/registry\/new-york-v4\/ui\/([\w-]+)"/g,
-      (_, component: string) => `from "${ui(component)}"`,
-    )
-    .replace(/from "@\/registry\/new-york-v4\/examples\/([\w-]+)"/g, (_, example: string) =>
-      fromComponents ? `from "../../demo/examples/${example}.tsx"` : `from "./${example}.tsx"`,
-    )
-    .replace(/from "@\/registry\/new-york-v4\/hooks\/([\w-]+)"/g, `from "${lib}/hooks/$1.ts"`)
-    .replace(/from "@\/registry\/new-york-v4\/lib\/([\w-]+)"/g, `from "${lib}/lib/$1.ts"`);
+  return (
+    code
+      .replace(/^"use (client|server)"\n+/m, "")
+      .replace(
+        /import\s*(type\s+)?\{([^}]*)\}\s*from\s*"radix-ui"/g,
+        (_, typeOnly: string | undefined, specifiers: string) =>
+          specifiers
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .map((part) => {
+              const name = part.replace(/^type\s+/, "").split(/\s+as\s+/)[0] ?? part;
+              return `import ${typeOnly ?? ""}{ ${part} } from "${lib}/primitives/${primitiveFile(name)}.tsx"`;
+            })
+            .join("\n"),
+      )
+      .replace(/from "cn"/g, `from "${lib}/lib/cn.ts"`)
+      .replace(/from "@\/lib\/utils"/g, `from "${lib}/lib/cn.ts"`)
+      .replace(/from "class-variance-authority"/g, `from "${lib}/lib/cn.ts"`)
+      // A component draws from the icons kept for the components (list a new
+      // one in `CORE`, scripts/gen-icons.ts): the whole icons entry is a
+      // module of 6,800 exports, which an app that uses a button shouldn't load.
+      .replace(
+        /from "lucide-react"/g,
+        `from "${lib}/icons/${fromComponents ? "core.generated.ts" : "index.ts"}"`,
+      )
+      .replace(/from "([^"]+)"/g, (whole, module: string) =>
+        MODULES[module] ? `from "${lib}/${MODULES[module]}"` : whole,
+      )
+      .replace(
+        /from "@\/registry\/new-york-v4\/ui\/([\w-]+)"/g,
+        (_, component: string) => `from "${ui(component)}"`,
+      )
+      .replace(/from "@\/registry\/new-york-v4\/examples\/([\w-]+)"/g, (_, example: string) =>
+        fromComponents ? `from "../../demo/examples/${example}.tsx"` : `from "./${example}.tsx"`,
+      )
+      .replace(/from "@\/registry\/new-york-v4\/hooks\/([\w-]+)"/g, `from "${lib}/hooks/$1.ts"`)
+      .replace(/from "@\/registry\/new-york-v4\/lib\/([\w-]+)"/g, `from "${lib}/lib/$1.ts"`)
+  );
 }
 
 /** Sibling imports (`./form-next-demo-action`) get the extension of the upstream file. */

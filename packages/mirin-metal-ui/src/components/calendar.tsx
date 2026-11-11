@@ -1,6 +1,6 @@
 import * as React from "react";
 import { type DayButton, DayPicker, getDefaultClassNames } from "../compat/react-day-picker.tsx";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "../icons/index.ts";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 
 import { Button, buttonVariants } from "./button.tsx";

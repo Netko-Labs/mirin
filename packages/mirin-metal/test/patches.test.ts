@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createElement, Fragment, type ReactNode, useState } from "react";
+import { createElement, Fragment, memo, type ReactNode, useState } from "react";
 import { Text, TextInput, View } from "../src/components.ts";
 import { createPortal, render } from "../src/render.ts";
 import type { NativeEvent, NativeRoot, NativeTransport } from "../src/types.ts";
@@ -234,6 +234,56 @@ describe("tree patches", () => {
     await step(() => rows.set(["x", "y"]));
   });
 
+  test("a long list changed every way keeps the host's order the driver's", async () => {
+    const keys = (from: number, count: number) =>
+      Array.from({ length: count }, (_, index) => `k${from + index}`);
+    const rows = control(keys(0, 60));
+    function App() {
+      const shown = rows.use();
+      return createElement(
+        View,
+        { testID: "list" },
+        shown.map((key) => createElement(View, { key }, createElement(Text, null, key))),
+      );
+    }
+    const { step, host } = await mounted(createElement(App));
+    const order = () =>
+      ((host.tree?.children ?? []) as Node[]).map((row) => {
+        const text = row.children?.[0] as Node;
+        return String(text.children?.[0]);
+      });
+    const base = keys(0, 60);
+    const shuffled = [...base];
+    let seed = 7;
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const other = seed % (index + 1);
+      [shuffled[index], shuffled[other]] = [shuffled[other] as string, shuffled[index] as string];
+    }
+    const swapped = [...base];
+    [swapped[5], swapped[50]] = [swapped[50] as string, swapped[5] as string];
+    const orders: string[][] = [
+      [...base].reverse(),
+      base,
+      swapped,
+      shuffled,
+      [...base.slice(1), base[0] as string],
+      // Many rows before the old ones, between them, and after.
+      [...keys(100, 40), ...base],
+      [...base.slice(0, 30), ...keys(200, 40), ...base.slice(30)],
+      [...base, ...keys(300, 40)],
+      // Every other row gone, then rows gone and new at once, in a new order.
+      base.filter((_, index) => index % 2 === 0),
+      [...keys(400, 10), ...[...base].reverse().filter((_, index) => index % 3 !== 0)],
+      [],
+      base,
+    ];
+    for (const next of orders) {
+      await step(() => rows.set(next));
+      expect(order()).toEqual(next);
+    }
+  });
+
   test("conditional subtrees mount and unmount; fields follow their value", async () => {
     const open = control(false);
     function App() {
@@ -357,5 +407,65 @@ describe("hosts without patches", () => {
     expect(tree.children?.[0]).toEqual({ type: "text", props: {}, children: ["1"] });
     expect(root.lastTree()).toBe(sent.at(-1) ?? null);
     root.unmount();
+  });
+
+  test("a whole tree after changes is the tree an app mounted that way sends", async () => {
+    interface Shape {
+      rows: string[];
+      wide: string;
+      value: string;
+    }
+    const shape = control<Shape>({ rows: ["a", "b", "c"], wide: "b", value: "" });
+    const seen: Shape[] = [];
+    function App({ fixed }: { fixed?: Shape }) {
+      const live = shape.use();
+      const { rows, wide, value } = fixed ?? live;
+      return createElement(
+        View,
+        { style: { padding: rows.length } },
+        createElement(TextInput, { value, onChangeText() {} }),
+        // Memoized: a row that didn't change keeps its props, and so its kept head.
+        rows.map((key) => createElement(Row, { key, name: key, wide: key === wide })),
+      );
+    }
+    const Row = memo(function Row({ name, wide }: { name: string; wide: boolean }) {
+      return createElement(
+        View,
+        { style: { padding: 4, width: wide ? 200 : 100 }, onPress: wide ? () => {} : undefined },
+        createElement(Text, null, name),
+      );
+    });
+    const transport = (lines: string[]): NativeTransport => ({
+      send: (line) => lines.push(line),
+      onEvent() {},
+      onClose() {},
+      simulate() {},
+      close() {},
+    });
+    const sent: string[] = [];
+    const root = render(createElement(App), transport(sent));
+    await nextCommit();
+    for (const next of [
+      { rows: ["a", "b", "c"], wide: "c", value: "" },
+      { rows: ["a", "b", "c"], wide: "c", value: "typed" },
+      { rows: ["c", "a", "d", "b"], wide: "a", value: "typed" },
+      { rows: ["d"], wide: "d", value: "" },
+      { rows: ["d"], wide: "d", value: "" },
+    ]) {
+      seen.push(next);
+      shape.set(next);
+      await nextCommit();
+    }
+    root.unmount();
+    // The same shapes, each mounted from nothing: only the ids differ.
+    const bare = (line: string) => line.replace(/"id":"\d+"/g, '"id":"?"');
+    expect(sent).toHaveLength(seen.length + 1);
+    for (const [index, fixed] of seen.entries()) {
+      const lines: string[] = [];
+      const fresh = render(createElement(App, { fixed }), transport(lines));
+      await nextCommit();
+      expect(bare(sent[index + 1] ?? "")).toBe(bare(lines[0] ?? ""));
+      fresh.unmount();
+    }
   });
 });

@@ -150,6 +150,9 @@
     "packages/mirin-metal": {
       "name": "@mirinjs/metal",
       "version": "0.1.0-alpha.1",
+      "bin": {
+        "mirin-metal": "./src/cli.ts",
+      },
       "dependencies": {
         "react-reconciler": "^0.33.0",
       },

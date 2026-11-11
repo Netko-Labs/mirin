@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { ChevronDownIcon } from "../icons/index.ts";
+import { ChevronDownIcon } from "../icons/core.generated.ts";
 import { cn, cva } from "../lib/cn.ts";
 import { NavigationMenu as NavigationMenuPrimitive } from "../primitives/navigation-menu.tsx";
 
