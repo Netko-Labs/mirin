@@ -211,16 +211,25 @@ export class TreeSync {
    * than `FEWEST_FROM` of them: a move or two goes as React made it.
    */
   private reordered(log: CommitLog): Set<ViewInstance> {
-    let moves: Map<ViewInstance, number> | null = null;
+    const moves = new Map<ViewInstance, number>();
+    // A commit's moves come a view at a time: counted in a run, added up per view.
+    let view: ViewInstance | null = null;
+    let count = 0;
     for (const mutation of log.mutations) {
       const parent: HostParent = mutation.parent;
-      if (mutation.kind === "place" && parent.kind === "view" && this.holds(mutation.child)) {
-        moves ??= new Map();
-        moves.set(parent, (moves.get(parent) ?? 0) + 1);
+      if (mutation.kind !== "place" || parent.kind !== "view" || !this.holds(mutation.child)) {
+        continue;
       }
+      if (parent !== view) {
+        if (view) moves.set(view, (moves.get(view) ?? 0) + count);
+        view = parent;
+        count = 0;
+      }
+      count += 1;
     }
+    if (view) moves.set(view, (moves.get(view) ?? 0) + count);
     const views = new Set<ViewInstance>();
-    if (moves) for (const [view, count] of moves) if (count > FEWEST_FROM) views.add(view);
+    for (const [each, moved] of moves) if (moved > FEWEST_FROM) views.add(each);
     return views;
   }
 
@@ -243,41 +252,43 @@ export class TreeSync {
     if (!before) return false;
     for (let slot = 0; slot < before.length; slot += 1) (before[slot] as HostNode).slot = slot;
     const children = parent.children;
-    const order = new Int32Array(children.length);
-    let held = 0;
-    for (const node of children) {
+    const count = children.length;
+    // Which children the host holds (the others are new), by index.
+    const held = new Uint8Array(count);
+    const order = new Int32Array(count);
+    let heldCount = 0;
+    for (let index = 0; index < count; index += 1) {
+      const node = children[index] as HostNode;
       if (!this.holds(node)) continue;
       // Where it was among the children the host holds; not there, it came from elsewhere.
       if (before[node.slot] !== node) return false;
-      order[held] = node.slot;
-      held += 1;
+      held[index] = 1;
+      order[heldCount] = node.slot;
+      heldCount += 1;
     }
-    const stays = longestIncreasing(order.subarray(0, held), before.length);
+    const kept = longestIncreasing(order.subarray(0, heldCount), before.length);
+    const stays = (index: number): boolean =>
+      held[index] === 1 && kept[(children[index] as HostNode).slot] === 1;
     const parentId = `"${parent.key}"`;
-    const place = (node: HostNode, next: HostNode | null): void => {
+    const place = (index: number, next: HostNode | null): void => {
+      const node = children[index] as HostNode;
       const where = next ? `,"before":"${next.key}"` : "";
-      if (!this.holds(node)) {
+      if (held[index] === 1) {
+        ops.push(`{"op":"move","id":"${node.key}","parent":${parentId}${where}}`);
+      } else {
         const json = this.freshJson(node, parent, fresh);
         ops.push(`{"op":"insert","parent":${parentId}${where},"node":${json}}`);
-      } else ops.push(`{"op":"move","id":"${node.key}","parent":${parentId}${where}}`);
+      }
     };
     // Those after the last that stays go to the end, in order; the others
     // before the child that follows them, last to first.
-    let last = children.length - 1;
-    while (last >= 0 && !this.stays(children[last] as HostNode, stays)) last -= 1;
-    for (let index = last + 1; index < children.length; index += 1) {
-      place(children[index] as HostNode, null);
-    }
+    let last = count - 1;
+    while (last >= 0 && !stays(last)) last -= 1;
+    for (let index = last + 1; index < count; index += 1) place(index, null);
     for (let index = last - 1; index >= 0; index -= 1) {
-      const node = children[index] as HostNode;
-      if (!this.stays(node, stays)) place(node, children[index + 1] as HostNode);
+      if (!stays(index)) place(index, children[index + 1] as HostNode);
     }
     return true;
-  }
-
-  /** Whether a child the host holds keeps its place in a reorder (`stays`: by its old slot). */
-  private stays(node: HostNode, stays: Uint8Array): boolean {
-    return this.holds(node) && stays[node.slot] === 1;
   }
 
   /** A `set` op when the node's head is not what the host has. */
