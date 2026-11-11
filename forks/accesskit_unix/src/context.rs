@@ -322,6 +322,12 @@ async fn process_adapter_message(
                 bus.emit_cache_remove(adapter_id, node_id).await?;
             }
         }
+        // mirin: who listens for bounds changes (`listeners.rs`).
+        Message::AskListeners => {
+            if let Some(bus) = atspi_bus {
+                bus.ask_listeners().await;
+            }
+        }
     }
 
     Ok(())

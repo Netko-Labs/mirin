@@ -4,6 +4,7 @@
 // the LICENSE-MIT file), at your option.
 
 use accesskit::{ActionHandler, ActivationHandler, DeactivationHandler, Rect, TreeUpdate};
+// mirin: `ObjectEvent` too, for the bounds changes that are not sent.
 use accesskit_atspi_common::{
     ActionHandlerNoMut, ActionHandlerWrapper, Adapter as AdapterImpl, AdapterCallback, CacheEvent,
     Event, FullNodeId, ObjectEvent, PlatformNode, WindowBounds, next_adapter_id,
@@ -18,7 +19,7 @@ use tokio::sync::mpsc::UnboundedSender as Sender;
 
 use crate::context::{get_or_init_app_context, get_or_init_messages};
 // mirin: bounds changes go out only while something listens for them.
-use crate::listeners::{bounds_heard, count_signal};
+use crate::listeners::{bounds_changed, count_signal};
 
 pub(crate) struct Callback {
     messages: Sender<Message>,
@@ -65,7 +66,11 @@ impl AdapterCallback for Callback {
             ..
         } = &event
         {
-            if !bounds_heard() {
+            let change = bounds_changed();
+            if change.ask {
+                self.send_message(Message::AskListeners);
+            }
+            if !change.send {
                 return;
             }
         }
@@ -302,4 +307,6 @@ pub(crate) enum Message {
         adapter_id: usize,
         node_id: FullNodeId,
     },
+    // mirin: bounds are changing: time to ask the registry who listens.
+    AskListeners,
 }
