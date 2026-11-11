@@ -48,6 +48,9 @@ pub(crate) struct Boundaries {
     next: u64,
     /// The tree generation the last sync saw (`patch::Document`).
     synced: u64,
+    /// What each id'd view's subtree was at the last sync it was walked in
+    /// (pure, nodes): a patch walks only what changed.
+    walks: HashMap<String, (bool, usize)>,
 }
 
 /// What a subtree is, as far as keeping it goes.
@@ -84,9 +87,16 @@ impl Boundaries {
         let synced = self.synced;
         let changed = |id: &str| doc.subtree_generation(id) > synced;
         let changed: Option<&dyn Fn(&str) -> bool> = by_generation.then_some(&changed);
+        if !by_generation {
+            self.walks.clear();
+        }
         self.walk(doc, old, changed, &mut path, &mut duplicates, cx);
         self.synced = doc.generation();
-        self.map.retain(|_, boundary| boundary.seen);
+        // After a patch, a subtree that didn't change was not walked: the
+        // retained subtrees in it stay.
+        self.map.retain(|id, boundary| {
+            boundary.seen || (by_generation && doc.subtree_generation(id) <= synced)
+        });
         for id in duplicates {
             self.map.remove(&id);
         }
@@ -126,6 +136,19 @@ impl Boundaries {
                 .collect(),
             _ => HashMap::new(),
         };
+        let id = props.id.as_deref();
+        if let Some((id, changed)) = id.zip(changed) {
+            if !changed(id) {
+                if let Some(&(pure, nodes)) = self.walks.get(id) {
+                    // Unchanged since the last sync: as it was then.
+                    return Walk {
+                        pure,
+                        nodes,
+                        same: true,
+                    };
+                }
+            }
+        }
         let mut walk = Walk {
             pure: pure_view(props, children),
             nodes: 1,
@@ -144,11 +167,15 @@ impl Boundaries {
             walk.nodes += child_walk.nodes;
             walk.same &= child_walk.same;
         }
-        if let Some(id) = props
-            .id
-            .as_deref()
-            .filter(|_| walk.pure && walk.nodes >= MIN_NODES)
-        {
+        if let Some(id) = id {
+            match self.walks.get_mut(id) {
+                Some(entry) => *entry = (walk.pure, walk.nodes),
+                None => {
+                    self.walks.insert(id.to_owned(), (walk.pure, walk.nodes));
+                }
+            }
+        }
+        if let Some(id) = id.filter(|_| walk.pure && walk.nodes >= MIN_NODES) {
             let same = changed.map_or(walk.same, |changed| !changed(id));
             self.keep(id, same, path, duplicates, cx);
         }
@@ -291,10 +318,13 @@ fn build(
     // Shared only while it is built: a tree held past the frame makes the
     // next patch copy it whole.
     let tree = std::rc::Rc::clone(view.tree.tree());
-    let node = view
-        .boundaries
-        .get(id)
-        .and_then(|boundary| node_at(&tree, &boundary.path));
+    // Found by id after a patch (paths of unchanged subtrees may be stale);
+    // after a whole tree by the path its sync recorded.
+    let node = view.tree.find_in(&tree, id).or_else(|| {
+        view.boundaries
+            .get(id)
+            .and_then(|boundary| node_at(&tree, &boundary.path))
+    });
     let Some(NodeSpec::View { props, children }) = node else {
         return div().into_any_element();
     };
