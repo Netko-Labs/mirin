@@ -612,7 +612,9 @@ impl WaylandClient {
             })
             .unwrap();
 
+        let started = Instant::now(); // mirin: a startup milestone
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+        log::info!(target: "mirin::startup", "gpu context created in {:.1}ms", started.elapsed().as_secs_f64() * 1000.0); // mirin:
 
         let seat = seat.unwrap();
         let globals = Globals::new(
@@ -748,6 +750,7 @@ impl WaylandClient {
             .insert(handle)
             .unwrap();
 
+        log::info!(target: "mirin::startup", "wayland client ready"); // mirin: a startup milestone
         Self(state)
     }
 }

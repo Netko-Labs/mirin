@@ -36,6 +36,7 @@ Upstreaming candidates are marked as such.
 | The layout engine keeps a tree across frames (`begin_owned`/`end_owned`, `remove_nodes`, `released`, `contains`; `clear` frees only the frame's own nodes and released subtrees, or everything when nothing is retained) | `src/taffy.rs` | Retained subtrees keep their taffy nodes and cache; the measure function is shared with the detached layout. |
 | The fork's taffy by path (`[dependencies.taffy] path = "../taffy"`) | `Cargo.toml` | The retained subtrees use the taffy fork's API (incremental rounding, detached layout, `contains`), also when this crate is built alone for its tests. |
 | `DispatchEventResult` is public (hidden) | `src/window.rs` | It was a private type in `Window::dispatch_event`'s public signature, which made the method uncallable from outside; mirin-metal's simulated pointer moves (sim `move`) dispatch through it. Upstreamable. |
+| Startup milestones on the `mirin::startup` log target | `src/platform/linux/platform.rs`, `src/platform/linux/text_system.rs`, `src/platform/linux/wayland/{client,window}.rs` | Where a host's start goes was invisible between its first line and its first frame. The text system, the GPU context, a window's renderer and each font family loaded log their time (`log::info!`, nothing without a logger); mirin-metal's `MIRIN_METAL_TRACE=1` prints them (`trace.rs`). |
 
 To update: see `../README.md` (merge the `forks-upstream` branch), then
 reconcile the changes above.

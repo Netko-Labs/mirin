@@ -223,6 +223,7 @@ impl CosmicTextSystemState {
             .map(|face| (face.id, face.post_script_name.clone()))
             .collect::<SmallVec<[_; 4]>>();
 
+        let started = std::time::Instant::now(); // mirin: a startup milestone
         let mut loaded_font_ids = SmallVec::new();
         for (font_id, postscript_name) in families {
             let font = self
@@ -251,6 +252,7 @@ impl CosmicTextSystemState {
                 is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
             });
         }
+        log::info!(target: "mirin::startup", "font family {name}: {} faces loaded in {:.1}ms", loaded_font_ids.len(), started.elapsed().as_secs_f64() * 1000.0); // mirin:
 
         Ok(loaded_font_ids)
     }

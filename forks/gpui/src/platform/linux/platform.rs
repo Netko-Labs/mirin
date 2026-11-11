@@ -108,8 +108,11 @@ impl LinuxCommon {
     pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
 
+        // mirin: a startup milestone for mirin-metal's trace (target `mirin::startup`).
+        let started = std::time::Instant::now();
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::CosmicTextSystem::new());
+        log::info!(target: "mirin::startup", "text system created in {:.1}ms", started.elapsed().as_secs_f64() * 1000.0); // mirin:
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
         let text_system = Arc::new(crate::NoopTextSystem::new());
 

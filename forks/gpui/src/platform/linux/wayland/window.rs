@@ -237,7 +237,10 @@ impl WaylandWindowState {
                 },
                 transparent: true,
             };
-            BladeRenderer::new(gpu_context, &raw_window, config)?
+            let started = std::time::Instant::now(); // mirin: a startup milestone
+            let renderer = BladeRenderer::new(gpu_context, &raw_window, config)?;
+            log::info!(target: "mirin::startup", "renderer created in {:.1}ms", started.elapsed().as_secs_f64() * 1000.0); // mirin:
+            renderer
         };
 
         Ok(Self {

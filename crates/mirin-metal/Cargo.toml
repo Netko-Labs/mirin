@@ -20,6 +20,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async channel that wakes the window when the driver sends (already in gpui's tree).
 futures = "0.3"
+# The GPUI fork's startup milestones in the trace (src/trace.rs; already in gpui's tree).
+log = "0.4"
 # The accessibility tree (src/access/): AccessKit's tree types, everywhere.
 accesskit = "0.25"
 # Opt-in sampling profiler for the host (`--features profiling`); see

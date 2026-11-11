@@ -310,6 +310,10 @@ fn open_window(
             return None;
         }
     };
+    crate::trace::log(format_args!(
+        "window opened, {:.1}ms after the host started",
+        crate::trace::since_start_ms()
+    ));
     cx.activate(true);
     // GPUI's Wayland backend ignores `TitlebarOptions::title` at creation
     // (the window opened untitled); set it explicitly.

@@ -3379,6 +3379,7 @@ dependencies = [
  "ash",
  "futures",
  "gpui",
+ "log",
  "pprof",
  "serde",
  "serde_json",
