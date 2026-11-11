@@ -6,7 +6,7 @@
 use accesskit::{ActionHandler, ActivationHandler, DeactivationHandler, Rect, TreeUpdate};
 use accesskit_atspi_common::{
     ActionHandlerNoMut, ActionHandlerWrapper, Adapter as AdapterImpl, AdapterCallback, CacheEvent,
-    Event, FullNodeId, PlatformNode, WindowBounds, next_adapter_id,
+    Event, FullNodeId, ObjectEvent, PlatformNode, WindowBounds, next_adapter_id,
 };
 #[cfg(not(feature = "tokio"))]
 use async_channel::Sender;
@@ -17,6 +17,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender as Sender;
 
 use crate::context::{get_or_init_app_context, get_or_init_messages};
+// mirin: bounds changes go out only while something listens for them.
+use crate::listeners::{bounds_heard, count_signal};
 
 pub(crate) struct Callback {
     messages: Sender<Message>,
@@ -56,6 +58,18 @@ impl AdapterCallback for Callback {
     }
 
     fn emit_event(&self, adapter: &AdapterImpl, event: Event) {
+        // mirin: a bounds change nothing registered for is not sent (they
+        // come one a node: `listeners.rs`); every other signal is counted.
+        if let Event::Object {
+            event: ObjectEvent::BoundsChanged(_),
+            ..
+        } = &event
+        {
+            if !bounds_heard() {
+                return;
+            }
+        }
+        count_signal();
         match event {
             Event::Cache(CacheEvent::Added(id)) => {
                 let node = adapter.platform_node(id);

@@ -31,6 +31,8 @@ use zbus::{
 pub(crate) struct Bus {
     conn: Connection,
     _task: Task<()>,
+    // mirin: follows who listens for bounds changes (`listeners.rs`).
+    _listeners: Task<()>,
     socket_proxy: SocketProxy<'static>,
     desktop: Arc<OnceLock<ObjectRefOwned>>,
 }
@@ -59,9 +61,15 @@ impl Bus {
             "accesskit_atspi_bus_task",
         );
         let socket_proxy = SocketProxy::new(&conn).await?;
+        // mirin: who listens for bounds changes, for as long as the bus is used.
+        let _listeners = executor.spawn(
+            crate::listeners::follow_bounds_listeners(conn.clone()),
+            "accesskit_bounds_listeners_task",
+        );
         let mut bus = Bus {
             conn,
             _task,
+            _listeners,
             socket_proxy,
             desktop: Arc::new(OnceLock::new()),
         };

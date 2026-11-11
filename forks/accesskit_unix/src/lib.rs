@@ -22,8 +22,12 @@ mod adapter;
 mod atspi;
 mod context;
 mod executor;
+// mirin: which events are listened for, and how many signals were made.
+mod listeners;
 mod util;
 
 pub use adapter::Adapter;
 // mirin: the application's name on the bus.
 pub use context::set_app_name;
+// mirin: how many signals this process has queued for the bus.
+pub use listeners::signals_queued;
