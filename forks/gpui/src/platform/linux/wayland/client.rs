@@ -234,6 +234,11 @@ pub(crate) struct WaylandClientState {
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
+    // mirin: the compose table is read at the first key press after a
+    // keymap (`compose_context` holds what it is made from until then).
+    // Reading the locale's Compose file took ~2 ms of every host's start,
+    // and a panel or a dock never hears a key.
+    compose_context: Option<xkb::Context>,
     drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
@@ -689,6 +694,7 @@ impl WaylandClient {
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
             keymap_state: None,
             compose_state: None,
+            compose_context: None, // mirin:
             drag: DragState {
                 data_offer: None,
                 window: None,
@@ -1465,7 +1471,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     .expect("Failed to create keymap")
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
-                state.compose_state = get_xkb_compose_state(&xkb_context);
+                // mirin: made at the next key press.
+                state.compose_state = None;
+                state.compose_context = Some(xkb_context);
                 drop(state);
 
                 this.handle_keyboard_layout_change();
@@ -1548,6 +1556,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
                         let mut keystroke =
                             Keystroke::from_xkb(keymap_state, state.modifiers, keycode);
+                        // mirin: the compose table, at the first key press.
+                        if let Some(xkb_context) = state.compose_context.take() {
+                            state.compose_state = get_xkb_compose_state(&xkb_context);
+                        }
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {
