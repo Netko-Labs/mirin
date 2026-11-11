@@ -3011,6 +3011,15 @@ impl Interactivity {
                     .cloned()
             });
             let current_view = window.current_view();
+            // mirin: the state the listener compares with is what this frame
+            // paints (from the hit test), not the last mouse move's: content
+            // that moved under a resting pointer is painted hovered without a
+            // move, and a view copied from this frame (`AnyView::cached`,
+            // `elements::retained`) must hear when that changes.
+            if let Some(hover_state) = &hover_state {
+                hover_state.borrow_mut().element =
+                    !window.last_input_was_touch() && hitbox.is_hovered(window);
+            }
 
             window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = hitbox.is_hovered(window);
