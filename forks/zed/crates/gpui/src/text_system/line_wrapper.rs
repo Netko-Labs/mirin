@@ -378,6 +378,19 @@ impl LineWrapper {
         if let Some(truncate_ix) =
             self.should_truncate_line(&line, truncate_width, truncation_affix, truncate_from)
         {
+            // mirin: a box narrower than the affix itself shows nothing, not a
+            // sliver of the ellipsis clipped at its edge.
+            let affix_width = truncation_affix
+                .chars()
+                .map(|c| self.width_for_char(c))
+                .fold(px(0.0), |a, x| a + x);
+            if affix_width > truncate_width && !truncation_affix.is_empty() {
+                let mut runs = runs.iter().take(1).cloned().collect::<Vec<_>>();
+                if let Some(run) = runs.first_mut() {
+                    run.len = 0;
+                }
+                return (SharedString::default(), Cow::Owned(runs));
+            }
             let result = match truncate_from {
                 TruncateFrom::Start => SharedString::from(format!(
                     "{truncation_affix}{}",

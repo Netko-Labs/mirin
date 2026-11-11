@@ -5520,6 +5520,19 @@ impl Window {
         self.layout_engine = Some(layout_engine);
     }
 
+    /// mirin: how far an element's content reaches from its top left (its
+    /// scrollable overflow and end border; see `TaffyLayoutEngine::layout_scroll_extent`).
+    ///
+    /// This method should only be called as part of element drawing.
+    pub fn layout_scroll_extent(&mut self, layout_id: LayoutId) -> Size<Pixels> {
+        self.invalidator.debug_assert_prepaint();
+        let scale_factor = self.scale_factor();
+        self.layout_engine
+            .as_ref()
+            .unwrap()
+            .layout_scroll_extent(layout_id, scale_factor)
+    }
+
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method will usually be invoked by
     /// GPUI itself automatically in order to pass your element its `Bounds` automatically.
     ///

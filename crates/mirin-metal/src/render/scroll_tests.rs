@@ -297,9 +297,13 @@ fn a_view_scrolled_between_pixels_paints_on_them_and_keeps_its_offset(cx: &mut T
     assert_eq!(painted(&inner), 50.0 - 236.0);
 
     // Without it (`MIRIN_METAL_SCROLL_SNAP=0`), painted at the offset.
-    cx.update(|window, _| crate::gpui_api::set_scroll_snap(window, false));
-    draw(cx);
-    assert!(near(painted(&inner), 50.0 - 236.2));
+    // Upstream GPUI always paints there (`gpui_api::set_scroll_snap`).
+    #[cfg(not(feature = "gpui-next"))]
+    {
+        cx.update(|window, _| crate::gpui_api::set_scroll_snap(window, false));
+        draw(cx);
+        assert!(near(painted(&inner), 50.0 - 236.2));
+    }
 }
 
 #[gpui::test]

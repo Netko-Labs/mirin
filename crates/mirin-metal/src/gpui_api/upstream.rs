@@ -198,7 +198,10 @@ pub(crate) fn unlock_session(_window: &mut Window) {}
 /// GAP: upstream takes a least size only when the window opens.
 pub(crate) fn set_min_size(_window: &mut Window, _size: Size<Pixels>) {}
 
-/// GAP: scroll views paint where their offset puts them.
+/// Upstream always paints scroll views at whole device pixels
+/// (`Window::layout_bounds` snaps the element offset, halves toward zero);
+/// the switch to paint them at their offset (`MIRIN_METAL_SCROLL_SNAP=0`) is
+/// the fork's alone.
 pub(crate) fn set_scroll_snap(_window: &mut Window, _snap: bool) {}
 
 /// GAP: upstream's drag-out (`external_drag_payload`) has another shape and

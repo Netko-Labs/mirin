@@ -353,6 +353,20 @@ impl TaffyLayoutEngine {
     // snapped independently, but the raw content-box origin can carry a
     // 1dp residual into descendants.
 
+    /// mirin: how far a node's content reaches from its top left, its end
+    /// border included: its scrollable overflow (children's boxes and what
+    /// overflows them visibly, then a scroll container's end padding), as
+    /// taffy measured it from the padding box, and the borders around it.
+    /// A scroll view scrolls by this less its size.
+    pub fn layout_scroll_extent(&self, id: LayoutId, scale_factor: f32) -> Size<Pixels> {
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let reach = layout.scrollable_overflow_rect;
+        size(
+            Pixels((layout.border.left + reach.right + layout.border.right) / scale_factor),
+            Pixels((layout.border.top + reach.bottom + layout.border.bottom) / scale_factor),
+        )
+    }
+
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;

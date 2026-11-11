@@ -317,6 +317,27 @@ pub fn compute_flexbox_layout(
         LayoutInput { known_dimensions: styled_based_known_dimensions, known_dimensions_are_definite, ..inputs },
     );
 
+    // mirin: a width the container's min-width or max-width set, not its content. Its children were laid out
+    // for the content's width (under a min-content constraint, each line wrapped at its widest word), so the
+    // height that came back belongs to another width. The cache then hands that height to a parent asking for
+    // this very width (`Cache::get` reuses an entry whose size equals the known one): a row of words with
+    // `min-width: 120`, laid out at exactly 120, came out as tall as its text wrapped word by word. Lay the
+    // children out again at the width the container took.
+    if styled_based_known_dimensions.width.is_none() {
+        let width = output.size.width;
+        let at_bound = |bound: Option<f32>| {
+            bound.is_some_and(|bound| (f32_max(bound, padding_border_sum.width) - width).abs() < 0.001)
+        };
+        if at_bound(min_size.width) || at_bound(max_size.width) {
+            let known_dimensions = Size { width: Some(width), height: styled_based_known_dimensions.height };
+            output = compute_preliminary(
+                tree,
+                node,
+                LayoutInput { known_dimensions, known_dimensions_are_definite, ..inputs },
+            );
+        }
+    }
+
     // Layout containment suppresses the box's baseline for baseline-alignment purposes
     if contain.suppresses_baseline() {
         output.baselines = Baselines::NONE;
@@ -882,6 +903,27 @@ fn determine_available_space(
 ///   Furthermore, the sizing calculations that floor the content box size at zero when applying box-sizing are also ignored.
 ///   (For example, an item with a specified size of zero, positive padding, and box-sizing: border-box will have an outer flex base size of zero—and hence a negative inner flex base size.)
 #[inline]
+// mirin: fit-content cross size for flex base sizes.
+/// Measure a flex item's cross size under `available_space`.
+fn tree_measure_cross(
+    tree: &mut impl LayoutFlexboxContainer,
+    node: NodeId,
+    known_dimensions: Size<Option<f32>>,
+    parent_size: Size<Option<f32>>,
+    available_space: Size<AvailableSpace>,
+    dir: FlexDirection,
+) -> f32 {
+    tree.measure_child_size(
+        node,
+        known_dimensions,
+        parent_size,
+        available_space,
+        SizingMode::ContentSize,
+        dir.cross_axis(),
+        Line::FALSE,
+    )
+}
+
 fn determine_flex_base_size(
     tree: &mut impl LayoutFlexboxContainer,
     constants: &AlgoConstants,
@@ -970,6 +1012,28 @@ fn determine_flex_base_size(
             .maybe_add(box_sizing_adjustment);
 
         drop(child_style);
+
+        // mirin: spec 9.2.3.E sizes a non-stretched item with an auto cross size
+        // at fit-content for its base size (and the automatic minimum size below).
+        // Measuring it against the whole available width instead let content that
+        // scales with width (aspect-ratio grids) report a far larger height than
+        // the item ends up with.
+        let mut child_known_dimensions = child_known_dimensions;
+        if dir.is_column() && child.align_self != AlignSelf::STRETCH && child_known_dimensions.cross(dir).is_none() {
+            if let AvailableSpace::Definite(available) = cross_axis_available_space {
+                let available = (available - child.margin.cross_axis_sum(dir)).max(0.0);
+                let ckd = child_known_dimensions;
+                let max_content =
+                    tree_measure_cross(tree, child.node, ckd, child_parent_size, Size::MAX_CONTENT, dir);
+                let fit = if max_content > available {
+                    tree_measure_cross(tree, child.node, ckd, child_parent_size, Size::MIN_CONTENT, dir).max(available)
+                } else {
+                    max_content
+                };
+                child_known_dimensions
+                    .set_cross(dir, Some(fit.maybe_clamp(child.min_size.cross(dir), child.max_size.cross(dir))));
+            }
+        }
 
         child.flex_basis = 'flex_basis: {
             // A. If the item has a definite used flex basis, that’s the flex base size.
@@ -1941,6 +2005,36 @@ fn determine_hypothetical_cross_size(
             _ => child_available_cross,
         };
 
+        // mirin: spec 9.4.7 treats an auto cross size as fit-content. In a column, a
+        // non-stretched item (`align-items: center`) measured against the available
+        // width came back at its max-content width, wider than the column (a notice
+        // centered over a window narrower than its one-line text overflowed both
+        // edges). Its fit-content width is used instead, as for its base size.
+        let child_cross = child_cross.or_else(|| {
+            if !constants.dir.is_column() || child.align_self == AlignSelf::STRETCH {
+                return None;
+            }
+            let available =
+                constants.node_inner_size.cross(constants.dir).or(match available_space.cross(constants.dir) {
+                    AvailableSpace::Definite(available) => Some(available),
+                    _ => None,
+                })?;
+            let available = (available - child.margin.cross_axis_sum(constants.dir)).max(0.0);
+            let known = Size { width: None, height: Some(child.target_size.height) };
+            let parent = constants.node_inner_size;
+            let max_content = tree_measure_cross(tree, child.node, known, parent, Size::MAX_CONTENT, constants.dir);
+            if max_content <= available {
+                return None;
+            }
+            let min_content = tree_measure_cross(tree, child.node, known, parent, Size::MIN_CONTENT, constants.dir);
+            Some(
+                min_content
+                    .max(available)
+                    .maybe_clamp(transferred_min_cross, transferred_max_cross)
+                    .max(padding_border_sum),
+            )
+        });
+
         let child_inner_cross = child_cross.unwrap_or_else(|| {
             tree.compute_child_layout(
                 child.node,
@@ -2628,14 +2722,25 @@ fn calculate_flex_item(
         } else {
             Point { x: location.x - border.left, y: location.y - border.top }
         };
-        *total_overflow_rect = total_overflow_rect.union(compute_scrollable_overflow_contribution(
+        let mut contribution = compute_scrollable_overflow_contribution(
             contribution_location,
             size,
             scrollable_overflow_rect,
             item.overflow,
             item.contain,
             constants.is_scroll_container,
-        ));
+        );
+        // mirin: an in-flow item's margin box counts toward its container's
+        // scrollable overflow (CSS Overflow 3, 2.2), so a scroll view reaches
+        // past its last item's end margin, as in browsers.
+        if contribution != Rect::ZERO {
+            let inline_end_margin = if layout_direction.is_rtl() { item.margin.left } else { item.margin.right };
+            contribution.right =
+                f32_max(contribution.right, contribution_location.x + size.width + inline_end_margin);
+            contribution.bottom =
+                f32_max(contribution.bottom, contribution_location.y + size.height + item.margin.bottom);
+        }
+        *total_overflow_rect = total_overflow_rect.union(contribution);
     }
 }
 

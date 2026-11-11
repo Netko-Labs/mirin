@@ -12,6 +12,22 @@ port a change of `../gpui` say which (`../gpui/MIRIN.md`).
 | --- | --- | --- |
 | Explicit grid track lists (`Style::grid_template_columns` / `grid_template_rows`, `GridTrack`, `TrackBreadth`) | `crates/gpui/src/style.rs`, `crates/gpui/src/taffy.rs` | Port of `../gpui`'s row: Tailwind `grid-cols-[16px_1fr]`, `grid-cols-[1fr_auto]`; upstream has only `repeat(N, minmax(_, 1fr))` (`GridTemplate`). A pixel breadth is rounded to device pixels as upstream rounds every length. Upstreamable. |
 | `justify_items` / `justify_self` | `crates/gpui/src/style.rs`, `crates/gpui/src/taffy.rs` | Port of `../gpui`'s row: grid inline-axis alignment (`justify-self-end`, `justify-items-center`). Upstreamable. |
+| Text min-content width is the widest word | `crates/gpui/src/elements/text.rs` (`widest_word`; a layout is reused only for the same wrap width) | Port of `../gpui`'s row: taffy asks text for its min-content size when sizing `auto`/`1fr` grid tracks and flex items; GPUI gave no wrap width there, so the text never wrapped. With min-content wrapping, an unwrapped query must not get the wrapped size back: upstream reused any layout for a query without a wrap width. Upstreamable. |
+| A scroll view scrolls by taffy's content size (`Window::layout_scroll_extent`, `TaffyLayoutEngine::layout_scroll_extent`; `Interactivity::scroll_extent`) | `crates/gpui/src/taffy.rs`, `crates/gpui/src/window.rs`, `crates/gpui/src/elements/div.rs` (tested in mirin-metal's `render::scroll_tests`) | Port of `../gpui`'s row. Upstream still scrolls over the span between the children's border boxes plus the padding. taffy 0.15 measures the scrollable overflow from the padding box (`scrollable_overflow_rect`) and adds a scroll container's end padding itself; the extent is that, the start border and the end border. Upstreamable. |
+| The wheel scrolls the innermost view that can still move, then the one around it (`wheel_scroll`; the list's `scroll` says whether it moved) | `crates/gpui/src/elements/div.rs`, `crates/gpui/src/elements/list.rs` (tested in mirin-metal's `render::scroll_tests`) | Port of `../gpui`'s row: every scroll view under the pointer took every turn, unclamped until the next frame, so a list in a page scrolled the page with it. Upstreamable. |
+| A list's scroll bar range counts its padding (`max_scroll_offset`) | `crates/gpui/src/elements/list.rs` | Port of `../gpui`'s row (upstream now shares `max_scroll_offset` between the bar's range and its offset at the bottom). Upstreamable. |
+| A line cut to a width narrower than its ellipsis draws nothing | `crates/gpui/src/text_system/line_wrapper.rs` (`truncate_line`; tested in mirin-metal's `render::one_line_tests`) | Port of `../gpui`'s row: the cut kept the affix whatever the width, so a box a few px wide drew a sliver of "…". Upstreamable. |
+
+Fork changes upstream has in its own way (nothing to port; see
+`docs/metal/gpui-next.md` for the evidence): layer-shell surfaces and the
+screen they open on, typed float literals, idle windows that stop
+committing, the loop outliving its last window (`QuitMode::Explicit`),
+text input only while a field takes text, the toplevel's suspended state
+(as window visibility), a layout reused only for the same truncation
+width, a line cut from a copy of its runs, no-break spaces and quotes
+(UAX #14), `DispatchEventResult` public, and scroll views painted at whole
+device pixels (`Window::layout_bounds` snaps the element offset; always on,
+so `MIRIN_METAL_SCROLL_SNAP=0` has no effect on this build).
 
 To update: see `../README.md` (merge the `forks-upstream-next` branch), then
 reconcile the changes above.

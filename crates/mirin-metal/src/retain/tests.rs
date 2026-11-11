@@ -103,6 +103,8 @@ fn drawn_whole(cx: &mut TestAppContext, tree: NodeSpec) -> Vec<LayoutNode> {
 }
 
 #[gpui::test]
+// GAP: no retained subtrees on upstream GPUI yet (gpui_api::RETAINED).
+#[cfg_attr(feature = "gpui-next", ignore)]
 fn a_frame_that_keeps_the_tree_lays_it_out_as_one_that_draws_it(cx: &mut TestAppContext) {
     let (view, window) = open(cx, grid(8, 6, &[], &[]));
     let first = layout(&view, window);
@@ -143,6 +145,8 @@ fn a_frame_that_keeps_the_tree_lays_it_out_as_one_that_draws_it(cx: &mut TestApp
 }
 
 #[gpui::test]
+// GAP: no retained subtrees on upstream GPUI yet (gpui_api::RETAINED).
+#[cfg_attr(feature = "gpui-next", ignore)]
 fn only_subtrees_that_render_from_their_content_alone_are_kept(cx: &mut TestAppContext) {
     let tree = |value: &str| {
         parse_tree(&format!(

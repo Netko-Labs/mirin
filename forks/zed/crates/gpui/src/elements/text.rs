@@ -598,6 +598,37 @@ struct TextLayoutInner {
     bounds: Option<Bounds<Pixels>>,
 }
 
+// mirin: min-content width of text.
+/// The widest word of single-style text, plus a pixel of slack so wrapping at
+/// exactly this width never breaks inside it. `None` for multi-style runs.
+fn widest_word(
+    text: &SharedString,
+    font_size: Pixels,
+    runs: &[TextRun],
+    window: &Window,
+) -> Option<Pixels> {
+    let [run] = runs else {
+        return None;
+    };
+    let mut widest = Pixels::ZERO;
+    for word in text.split_whitespace() {
+        let word_run = TextRun {
+            len: word.len(),
+            ..run.clone()
+        };
+        let shaped = window.text_system().shape_line(
+            SharedString::from(word.to_string()),
+            font_size,
+            &[word_run],
+            None,
+        );
+        if shaped.width > widest {
+            widest = shaped.width;
+        }
+    }
+    (widest > Pixels::ZERO).then(|| widest.ceil() + crate::px(1.0))
+}
+
 impl TextLayout {
     fn layout(
         &self,
@@ -626,6 +657,12 @@ impl TextLayout {
                 let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                     known_dimensions.width.or(match available_space.width {
                         crate::AvailableSpace::Definite(x) => Some(x),
+                        // mirin: CSS min-content is the widest unbreakable word,
+                        // not the whole line, so text can wrap inside grid and
+                        // flex tracks sized from content.
+                        crate::AvailableSpace::MinContent => {
+                            widest_word(&text, font_size, &runs, window)
+                        }
                         _ => None,
                     })
                 } else {
@@ -661,7 +698,10 @@ impl TextLayout {
                 //    sizing with whatever width some earlier measure pass happened to use)
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && let Some(size) = text_layout.size
-                    && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                    // mirin: reuse a layout only for the same wrap width. Min-content
+                    // now wraps at the widest word, so an unwrapped (max-content)
+                    // query must not get that wrapped size back.
+                    && wrap_width == text_layout.wrap_width
                     && truncate_width.is_none()
                     && text_layout.truncate_width.is_none()
                 {
