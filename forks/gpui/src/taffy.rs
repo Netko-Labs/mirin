@@ -194,6 +194,18 @@ impl TaffyLayoutEngine {
         self.taffy.inner_changed_since(id.into(), epoch)
     }
 
+    /// mirin: whether a layout after `epoch` measured one of `nodes` again
+    /// (taffy's `asked_since`: texts of a retained subtree, since the layout
+    /// they were made in). What a text holds then depends on which of its
+    /// answers taffy's cache still had, not on what a layout from nothing
+    /// asks last: the subtree is not built again onto these nodes but laid
+    /// out anew.
+    pub fn any_asked_since(&self, nodes: &[LayoutId], epoch: u32) -> bool {
+        nodes
+            .iter()
+            .any(|id| self.taffy.asked_since((*id).into(), epoch))
+    }
+
     /// mirin: build a retained subtree's elements again onto `nodes`, the
     /// ones it made (in that order) and kept: until `end_bind`, each layout
     /// requested is answered with the next of them instead of a new node.
@@ -220,8 +232,9 @@ impl TaffyLayoutEngine {
 
     /// mirin: the kept nodes of the subtree bound since `begin_bind`, when
     /// its elements asked for exactly them. Each measured leaf's new
-    /// function is asked what the old one was asked for the layout the node
-    /// has, so its element holds what it would after a layout.
+    /// function is asked what the old one was last asked, so its element
+    /// holds what the old one did (a subtree is bound only while that is
+    /// what a layout from nothing leaves it with, `any_asked_since`).
     pub fn end_bind(&mut self, window: &mut Window, cx: &mut App) -> Option<Vec<LayoutId>> {
         let bind = self.bind.take()?;
         if bind.failed || bind.next != bind.nodes.len() {
@@ -230,7 +243,7 @@ impl TaffyLayoutEngine {
         let scale_factor = window.scale_factor();
         let mut measure = measure_with(scale_factor, window, cx);
         for id in bind.measured {
-            let (known_dimensions, available_space) = self.taffy.final_measure_inputs(id.into())?;
+            let (known_dimensions, available_space) = self.taffy.last_measure_inputs(id.into())?;
             let context = self.taffy.get_node_context_mut(id.into());
             measure(
                 known_dimensions,

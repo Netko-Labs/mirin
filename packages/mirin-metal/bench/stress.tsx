@@ -256,7 +256,7 @@ const cardId = (index: number): string => {
 const visible = Math.min(rows * cols, cols * 12);
 
 const select: Sample[] = [];
-for (let index = 0; runs("select") && index < 20; index += 1) {
+for (let index = 0; runs("select") && index < option("selects", 20); index += 1) {
   const id = cardId((index * 37) % visible);
   const sample = await measure(() => transport.simulate({ kind: "click", id }));
   if (sample) select.push(sample);
@@ -267,7 +267,7 @@ if (!query) throw new Error("no query field");
 transport.simulate({ kind: "click", id: query });
 await Bun.sleep(300);
 const typing: Sample[] = [];
-for (let index = 0; runs("type") && index < 20; index += 1) {
+for (let index = 0; runs("type") && index < option("types", 20); index += 1) {
   const sample = await measure(() =>
     transport.simulate({ kind: "type", text: String.fromCharCode(97 + (index % 26)) }),
   );

@@ -164,8 +164,10 @@ pub(super) struct RetainedState {
     /// records of its drawing, between phases.
     pub(super) drawing: Option<ElementStateScope>,
     pub(super) recording: Option<Recording>,
-    /// The layout its drawing is of (`TaffyLayoutEngine::epoch`).
+    /// The layout its drawing is of (`TaffyLayoutEngine::epoch`), and the
+    /// last one before its nodes were made.
     pub(super) epoch: u32,
+    pub(super) made: u32,
 }
 
 impl Drop for RetainedState {
@@ -198,6 +200,7 @@ impl RetainedState {
             drawing: None,
             recording: None,
             epoch: 0,
+            made: window.layout_engine().epoch(),
         }
     }
 

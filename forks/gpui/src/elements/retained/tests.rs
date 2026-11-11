@@ -1,6 +1,10 @@
 //! mirin: retained subtrees draw what drawing everything would.
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 
 use crate::{
     self as gpui, AnyElement, AppContext, Context, Entity, InteractiveElement, IntoElement,
@@ -29,6 +33,12 @@ struct Scene {
     cells: usize,
     /// Rows may be moved and left out (`Retained::movable`, `skippable`).
     loose: bool,
+    /// Added to every cell's color when it is built. Not part of any
+    /// version: a cell hears of a change by being notified.
+    tint: Rc<Cell<u32>>,
+    /// Counts each row's builds; with it, every build of a row but its
+    /// first has one more (empty) element in it.
+    unsteady: Option<Rc<RefCell<HashMap<usize, usize>>>>,
 }
 
 struct Rows {
@@ -40,20 +50,31 @@ struct Rows {
     draws: Rc<RefCell<HashMap<RetainedDraw, usize>>>,
 }
 
-fn cell(row: usize, index: usize) -> AnyElement {
+fn cell(row: usize, index: usize, tint: u32) -> AnyElement {
     div()
         .id(("cell", row * 100 + index))
         .w(px(30.0))
         .h_full()
         // Its text runs past its box: clipped by a mask that moves with it.
         .overflow_hidden()
-        .bg(rgb(0x0000ff + index as u32))
+        .bg(rgb(0x0000ff + index as u32 + tint))
         .hover(|style| style.bg(rgb(0x00ffff)))
         .child(format!("cell {row}.{index} overflowing"))
         .into_any_element()
 }
 
-fn row(index: usize, row: Row, cells: Vec<AnyElement>) -> AnyElement {
+fn row(
+    index: usize,
+    row: Row,
+    cells: Vec<AnyElement>,
+    unsteady: Option<&RefCell<HashMap<usize, usize>>>,
+) -> AnyElement {
+    let built_before = unsteady.is_some_and(|builds| {
+        let mut builds = builds.borrow_mut();
+        let count = builds.entry(index).or_default();
+        *count += 1;
+        *count > 1
+    });
     div()
         .id(("row", index))
         .flex()
@@ -67,6 +88,7 @@ fn row(index: usize, row: Row, cells: Vec<AnyElement>) -> AnyElement {
         // one must come after the row's background all the same.
         .child(div().size(px(6.0)).bg(rgb(0x00ff00)).shadow_sm())
         .children(cells)
+        .children(built_before.then(div))
         .into_any_element()
 }
 
@@ -80,13 +102,15 @@ impl Render for Rows {
             .enumerate()
             .map(|(index, spec)| {
                 if !self.retain {
-                    let cells = (0..scene.cells).map(|cell_index| cell(index, cell_index));
-                    return row(index, spec, cells.collect());
+                    let tint = scene.tint.get();
+                    let cells = (0..scene.cells).map(|cell_index| cell(index, cell_index, tint));
+                    return row(index, spec, cells.collect(), scene.unsteady.as_deref());
                 }
                 let version = spec.version;
                 let draws = self.draws.clone();
                 // Built by the subtree, as often as it is asked.
                 let (scene_cells, loose) = (scene.cells, scene.loose);
+                let (tint, unsteady) = (scene.tint.clone(), scene.unsteady.clone());
                 let cell_markers = self.cell_markers.clone();
                 let cell_draws = self.draws.clone();
                 retained(
@@ -99,12 +123,10 @@ impl Render for Rows {
                                 let marker =
                                     cell_markers[index * scene_cells + cell_index].entity_id();
                                 let draws = cell_draws.clone();
-                                retained(
-                                    ("kept-cell", index * 100 + cell_index),
-                                    marker,
-                                    1,
-                                    move |_, _| cell(index, cell_index),
-                                )
+                                retained(("kept-cell", index * 100 + cell_index), marker, 1, {
+                                    let tint = tint.clone();
+                                    move |_, _| cell(index, cell_index, tint.get())
+                                })
                                 .movable(loose)
                                 .skippable(loose)
                                 .on_prepaint(move |draw, _, _, _| {
@@ -113,7 +135,7 @@ impl Render for Rows {
                                 .into_any_element()
                             })
                             .collect();
-                        row(index, spec.clone(), cells)
+                        row(index, spec.clone(), cells, unsteady.as_deref())
                     },
                 )
                 .movable(scene.loose)
@@ -169,11 +191,14 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         viewport: 120.0,
         cells,
         loose: true,
+        tint: Rc::default(),
+        unsteady: None,
     }
 }
 
 struct Opened<'a> {
     scene: Rc<RefCell<Scene>>,
+    cell_markers: Vec<Entity<Marker>>,
     scroll: ScrollHandle,
     draws: Rc<RefCell<HashMap<RetainedDraw, usize>>>,
     cx: &'a mut VisualTestContext,
@@ -187,7 +212,7 @@ fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
     };
     let scroll = ScrollHandle::new();
     let draws = Rc::new(RefCell::new(HashMap::new()));
-    let (_, cx) = cx.add_window_view({
+    let (view, cx) = cx.add_window_view({
         let (scene, scroll, draws) = (shared.clone(), scroll.clone(), draws.clone());
         move |_, cx| Rows {
             scene,
@@ -198,11 +223,13 @@ fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
             draws,
         }
     });
+    let cell_markers = cx.update(|_, cx| view.read(cx).cell_markers.clone());
     cx.simulate_resize(size(px(300.0), px(400.0)));
     cx.run_until_parked();
     draw(cx);
     Opened {
         scene: shared,
+        cell_markers,
         scroll,
         draws,
         cx,
@@ -216,6 +243,8 @@ fn plain(rows: Vec<Row>) -> Scene {
         viewport: 0.0,
         cells: 0,
         loose: false,
+        tint: Rc::default(),
+        unsteady: None,
     }
 }
 
@@ -440,6 +469,51 @@ fn what_is_under_the_pointer_is_drawn_again_when_rows_move(cx: &mut TestAppConte
     assert!(hovered(&kept[0]), "a row is hovered");
     assert_eq!(kept, whole);
     assert!(draws[&RetainedDraw::Moved] > 10, "{draws:?}");
+}
+
+#[gpui::test]
+fn a_view_notified_while_it_was_left_undrawn_is_built_again(cx: &mut TestAppContext) {
+    let run = |cx: &mut TestAppContext, retain: bool| {
+        let opened = open(cx, scrolled(30, 3), retain);
+        // Once more, so the rows out of view are left out.
+        draw(opened.cx);
+        // Every cell draws another color, and is notified: the ones out of
+        // view too, which are in no drawing.
+        opened.scene.borrow().tint.set(0x003300);
+        opened.cx.update(|_, cx| {
+            for marker in &opened.cell_markers {
+                cx.notify(marker.entity_id());
+            }
+        });
+        let mut frames = Vec::new();
+        for to in [0.0, 300.0, 140.0, 0.0] {
+            opened.scroll.set_offset(point(px(0.0), px(-to)));
+            draw(opened.cx);
+            frames.push(drawn(opened.cx));
+        }
+        (frames, opened.draws.borrow().clone())
+    };
+    let (kept, draws) = run(cx, true);
+    let (whole, _) = run(cx, false);
+    assert_eq!(kept, whole);
+    assert!(draws[&RetainedDraw::Skipped] > 20, "{draws:?}");
+}
+
+#[gpui::test]
+fn a_subtree_whose_elements_differ_from_build_to_build_is_built_apart(cx: &mut TestAppContext) {
+    let mut scene = scrolled(12, 0);
+    // Rows that may not be copied elsewhere are built again when they move,
+    // with one more element than the layout they kept was made for.
+    scene.loose = false;
+    scene.unsteady = Some(Rc::default());
+    crate::take_built_apart();
+    let draws = compare(
+        cx,
+        scene,
+        &[&|_| Some(9.0), &|_| Some(30.0), &|_| Some(0.0)],
+    );
+    assert!(draws[&RetainedDraw::Redrawn] > 10, "{draws:?}");
+    assert!(crate::take_built_apart() > 10);
 }
 
 #[gpui::test]

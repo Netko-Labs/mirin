@@ -2678,14 +2678,13 @@ impl Window {
         self.layout_engine.as_mut().unwrap()
     }
 
-    /// mirin: a digest of what the frame being painted has drawn so far:
-    /// every primitive (bounds, content mask, colors; not its draw order or
-    /// its place in the atlas) and every hitbox that can be hit, in no
-    /// order. For a host's checks that two ways of drawing (retained
-    /// subtrees or not) draw the same; call it from a paint.
+    /// mirin: what the frame being painted has drawn so far, sorted: every
+    /// primitive (bounds, content mask, colors; not its draw order or its
+    /// place in the atlas) and every hitbox that can be hit. For a host's
+    /// checks that two ways of drawing (retained subtrees or not) draw the
+    /// same; call it from a paint.
     #[doc(hidden)]
-    pub fn scene_digest(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
+    pub fn scene_drawn(&self) -> Vec<String> {
         let mut drawn = self.next_frame.scene.describe();
         drawn.extend(
             self.next_frame
@@ -2699,14 +2698,21 @@ impl Window {
                 })
                 .map(|hitbox| {
                     format!(
-                        "{:?} {:?} {:?}",
+                        "Hitbox {:?} {:?} {:?}",
                         hitbox.bounds, hitbox.content_mask, hitbox.behavior
                     )
                 }),
         );
         drawn.sort_unstable();
+        drawn
+    }
+
+    /// mirin: a digest of `scene_drawn`.
+    #[doc(hidden)]
+    pub fn scene_digest(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
         let mut hasher = collections::FxHasher::default();
-        drawn.hash(&mut hasher);
+        self.scene_drawn().hash(&mut hasher);
         hasher.finish()
     }
 

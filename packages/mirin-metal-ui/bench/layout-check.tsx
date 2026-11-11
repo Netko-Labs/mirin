@@ -19,7 +19,10 @@
  * the frame's primitives and hitboxes, which a host traces with
  * `MIRIN_METAL_TRACE_SCENE=1` (hosts from before that have none). With
  * `--env-b=MIRIN_METAL_RETAIN=0` and the same host twice, that checks
- * retained subtrees draw what drawing everything does.
+ * retained subtrees draw what drawing everything does. To find what
+ * differs, give each host a file with
+ * `--env-a=MIRIN_METAL_TRACE_SCENE=<path>` (every frame's drawing is
+ * appended to it), and `LAYOUT_CHECK_TRACE=1` echoes the hosts' trace.
  */
 
 import {
@@ -244,13 +247,15 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
     height: 800,
     env: {
       ...display?.env,
-      ...hostEnv("a"),
       ...(scene ? { MIRIN_METAL_TRACE: "1", MIRIN_METAL_TRACE_SCENE: "1" } : {}),
+      ...hostEnv("a"),
     },
     onStderr(line) {
       const digest = line.match(/^\[mirin-metal trace\] [\d.]+ scene ([0-9a-f]+)$/)?.[1];
       if (digest) drew = digest;
-      else if (!line.startsWith("[mirin-metal trace]")) console.error(line);
+      else if (!line.startsWith("[mirin-metal trace]") || process.env.LAYOUT_CHECK_TRACE) {
+        console.error(line);
+      }
     },
   });
   let layout: LayoutNode[] | null = null;

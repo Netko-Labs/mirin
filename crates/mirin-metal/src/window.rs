@@ -502,9 +502,13 @@ impl Render for RootView {
                         crate::trace::since_start_ms()
                     ));
                 }
-                if scene_traced() {
+                if let Some(dump) = scene_traced() {
                     // For a check that two hosts draw the same (`layout-check --scene`).
-                    crate::trace::log(format_args!("scene {:016x}", window.scene_digest()));
+                    let digest = window.scene_digest();
+                    crate::trace::log(format_args!("scene {digest:016x}"));
+                    if let Some(path) = dump {
+                        dump_scene(path, digest, &window.scene_drawn());
+                    }
                 }
                 let drawn = crate::retain::take_counts();
                 crate::trace::log(format_args!(
@@ -536,10 +540,31 @@ impl Render for RootView {
 
 /// Whether each frame's trace says what it drew (`MIRIN_METAL_TRACE_SCENE=1`,
 /// with `MIRIN_METAL_TRACE=1`): a digest of the scene's primitives and
-/// hitboxes, for comparing two hosts.
-fn scene_traced() -> bool {
-    static TRACED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *TRACED.get_or_init(|| std::env::var("MIRIN_METAL_TRACE_SCENE").is_ok_and(|value| value == "1"))
+/// hitboxes, for comparing two hosts. Any other value is a file every
+/// frame's primitives and hitboxes are appended to as well (the inner
+/// `Some`), for finding what differs.
+fn scene_traced() -> Option<Option<&'static std::path::Path>> {
+    static TRACED: std::sync::OnceLock<Option<Option<std::path::PathBuf>>> =
+        std::sync::OnceLock::new();
+    TRACED
+        .get_or_init(|| {
+            let value = std::env::var("MIRIN_METAL_TRACE_SCENE").ok()?;
+            Some((value != "1").then(|| value.into()))
+        })
+        .as_ref()
+        .map(|dump| dump.as_deref())
+}
+
+/// Append a frame's drawing to the scene dump (`scene_traced`).
+fn dump_scene(path: &std::path::Path, digest: u64, drawn: &[String]) {
+    use std::io::Write;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path);
+    if let Ok(mut file) = file {
+        let _ = writeln!(file, "frame {digest:016x}\n{}", drawn.join("\n"));
+    }
 }
 
 /// Create the editing state of a field new to the tree, or bring an existing

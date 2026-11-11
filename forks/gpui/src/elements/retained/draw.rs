@@ -123,25 +123,35 @@ impl RetainedState {
             prev: mem::take(&mut self.states),
             next: States::default(),
         });
-        window.retained_binding = true;
-        window.layout_engine().begin_bind(self.owned.clone());
-        let root = window.with_rendered_view(view, |window| element.request_layout(window, cx));
-        let bound = window.end_bind(cx).is_some() && root == self.root;
-        window.retained_binding = false;
-        if bound {
-            self.drawing = window.element_state_scopes.pop();
-            return (element, None);
+        // A text holds what its last measure left it with. For the ones it
+        // was made with, that is what a layout from nothing asks last; once
+        // a later layout measured one again (finding some of its answers in
+        // taffy's cache and not others), it may be another: then the subtree
+        // is laid out anew, apart.
+        let as_made = !window
+            .layout_engine()
+            .any_asked_since(&self.owned, self.made);
+        if as_made {
+            window.retained_binding = true;
+            window.layout_engine().begin_bind(self.owned.clone());
+            let root = window.with_rendered_view(view, |window| element.request_layout(window, cx));
+            let bound = window.end_bind(cx).is_some() && root == self.root;
+            window.retained_binding = false;
+            if bound {
+                self.drawing = window.element_state_scopes.pop();
+                return (element, None);
+            }
+            // What it kept from its last drawing, whichever half the try took.
+            let mut scope = window.element_state_scopes.pop().unwrap_or_default();
+            scope.prev.extend(scope.next.drain());
+            window.element_state_scopes.push(ElementStateScope {
+                prev: scope.prev,
+                next: States::default(),
+            });
+            drop(element);
+            element = build(window, cx);
         }
         APART.with(|apart| apart.set(apart.get() + 1));
-        // What it kept from its last drawing, whichever half the try took.
-        let mut scope = window.element_state_scopes.pop().unwrap_or_default();
-        scope.prev.extend(scope.next.drain());
-        drop(element);
-        let mut element = build(window, cx);
-        window.element_state_scopes.push(ElementStateScope {
-            prev: scope.prev,
-            next: States::default(),
-        });
         window.retained_detached += 1;
         let copy = window.with_rendered_view(view, |window| element.request_layout(window, cx));
         window.compute_detached_layout(copy, self.root, cx);
@@ -278,6 +288,7 @@ pub(super) fn build_layout(
 ) -> (LayoutId, AnyElement, RetainedState) {
     let mut element = build(window, cx);
     let mut state = state;
+    let made = window.layout_engine().epoch();
     let prev = state
         .as_mut()
         .map(|state| mem::take(&mut state.states))
@@ -305,6 +316,7 @@ pub(super) fn build_layout(
             state.version = version;
             state.root = root;
             state.owned = owned;
+            state.made = made;
             state.record.drawn.borrow_mut().known = false;
             state
         }
