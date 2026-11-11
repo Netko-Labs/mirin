@@ -4,15 +4,20 @@
  * input), and lines up the driver's timings with the renderer's
  * `MIRIN_METAL_TRACE` log to split each click into stages.
  *
- *   bun bench/native.tsx [host-binary] [clicks] [--visible]
+ *   bun bench/native.tsx [host-binary] [clicks] [--visible] [--trace=<path>]
  *
  * Runs in an off-screen virtual compositor (kwin_wayland --virtual) unless
  * `--visible` is passed.
  *
+ * The accessibility rows are the host's `access:` trace lines (the tree
+ * brought in line after a frame: nodes made again, nodes handed to the
+ * adapter, time on the window's thread) and its CPU over each part (every
+ * thread, so the adapter's too).
+ *
  * Defaults to the release host when it exists, then the debug one.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { type NativeEvent, render, spawnNativeHost, startHeadlessDisplay } from "@mirinjs/metal";
 import { Browser } from "../demo/browser.tsx";
 import { ThemeProvider } from "../src/provider.tsx";
@@ -20,7 +25,7 @@ import { ThemeProvider } from "../src/provider.tsx";
 const target = new URL("../../../crates/mirin-metal/target/", import.meta.url).pathname;
 const args = Bun.argv.slice(2);
 const binary =
-  args.find((arg) => arg.includes("/")) ??
+  args.find((arg) => !arg.startsWith("--") && arg.includes("/")) ??
   [`${target}release/mirin-metal-host`, `${target}debug/mirin-metal-host`].find(existsSync) ??
   "";
 const clicks = Number(args.find((arg) => /^\d+$/.test(arg)) ?? 20);
@@ -68,6 +73,25 @@ const root = render(
   transport,
 );
 await Bun.sleep(3000);
+const hostPid = Number(
+  Bun.spawnSync(["pgrep", "-n", "-P", String(process.pid)])
+    .stdout.toString()
+    .trim(),
+);
+/** The host's CPU so far (user + system, every thread), in ms. */
+const cpuMs = (): number => {
+  const fields = readFileSync(`/proc/${hostPid}/stat`, "utf8").split(") ")[1]?.split(" ") ?? [];
+  return (Number(fields[11]) + Number(fields[12])) * 10;
+};
+/** The accessibility updates traced since `at`: time, nodes made, nodes handed over, each. */
+const accessSince = (at: number) =>
+  trace
+    .filter((line) => line.at >= at && line.message.startsWith("access:"))
+    .map((line) => ({
+      ms: Number(line.message.match(/in ([\d.]+)ms/)?.[1] ?? 0),
+      built: Number(line.message.match(/built (\d+) nodes/)?.[1] ?? 0),
+      published: Number(line.message.match(/published (\d+)/)?.[1] ?? 0),
+    }));
 
 interface Sample {
   toPress: number;
@@ -77,8 +101,12 @@ interface Sample {
   total: number;
   render: number;
   bytes: number;
+  access: number;
+  accessBuilt: number;
+  accessPublished: number;
 }
 const samples: Sample[] = [];
+const clicksCpuFrom = cpuMs();
 for (let index = 0; index < clicks; index += 1) {
   const name = index % 2 === 0 ? "badge-demo" : "button-demo";
   const id = root.nodeId(`example:${name}`);
@@ -101,7 +129,11 @@ for (let index = 0; index < clicks; index += 1) {
   const frame =
     applied && trace.find((line) => line.at >= applied.at && line.message.startsWith("render"));
   if (!applied || !frame) continue;
+  const access = accessSince(started);
   samples.push({
+    access: access.reduce((total, update) => total + update.ms, 0),
+    accessBuilt: access.reduce((total, update) => total + update.built, 0),
+    accessPublished: access.reduce((total, update) => total + update.published, 0),
     toPress: press - started,
     driver: lastSend - press,
     toApplied: applied.at - lastSend,
@@ -112,15 +144,20 @@ for (let index = 0; index < clicks; index += 1) {
   });
 }
 
+const clicksCpu = (cpuMs() - clicksCpuFrom) / clicks;
+
 // Scroll the example list down and back up, one wheel step per frame.
 const list = root.nodeId("example-list");
 if (!list) throw new Error("no example list");
 const scrollStart = Date.now();
+const scrollCpuFrom = cpuMs();
 for (let step = 0; step < 120; step += 1) {
   transport.simulate({ kind: "scroll", id: list, dy: step < 60 ? 40 : -40 });
   await Bun.sleep(16);
 }
 await Bun.sleep(300);
+const scrollCpu = (cpuMs() - scrollCpuFrom) / 120;
+const scrollAccess = accessSince(scrollStart);
 const scrollFrames = trace
   .filter((line) => line.at >= scrollStart && line.message.startsWith("render"))
   .map((line) => Number(line.message.match(/frame ([\d.]+)ms/)?.[1] ?? 0));
@@ -143,6 +180,11 @@ for (let round = 0; round < 4; round += 1) {
 root.unmount();
 transport.close();
 display?.close();
+// `--trace=<path>`: the host's whole trace log, for a closer look at a run.
+const tracePath = args.find((arg) => arg.startsWith("--trace="))?.slice("--trace=".length);
+if (tracePath) {
+  await Bun.write(tracePath, trace.map((line) => `${line.at} ${line.message}`).join("\n"));
+}
 
 const median = (values: number[]) => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -181,7 +223,12 @@ const rows: Array<[string, number]> = [
   ["scroll frame", median(scrollFrames)],
   ["scroll frame p95", p95(scrollFrames)],
   ["maximize/restore → settled frame", median(resizes)],
+  ["accessibility per click", median(samples.map((s) => s.access))],
+  ["accessibility per scroll update", median(scrollAccess.map((update) => update.ms))],
+  ["host CPU per click", clicksCpu],
+  ["host CPU per scroll step", scrollCpu],
 ];
+const nodes = (values: number[]) => median(values).toFixed(0);
 console.log(`host: ${binary}`);
 console.log(
   `samples: ${samples.length}/${clicks}, frames: ${renders.length}, scroll frames: ${scrollFrames.length}/120`,
@@ -189,4 +236,11 @@ console.log(
 for (const [label, value] of rows) {
   console.log(`${label.padEnd(38)} ${value.toFixed(1)}${label.endsWith("(KB)") ? "" : " ms"}`);
 }
+console.log(
+  `accessibility nodes made/handed over: per click ${nodes(samples.map((s) => s.accessBuilt))}/${nodes(
+    samples.map((s) => s.accessPublished),
+  )}, per scroll update ${nodes(scrollAccess.map((u) => u.built))}/${nodes(
+    scrollAccess.map((u) => u.published),
+  )} (${scrollAccess.length} updates)`,
+);
 process.exit(0);

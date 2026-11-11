@@ -314,11 +314,30 @@ fn open_window(
     // GPUI's Wayland backend ignores `TitlebarOptions::title` at creation
     // (the window opened untitled); set it explicitly.
     let title = options.title.clone();
-    // What a screen reader hears (`access/`); its presses come back as simulated clicks.
-    let tree_access = Accessibility::new(&title, move |command| {
-        let _ = access.unbounded_send(command);
-    })
+    // What a screen reader hears (`access/`); its presses come back as
+    // simulated clicks. When one starts listening the window publishes its
+    // tree at once, painted or not (a window out of sight paints no frame).
+    let (wake, mut woken) = futures::channel::mpsc::unbounded::<()>();
+    let tree_access = Accessibility::new(
+        &title,
+        move |command| {
+            let _ = access.unbounded_send(command);
+        },
+        move || {
+            let _ = wake.unbounded_send(());
+        },
+    )
     .map(|access| Rc::new(RefCell::new(access)));
+    cx.spawn(async move |cx| {
+        // Ends with the window, or with its tree (the adapter drops `wake`).
+        while woken.next().await.is_some() {
+            let woke = window.update(cx, |view, window, _cx| view.refresh_access(window));
+            if woke.is_err() {
+                break;
+            }
+        }
+    })
+    .detach();
     let _ = window.update(cx, |view, window, _cx| {
         window.set_window_title(&title);
         view.access = tree_access;

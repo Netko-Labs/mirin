@@ -45,6 +45,9 @@ accesskit_unix = "0.24"
 # text system), for tests that lay elements out (src/render/tests.rs).
 [dev-dependencies]
 gpui = { version = "0.2", features = ["test-support"] }
+# AccessKit's own tree (already built: the Unix adapter uses it), so the
+# accessibility tests hand it every update as the adapter would.
+accesskit_consumer = "0.39"
 
 [features]
 profiling = ["dep:pprof"]

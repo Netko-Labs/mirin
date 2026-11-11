@@ -1,6 +1,7 @@
-//! A Metal window's accessibility tree as AccessKit nodes, built from the
-//! element tree the driver sent and what only the renderer knows (painted
-//! bounds, which field has the keyboard, what is typed in it).
+//! A Metal window's accessibility tree as AccessKit nodes: what each element
+//! of the tree the driver sent says of itself. What only the renderer knows
+//! (painted bounds, which field has the keyboard, what is typed in it) and
+//! which nodes an update carries are `published.rs`'s.
 //!
 //! - A view is a node when it says what it is (`access`: a role or a label)
 //!   or can be pressed (a button by default, named by its text). Other views
@@ -19,9 +20,9 @@
 
 use std::collections::HashMap;
 
-use accesskit::{Action, Live, Node, NodeId, Rect, Role, Toggled, TreeId, TreeInfo, TreeUpdate};
+use accesskit::{Action, Live, Node, NodeId, Rect, Role, Toggled};
 
-use crate::tree::{AccessProps, NodeSpec};
+use crate::tree::{AccessProps, InputProps, ViewProps};
 
 /// The window itself.
 pub(crate) const ROOT: NodeId = NodeId(0);
@@ -32,20 +33,18 @@ pub(crate) struct Facts<'a> {
     pub title: &'a str,
     /// A node's painted bounds in window pixels.
     pub bounds: &'a dyn Fn(&str) -> Option<Rect>,
+    /// Whether any bounds may differ from the last update's (the layout's
+    /// revision moved): every kept node's are compared then.
+    pub moved: bool,
     /// The field (or key-taking view) with the keyboard.
     pub focused: Option<&'a str>,
-    /// What is in a field now (the renderer's buffer; the driver's value lags).
-    pub text_of: &'a dyn Fn(&str) -> Option<String>,
-}
-
-/// A tree to hand the adapter, and which element each pressable node is.
-pub(crate) struct Built {
-    pub update: TreeUpdate,
-    pub targets: Targets,
+    /// What is in it now, when it is a field (the renderer's buffer; the
+    /// driver's value lags).
+    pub typed: Option<&'a str>,
 }
 
 /// Where a screen reader's action on a node goes.
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Targets {
     /// Node → the element id a click goes to (pressable views and fields).
     press: HashMap<NodeId, String>,
@@ -72,6 +71,32 @@ impl Targets {
             Action::Focus => self.focus.get(&node).map(|id| Request::Focus(id)),
             _ => None,
         }
+    }
+
+    /// `node` is `element` now, or no element's (text, the window): what it
+    /// takes is what the node says it does.
+    pub(crate) fn set(&mut self, id: NodeId, node: &Node, element: Option<&str>) {
+        let actions = [
+            (&mut self.press, Action::Click),
+            (&mut self.focus, Action::Focus),
+        ];
+        for (targets, action) in actions {
+            match element.filter(|_| node.supports_action(action)) {
+                Some(element) if targets.get(&id).is_some_and(|kept| kept == element) => {}
+                Some(element) => {
+                    targets.insert(id, element.to_owned());
+                }
+                None => {
+                    targets.remove(&id);
+                }
+            }
+        }
+    }
+
+    /// `node` left the tree.
+    pub(crate) fn forget(&mut self, node: NodeId) {
+        self.press.remove(&node);
+        self.focus.remove(&node);
     }
 }
 
@@ -156,187 +181,135 @@ fn apply_state(node: &mut Node, access: &AccessProps) {
     }
 }
 
-struct Walk<'a, 'f> {
-    facts: &'a Facts<'f>,
-    nodes: Vec<(NodeId, Node)>,
-    targets: Targets,
-    /// The focused field's node; where it is in `nodes` when it is a combo box; the selected options seen.
-    focus: Option<NodeId>,
-    combobox: Option<usize>,
-    selected: Vec<NodeId>,
+/// What a view is, if it is a node at all: the role it says, else a button
+/// when it can be pressed, else a group when it takes the keyboard or has a
+/// label. None for a view that is only layout.
+pub(crate) fn view_role(props: &ViewProps) -> Option<Role> {
+    let access = props.access.as_ref();
+    access
+        .and_then(|access| access.role.as_deref())
+        .and_then(role_of)
+        .or_else(|| props.on_press.then_some(Role::Button))
+        .or_else(|| props.focusable.then_some(Role::Group))
+        .or_else(|| {
+            access
+                .and_then(|access| access.label.as_ref())
+                .map(|_| Role::Group)
+        })
 }
 
-impl Walk<'_, '_> {
-    fn place(&self, node: &mut Node, id: &str) {
-        if let Some(bounds) = (self.facts.bounds)(id) {
-            node.set_bounds(bounds);
-        }
+/// A view's node, before its children and its bounds.
+pub(crate) fn view_node(props: &ViewProps, role: Role) -> Node {
+    let mut node = Node::new(role);
+    if let Some(access) = props.access.as_ref() {
+        apply_state(&mut node, access);
     }
-
-    /// `spec` and what is under it as nodes; the ones that are its parent's children join `out`.
-    fn node(&mut self, spec: &NodeSpec, key: &str, out: &mut Vec<NodeId>) {
-        match spec {
-            NodeSpec::View { props, children } => self.view(props, children, key, out),
-            NodeSpec::Text { children, .. } => {
-                let words = children.concat();
-                if words.trim().is_empty() {
-                    return;
-                }
-                let id = node_id(key);
-                let mut node = Node::new(Role::Label);
-                node.set_value(words);
-                self.nodes.push((id, node));
-                out.push(id);
-            }
-            NodeSpec::Input { props } => self.input(props, out),
-            NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
-        }
-    }
-
-    fn view(
-        &mut self,
-        props: &crate::tree::ViewProps,
-        children: &[NodeSpec],
-        key: &str,
-        out: &mut Vec<NodeId>,
-    ) {
-        let access = props.access.as_ref();
-        let id = props.id.as_deref().unwrap_or(key);
-        let role = access
-            .and_then(|access| access.role.as_deref())
-            .and_then(role_of)
-            .or_else(|| props.on_press.then_some(Role::Button))
-            .or_else(|| props.focusable.then_some(Role::Group))
-            .or_else(|| {
-                access
-                    .and_then(|access| access.label.as_ref())
-                    .map(|_| Role::Group)
-            });
-        let Some(role) = role else {
-            for (index, child) in children.iter().enumerate() {
-                self.node(child, &format!("{id}/{index}"), out);
-            }
-            return;
-        };
-        let node_id = node_id(id);
-        let mut node = Node::new(role);
-        if let Some(access) = access {
-            apply_state(&mut node, access);
-            if access.selected == Some(true) {
-                self.selected.push(node_id);
-            }
-        }
-        self.place(&mut node, id);
-        if props.on_press {
-            node.add_action(Action::Click);
-            self.targets.press.insert(node_id, id.to_owned());
-        }
-        // A focusable view with the keyboard is the focus (`focus/`).
-        if props.focusable {
-            node.add_action(Action::Focus);
-            self.targets.focus.insert(node_id, id.to_owned());
-            if self.facts.focused == Some(id) {
-                self.focus = Some(node_id);
-            }
-        }
-        let labelled = access.is_some_and(|access| access.label.is_some());
-        if !(labelled && speaks_for_content(role)) {
-            let mut inner = Vec::new();
-            for (index, child) in children.iter().enumerate() {
-                self.node(child, &format!("{id}/{index}"), &mut inner);
-            }
-            node.set_children(inner);
-        }
-        self.nodes.push((node_id, node));
-        out.push(node_id);
-    }
-
-    fn input(&mut self, props: &crate::tree::InputProps, out: &mut Vec<NodeId>) {
-        let access = props.access.as_deref();
-        let role = match access.and_then(|access| access.role.as_deref()) {
-            Some("combobox") => Role::EditableComboBox,
-            Some("search" | "searchbox") => Role::SearchInput,
-            _ if props.secure => Role::PasswordInput,
-            _ if props.multiline => Role::MultilineTextInput,
-            _ => Role::TextInput,
-        };
-        let node_id = node_id(&props.id);
-        let mut node = Node::new(role);
-        if let Some(access) = access {
-            apply_state(&mut node, access);
-        }
-        if access.and_then(|access| access.label.as_ref()).is_none() {
-            if let Some(placeholder) = props.placeholder.as_deref() {
-                node.set_label(placeholder);
-            }
-        }
-        // A password field's words are never published.
-        if !props.secure {
-            let text = (self.facts.text_of)(&props.id).unwrap_or_else(|| props.value.clone());
-            node.set_value(text);
-        }
-        node.add_action(Action::Focus);
+    if props.on_press {
         node.add_action(Action::Click);
-        self.place(&mut node, &props.id);
-        self.targets.press.insert(node_id, props.id.clone());
-        self.targets.focus.insert(node_id, props.id.clone());
-        if self.facts.focused == Some(props.id.as_str()) {
-            self.focus = Some(node_id);
-            if role == Role::EditableComboBox {
-                self.combobox = Some(self.nodes.len());
-            }
-        }
-        self.nodes.push((node_id, node));
-        out.push(node_id);
     }
+    // A focusable view with the keyboard is the focus (`focus/`).
+    if props.focusable {
+        node.add_action(Action::Focus);
+    }
+    node
 }
 
-/// The whole tree for `tree`, rooted at the window.
-pub(crate) fn build(tree: &NodeSpec, facts: &Facts) -> Built {
-    let mut walk = Walk {
-        facts,
-        nodes: Vec::new(),
-        targets: Targets::default(),
-        focus: None,
-        combobox: None,
-        selected: Vec::new(),
+/// Whether the view's label stands for what is inside it (nothing under it
+/// is a node then).
+pub(crate) fn stands_for_content(props: &ViewProps, role: Role) -> bool {
+    let labelled = props
+        .access
+        .as_ref()
+        .is_some_and(|access| access.label.is_some());
+    labelled && speaks_for_content(role)
+}
+
+/// Whether the view says it is selected (a combo box points at the first).
+pub(crate) fn is_selected(props: &ViewProps) -> bool {
+    props
+        .access
+        .as_ref()
+        .is_some_and(|access| access.selected == Some(true))
+}
+
+/// A text's node: a label whose value is its words.
+pub(crate) fn text_node(words: String) -> Node {
+    let mut node = Node::new(Role::Label);
+    node.set_value(words);
+    node
+}
+
+/// A field's node with the driver's value, before its bounds. A password
+/// field's words are never published.
+pub(crate) fn field_node(props: &InputProps) -> Node {
+    let access = props.access.as_deref();
+    let role = match access.and_then(|access| access.role.as_deref()) {
+        Some("combobox") => Role::EditableComboBox,
+        Some("search" | "searchbox") => Role::SearchInput,
+        _ if props.secure => Role::PasswordInput,
+        _ if props.multiline => Role::MultilineTextInput,
+        _ => Role::TextInput,
     };
-    let mut top = Vec::new();
-    walk.node(tree, "root", &mut top);
-    // The focused combo box points at the selected option.
-    if let (Some(at), Some(&option)) = (walk.combobox, walk.selected.first()) {
-        if let Some((_, node)) = walk.nodes.get_mut(at) {
-            node.set_active_descendant(option);
+    let mut node = Node::new(role);
+    if let Some(access) = access {
+        apply_state(&mut node, access);
+    }
+    if access.and_then(|access| access.label.as_ref()).is_none() {
+        if let Some(placeholder) = props.placeholder.as_deref() {
+            node.set_label(placeholder);
         }
     }
-    let mut root = Node::new(Role::Window);
-    root.set_label(facts.title);
-    root.set_children(top);
-    walk.nodes.push((ROOT, root));
-    let mut info = TreeInfo::new(ROOT);
-    info.toolkit_name = Some("mirin metal".into());
-    Built {
-        update: TreeUpdate {
-            nodes: walk.nodes,
-            tree: Some(info),
-            tree_id: TreeId::ROOT,
-            focus: walk.focus.unwrap_or(ROOT),
-        },
-        targets: walk.targets,
+    if !props.secure {
+        node.set_value(props.value.clone());
     }
+    node.add_action(Action::Focus);
+    node.add_action(Action::Click);
+    node
+}
+
+/// The window's node: named by its title, over the tree's top nodes.
+pub(crate) fn window_node(title: &str, children: Vec<NodeId>) -> Node {
+    let mut node = Node::new(Role::Window);
+    node.set_label(title);
+    node.set_children(children);
+    node
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
+    use accesskit::TreeUpdate;
+
+    use super::super::published::Published;
     use super::*;
-    use crate::tree::parse_tree;
+    use crate::patch::Document;
+    use crate::tree::{parse_tree, NodeSpec};
 
     fn facts(focused: Option<&str>) -> Facts<'_> {
         Facts {
             title: "Launcher",
             bounds: &|_| Some(Rect::new(0.0, 0.0, 10.0, 10.0)),
+            moved: true,
             focused,
-            text_of: &|id| (id == "field").then(|| "wi".to_owned()),
+            typed: (focused == Some("field")).then_some("wi"),
+        }
+    }
+
+    /// A first, whole tree, and which element each pressable node is.
+    struct Built {
+        update: TreeUpdate,
+        targets: Targets,
+    }
+
+    fn build(tree: &NodeSpec, facts: &Facts) -> Built {
+        let targets = Mutex::default();
+        let update = Published::default().update(&Document::new(tree.clone()), facts, &targets);
+        Built {
+            update: update.tree,
+            targets: targets
+                .into_inner()
+                .expect("nothing else holds the targets"),
         }
     }
 

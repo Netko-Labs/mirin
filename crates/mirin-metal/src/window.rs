@@ -389,31 +389,34 @@ impl RootView {
             })
     }
 
+    /// Bring the published accessibility tree in line with the tree and the
+    /// bounds last painted (`access/`): after each paint, and when a screen
+    /// reader starts listening.
+    pub(crate) fn refresh_access(&self, window: &Window) {
+        if let Some(access) = &self.access {
+            access.borrow_mut().refresh(
+                &self.tree,
+                &self.layout,
+                self.focused(window),
+                window.is_window_active(),
+            );
+        }
+    }
+
     /// Painted last, after everything else: publishes the accessibility tree
-    /// with this frame's bounds (`access/`).
-    fn access_canvas(&self, window: &Window) -> Option<gpui::AnyElement> {
-        let access = Rc::clone(self.access.as_ref()?);
-        // Weak: a patch after this frame must find the tree unshared, or it
-        // copies it whole.
-        let tree = Rc::downgrade(self.tree.tree());
-        let generation = self.tree.generation();
-        let layout = self.layout.clone();
-        let focused = self.focused(window);
-        let active = window.is_window_active();
+    /// with this frame's bounds.
+    fn access_canvas(&self, cx: &Context<Self>) -> Option<gpui::AnyElement> {
+        self.access.as_ref()?;
+        // The view is read when the canvas paints: nothing of the tree is
+        // held meanwhile (a share of it would make the next patch copy it).
+        let view = cx.weak_entity();
         Some(
             gpui::canvas(
                 |_, _, _| {},
-                move |_, (), _, _| {
-                    let Some(tree) = tree.upgrade() else {
-                        return;
-                    };
-                    access.borrow_mut().refresh(
-                        &tree,
-                        generation,
-                        &layout,
-                        focused.clone(),
-                        active,
-                    );
+                move |_, (), window, cx| {
+                    if let Some(view) = view.upgrade() {
+                        view.read(cx).refresh_access(window);
+                    }
                 },
             )
             .absolute()
@@ -469,7 +472,7 @@ impl Render for RootView {
         // opening the app first sees of it (traced).
         let first_content = !self.placeholder && !self.content_painted;
         self.content_painted |= first_content;
-        let access = self.access_canvas(window);
+        let access = self.access_canvas(cx);
         if !first && !crate::trace::enabled() {
             return match access {
                 Some(access) => gpui::div()

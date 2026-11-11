@@ -11,6 +11,10 @@
  * frame (`MIRIN_METAL_TRACE` log). `parse` is the host reading the line
  * (`line parsed`), `apply` putting it in its tree (`tree applied`, or
  * `patch applied` when the host takes patches); `KB` is what the driver sent.
+ * `access` is the accessibility tree after the frame (`access:` in the trace:
+ * the nodes built and handed to the adapter, and the time on the window's
+ * thread), and `cpu` the host's CPU (all threads, so the adapter's too) per
+ * update over the scenario.
  * - select: click a card, which toggles its highlight (one node's style).
  * - type: keystrokes into a field above the grid (one text node).
  * - hover: move the pointer onto a card and off (`hoverBackgroundColor`, renderer-side only).
@@ -143,6 +147,18 @@ const timedAfter = (at: number, ...prefixes: string[]) =>
     .map((line) => Number(line.message.match(/in ([\d.]+)ms/)?.[1] ?? 0));
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 
+/** The accessibility tree's work after `at`: time, nodes built, nodes handed to the adapter. */
+const accessAfter = (at: number) => {
+  const lines = trace.filter((line) => line.at >= at && line.message.startsWith("access:"));
+  const count = (pattern: RegExp) =>
+    sum(lines.map((line) => Number(line.message.match(pattern)?.[1] ?? 0)));
+  return {
+    ms: count(/in ([\d.]+)ms/),
+    built: count(/built (\d+) nodes/),
+    published: count(/published (\d+)/),
+  };
+};
+
 interface Sample {
   driver: number;
   parse: number;
@@ -150,6 +166,9 @@ interface Sample {
   frame: number;
   total: number;
   bytes: number;
+  access: number;
+  accessBuilt: number;
+  accessPublished: number;
 }
 async function measure(action: () => void, settle = 700): Promise<Sample | null> {
   sends.length = 0;
@@ -160,7 +179,11 @@ async function measure(action: () => void, settle = 700): Promise<Sample | null>
   const after = last?.at ?? started;
   const frame = rendersAfter(after)[0];
   if (!frame) return null;
+  const access = accessAfter(started);
   return {
+    access: access.ms,
+    accessBuilt: access.built,
+    accessPublished: access.published,
     driver: last ? last.at - started : 0,
     parse: sum(timedAfter(started, "line parsed")),
     apply: sum(timedAfter(started, "tree applied", "patch applied")),
@@ -177,41 +200,56 @@ const cardId = (index: number): string => {
 };
 const visible = Math.min(rows * cols, cols * 12);
 
-const select: Sample[] = [];
-for (let index = 0; index < 20; index += 1) {
-  const id = cardId((index * 37) % visible);
-  const sample = await measure(() => transport.simulate({ kind: "click", id }));
-  if (sample) select.push(sample);
+// Host CPU (user + system, every thread) in clock ticks of 10 ms.
+const ticks = () => {
+  const fields = readFileSync(`/proc/${hostPid}/stat`, "utf8").split(") ")[1]?.split(" ") ?? [];
+  return Number(fields[11]) + Number(fields[12]);
+};
+const cpu: Record<string, number> = {};
+/** Run a scenario and note the host CPU it took, in ms per update. */
+async function scenario(name: string, updates: number, run: () => Promise<void>): Promise<void> {
+  const from = ticks();
+  await run();
+  cpu[name] = ((ticks() - from) * 10) / updates;
 }
+
+const select: Sample[] = [];
+await scenario("select", 20, async () => {
+  for (let index = 0; index < 20; index += 1) {
+    const id = cardId((index * 37) % visible);
+    const sample = await measure(() => transport.simulate({ kind: "click", id }));
+    if (sample) select.push(sample);
+  }
+});
 
 const query = root.nodeId("query");
 if (!query) throw new Error("no query field");
 transport.simulate({ kind: "click", id: query });
 await Bun.sleep(300);
 const typing: Sample[] = [];
-for (let index = 0; index < 20; index += 1) {
-  const sample = await measure(() =>
-    transport.simulate({ kind: "type", text: String.fromCharCode(97 + (index % 26)) }),
-  );
-  if (sample) typing.push(sample);
-}
+await scenario("type", 20, async () => {
+  for (let index = 0; index < 20; index += 1) {
+    const sample = await measure(() =>
+      transport.simulate({ kind: "type", text: String.fromCharCode(97 + (index % 26)) }),
+    );
+    if (sample) typing.push(sample);
+  }
+});
 
 const hover: Sample[] = [];
-for (let index = 0; index < 20; index += 1) {
-  const id = cardId((index * 53) % visible);
-  const on = index % 2 === 0;
-  // A real pointer move (sim `move`): onto the card, then off the grid.
-  const sample = await measure(() =>
-    transport.simulate(on ? { kind: "move", id } : { kind: "move", x: 2, y: 2 }),
-  );
-  if (sample) hover.push(sample);
-}
+await scenario("hover", 20, async () => {
+  for (let index = 0; index < 20; index += 1) {
+    const id = cardId((index * 53) % visible);
+    const on = index % 2 === 0;
+    // A real pointer move (sim `move`): onto the card, then off the grid.
+    const sample = await measure(() =>
+      transport.simulate(on ? { kind: "move", id } : { kind: "move", x: 2, y: 2 }),
+    );
+    if (sample) hover.push(sample);
+  }
+});
 
 // Idle: host CPU over 3 s with nothing changing, and resident memory.
-const ticks = () => {
-  const fields = readFileSync(`/proc/${hostPid}/stat`, "utf8").split(") ")[1]?.split(" ") ?? [];
-  return Number(fields[11]) + Number(fields[12]);
-};
 const rss = () =>
   Number(readFileSync(`/proc/${hostPid}/status`, "utf8").match(/VmRSS:\s+(\d+)/)?.[1] ?? 0) / 1024;
 await Bun.sleep(500);
@@ -249,13 +287,16 @@ const summary = (samples: Sample[]) => ({
   frameP95: p95(samples.map((s) => s.frame)),
   total: median(samples.map((s) => s.total)),
   kb: median(samples.map((s) => s.bytes)) / 1024,
+  access: median(samples.map((s) => s.access)),
+  accessBuilt: median(samples.map((s) => s.accessBuilt)),
+  accessPublished: median(samples.map((s) => s.accessPublished)),
 });
 const result = {
   host: binary,
   nodes: rows * cols * 6 + 6,
-  select: summary(select),
-  type: summary(typing),
-  hover: summary(hover),
+  select: { ...summary(select), cpu: cpu.select ?? 0 },
+  type: { ...summary(typing), cpu: cpu.type ?? 0 },
+  hover: { ...summary(hover), cpu: cpu.hover ?? 0 },
   idleCpuMsPer3s: idleCpuMs,
   idleFrames,
   rssMb: memory,
@@ -264,7 +305,9 @@ if (args.includes("--json")) {
   console.log(JSON.stringify(result));
 } else {
   console.log(`host: ${binary}\nnodes: ~${result.nodes}`);
-  console.log("scenario  n   driver  parse   apply   frame  frame95  total      KB");
+  console.log(
+    "scenario  n   driver  parse   apply   frame  frame95  total      KB  access     cpu  a11y built/published",
+  );
   for (const name of ["select", "type", "hover"] as const) {
     const s = result[name];
     console.log(
@@ -276,9 +319,11 @@ if (args.includes("--json")) {
         s.frameP95,
         s.total,
         s.kb,
+        s.access,
+        s.cpu,
       ]
         .map((v) => v.toFixed(1).padStart(7))
-        .join(" ")}`,
+        .join(" ")}  ${s.accessBuilt}/${s.accessPublished}`,
     );
   }
   console.log(

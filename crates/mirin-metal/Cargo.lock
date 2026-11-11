@@ -3375,6 +3375,7 @@ name = "mirin-metal"
 version = "0.1.0-alpha.1"
 dependencies = [
  "accesskit",
+ "accesskit_consumer",
  "accesskit_unix",
  "ash",
  "futures",
