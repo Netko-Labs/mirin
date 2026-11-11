@@ -27,9 +27,14 @@ pub(crate) struct LinuxDispatcher {
 impl LinuxDispatcher {
     pub fn new(main_sender: Sender<Runnable>) -> Self {
         let (background_sender, background_receiver) = flume::unbounded::<Runnable>();
+        // mirin: at most four background threads. GPUI started one per
+        // core (24 on a laptop) in every app; a desktop's small apps give
+        // them timers, image decodes and D-Bus calls, and each idle thread
+        // still costs its stack, its allocator arena and its kernel state.
         let thread_count = std::thread::available_parallelism()
             .map(|i| i.get())
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .min(4);
 
         let mut background_threads = (0..thread_count)
             .map(|i| {

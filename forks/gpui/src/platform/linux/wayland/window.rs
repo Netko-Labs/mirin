@@ -235,9 +235,16 @@ impl WaylandWindowState {
                     height: options.bounds.size.height.0 as u32,
                     depth: 1,
                 },
-                transparent: true,
+                // mirin: as the window will be once it is open. It was
+                // always true, and an opaque window's renderer was
+                // reconfigured (its pipelines built a second time) as soon
+                // as GPUI set the window's decorations and background.
+                transparent: options.transparent,
             };
-            BladeRenderer::new(gpu_context, &raw_window, config)?
+            let started = std::time::Instant::now(); // mirin: a startup milestone
+            let renderer = BladeRenderer::new(gpu_context, &raw_window, config)?;
+            log::info!(target: "mirin::startup", "renderer created in {:.1}ms", started.elapsed().as_secs_f64() * 1000.0); // mirin:
+            renderer
         };
 
         Ok(Self {
@@ -1120,9 +1127,7 @@ fn create_layer_surface(
             zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand
         }
         KeyboardInteractivity::OnDemand => zwlr_layer_surface_v1::KeyboardInteractivity::None,
-        KeyboardInteractivity::Exclusive => {
-            zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive
-        }
+        KeyboardInteractivity::Exclusive => zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive,
     };
     layer_surface.set_keyboard_interactivity(keyboard);
     Ok(layer_surface)

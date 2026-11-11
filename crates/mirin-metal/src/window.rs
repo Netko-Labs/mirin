@@ -187,6 +187,8 @@ pub(crate) struct RootView {
     content_painted: bool,
     /// The accessibility tree, published after each paint (`access/`); none when turned off.
     pub(crate) access: Option<Rc<RefCell<Accessibility>>>,
+    /// Trims the heap once the window has gone quiet (`idle.rs`).
+    idle: crate::idle::IdleTrim,
     /// Which field or view the keyboard goes to with Tab and the arrows (`focus/`).
     pub(crate) focus: crate::focus::FocusState,
     /// The subtrees GPUI keeps across frames (`retain.rs`).
@@ -231,6 +233,7 @@ impl RootView {
             placeholder,
             content_painted: false,
             access: None,
+            idle: crate::idle::IdleTrim::default(),
             focus: crate::focus::FocusState::new(cx),
             boundaries: crate::retain::Boundaries::default(),
             group: None,
@@ -457,6 +460,7 @@ impl Render for RootView {
         // The tree is immutable per frame; hold a reference so input state can
         // be read and listeners attached while walking it.
         let started = std::time::Instant::now();
+        self.idle.frame_drawn(cx);
         self.layout.begin_frame();
         if self.drop_target.is_some() && !cx.has_active_drag() {
             self.files_gone(window);

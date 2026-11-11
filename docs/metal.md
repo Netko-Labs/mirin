@@ -1052,6 +1052,119 @@ accessibility tree: comparing every node's bounds when any moved (about
 out every frame (they could wait for it to settle), and the tree a session
 with accessibility on but nothing reading it still pays for once.
 
+### Footprint: what one small app costs
+
+A desktop runs a host and a driver per app (section 0b), so the floor
+multiplies. `bun bench/footprint.tsx [host] [--app=counter|browser] [--runs=3]
+[--env=K=V] [--unset=K] [--json] --visible` in `packages/mirin-metal` starts an
+app as it really runs (a driver process, `demo/counter.tsx` or metal-ui's
+`demo/browser.tsx` from its own package directory, that spawns the host) and
+reports, per run and as medians: driver spawn to the host's `first content
+frame painted` and the host's own share, the CPU each process used by then
+(the host's with the children it waited for), and after a quiet spell the
+host's and the driver's RSS, PSS, private dirty and anonymous memory
+(`smaps_rollup`), their mappings by category and the largest by name
+(`smaps`), the GPU memory of the host's DRM client (`fdinfo`: not in RSS, and
+system memory on an integrated GPU), threads by name, and CPU and wakeups
+over 5 s idle. With `MIRIN_METAL_TRACE=1` the host also traces its start
+(`startup: …` lines: the text system, the GPU context, a window's renderer,
+each font face loaded; the GPUI fork logs them on the `mirin::startup`
+target).
+
+Measured 2026-11-10 on a Ryzen laptop (24 threads, Radeon 890M, radv), the
+release host of round 1 and this one back to back in a nested dashi-comp at
+scale 1, medians of three runs:
+
+| host process | counter (800×600) before | after | example browser (1440×900) before | after |
+| --- | --- | --- | --- | --- |
+| RSS | 76.2 MB | 58.9 MB | 89.4 MB | 65.5 MB |
+| PSS | 43.9 MB | 26.6 MB | 56.9 MB | 33.0 MB |
+| private dirty | 12.0 MB | 7.6 MB | 19.3 MB | 12.5 MB |
+| GPU memory | 68.6 MB | 13.9 MB | 124.0 MB | 29.3 MB |
+| threads | 35 | 15 | 35 | 15 |
+| host start → first content frame | 53 ms | 33 ms | 79 ms | 51 ms |
+| host CPU by then (10 ms ticks) | 50 ms | 30–40 ms | 70 ms | 60 ms |
+| idle, per 5 s | 0.4 ms, 10 wakeups | 0.4 ms, 10 wakeups | 0.3 ms, 10 wakeups | 0.3 ms, 10 wakeups |
+
+The driver (Bun) beside it, unchanged: 29 MB RSS, 12 MB PSS and 7 MB
+anonymous for the counter; 71 MB, 48 MB and 40 MB for the example browser
+(its 239 examples and their libraries); 190–220 ms of CPU before the
+browser's first frame, where the host uses 60; and it is not idle: 6–44 ms
+of CPU and 200–760 wakeups per 5 s, nearly all from JavaScriptCore's seven
+heap helper threads. With `BUN_JSC_numberOfGCMarkers=1` in the driver's
+environment it is: 1–3 ms and 20 wakeups per 5 s, 10–12 threads where it had
+16–19, the same memory and the same start (collections mark on one thread,
+which a small app's heap doesn't notice). Nothing in Metal sets it: the
+driver is the parent process, so whatever launches apps would.
+
+Where it went, and what changed (fork changes in `forks/gpui/MIRIN.md` and
+`forks/blade-graphics/MIRIN.md`):
+
+- **GPU memory.** Blade's allocator used gpu-alloc's prototyping preset: a
+  buddy allocator rounds each texture up to a power of two and grows by a
+  chunk of twice that, so the 8.2 MiB multisampled path target of an 800×600
+  window held 32 MiB. `forks/blade-graphics` (new) gives anything of 256 KiB
+  or more its own allocation: 68 → 23.6 MB. The two window-sized textures
+  paths are drawn through (20 bytes a pixel) are now made by the first frame
+  that has a path and freed by the first without one; Metal draws no paths:
+  → 13.8 MB, which is the swapchain's four images (7.7 MB), one 1 MiB glyph
+  atlas, and the driver's own buffers.
+- **Pipelines.** A window parsed the shaders (~4 ms) and built eight
+  pipelines (~8 ms), and an opaque window did it twice, since its renderer
+  started transparent and was reconfigured before the first frame. Pipelines
+  now belong to the GPU context (one set per surface format and alpha mode,
+  for every window of the process), each is built by the first frame that
+  uses it, and a Wayland renderer starts with its window's transparency. A
+  resident host's second window draws ~1 ms after its renderer exists
+  (it used to build both sets again).
+- **Fonts.** Asking for a family loaded all of its faces (74 of Noto Sans:
+  15 MB of mapped files, 3.7 MB of heap, ~5 ms of the first frame). A face
+  is now loaded when a text picks it. The scan of the system's fonts (7 ms)
+  runs on a thread while the GPU context starts.
+- **Threads.** GPUI's background pool was a thread per core (24); it is four.
+- **The heap.** A window that has drawn nothing for three seconds gives its
+  freed memory back (`malloc_trim`, `idle.rs`): 0.5 MB after the counter's
+  start, 1.7 MB after the browser's. An idle window schedules nothing.
+- **The rest of the start.** The compose table (~2 ms) is read at the first
+  key press. Where the session doesn't set `VK_LOADER_DRIVERS_SELECT`
+  (Dashi's does), the probe of the Vulkan loader finding above cost 18 ms of
+  every start (a child loads the driver); its yes is now kept in the runtime
+  directory for the session (`mirin-metal-gpu-<driver>-<major>-<minor>`).
+
+The counter's start now: 1–21 ms creating the GPU context (loading radv,
+which links LLVM: 6–8 ms; enumerating devices: ~5 ms), ~3 ms the window's
+surface and renderer, ~8 ms the first frame (4 ms of it parsing the shaders,
+2 ms two pipelines), first content frame at 33 ms. Before: the font scan to
+7 ms, the GPU context to 26, the renderer (pipelines) to 40, the pipelines
+again and a wait to 49, a 13 ms first frame (5 of it the family's 74 faces)
+to 62.
+
+What remains in a counter's host, largest first, and what it would take:
+
+| | MB | to cut it |
+| --- | --- | --- |
+| radv and LLVM mapped (shared between hosts) | 26.4, 2.5 of it private | a Mesa whose radv doesn't link LLVM (also 6 ms of each start) |
+| the host binary mapped (shared between hosts) | 15.7, 0.7 private | a smaller binary (`opt-level = "s"`, LTO, panic = abort); not tried |
+| GPU: swapchain | 7.7 (four images) | FIFO presentation needs three, but can block the main thread when the compositor holds its buffers; scales with the window's pixels |
+| GPU: Mesa's buffers, the glyph atlas | ~6 | a 512² first atlas saves 0.75 MB, and costs larger apps draw calls |
+| other libraries mapped (shared) | 7.7, 0.4 private | — |
+| heap and arenas | 3.5 | `MALLOC_ARENA_MAX=1` saves 0.4 MB (1.5 MB in the browser) and makes the reader thread's parse and the window's frame share a lock |
+| thread stacks | 0.5 | the reader's bridge thread could go (`run` taking an async channel) |
+
+Not landed, with numbers: building the eight pipelines on threads (first
+frame 6 ms sooner, 4 MB more in stacks and arenas); parsing the shaders on a
+worker while the window opens (~4 ms sooner, a thread's stack and arena
+more); `MALLOC_ARENA_MAX=1` (above); one path sample instead of four (16
+bytes a pixel while paths show, and jagged paths); FIFO presentation (above).
+For the driver: a production React build changed nothing in the counter's
+memory; the heap helper threads are the one cheap win found (above).
+
+Regression checks against round 1's host: `bench/layout-check.tsx` identical
+on both apps; `grim` screenshots of eight examples, a resident host's second
+window and a translucent layer surface identical pixel for pixel; the stress
+bench's frame, apply and parse unchanged within noise over four rounds
+(select frame 4.2–5.3 ms on both) and its RSS 265 → 249 MB.
+
 ## 5c. Who uses it: Dashi
 
 Dashi, the Linux desktop of section 0b, is Metal's first and main consumer. Its
@@ -1080,7 +1193,8 @@ cargo test                      # headless: GPUI's test platform, no display
 ```
 
 The forks live at the repository root (`forks/gpui`, `forks/taffy`,
-`forks/accesskit_unix`; `forks/README.md` explains the upstream branch). The
+`forks/blade-graphics`, `forks/accesskit_unix`; `forks/README.md` explains the
+upstream branch). The
 GPUI fork's own tests build it alone with this crate's lockfile:
 
 ```sh
