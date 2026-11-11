@@ -49,6 +49,8 @@ const transport = spawnNativeHost(binary, {
   onStderr(line) {
     const match = line.match(/^\[mirin-metal trace\] (\d+\.\d) (.*)$/);
     if (match) trace.push({ at: Number(match[1]), message: match[2] ?? "" });
+    // The host's own complaints (`MIRIN_METAL_ACCESS_CHECK`, a refused line).
+    else console.error(line);
   },
 });
 
