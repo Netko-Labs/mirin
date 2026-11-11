@@ -8,6 +8,8 @@ use std::ops::Range;
 
 use crate::{Bounds, Pixels, Point};
 
+use super::grid::Grid;
+
 /// A content mask as it was pushed (not yet intersected with the ones
 /// around it), and the one around it: its place in the frame's list, from
 /// 1; 0 for none.
@@ -68,15 +70,22 @@ impl MaskMap {
             .unwrap_or(self.outer)
     }
 
-    /// The next mask of the old range as it goes into this frame's list.
-    pub(crate) fn push(&mut self, node: &MaskNode, moved: Option<Point<Pixels>>) -> MaskNode {
+    /// The next mask of the old range as it goes into this frame's list,
+    /// `moved` device pixels from where it was when given.
+    pub(crate) fn push(
+        &mut self,
+        node: &MaskNode,
+        moved: Option<Point<f32>>,
+        grid: &Grid,
+    ) -> MaskNode {
         let mut bounds = node.bounds;
         if let Some(moved) = moved {
-            bounds.origin += moved;
+            bounds.origin = grid.moved_point(bounds.origin, moved);
             // Masks are listed in the order they were pushed: the one
-            // around this one is already in.
+            // around this one is already in. Settled as a mask pushed
+            // there is (`Window::with_content_mask`).
             let clip = bounds.intersect(&self.mask(node.parent));
-            self.clips.push(clip);
+            self.clips.push(grid.settle_bounds(clip).0);
         }
         MaskNode {
             bounds,

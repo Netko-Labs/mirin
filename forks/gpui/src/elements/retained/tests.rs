@@ -39,6 +39,8 @@ struct Scene {
     /// Counts each row's builds; with it, every build of a row but its
     /// first has one more (empty) element in it.
     unsteady: Option<Rc<RefCell<HashMap<usize, usize>>>>,
+    /// How often a row's elements, and a cell's, were made.
+    builds: Rc<Cell<(usize, usize)>>,
 }
 
 struct Rows {
@@ -113,19 +115,26 @@ impl Render for Rows {
                 let (tint, unsteady) = (scene.tint.clone(), scene.unsteady.clone());
                 let cell_markers = self.cell_markers.clone();
                 let cell_draws = self.draws.clone();
+                let builds = scene.builds.clone();
                 retained(
                     ("kept", index),
                     self.markers[index].entity_id(),
                     version,
                     move |_, _| {
+                        let (rows, cells) = builds.get();
+                        builds.set((rows + 1, cells));
                         let cells = (0..scene_cells)
                             .map(|cell_index| {
                                 let marker =
                                     cell_markers[index * scene_cells + cell_index].entity_id();
                                 let draws = cell_draws.clone();
                                 retained(("kept-cell", index * 100 + cell_index), marker, 1, {
-                                    let tint = tint.clone();
-                                    move |_, _| cell(index, cell_index, tint.get())
+                                    let (tint, builds) = (tint.clone(), builds.clone());
+                                    move |_, _| {
+                                        let (rows, cells) = builds.get();
+                                        builds.set((rows, cells + 1));
+                                        cell(index, cell_index, tint.get())
+                                    }
                                 })
                                 .movable(loose)
                                 .skippable(loose)
@@ -193,6 +202,7 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         loose: true,
         tint: Rc::default(),
         unsteady: None,
+        builds: Rc::default(),
     }
 }
 
@@ -205,6 +215,18 @@ struct Opened<'a> {
 }
 
 fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
+    open_at(cx, scene, retain, 2.0, false)
+}
+
+/// `open`, on a display of the scale factor `scale` (a test window's is
+/// 2), with scroll views painting at whole device pixels or not (`snap`).
+fn open_at(
+    cx: &mut TestAppContext,
+    scene: Scene,
+    retain: bool,
+    scale: f32,
+    snap: bool,
+) -> Opened<'_> {
     let shared = Rc::new(RefCell::new(scene));
     let (count, cells) = {
         let scene = shared.borrow();
@@ -224,6 +246,10 @@ fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
         }
     });
     let cell_markers = cx.update(|_, cx| view.read(cx).cell_markers.clone());
+    cx.update(|window, _| window.set_scroll_snap(snap));
+    if scale != 2.0 {
+        cx.simulate_rescale(scale);
+    }
     cx.simulate_resize(size(px(300.0), px(400.0)));
     cx.run_until_parked();
     draw(cx);
@@ -245,6 +271,7 @@ fn plain(rows: Vec<Row>) -> Scene {
         loose: false,
         tint: Rc::default(),
         unsteady: None,
+        builds: Rc::default(),
     }
 }
 
@@ -316,6 +343,27 @@ fn kept_and_redrawn_rows_draw_what_drawing_everything_does(cx: &mut TestAppConte
     assert_eq!(again, whole);
 }
 
+/// Two frames drew the same (`drawn`); the failure names what only one has.
+fn assert_same(kept: &(Vec<String>, String), whole: &(Vec<String>, String), what: &str) {
+    if kept.0 != whole.0 {
+        let only = |a: &[String], b: &[String]| {
+            a.iter()
+                .filter(|drawn| !b.contains(drawn))
+                .map(|drawn| drawn.split(" over ").next().unwrap_or_default().to_owned())
+                .take(3)
+                .collect::<Vec<_>>()
+        };
+        panic!(
+            "primitives of {what}: {} kept, {} whole\nonly kept: {:#?}\nonly whole: {:#?}",
+            kept.0.len(),
+            whole.0.len(),
+            only(&kept.0, &whole.0),
+            only(&whole.0, &kept.0),
+        );
+    }
+    assert_eq!(kept.1, whole.1, "hitboxes of {what}");
+}
+
 /// Drive the same steps with retained rows and without, and compare every
 /// frame. `step` changes the scene and may scroll (the offset down).
 fn compare(
@@ -323,8 +371,19 @@ fn compare(
     scene: Scene,
     steps: &[&dyn Fn(&mut Scene) -> Option<f32>],
 ) -> HashMap<RetainedDraw, usize> {
+    compare_at(cx, scene, 2.0, false, steps)
+}
+
+/// `compare`, at a scale factor and with or without scroll snapping.
+fn compare_at(
+    cx: &mut TestAppContext,
+    scene: Scene,
+    scale: f32,
+    snap: bool,
+    steps: &[&dyn Fn(&mut Scene) -> Option<f32>],
+) -> HashMap<RetainedDraw, usize> {
     let run = |cx: &mut TestAppContext, retain: bool| {
-        let opened = open(cx, scene.clone(), retain);
+        let opened = open_at(cx, scene.clone(), retain, scale, snap);
         let mut frames = vec![drawn(opened.cx)];
         for step in steps {
             let to = step(&mut opened.scene.borrow_mut());
@@ -339,8 +398,7 @@ fn compare(
     let (kept, draws) = run(cx, true);
     let (whole, _) = run(cx, false);
     for (index, (kept, whole)) in kept.iter().zip(&whole).enumerate() {
-        assert_eq!(kept.0, whole.0, "primitives of frame {index}");
-        assert_eq!(kept.1, whole.1, "hitboxes of frame {index}");
+        assert_same(kept, whole, &format!("frame {index} at {scale}"));
     }
     draws
 }
@@ -530,3 +588,6 @@ fn rows_that_may_not_move_are_drawn_where_they_land(cx: &mut TestAppContext) {
     assert!(draws[&RetainedDraw::Redrawn] > 30, "{draws:?}");
     assert!(draws[&RetainedDraw::Reused] > 30, "{draws:?}");
 }
+
+mod parked;
+mod scaled;

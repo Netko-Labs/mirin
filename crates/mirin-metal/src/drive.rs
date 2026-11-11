@@ -254,6 +254,16 @@ fn bridge<T: Send + 'static, M: Send + 'static>(
 /// Open the window for `options`, drawing `tree` on its first frame
 /// (`placeholder` when it is the host's stand-in, not the driver's); None
 /// (logged) when the platform refused it.
+/// Whether scroll views paint their content at whole device pixels (GPUI
+/// fork's `Window::set_scroll_snap`): the offset keeps its fraction, so a
+/// touchpad's small steps add up and the scroll bar reads what it did, and
+/// a scrolled frame moves what was drawn by whole pixels, which retained
+/// subtrees copy (`retain.rs`). `MIRIN_METAL_SCROLL_SNAP=0` paints at the
+/// offset itself, as before: for comparing the two.
+fn scroll_snap() -> bool {
+    std::env::var("MIRIN_METAL_SCROLL_SNAP").map_or(true, |value| value != "0")
+}
+
 fn open_window(
     cx: &mut App,
     options: &NativeUiOptions,
@@ -300,7 +310,8 @@ fn open_window(
     let chrome_events = event_sender.clone();
     let close_events = event_sender.clone();
     let visibility_events = event_sender.clone();
-    let opened = cx.open_window(window_options, |_window, cx| {
+    let opened = cx.open_window(window_options, |window, cx| {
+        window.set_scroll_snap(scroll_snap());
         cx.new(|cx| RootView::new(tree, placeholder, event_sender, layout, cx))
     });
     let window = match opened {

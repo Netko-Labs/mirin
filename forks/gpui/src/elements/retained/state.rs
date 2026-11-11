@@ -9,7 +9,10 @@ use crate::{
     TextStyle, Window, window::ElementStateScope,
 };
 
-use super::{RetainedDraw, RetainedRecord, States, recording::Recording, region::Region};
+use super::{
+    RetainedDraw, RetainedRecord, States, grid::Grid, parked::Parked, recording::Recording,
+    region::Region,
+};
 
 /// What a subtree is laid out and drawn under, apart from where: a change
 /// builds it again.
@@ -43,9 +46,13 @@ pub(crate) struct Drawn {
     /// Its place in last frame's lists; `None` when it is not there (not
     /// drawn yet, left out, or dropped with a subtree around it).
     pub(crate) ranges: Option<Ranges>,
+    /// Left out, its last drawing: kept until it shows again, or until
+    /// what a window keeps so is too much (`parked`).
+    pub(crate) parked: Option<Box<Parked>>,
     /// Where it was drawn (or would have been, left out).
     pub(super) bounds: Bounds<Pixels>,
-    /// The content mask around it; `None` once a subtree around it moved it.
+    /// The content mask around it when it was last drawn or copied; `None`
+    /// once a subtree around it moved it.
     pub(super) mask: Option<Bounds<Pixels>>,
     /// Where the drawing is whole (`Recording::valid`).
     pub(crate) valid: Region,
@@ -54,8 +61,8 @@ pub(crate) struct Drawn {
     /// It was drawn whole, as it is laid out: the rest is known.
     pub(super) known: bool,
     pub(crate) pinned: bool,
-    pub(crate) glyphs: bool,
-    pub(crate) uneven: bool,
+    /// Not moved across, or down (`Recording::fixed`).
+    pub(crate) fixed: [bool; 2],
     /// Nothing in it takes keys, actions, focus or text.
     pub(crate) inert: bool,
     pub(crate) prunable: bool,
@@ -65,14 +72,14 @@ impl Drawn {
     fn new() -> Self {
         Self {
             ranges: None,
+            parked: None,
             bounds: Bounds::default(),
             mask: None,
             valid: Region::everywhere(),
             extent: None,
             known: false,
             pinned: false,
-            glyphs: false,
-            uneven: false,
+            fixed: [false; 2],
             inert: false,
             prunable: false,
         }
@@ -87,35 +94,31 @@ impl Drawn {
         }
     }
 
+    /// `shift`, by whole device pixels: where it was drawn stays on the
+    /// grid, however often it is moved.
+    pub(super) fn shift_device(&mut self, by: Point<f32>, grid: &Grid) {
+        let origin = grid.moved_point(self.bounds.origin, by);
+        self.shift(grid.logical(by));
+        self.bounds.origin = origin;
+    }
+
     /// Whether nothing of it shows under `mask`, `offset` from where it was.
     pub(super) fn unseen(&self, offset: Point<Pixels>, mask: &Bounds<Pixels>) -> bool {
         self.extent
             .is_none_or(|extent| !(extent + offset).intersects(mask))
     }
 
-    /// Whether the drawing copied `offset` away, with its top left at
-    /// `origin` under `mask`, is what drawing it there would give.
-    fn moves(
-        &self,
-        offset: Point<Pixels>,
-        origin: Point<Pixels>,
-        mask: &Bounds<Pixels>,
-        scale_factor: f32,
-    ) -> bool {
-        // Positions are exact only where device pixels are a power of two
-        // of logical ones and it sits on whole pixels before and after:
-        // then every rounding inside lands as it did.
-        let exact = matches!(scale_factor, 1. | 2. | 4.);
-        let on_pixels = |point: Point<Pixels>| {
-            (point.x.0 * scale_factor).fract() == 0. && (point.y.0 * scale_factor).fract() == 0.
-        };
-        exact
-            && !self.pinned
-            && on_pixels(self.bounds.origin)
-            && on_pixels(origin)
-            && (!self.glyphs || offset.x.0 == 0.)
-            && (!self.uneven || offset.y.0 == 0.)
-            && self.valid.moved(offset).covers(mask)
+    /// Whether the drawing copied `by` device pixels away (whole ones, from
+    /// the grid to the grid: `Grid::whole_move`), under `mask`, is what
+    /// drawing it there would give. Then every position inside lands as it
+    /// did: what is laid out is on the grid, a glyph or an icon rounds to
+    /// the same pixel a whole number of them away, and what would not is
+    /// `fixed` or `pinned`.
+    fn moves(&self, by: Point<f32>, grid: &Grid, mask: &Bounds<Pixels>) -> bool {
+        !self.pinned
+            && (!self.fixed[0] || by.x == 0.)
+            && (!self.fixed[1] || by.y == 0.)
+            && self.valid.moved(grid.logical(by)).covers(mask)
     }
 }
 
@@ -125,10 +128,11 @@ pub(super) enum Plan {
     Draw(AnyElement),
     /// Built again for its kept layout.
     Redraw,
-    /// Last frame's drawing, this far from where it was (`None`: as it is).
-    /// `whole`: what shows of it is what did (`Scene::replay_moved`).
+    /// Last frame's drawing, this many device pixels from where it was
+    /// (`None`: as it is). `whole`: what shows of it is what did
+    /// (`Scene::replay_moved`).
     Reuse {
-        moved: Option<Point<Pixels>>,
+        moved: Option<Point<f32>>,
         whole: bool,
     },
     Skip,
@@ -225,7 +229,7 @@ impl RetainedState {
         skippable: bool,
         window: &mut Window,
     ) -> Plan {
-        let drawn = self.record.drawn.borrow();
+        let mut drawn = self.record.drawn.borrow_mut();
         // Laid out inside as it was drawn: only then is the drawing, or how
         // far it reaches, still what it would draw.
         let same = drawn.known
@@ -236,11 +240,34 @@ impl RetainedState {
         if !same {
             return Plan::Redraw;
         }
-        let offset = bounds.origin - drawn.bounds.origin;
-        let still = offset == Point::default();
+        let grid = window.grid();
         let mask = window.content_mask().bounds;
+        // How far it is from where it was: `by` in device pixels, when
+        // that is a whole number of them between two places on the grid.
+        let from = |drawn: &Drawn| {
+            let offset = bounds.origin - drawn.bounds.origin;
+            let by = grid.whole_move(drawn.bounds.origin, bounds.origin);
+            let still = offset == Point::default() || by == Some(Point::default());
+            (offset, by, still)
+        };
+        let (mut offset, mut by, mut still) = from(&drawn);
         if skippable && drawn.inert && (movable || still) && drawn.unseen(offset, &mask) {
             return Plan::Skip;
+        }
+        if drawn.ranges.is_none() {
+            if let Some(parked) = drawn.parked.take() {
+                // It shows again: its drawing goes back among last frame's,
+                // where it was drawn, with the ones inside it.
+                let back = parked.origin - drawn.bounds.origin;
+                drawn.shift(back);
+                drawn.bounds.origin = parked.origin;
+                let (ranges, nested) = window.unpark(parked);
+                drawn.ranges = Some(ranges);
+                for (record, ranges) in self.nested.iter().zip(nested) {
+                    record.drawn.borrow_mut().ranges = ranges;
+                }
+                (offset, by, still) = from(&drawn);
+            }
         }
         let copies = drawn.ranges.as_ref().is_some_and(|ranges| {
             window.prepaint_range_valid(&ranges.prepaint) && window.paint_range_valid(&ranges.paint)
@@ -263,7 +290,8 @@ impl RetainedState {
         let hovers = drawn.extent.is_some_and(|extent| {
             extent.contains(&pointer) || (extent + offset).contains(&pointer)
         });
-        if movable && !hovers && drawn.moves(offset, bounds.origin, &mask, window.scale_factor()) {
+        let by = by.filter(|by| movable && !hovers && drawn.moves(*by, &grid, &mask));
+        if let Some(by) = by {
             // Nothing around it clipped it, or does where it lands.
             let whole = drawn.extent.is_none_or(|extent| {
                 drawn
@@ -276,7 +304,7 @@ impl RetainedState {
             // and the ones that left the view not at all.
             if whole || self.nested.is_empty() {
                 return Plan::Reuse {
-                    moved: Some(offset),
+                    moved: Some(by),
                     whole,
                 };
             }

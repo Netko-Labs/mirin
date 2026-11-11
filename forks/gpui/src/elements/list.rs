@@ -816,7 +816,18 @@ impl StateInner {
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
-                item_origin.y -= layout_response.scroll_top.offset_in_item;
+                // mirin: the items are painted at whole device pixels
+                // (`Window::set_scroll_snap`): the list's whole offset is
+                // rounded, not the part of it inside the first item, so a
+                // scroll moves every item by whole pixels whichever item is
+                // first.
+                let offset_in_item = layout_response.scroll_top.offset_in_item;
+                let above = self.scroll_top(&layout_response.scroll_top) - offset_in_item;
+                let scroll_max = (self.items.summary().height + padding.top + padding.bottom
+                    - bounds.size.height)
+                    .max(px(0.));
+                let painted = -window.painted_scroll(-(above + offset_in_item), scroll_max);
+                item_origin.y -= painted - above;
                 for item in &mut layout_response.item_layouts {
                     window.with_content_mask(Some(ContentMask { bounds }), |window| {
                         item.element.prepaint_at(item_origin, window, cx);
@@ -1292,5 +1303,82 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    // mirin: `Window::set_scroll_snap`.
+    #[gpui::test]
+    fn test_items_are_painted_on_device_pixels_when_scrolls_snap(cx: &mut TestAppContext) {
+        use crate::{
+            AppContext, Context, Element, IntoElement, ListState, ParentElement, Render, Styled,
+            Window, canvas, div, list, point, px, size,
+        };
+        use std::{cell::RefCell, rc::Rc};
+
+        let cx = cx.add_empty_window();
+        cx.update(|window, _| window.set_scroll_snap(true));
+        let state = ListState::new(20, crate::ListAlignment::Top, px(10.));
+        // Where each item was painted in the last frame.
+        let painted: Rc<RefCell<Vec<(usize, f32)>>> = Rc::default();
+
+        struct TestView(ListState, Rc<RefCell<Vec<(usize, f32)>>>);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let painted = self.1.clone();
+                list(self.0.clone(), move |index, _, _| {
+                    let painted = painted.clone();
+                    div()
+                        .h(px(20.))
+                        .w_full()
+                        .child(
+                            canvas(
+                                move |bounds, _, _| {
+                                    painted.borrow_mut().push((index, bounds.origin.y.0))
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        )
+                        .into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+        let mut draw = |cx: &mut crate::VisualTestContext| {
+            painted.borrow_mut().clear();
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+                cx.new(|_| TestView(state.clone(), painted.clone()))
+            });
+        };
+        draw(cx);
+
+        // Steps of a third of a pixel, across the end of the first items: a
+        // test window draws two device pixels to a logical one, so every
+        // item sits at a multiple of a half, the same half for all of them.
+        let mut scrolled = 0.0f32;
+        for _ in 0..150 {
+            state.scroll_by(px(0.3));
+            scrolled += 0.3;
+            draw(cx);
+            let top = state.logical_scroll_top();
+            let precise = top.item_ix as f32 * 20. + top.offset_in_item.0;
+            assert!((precise - scrolled).abs() < 1e-2, "{precise} of {scrolled}");
+            let rounded = (precise * 2.).round() / 2.;
+            let painted = painted.borrow();
+            assert!(!painted.is_empty());
+            for (index, y) in painted.iter() {
+                assert_eq!(
+                    *y,
+                    *index as f32 * 20. - rounded,
+                    "item {index} at {precise}"
+                );
+            }
+        }
+
+        // The end is painted where it is.
+        state.scroll_by(px(10_000.));
+        draw(cx);
+        let (index, y) = *painted.borrow().last().unwrap();
+        assert_eq!((index, y), (19, 80.));
     }
 }

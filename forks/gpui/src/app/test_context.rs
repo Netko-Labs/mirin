@@ -805,6 +805,12 @@ impl VisualTestContext {
         self.simulate_window_resize(self.window, size)
     }
 
+    /// mirin: simulates the window moving to a display of another scale
+    /// factor (a test window's is 2.0).
+    pub fn simulate_rescale(&self, scale_factor: f32) {
+        self.test_window(self.window).simulate_rescale(scale_factor);
+    }
+
     /// debug_bounds returns the bounds of the element with the given selector.
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())

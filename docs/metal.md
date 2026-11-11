@@ -325,6 +325,21 @@ patches change it in place, in order (section "Patches").
   - **The wheel** scrolls the innermost view under the pointer that can still
     move that way; at its end the turn goes on to the view around it. Every
     view used to take every turn, so a list scrolled with its page.
+  - **Painted on pixels.** A view's offset keeps its fraction: a touchpad's
+    steps of a third of a pixel add up, and the scroll bar, the range and
+    the ends are what they were. Its content is painted at that offset
+    rounded to device pixels, as browsers do (`Window::set_scroll_snap` in
+    the GPUI fork; a list rounds its whole offset, not the part inside its
+    first row), and what is painted is what is hit: a press lands on the
+    node drawn under it. The ends are where they were: a view's range is
+    whole device pixels (taffy lays out in them), and an offset at the very
+    end is painted as it is. Content between pixels blurred, and no row
+    landed a whole number of pixels from where it was, so every row in view
+    was drawn again each frame (section 5b). `MIRIN_METAL_SCROLL_SNAP=0`
+    paints at the offset itself, as before, for comparing the two. A
+    whole-pixel scroll paints what it did. Nothing reports a scroll
+    position to the app yet; when something does, it is the offset, not
+    where it was painted.
   - **The scroll bar** (`scrollbar.rs`) is an overlay, as on macOS: a thumb 6
     wide along the right edge (and the bottom, for `scrollX`), drawn over the
     content, with no room kept for it. It shows while the view scrolls and
@@ -1048,7 +1063,8 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
 
   A drawing is moved only when the copy is exactly what drawing it there
   gives (`forks/gpui/MIRIN.md` has the list): by whole device pixels at a
-  scale factor of 1, 2 or 4, not sideways when it holds text, not under the
+  scale factor of 1, 2 or 4 (at any, since "Scrolling between pixels"
+  below), not sideways when it holds text, not under the
   pointer (hover styles), and only where it is whole. For the last, a
   subtree drawn anew keeps what its clip hides within 256 px (so a row
   scrolled into view is drawn once, not on every frame until it all
@@ -1390,14 +1406,124 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   order, instead of React's) would send a swap as two ops, not 2,480; the
   12 ms React spends placing them would remain.
 
+- Scrolling between pixels, other scale factors, rows that come back
+  (2026-11-11; release host, `bench/stress.tsx`, medians of two runs each
+  of the host before (`moved and unseen` above, built with only
+  `MIRIN_METAL_SCALE` added) and this one, back to back on a nested
+  dashi-comp, which draws at 1: the other scale factors are
+  `MIRIN_METAL_SCALE`, section 6). A drawing was moved only by whole device
+  pixels at a scale factor of 1, 2 or 4. A touchpad scrolls by fractions of
+  a pixel and a laptop often runs at 1.25 to 1.75, and there every row in
+  view was drawn again each frame. Three changes, in the GPUI fork
+  (`forks/gpui/MIRIN.md`):
+
+  - *Scroll views paint on device pixels* (section 2): the offset keeps its
+    fraction, the content is painted at the nearest device pixel. A frame
+    whose offset moved by less than a pixel reuses every row in place; any
+    other moves them by whole pixels.
+  - *Positions settle on a device grid*
+    (`forks/gpui/src/elements/retained/grid.rs`). Why only 1, 2 and 4: taffy
+    lays out in whole device pixels, but an element was given logical
+    bounds (each ancestor's position divided by the scale factor, added
+    up) and every primitive multiplied its own back. At a power of two
+    both are exact; at 1.5 each loses a little, by an amount that depends
+    on where the element is, so a drawing copied 60 device pixels down
+    differed in its last bits from the same drawing made there (and a
+    quad's edge sat at 150.99998 where layout said 151). Now a node is
+    placed from its device position and the offset around it in one
+    division, and a device position within 1/64 px of the grid (eighths of
+    a device pixel) is that grid point: for primitives, their masks,
+    layers, hitboxes and content masks, with retained subtrees or without.
+    A move is a whole number of device pixels between grid points, applied
+    to the grid point. What is farther than 1/256 px from the grid keeps
+    its subtree from moving along that axis: a shadow one logical pixel
+    down at 1.1 (no float holds 1.1), an underline at a fraction of a
+    pixel. An icon rounds from its settled position, a half always up (at
+    1.5 half of all icons sit on a half pixel). At a power of two nothing
+    is settled: every position is what it was.
+  - *A row out of view keeps its drawing*
+    (`forks/gpui/src/elements/retained/parked.rs`). A subtree nothing
+    shows of left the frame, and its drawing with it, so a row scrolled
+    out and back was built again: half of a scrolled frame. Its drawing is
+    now taken out of the frame it was last in (if it is whole and may
+    move) and appended to last frame's lists when it shows again, from
+    where it is copied like any drawing that moved; in between it costs
+    nothing. A window keeps at most 24,000 primitives, hitboxes and
+    listeners so and drops the ones parked longest ago, which are drawn
+    anew as before: memory does not grow with the content's length.
+
+  | stress bench (15k nodes), scroll frame (p95) | before | now |
+  | --- | --- | --- |
+  | scale 1, 40 px steps | 4.0–4.1 ms (4.5–4.7) | 3.0–3.4 ms (4.8) |
+  | scale 1, 40.5 px steps | 17.7–21.2 ms (21.4–32.6) | 3.2–3.3 ms (4.8–5.0) |
+  | scale 1, 13.3 px steps | 16.9–19.8 ms (21.3–21.4) | 2.6–2.8 ms (3.1–3.5) |
+  | scale 1.5, 40 px steps | 17.4–20.2 ms (21.1–21.2) | 3.1–3.3 ms (4.7–4.9) |
+  | scale 1.5, 40.5 px steps | 17.1–17.5 ms (20.7–21.1) | 3.1–3.2 ms (4.9) |
+  | scale 1.5, 13.3 px steps | 16.5–20.5 ms (19.9–35.5) | 2.8–3.0 ms (3.5–4.3) |
+  | scale 2, 40 px steps | 4.1–4.3 ms (4.8) | 3.1–3.2 ms (4.5–4.7) |
+  | scale 2, 40.5 px steps | 3.5–4.1 ms (4.6–5.0) | 3.0–3.1 ms (4.8–4.9) |
+  | scale 2, 13.3 px steps | 16.5–20.0 ms (20.8–21.3) | 2.8–3.1 ms (3.2–3.6) |
+
+  A step is one wheel turn a frame, down and back up (24 each way in the
+  full run, scale 1 and 40 px; 16 in the others); 40 px is 60 device pixels at 1.5, and
+  40.5 px is 81 at 2, which the host before already moved. The other
+  scenarios are what they were (select 2.5 → 2.7–2.8, type 1.7 → 1.7–1.8, hover
+  2.1–2.6 → 2.6–2.9, grow 3.9 → 3.7–4.2, grow in the scroll view 4.1–4.2 → 4.3–4.4, select
+  there 3.0 → 3.1–3.2 ms a frame, before → now), and so is the example
+  browser's scrolled frame (1.5–1.6 → 1.0–1.7, p95 1.9–2.0 either way ms). Resident memory: 238–256 → 239–240 MB
+  idle, and 332 → 332–333 MB after the whole run, when the rows that scrolled
+  out are parked (the budget's worst case is about 3 MB).
+
+  A scrolled frame is now 4 to 5 ms when a row shows for the first time
+  (it is built: its first drawing, made out of view, has nothing in it)
+  and about 3 ms otherwise, also when a row comes back: nothing is built
+  for it. What is left is the scroll view's own content, drawn at its own
+  level every scrolled frame, and copying the rows that come in clipped
+  primitive by primitive.
+
+  Checks. The GPUI fork's tests (`retained/tests/`) compare moved frames
+  with drawing everything at 1, 1.25, 1.5, 1.75, 2, 3 and 1.1, with and
+  without snapping, wheel steps of 0.3 px adding up, and rows scrolled out
+  and back with room for all, some and none of their drawings (what was
+  dropped is built again; nothing else is). `layout-check.tsx` (`scroll`,
+  `grid`, `browser`, with `--scene`): this host with
+  `MIRIN_METAL_SCROLL_SNAP=0` draws what the host before did at every
+  step; with snapping, at every step but the two where the view sits half
+  a pixel in (the rows are 0.5 px further up); and what it draws is the
+  same with `MIRIN_METAL_RETAIN=0`. `layout-check.tsx scroll-fractional`
+  (steps of 40.5, 13.3 and 0.3 px, the ends, presses and pointer moves by
+  window coordinates) draws the same with retention and without at 1 and
+  at 1.5, to the bit. At 1.5 the bounds the layout map reports for a
+  copied subtree's nodes differ from a fresh layout in the seventh digit
+  (it moves them by a logical distance, `sim.rs`): `--bounds-digits=3`
+  compares them to that.
+
+  Resize (`bench/stress.tsx`'s `resize`: the window 100 px narrower and
+  back, the rows in the scroll view): 15.8–20.8 → 19.9–20.4 ms a frame at 15k nodes,
+  before and now. From a profile: taffy 28% (each of the 100 rows is a
+  flex container whose width changed; its 25 cards answer from their
+  caches, but the flex algorithm runs for every row), and every row is
+  built again onto its kept layout, the 83 out of view too (a subtree
+  whose size changed is drawn to learn how far it reaches before it can
+  be left out): building them 23%, their prepaint 14%, their paint 15%.
+  Within those, 13% is looking up the retained state of each of the 2,500
+  cards three times a frame, by its whole element id path. One of the
+  three went (a card left out is no longer looked up at paint); the rest
+  is open, below.
+
 Open: React work per update (the demo re-renders its whole list on select);
-a scroll by a fraction of a pixel (a touchpad) or at a scale factor other
-than 1, 2 or 4 moves nothing (every row in view is redrawn from its kept
-layout: 17 ms a frame on the stress bench with 40.5 px steps, a sixth of
-what it cost): scroll offsets snapped to device pixels, and layout kept in
-device pixels through painting, would lift both; and a row that comes into
-view is built again though it was drawn before (its drawing is not kept
-while it is out of view). For the accessibility tree: nodes that each
+a scale factor that is not a multiple of 1/8 (1.1, 1.2) moves only what
+is laid out, not what sits a logical distance from it (a shadow's offset):
+snapping those distances to device pixels would lift it; a subtree with
+text is never moved sideways (a glyph picks one of four subpixel positions
+from its own x), so a horizontal scroll draws its rows again; a row drawn
+for the first time out of view is drawn again when it first shows; a
+resize builds every row whose size changed, in view or not (a subtree's
+own box could say how far it reaches when only its size changed, but then
+the layout map's bounds for it would be stale while it is out of view),
+and looks every retained subtree's state up by its whole id path; the
+layout map moves a copied subtree's nodes by a logical distance, exact
+only at a power-of-two scale factor. For the accessibility tree: nodes that each
 move on their own (a reflow, a window resized) are handed over one by one,
 about 5 µs a node on the window's thread (holding them until the content
 settles needs the adapter to fetch what is held before it answers a
@@ -1699,3 +1825,13 @@ Or drive the host by hand:
 echo '{"type":"view","props":{"fill":true,"center":true,"background":"#3b82f6"},"children":[{"type":"text","props":{"size":40,"color":"#ffffff"},"children":["mirin metal"]}]}' \
   | crates/mirin-metal/target/debug/mirin-metal-host
 ```
+
+For checks and benchmarks, not for an app to set: `MIRIN_METAL_RETAIN=0`
+draws every frame whole (no retained subtrees, section 5b);
+`MIRIN_METAL_SCROLL_SNAP=0` paints scroll views at their offset itself,
+between device pixels (section 2); and `MIRIN_METAL_SCALE=<factor>` draws at
+that scale factor whatever the compositor says (Wayland, in the GPUI fork: the
+surface is shown at its logical size through its viewport, so it is resampled,
+not sharp), which is how the layout check and the stress bench run at 1.25,
+1.5 or 2 on a display without fractional scaling. With `MIRIN_METAL_TRACE=1`
+the host logs `scale factor N` when the scale it draws at changes.
