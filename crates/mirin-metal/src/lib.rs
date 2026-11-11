@@ -25,6 +25,7 @@ mod follow;
 pub mod gpu;
 mod grid;
 mod height;
+mod idle;
 mod ime;
 mod input;
 mod list;
