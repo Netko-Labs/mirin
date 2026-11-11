@@ -15,6 +15,13 @@
  * non-zero on any difference. Runs in an off-screen compositor unless
  * `--visible`.
  *
+ * `scroll-fractional` is the `scroll` app scrolled by fractions of a pixel
+ * (a touchpad's steps, small ones that add up, the ends). A scroll view
+ * paints its content at whole device pixels (`MIRIN_METAL_SCROLL_SNAP`),
+ * which a host from before that does not, so it is for comparing one host
+ * with itself: `--scene --env-b=MIRIN_METAL_RETAIN=0`, and at another scale
+ * factor with `--env-a=MIRIN_METAL_SCALE=1.5 --env-b=MIRIN_METAL_SCALE=1.5`.
+ *
  * `--scene` also compares what each host drew after every step: a digest of
  * the frame's primitives and hitboxes, which a host traces with
  * `MIRIN_METAL_TRACE_SCENE=1` (hosts from before that have none). With
@@ -43,9 +50,9 @@ import { ThemeProvider } from "../src/provider.tsx";
 
 const args = Bun.argv.slice(2);
 const [app, hostA, hostB] = args.filter((arg) => !arg.startsWith("--"));
-if (!app || !hostA || !hostB || !["browser", "grid", "scroll"].includes(app)) {
+if (!app || !hostA || !hostB || !["browser", "grid", "scroll", "scroll-fractional"].includes(app)) {
   console.error(
-    "usage: bun bench/layout-check.tsx <browser|grid|scroll> <host-a> <host-b> [--visible] [--scene]",
+    "usage: bun bench/layout-check.tsx <browser|grid|scroll|scroll-fractional> <host-a> <host-b> [--visible] [--scene]",
   );
   process.exit(2);
 }
@@ -170,6 +177,47 @@ const point = (index: number): Step => ({
   name: `move to ${index}`,
   command: (_, at) => ({ kind: "move", ...at(`card:${index}`) }),
 });
+/**
+ * `scroll-fractional`: the scroll view scrolled by fractions of a pixel.
+ * Painted at whole device pixels, the rows move by whole pixels and are
+ * copied; the offset itself keeps its fraction, so small steps add up.
+ */
+const fractionalSteps: Step[] = [
+  scroll(40.5),
+  scroll(40.5),
+  scroll(13.3),
+  scroll(13.3),
+  scroll(13.3),
+  press(130),
+  point(160),
+  // Less than a pixel at a time: every few steps the rows move by one.
+  scroll(0.3),
+  scroll(0.3),
+  scroll(0.3),
+  scroll(0.3),
+  point(110),
+  scroll(700.7),
+  press(480),
+  point(560),
+  { name: "grow", command: (id) => ({ kind: "click", id: id("banner") }) },
+  point(485),
+  // Back: rows that left the view come into it again.
+  scroll(-320.4),
+  press(300),
+  point(410),
+  { name: "shrink", command: (id) => ({ kind: "click", id: id("banner") }) },
+  scroll(-13.3),
+  scroll(-13.3),
+  // The end (painted where it is), a little back, and the start.
+  scroll(5000),
+  point(1410),
+  scroll(-0.4),
+  press(1420),
+  scroll(-5000.5),
+  point(35),
+  { name: "move off", command: () => ({ kind: "move", x: 2, y: 2 }) },
+];
+
 const steps: Step[] =
   app === "scroll"
     ? [
@@ -236,6 +284,9 @@ const steps: Step[] =
           { name: "type", command: () => ({ kind: "type", text: "but" }) },
         ];
 
+/** The steps the app is driven through. */
+const driven: Step[] = app === "scroll-fractional" ? fractionalSteps : steps;
+
 type Snapshot = Map<string, string>;
 
 async function run(binary: string): Promise<Array<{ name: string; layout: Snapshot }>> {
@@ -267,7 +318,7 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
     if (event.type === "hover") heard.push(`hover ${event.nodeId} ${event.hovered}`);
   });
   const root = render(
-    app === "scroll" ? (
+    app === "scroll" || app === "scroll-fractional" ? (
       <Scrolled />
     ) : app === "grid" ? (
       <Grid />
@@ -298,7 +349,7 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
   };
   await Bun.sleep(3000);
   const out = [{ name: "initial", layout: await snapshot() }];
-  for (const step of steps) {
+  for (const step of driven) {
     const laid = out.at(-1)?.layout;
     const at = (testId: string): { x: number; y: number } => {
       const [x = 0, y = 0] = (laid?.get(nodeId(testId)) ?? "").split(/[, ]/).map(Number);

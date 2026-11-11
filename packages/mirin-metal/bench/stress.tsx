@@ -25,6 +25,8 @@
  * - scroll: one wheel step (`--step` px) per frame, down and back up; each
  *   step waits for its frame, so the nested compositor's pace doesn't merge them.
  * - grow (scroll), select (scroll): as above, with the rows in the scroll view.
+ * - resize: the window's width changes (`setSize`, back and forth by `--resize-by` px,
+ *   `--resizes` times), with the rows in the scroll view; each frame at the new size.
  *
  * Runs in an off-screen compositor unless `--visible` (see `startHeadlessDisplay`).
  */
@@ -376,6 +378,30 @@ await scenario("select/sc", 12, async () => {
   }
 });
 
+// Resize: the window's width changes, so every row is laid out at a new
+// width (the cards in it stay as they are). Timed to the first frame the
+// host draws at the new size.
+const resizes = option("resizes", 12);
+const resizeBy = option("resize-by", 100);
+const resize: number[] = [];
+await scenario("resize", resizes, async () => {
+  for (let index = 0; index < resizes; index += 1) {
+    const width = index % 2 === 0 ? 1280 - resizeBy : 1280;
+    const from = trace.length;
+    transport.setSize(width, 800);
+    for (let waited = 0; waited < 2500; waited += 4) {
+      const line = trace.slice(from).find((entry) => entry.message.startsWith(`render ${width}x`));
+      if (line) {
+        resize.push(frameMs(line));
+        break;
+      }
+      await Bun.sleep(4);
+    }
+    // Whatever follows it (the compositor's configure, a second frame).
+    await Bun.sleep(300);
+  }
+});
+
 // `--trace=<path>`: the host's whole trace log, for a closer look at a run.
 const tracePath = args.find((arg) => arg.startsWith("--trace="))?.slice("--trace=".length);
 if (tracePath) {
@@ -426,6 +452,10 @@ const result = {
   idleFrames,
   rssMb: memory,
 };
+// The resize scenario's frames, beside the others'.
+Object.assign(result, {
+  resize: { n: resize.length, frame: median(resize), frameP95: p95(resize), cpu: cpu.resize ?? 0 },
+});
 if (args.includes("--json")) {
   console.log(JSON.stringify(result));
 } else {
@@ -464,6 +494,9 @@ if (args.includes("--json")) {
   );
   console.log(
     `idle: ${idleCpuMs.toFixed(0)} ms CPU / 3 s, ${idleFrames} frames; RSS ${memory.toFixed(0)} MB`,
+  );
+  console.log(
+    `resize   ${String(resize.length).padStart(2)} frames of ${resizes} widths ${resizeBy} px apart: frame ${median(resize).toFixed(1)} ms, p95 ${p95(resize).toFixed(1)} ms, cpu ${(cpu.resize ?? 0).toFixed(1)} ms`,
   );
 }
 process.exit(0);
