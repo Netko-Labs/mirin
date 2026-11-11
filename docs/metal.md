@@ -281,8 +281,9 @@ patches change it in place, in order (section "Patches").
   GPUI's mouse dispatch is crate-private, so hit-testing is approximated),
   `{"kind":"key","keystroke":"ctrl-enter"}` and `{"kind":"type","text"}` go
   through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds
-  (only nodes painted in the latest frame), `{"kind":"scroll","id","dy"}`
-  scrolls a scroll view or virtualized list, `{"kind":"focus","id"}` gives
+  (only nodes painted in the latest frame), `{"kind":"scroll","id","dy","dx"}`
+  scrolls a scroll view down and across (`dx`, optional) or a virtualized
+  list down, `{"kind":"focus","id"}` gives
   a field or `focusable` view the keyboard without pressing it (a screen
   reader's focus), and `{"kind":"move","id"}` / `{"kind":"move","x","y"}`
   moves the pointer there through GPUI's real mouse dispatch, so
@@ -459,6 +460,10 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   comparing what two hosts drew (`bench/layout-check.tsx --scene`). Any
   other value is a file each frame's primitives and hitboxes are appended
   to as well, under a `frame <digest>` line, for finding what differs.
+  `MIRIN_METAL_TRACE_SCENE_GLYPHS=1` adds which subpixel variant each
+  glyph is drawn as (the atlas tile is left out, and with it the variant):
+  a trace with it differs from one without, so compare it only with
+  another host given it too.
 - **Driver side.** The host config logs each mutation React makes
   (`appendChild`, `insertBefore`, `removeChild`, the portal container's
   own) and each node whose props or text changed (`lib/commit-log.ts`; a
@@ -776,9 +781,15 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
     names exactly the nodes and groups whose place changed, came or went
     (`layout::Changes`): only those are looked at, and a frame in which
     nothing moved looks at none. A node whose frame and group disagree (a
-    frame not painted yet, a virtualized list's row, a tree newer than the
-    paint) is placed by where things are in the window and looked at again
-    whenever anything moved.
+    frame not painted yet, a tree newer than the paint) is placed by where
+    things are in the window and looked at again whenever anything moved.
+    A virtualized list's rows are its content's group too: GPUI's list
+    says where it paints its content before it prepaints a row
+    (`List::on_content_origin` in the fork), so its scroll is one frame's
+    transform, as a scroll view's is. A scroll view's own children have
+    bounds (GPUI handed a view with a tracked scroll handle none, so they
+    were in no layout answer and a screen reader heard no extents for
+    them).
   - *Signals.* A frame's move tells the bus nothing: no node a client
     sees changed its own bounds. Nodes that move on their own (a reflow)
     each change, and AccessKit sends `object:bounds-changed` for each;
@@ -1064,7 +1075,7 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   A drawing is moved only when the copy is exactly what drawing it there
   gives (`forks/gpui/MIRIN.md` has the list): by whole device pixels at a
   scale factor of 1, 2 or 4 (at any, since "Scrolling between pixels"
-  below), not sideways when it holds text, not under the
+  below), not sideways when it holds text (until round 4, below), not under the
   pointer (hover styles), and only where it is whole. For the last, a
   subtree drawn anew keeps what its clip hides within 256 px (so a row
   scrolled into view is drawn once, not on every frame until it all
@@ -1252,9 +1263,10 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   after each of 17 steps (scrolls, a banner growing, a row coming and
   going, typing, accessibility turned off and on), each the moment its
   frame is painted: both hosts give the same extents for every node at
-  every step. The example browser's list is virtualized: its rows are
-  drawn in no group, so each row in view still moves on its own (a
-  bounded number: the rows in view), now without a signal each.
+  every step. The example browser's list is virtualized: its rows were
+  drawn in no group, so each row in view still moved on its own (a
+  bounded number: the rows in view), now without a signal each (one
+  group since round 4, below).
 
   Evaluated and not done: holding bounds back while content moves and
   publishing them once it settles. A client must be answered with current
@@ -1511,28 +1523,118 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   three went (a card left out is no longer looked up at paint); the rest
   is open, below.
 
+- Text across, lists as one, other scale factors (2026-11-11, round 4;
+  release host, `bench/stress.tsx` and metal-ui's `bench/native.tsx`,
+  medians of two runs each of `host-r3` built with only the simulation's
+  `dx` added and this one, back to back on a nested dashi-comp). A
+  drawing with text was never moved across: a glyph took its pixel and
+  one of its four subpixel positions from its own place in the window
+  (the line's origin there plus every advance before it, each sum
+  rounded where it landed), so the same line a whole number of device
+  pixels away could round to another variant, and a horizontal scroll
+  drew every row in view again. A virtualized list's rows were in no
+  group, so its scroll handed AccessKit every row in view. At 1.1 or 1.2
+  a card was never moved at all. Changes (`forks/gpui/MIRIN.md`):
+
+  - *A glyph is placed from its line* (`Window::paint_line_glyph`). The
+    line's device position is settled on the grid and split into whole
+    pixels and a fraction; the glyph's distance from the line (summed
+    from zero) is added to the fraction alone. A whole-pixel move then
+    changes the whole pixels and nothing else, so a subtree with text
+    moves across as it does down. Where a glyph lands is the same to a
+    few float steps: a glyph within them of a quarter pixel may take the
+    variant next to the one it had (none did in the checks below, which
+    compare the drawing with `host-r3`'s).
+  - *Distances snapped onto the grid where scaling is not exact.* A
+    border is drawn four times, each in a band as deep as the border or
+    the corners; a shadow sits its offset and spread from its box. At 1.1
+    a 6 px band ends 6.6 device pixels in, which is on no grid, so every
+    card was drawn again each scrolled frame. The band depths snap up to
+    the next eighth of a device pixel (6.6 → 6.625: the quad has no
+    background, so a deeper band shows nothing more), a shadow's offset
+    and spread to the nearest (1.1 → 1.125: a blurred shadow 0.025 device
+    pixels lower). At a power of two, and at 1.25, 1.5, 1.75 or 3 (where
+    they are on the grid already), nothing changes.
+  - *A list's rows are one group.* GPUI's list says where it paints its
+    content before it prepaints its rows (`List::on_content_origin`), and
+    mirin-metal keeps the rows in that group, as a scroll view's content
+    (section 4, "Bounds"): a scroll is one frame's transform.
+  - *A scroll view's children have bounds* (section 4).
+  - *A copied subtree's nodes move on the grid* (`layout/state.rs`): at
+    1.5 the layout map moved them by a logical distance, which differed
+    from laying them out there in the seventh digit; it now moves them as
+    GPUI places them (device grid points, one division), to the bit.
+  - *Hover and rows put aside* (a bug found scrolling across and back): a
+    row parked while hovered came back showing its hover where the
+    pointer no longer was, and one parked unhovered came back without it
+    where the pointer had moved meanwhile. A drawing the pointer is over
+    is no longer parked, and one that comes back under the pointer is
+    drawn again.
+
+  | stress bench (15k nodes) | host-r3 | now |
+  | --- | --- | --- |
+  | across, 40 px steps (`hscroll`): frame (p95) / host CPU a step | 15.0–15.5 ms (18.2–19.4) / 18.3–19.6 ms | 3.4–3.7 ms (4.8–4.9) / 5.6–5.8 ms |
+  | across at 1.25 | HSCROLL125 |
+  | down and across at 1.1, cards with a shadow (`--shadow`) | SCALE11 |
+  | down at 1.25, with a shadow | SCROLL125 |
+  | down, 40 px steps (`scroll`) | 3.4–3.5 ms (4.4–4.9) / 5.0–5.4 ms | 3.4–3.5 ms (5.0–5.1) / 5.6–5.8 ms |
+  | select / type / hover / grow / grow and select in the scroll view, frame | 2.8–4.3 / 1.8 / 2.7–3.0 / 4.0–4.1 / 4.1–4.7 / 3.0–3.4 ms | 2.9–3.0 / 1.9 / 2.8 / 3.9–4.2 / 3.9–4.5 / 3.1–3.2 ms |
+  | resize, frame | 16.0–16.7 ms | 16.3–16.8 ms |
+
+  | example browser (`bench/native.tsx`), its list scrolled | host-r3 | now |
+  | --- | --- | --- |
+  | accessibility nodes made / handed over per scrolled frame | 1 / 18 | 1 / 3 |
+  | accessibility per scrolled frame | 0.2 ms | 0.1 ms |
+  | scroll frame (p95) | 1.7–1.8 ms (2.4–2.7) | 1.8 ms (2.3) |
+  | host CPU per scroll step | 3.0–3.3 ms | 3.0 ms |
+
+  The stress bench's new `hscroll` scenario is the same 2,500 cards in
+  columns of twelve, side by side in a view that scrolls across
+  (`overflow: "scroll-x"`); the simulation's `scroll` takes a `dx`. A
+  scrolled frame across is now what one down is: the columns that come
+  in, and copies. The list's three nodes handed over a frame are its
+  frame and the rows that come and go.
+
+  Checks. GPUI fork tests: a glyph moved by whole device pixels lands on
+  the same pixel and subpixel variant (and placed the old way, it does
+  not always); rows with text scrolled across at 1, 1.1, 1.25, 1.5, 2
+  and 3, and rows with a rounded border at 1.1, 1.2, 1.25, 1.5 and 2,
+  draw what drawing everything does and are moved; the hovered row
+  above. A scene's description can now say each glyph's subpixel
+  variant (`MIRIN_METAL_TRACE_SCENE_GLYPHS=1`; the atlas tile it leaves
+  out hid it, so a moved glyph on the wrong variant passed every check),
+  which the retained tests always use. `layout-check.tsx` has an `across`
+  app (the cards in columns scrolled across by whole and half pixels,
+  under centered and right-aligned captions, with a strip before them
+  that widens, presses and pointer moves): LCSELF. Against `host-r3`:
+  LCR3. `bench/a11y/extents.tsx` (which now also scrolls a virtualized
+  list): EXTENTS. MIRIN_METAL_ACCESS_CHECK on the whole stress bench:
+  ACCESSCHECK.
+
+  Evaluated and not done: keeping a row first drawn out of view. A
+  subtree drawn anew draws only what lies within 256 px of its mask, so
+  a row far out of view is drawn empty, and is drawn again onto its
+  kept layout when it first shows (FIRSTSHOW). Drawing such rows whole
+  when they are first built would move that cost to the first frame,
+  which builds every row already (160–210 ms at this size), and the
+  drawings would fill the window's parking budget (24,000 primitives,
+  about the 2,500 cards' whole drawing).
+
 Open: React work per update (the demo re-renders its whole list on select);
-a scale factor that is not a multiple of 1/8 (1.1, 1.2) moves only what
-is laid out, not what sits a logical distance from it (a shadow's offset):
-snapping those distances to device pixels would lift it; a subtree with
-text is never moved sideways (a glyph picks one of four subpixel positions
-from its own x), so a horizontal scroll draws its rows again; a row drawn
-for the first time out of view is drawn again when it first shows; a
+at a scale factor that is not a multiple of 1/8 (1.1, 1.2) what sits a
+logical distance from its box other than a border's bands and a shadow
+(an underline, a text's second line) keeps its subtree from moving; a
+row drawn for the first time out of view is drawn again when it first
+shows (evaluated above); a
 resize builds every row whose size changed, in view or not (a subtree's
 own box could say how far it reaches when only its size changed, but then
 the layout map's bounds for it would be stale while it is out of view),
-and looks every retained subtree's state up by its whole id path; the
-layout map moves a copied subtree's nodes by a logical distance, exact
-only at a power-of-two scale factor. For the accessibility tree: nodes that each
+and looks every retained subtree's state up by its whole id path. For the accessibility tree: nodes that each
 move on their own (a reflow, a window resized) are handed over one by one,
 about 5 µs a node on the window's thread (holding them until the content
 settles needs the adapter to fetch what is held before it answers a
 query: `Component`'s three geometry calls in the fork, waiting on the
-window's thread); a virtualized list's rows are drawn in no group, so a
-scroll of one moves each row in view on its own; a scroll view's own
-children get no bounds from GPUI (`on_children_prepainted` hands a view
-with a tracked scroll handle none), so they are in no layout answer and a
-screen reader is told no extents for them; and the tree a session with
+window's thread); and the tree a session with
 accessibility on but nothing reading it still pays for once. For the driver: apps started from source
 (a bundle halves the start), the first tree sent three times, serializing
 a view (seventy style fields looked at for each), and four fibers for
