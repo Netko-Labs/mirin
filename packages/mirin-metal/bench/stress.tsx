@@ -27,6 +27,10 @@
  * - grow (scroll), select (scroll): as above, with the rows in the scroll view.
  * - resize: the window's width changes (`setSize`, back and forth by `--resize-by` px,
  *   `--resizes` times), with the rows in the scroll view; each frame at the new size.
+ * Then the same cards in columns of twelve, side by side in a view that
+ * scrolls across (`overflow: "scroll-x"`):
+ * - hscroll: one step (`--step` px) across per frame, right and back left,
+ *   `--scroll-steps` each way (sim `scroll` with `dx`).
  *
  * Runs in an off-screen compositor unless `--visible` (see `startHeadlessDisplay`).
  */
@@ -120,7 +124,9 @@ function Card({ index }: { index: number }) {
 function Dashboard() {
   const [query, setQuery] = useState("");
   const [tall, setTall] = useState(false);
-  const [scrolls, setScrolls] = useState(false);
+  // How the cards are laid out: in the window, in a scroll view, or in
+  // columns in a view that scrolls across.
+  const [mode, setMode] = useState<"plain" | "scroll" | "wide">("plain");
   const banner = (
     <View
       testID="banner"
@@ -135,6 +141,15 @@ function Dashboard() {
       ))}
     </View>
   ));
+  const perColumn = 12;
+  const columns = Array.from({ length: Math.ceil((rows * cols) / perColumn) }, (_, column) => (
+    <View key={column} style={{ gap: 2 }}>
+      {Array.from({ length: Math.min(perColumn, rows * cols - column * perColumn) }, (_, index) => (
+        <Card key={index} index={column * perColumn + index} />
+      ))}
+    </View>
+  ));
+  const next = { plain: "scroll", scroll: "wide", wide: "plain" } as const;
   return (
     <View style={{ flex: 1, backgroundColor: "#09090b", padding: 8, gap: 8 }}>
       <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
@@ -150,11 +165,15 @@ function Dashboard() {
         <Text style={{ color: "#a1a1aa", fontSize: 12 }}>{query.length} chars</Text>
         <View
           testID="layout"
-          onPress={() => setScrolls((value) => !value)}
+          onPress={() => setMode((value) => next[value])}
           style={{ width: 12, height: 12, backgroundColor: "#52525b" }}
         />
       </View>
-      {scrolls ? (
+      {mode === "wide" ? (
+        <View testID="hscroller" style={{ flex: 1, overflow: "scroll-x" }}>
+          <View style={{ flexDirection: "row", gap: 2, alignItems: "flex-start" }}>{columns}</View>
+        </View>
+      ) : mode === "scroll" ? (
         <ScrollView testID="scroller" style={{ flex: 1, gap: 8 }}>
           {banner}
           <View style={{ gap: 2 }}>{grid}</View>
@@ -405,6 +424,24 @@ await scenario("resize", resizes, async () => {
 // (the drawings of rows that left the view).
 const memoryAtEnd = rss();
 
+// The cards in columns, scrolled across: each column holds text, which a
+// host that moves a drawing only down draws again every step.
+const hscroll: number[] = [];
+if (runs("hscroll")) {
+  transport.simulate({ kind: "click", id: nodeId("layout") });
+  await Bun.sleep(2500);
+  const across = nodeId("hscroller");
+  await scenario("hscroll", scrollSteps * 2, async () => {
+    for (let index = 0; index < scrollSteps * 2; index += 1) {
+      const dx = index < scrollSteps ? step : -step;
+      const frame = await frameAfter(() =>
+        transport.simulate({ kind: "scroll", id: across, dy: 0, dx }),
+      );
+      if (frame !== null) hscroll.push(frame);
+    }
+  });
+}
+
 // `--trace=<path>`: the host's whole trace log, for a closer look at a run.
 const tracePath = args.find((arg) => arg.startsWith("--trace="))?.slice("--trace=".length);
 if (tracePath) {
@@ -458,6 +495,12 @@ const result = {
 // The resize scenario's frames, beside the others'.
 Object.assign(result, {
   resize: { n: resize.length, frame: median(resize), frameP95: p95(resize), cpu: cpu.resize ?? 0 },
+  hscroll: {
+    n: hscroll.length,
+    frame: median(hscroll),
+    frameP95: p95(hscroll),
+    cpu: cpu.hscroll ?? 0,
+  },
   rssAtEndMb: memoryAtEnd,
 });
 if (args.includes("--json")) {
@@ -501,6 +544,9 @@ if (args.includes("--json")) {
   );
   console.log(
     `resize   ${String(resize.length).padStart(2)} frames of ${resizes} widths ${resizeBy} px apart: frame ${median(resize).toFixed(1)} ms, p95 ${p95(resize).toFixed(1)} ms, cpu ${(cpu.resize ?? 0).toFixed(1)} ms; RSS at the end ${memoryAtEnd.toFixed(0)} MB`,
+  );
+  console.log(
+    `hscroll  ${String(hscroll.length).padStart(2)} frames of ${scrollSteps * 2} steps of ${step} px across: frame ${median(hscroll).toFixed(1)} ms, p95 ${p95(hscroll).toFixed(1)} ms, cpu ${(cpu.hscroll ?? 0).toFixed(1)} ms`,
   );
 }
 process.exit(0);

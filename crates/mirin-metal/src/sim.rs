@@ -67,8 +67,16 @@ pub enum SimCommand {
     /// toggles maximized, `minimize` minimizes.
     Window { action: String },
     /// Scroll the scrollable node `id` down by `dy` pixels (negative scrolls
-    /// up), clamped to its content, as a wheel turn over it would.
-    Scroll { id: String, dy: f32 },
+    /// up) and right by `dx` (negative scrolls left; a virtualized list
+    /// scrolls down only), clamped to its content, as a wheel turn over it
+    /// would.
+    Scroll {
+        id: String,
+        #[serde(default)]
+        dy: f32,
+        #[serde(default)]
+        dx: f32,
+    },
     /// Give the keyboard to field or `focusable` view `id`, pressing nothing
     /// (a screen reader's focus).
     Focus { id: String },
@@ -104,7 +112,8 @@ pub(crate) enum SimAction {
     Move(Point<Pixels>),
     Zoom,
     Minimize,
-    Scroll(ScrollTarget, f32),
+    /// A scroll by (across, down) pixels.
+    Scroll(ScrollTarget, (f32, f32)),
 }
 
 /// What a simulated scroll moves: a plain scroll view or a virtualized list.
@@ -239,18 +248,21 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             };
             Some(SimAction::Focus(handle.clone()))
         }
-        SimCommand::Scroll { id, dy } => {
+        SimCommand::Scroll { id, dy, dx } => {
             if let Some(list) = view.lists.get(id) {
                 return Some(SimAction::Scroll(
                     ScrollTarget::List(list.state.clone()),
-                    *dy,
+                    (0.0, *dy),
                 ));
             }
             let Some(handle) = view.scrolls.get(id) else {
                 eprintln!("[mirin-metal] sim scroll: no scrollable node with id {id:?}");
                 return None;
             };
-            Some(SimAction::Scroll(ScrollTarget::View(handle.clone()), *dy))
+            Some(SimAction::Scroll(
+                ScrollTarget::View(handle.clone()),
+                (*dx, *dy),
+            ))
         }
         SimCommand::Window { action } => match action.as_str() {
             "zoom" => Some(SimAction::Zoom),
@@ -296,15 +308,16 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
             window.zoom_window();
         }
         SimAction::Minimize => window.minimize_window(),
-        SimAction::Scroll(ScrollTarget::View(handle), dy) => {
+        SimAction::Scroll(ScrollTarget::View(handle), (dx, dy)) => {
             // GPUI offsets are negative once scrolled: content moves up.
             let offset = handle.offset();
             let max = handle.max_offset();
+            let x = (offset.x - px(dx)).clamp(-max.width, px(0.0));
             let y = (offset.y - px(dy)).clamp(-max.height, px(0.0));
-            handle.set_offset(point(offset.x, y));
+            handle.set_offset(point(x, y));
             window.refresh();
         }
-        SimAction::Scroll(ScrollTarget::List(state), dy) => {
+        SimAction::Scroll(ScrollTarget::List(state), (_, dy)) => {
             state.scroll_by(px(dy));
             window.refresh();
         }
