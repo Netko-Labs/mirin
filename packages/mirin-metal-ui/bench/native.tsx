@@ -195,6 +195,37 @@ for (let round = 0; round < 4; round += 1) {
     if (size) lastSize = size;
   }
 }
+// Resized by the app (`setSize`, which a nested compositor honors): narrower
+// and back, across the example browser's breakpoint, so its text and
+// columns reflow. Each timed to the first frame at the new width, with the
+// accessibility work and host CPU that resize took.
+const resizeFrames: number[] = [];
+const resizeAccess: Array<{ ms: number; built: number; published: number }> = [];
+const resizeCpu: number[] = [];
+for (let round = 0; round < 8; round += 1) {
+  const width = round % 2 === 0 ? 900 : 1280;
+  const before = trace.length;
+  const started = Date.now();
+  const cpuFrom = cpuMs();
+  transport.setSize(width, 800);
+  for (let waited = 0; waited < 2500; waited += 4) {
+    const line = trace.slice(before).find((entry) => entry.message.startsWith(`render ${width}x`));
+    if (line) {
+      resizeFrames.push(Number(line.message.match(/frame ([\d.]+)ms/)?.[1] ?? 0));
+      break;
+    }
+    await Bun.sleep(4);
+  }
+  // The driver's answer to the new width, and its frame.
+  await Bun.sleep(600);
+  const access = accessSince(started);
+  resizeAccess.push({
+    ms: access.reduce((sum, update) => sum + update.ms, 0),
+    built: access.reduce((sum, update) => sum + update.built, 0),
+    published: access.reduce((sum, update) => sum + update.published, 0),
+  });
+  resizeCpu.push(cpuMs() - cpuFrom);
+}
 root.unmount();
 transport.close();
 display?.close();
@@ -242,6 +273,9 @@ const rows: Array<[string, number]> = [
   ["scroll frame p95", p95(scrollFrames)],
   ["maximize/restore → settled frame", median(resizes)],
   ["maximize/restore: frames at a new size", resized],
+  ["resize (setSize) → first frame", median(resizeFrames)],
+  ["accessibility per resize", median(resizeAccess.map((update) => update.ms))],
+  ["host CPU per resize", median(resizeCpu)],
   ["accessibility per click", median(samples.map((s) => s.access))],
   ["accessibility per scroll update", median(scrollAccess.map((update) => update.ms))],
   ["host CPU per click", clicksCpu],
@@ -261,6 +295,8 @@ console.log(
     samples.map((s) => s.accessPublished),
   )}, per scroll update ${nodes(scrollAccess.map((u) => u.built))}/${nodes(
     scrollAccess.map((u) => u.published),
-  )} (${scrollAccess.length} updates)`,
+  )} (${scrollAccess.length} updates), per resize ${nodes(resizeAccess.map((u) => u.built))}/${nodes(
+    resizeAccess.map((u) => u.published),
+  )}`,
 );
 process.exit(0);
