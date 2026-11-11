@@ -91,38 +91,14 @@ taffy_tree = ["dep:slotmap"]
 name = "taffy"
 path = "src/lib.rs"
 
-[[example]]
-name = "basic"
-path = "examples/basic.rs"
 doc-scrape-examples = true
 
-[[example]]
-name = "custom_tree_owned_partial"
-path = "examples/custom_tree_owned_partial.rs"
 
-[[example]]
-name = "custom_tree_owned_unsafe"
-path = "examples/custom_tree_owned_unsafe.rs"
 
-[[example]]
-name = "custom_tree_vec"
-path = "examples/custom_tree_vec.rs"
 
-[[example]]
-name = "flexbox_gap"
-path = "examples/flexbox_gap.rs"
 
-[[example]]
-name = "grid_holy_grail"
-path = "examples/grid_holy_grail.rs"
 
-[[example]]
-name = "measure"
-path = "examples/measure.rs"
 
-[[example]]
-name = "nested"
-path = "examples/nested.rs"
 
 [dependencies.arrayvec]
 version = "0.7"

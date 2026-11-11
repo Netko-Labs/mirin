@@ -219,7 +219,23 @@ pub fn compute_flexbox_layout(
     debug_log!("FLEX:", dbg:style.flex_direction());
     drop(style);
 
-    compute_preliminary(tree, node, LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs })
+    let output = compute_preliminary(tree, node, LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs });
+
+    // mirin: a width the container's min-width or max-width set, not its content. Its children were laid out
+    // for the content's width (under a min-content constraint, each line wrapped at its widest word), so the
+    // height that came back belongs to another width. The cache then hands that height to a parent asking for
+    // this very width (`Cache::get` reuses an entry whose size equals the known one): a row of words with
+    // `min-width: 120`, laid out at exactly 120, came out as tall as its text wrapped word by word. Lay the
+    // children out again at the width the container took.
+    if styled_based_known_dimensions.width.is_none() {
+        let width = output.size.width;
+        let at_bound = |bound: Option<f32>| bound.is_some_and(|bound| (f32_max(bound, padding_border_sum.width) - width).abs() < 0.001);
+        if at_bound(min_size.width) || at_bound(max_size.width) {
+            let known_dimensions = Size { width: Some(width), height: styled_based_known_dimensions.height };
+            return compute_preliminary(tree, node, LayoutInput { known_dimensions, ..inputs });
+        }
+    }
+    output
 }
 
 /// Compute a preliminary size for an item
@@ -638,6 +654,27 @@ fn determine_available_space(
 ///   Furthermore, the sizing calculations that floor the content box size at zero when applying box-sizing are also ignored.
 ///   (For example, an item with a specified size of zero, positive padding, and box-sizing: border-box will have an outer flex base size of zero—and hence a negative inner flex base size.)
 #[inline]
+// mirin: fit-content cross size for flex base sizes.
+/// Measure a flex item's cross size under `available_space`.
+fn tree_measure_cross(
+    tree: &mut impl LayoutFlexboxContainer,
+    node: NodeId,
+    known_dimensions: Size<Option<f32>>,
+    parent_size: Size<Option<f32>>,
+    available_space: Size<AvailableSpace>,
+    dir: FlexDirection,
+) -> f32 {
+    tree.measure_child_size(
+        node,
+        known_dimensions,
+        parent_size,
+        available_space,
+        SizingMode::ContentSize,
+        dir.cross_axis(),
+        Line::FALSE,
+    )
+}
+
 fn determine_flex_base_size(
     tree: &mut impl LayoutFlexboxContainer,
     constants: &AlgoConstants,
@@ -700,6 +737,28 @@ fn determine_flex_base_size(
             .maybe_add(box_sizing_adjustment);
 
         drop(child_style);
+
+        // mirin: spec 9.2.3.E sizes a non-stretched item with an auto cross size
+        // at fit-content for its base size (and the automatic minimum size below).
+        // Measuring it against the whole available width instead let content that
+        // scales with width (aspect-ratio grids) report a far larger height than
+        // the item ends up with.
+        let mut child_known_dimensions = child_known_dimensions;
+        if dir.is_column() && child.align_self != AlignSelf::Stretch && child_known_dimensions.cross(dir).is_none() {
+            if let AvailableSpace::Definite(available) = cross_axis_available_space {
+                let available = (available - child.margin.cross_axis_sum(dir)).max(0.0);
+                let ckd = child_known_dimensions;
+                let max_content =
+                    tree_measure_cross(tree, child.node, ckd, child_parent_size, Size::MAX_CONTENT, dir);
+                let fit = if max_content > available {
+                    tree_measure_cross(tree, child.node, ckd, child_parent_size, Size::MIN_CONTENT, dir).max(available)
+                } else {
+                    max_content
+                };
+                child_known_dimensions
+                    .set_cross(dir, Some(fit.maybe_clamp(child.min_size.cross(dir), child.max_size.cross(dir))));
+            }
+        }
 
         child.flex_basis = 'flex_basis: {
             // A. If the item has a definite used flex basis, that’s the flex base size.
@@ -1124,7 +1183,11 @@ fn determine_container_main_size(
                             let flex_contribution = if item.content_flex_fraction > 0.0 {
                                 f32_max(1.0, item.flex_grow) * flex_fraction
                             } else if item.content_flex_fraction < 0.0 {
-                                let scaled_shrink_factor = f32_max(1.0, item.flex_shrink) * item.inner_flex_basis;
+                                // mirin: the same scaled shrink factor the fraction was divided by above. Upstream
+                                // multiplies by `max(1, flex_shrink) * inner_flex_basis`, which differs when
+                                // `flex_shrink` is 0: a negative margin then shrinks the container by the margin
+                                // times the item's basis instead of by the margin.
+                                let scaled_shrink_factor = f32_max(1.0, item.flex_shrink * item.inner_flex_basis);
                                 scaled_shrink_factor * flex_fraction
                             } else {
                                 0.0
@@ -1378,6 +1441,35 @@ fn determine_hypothetical_cross_size(
             .cross(constants.dir)
             .maybe_clamp(child.min_size.cross(constants.dir), child.max_size.cross(constants.dir))
             .maybe_max(padding_border_sum);
+
+        // mirin: spec 9.4.7 treats an auto cross size as fit-content. In a column, a
+        // non-stretched item (`align-items: center`) measured against the available
+        // width came back at its max-content width, wider than the column (a notice
+        // centered over a window narrower than its one-line text overflowed both
+        // edges). Its fit-content width is used instead, as for its base size above.
+        let child_cross = child_cross.or_else(|| {
+            if !constants.dir.is_column() || child.align_self == AlignSelf::Stretch {
+                return None;
+            }
+            let available = constants.node_inner_size.cross(constants.dir).or(match available_space.cross(constants.dir) {
+                AvailableSpace::Definite(available) => Some(available),
+                _ => None,
+            })?;
+            let available = (available - child.margin.cross_axis_sum(constants.dir)).max(0.0);
+            let known = Size { width: None, height: Some(child.target_size.height) };
+            let parent = constants.node_inner_size;
+            let max_content = tree_measure_cross(tree, child.node, known, parent, Size::MAX_CONTENT, constants.dir);
+            if max_content <= available {
+                return None;
+            }
+            let min_content = tree_measure_cross(tree, child.node, known, parent, Size::MIN_CONTENT, constants.dir);
+            Some(
+                min_content
+                    .max(available)
+                    .maybe_clamp(child.min_size.cross(constants.dir), child.max_size.cross(constants.dir))
+                    .max(padding_border_sum),
+            )
+        });
 
         let child_inner_cross = child_cross.unwrap_or_else(|| {
             tree.measure_child_size(
@@ -1948,8 +2040,19 @@ fn calculate_flex_item(
 
     #[cfg(feature = "content_size")]
     {
-        *total_content_size =
-            total_content_size.f32_max(compute_content_size_contribution(location, size, content_size, item.overflow));
+        // mirin: an in-flow item's margin box counts toward its container's
+        // scrollable overflow (CSS Overflow 3, 2.2), so a scroll view reaches
+        // past its last item's end margin, as in browsers.
+        let contribution = compute_content_size_contribution(location, size, content_size, item.overflow);
+        let contribution = if contribution == Size::ZERO {
+            contribution
+        } else {
+            Size {
+                width: f32_max(contribution.width, location.x + size.width + item.margin.right),
+                height: f32_max(contribution.height, location.y + size.height + item.margin.bottom),
+            }
+        };
+        *total_content_size = total_content_size.f32_max(contribution);
     }
 }
 
@@ -2340,5 +2443,142 @@ fn sum_axis_gaps(gap: f32, num_items: usize) -> f32 {
     } else {
         // ...otherwise there are (num_items - 1) gaps
         gap * (num_items - 1) as f32
+    }
+}
+
+// mirin: a column's intrinsic height with a negative margin on an item that doesn't shrink.
+#[cfg(all(test, feature = "taffy_tree"))]
+mod mirin_tests {
+    use crate::prelude::*;
+    use crate::{Overflow, Point};
+
+    /// A column holding a 100-tall item and a 20-tall one pulled 4 up (`margin-top: -4`), both
+    /// `flex-shrink: 0`, laid out with no height of its own: 100 + 20 - 4 tall, as in browsers.
+    fn column_height(margin_top: f32, flex_shrink: f32) -> f32 {
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let first = tree.new_leaf(Style { size: Size { width: auto(), height: length(100.0_f32) }, flex_shrink: 0.0, ..Default::default() }).unwrap();
+        let pulled = tree
+            .new_leaf(Style {
+                size: Size { width: auto(), height: length(20.0_f32) },
+                flex_shrink,
+                margin: Rect { left: zero(), right: zero(), top: length(margin_top), bottom: zero() },
+                ..Default::default()
+            })
+            .unwrap();
+        let column = tree.new_with_children(Style { flex_direction: FlexDirection::Column, flex_shrink: 0.0, ..Default::default() }, &[first, pulled]).unwrap();
+        let root = tree
+            .new_with_children(Style { flex_direction: FlexDirection::Column, size: Size { width: length(300.0_f32), height: length(50.0_f32) }, ..Default::default() }, &[column])
+            .unwrap();
+        tree.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        tree.layout(column).unwrap().size.height
+    }
+
+    /// Text as a measure function sees it: eight 30-wide words, 6 apart, 14 a line, wrapped greedily at
+    /// the known or definite width, at the widest word for min-content, on one line for max-content.
+    fn text(known: Size<Option<f32>>, available: Size<AvailableSpace>) -> Size<f32> {
+        let wrap = known.width.or(match available.width {
+            AvailableSpace::Definite(width) => Some(width),
+            AvailableSpace::MinContent => Some(30.0),
+            AvailableSpace::MaxContent => None,
+        });
+        let per_line = wrap.map_or(8, |wrap| (((wrap + 6.0) / 36.0).floor() as usize).max(1));
+        let lines = 8_usize.div_ceil(per_line);
+        Size { width: (per_line.min(8) as f32) * 36.0 - 6.0, height: lines as f32 * 14.0 }
+    }
+
+    /// A settings row: a 40 knob, words that grow from nothing but keep 120 (`min-width`), and a
+    /// 260 slider, 12 apart, in a row `width` wide. The words' height, and the row's.
+    fn words_height(width: f32) -> (f32, f32) {
+        let mut tree: TaffyTree<bool> = TaffyTree::new();
+        let fixed = |width: f32| Style {
+            size: Size { width: length(width), height: length(40.0_f32) },
+            flex_shrink: 0.0,
+            ..Default::default()
+        };
+        let knob = tree.new_leaf(fixed(40.0)).unwrap();
+        let slider = tree.new_leaf(fixed(260.0)).unwrap();
+        let label = tree.new_leaf_with_context(Style::default(), true).unwrap();
+        let words = tree
+            .new_with_children(
+                Style {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    flex_basis: percent(0.0_f32),
+                    min_size: Size { width: length(120.0_f32), height: length(0.0_f32) },
+                    ..Default::default()
+                },
+                &[label],
+            )
+            .unwrap();
+        let row = tree
+            .new_with_children(
+                Style { align_items: Some(AlignItems::Center), gap: Size { width: length(12.0_f32), height: zero() }, ..Default::default() },
+                &[knob, words, slider],
+            )
+            .unwrap();
+        let root = tree
+            .new_with_children(Style { flex_direction: FlexDirection::Column, size: Size { width: length(width), height: length(600.0_f32) }, ..Default::default() }, &[row])
+            .unwrap();
+        tree.compute_layout_with_measure(root, Size::MAX_CONTENT, |known, available, _, context, _| match context {
+            Some(true) => text(known, available),
+            _ => Size::ZERO,
+        })
+        .unwrap();
+        (tree.layout(words).unwrap().size.height, tree.layout(row).unwrap().size.height)
+    }
+
+    #[test]
+    fn words_held_at_their_min_width_wrap_at_that_width_not_word_by_word() {
+        // 120 wide: three words a line, three lines. Word by word it would be eight.
+        assert_eq!(words_height(444.0), (42.0, 42.0), "exactly at the words' least width");
+        assert_eq!(words_height(443.5), (42.0, 42.0), "half a point short of it");
+        assert_eq!(words_height(444.5), (42.0, 42.0), "half a point past it");
+        assert_eq!(words_height(600.0), (28.0, 40.0), "wider: two lines");
+    }
+
+    /// A 100-tall scroll column, padded 10, holding three 50-tall items 8 apart; the last one with
+    /// `margin_bottom`. How far its content reaches (its scrollable overflow), from its top.
+    fn scrolled_content_height(margin_bottom: f32) -> f32 {
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let item = |bottom: f32| Style {
+            size: Size { width: auto(), height: length(50.0_f32) },
+            flex_shrink: 0.0,
+            margin: Rect { left: zero(), right: zero(), top: zero(), bottom: length(bottom) },
+            ..Default::default()
+        };
+        let items = [item(0.0), item(0.0), item(margin_bottom)].map(|style| tree.new_leaf(style).unwrap());
+        let scroll = tree
+            .new_with_children(
+                Style {
+                    flex_direction: FlexDirection::Column,
+                    overflow: Point { x: Overflow::Visible, y: Overflow::Scroll },
+                    scrollbar_width: 0.0,
+                    padding: length(10.0_f32),
+                    gap: length(8.0_f32),
+                    size: Size { width: length(200.0_f32), height: length(100.0_f32) },
+                    ..Default::default()
+                },
+                &items,
+            )
+            .unwrap();
+        tree.compute_layout(scroll, Size::MAX_CONTENT).unwrap();
+        tree.layout(scroll).unwrap().content_size.height
+    }
+
+    #[test]
+    fn a_scroll_view_reaches_past_its_last_items_end_margin() {
+        // 10 + 3 × 50 + 2 × 8 + 10.
+        assert_eq!(scrolled_content_height(0.0), 186.0);
+        assert_eq!(scrolled_content_height(20.0), 206.0, "the margin counts");
+        assert_eq!(scrolled_content_height(-20.0), 186.0, "a negative one takes nothing off the item");
+    }
+
+    #[test]
+    fn a_negative_margin_on_an_item_that_does_not_shrink_takes_off_only_the_margin() {
+        assert_eq!(column_height(-4.0, 0.0), 116.0);
+        assert_eq!(column_height(-4.0, 1.0), 116.0);
+        assert_eq!(column_height(4.0, 0.0), 124.0);
+        assert_eq!(column_height(0.0, 0.0), 120.0);
     }
 }

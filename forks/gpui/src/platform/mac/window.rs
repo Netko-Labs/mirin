@@ -582,6 +582,9 @@ impl MacWindow {
             display_id,
             window_min_size,
             tabbing_identifier,
+            // mirin: layer-shell and session-lock surfaces are Wayland only.
+            layer_shell: _,
+            session_lock: _,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,

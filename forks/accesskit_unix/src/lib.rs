@@ -25,3 +25,5 @@ mod executor;
 mod util;
 
 pub use adapter::Adapter;
+// mirin: the application's name on the bus.
+pub use context::set_app_name;

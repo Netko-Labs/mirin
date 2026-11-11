@@ -90,6 +90,24 @@ pub fn background_executor() -> BackgroundExecutor {
     current_platform(true).background_executor()
 }
 
+// mirin: a resident host hides its only window and opens one again later, so
+// the event loop must outlive its last window. Linux's clients stop the loop
+// when the last window goes unless this is turned off.
+static QUIT_WHEN_LAST_WINDOW_CLOSES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// mirin: whether the Linux event loop stops when its last window closes
+/// (true by default, as upstream). An app that turns it off quits itself.
+pub fn set_quit_when_last_window_closes(quit: bool) {
+    QUIT_WHEN_LAST_WINDOW_CLOSES.store(quit, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// mirin: see `set_quit_when_last_window_closes`.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+pub(crate) fn quits_when_last_window_closes() -> bool {
+    QUIT_WHEN_LAST_WINDOW_CLOSES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new(headless))
@@ -482,6 +500,11 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);
+    /// mirin: change the smallest the window may be made after it opened
+    /// (`WindowOptions::window_min_size` is the first): an app whose layout
+    /// needs more room while it shows more (a sidebar). Applied with the next
+    /// frame; platforms without it keep the first.
+    fn set_min_size(&mut self, _size: Size<Pixels>) {}
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
     fn zoom(&self);
@@ -497,8 +520,31 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
+    /// mirin: the area a compositor-drawn set of window controls covers over
+    /// a window that asked for a transparent title bar (Dashi's unified
+    /// chrome), in window coordinates. `None` when there is no such area.
+    fn chrome_controls(&self) -> Option<Bounds<Pixels>> {
+        None
+    }
+    /// mirin: called when `chrome_controls` changes.
+    fn on_chrome_changed(&self, _callback: Box<dyn FnMut()>) {}
+    /// mirin: the compositor says the window is out of sight (Wayland:
+    /// xdg_toplevel's `suspended` state: minimized, on another desktop).
+    /// Always false where the platform can't tell.
+    fn is_suspended(&self) -> bool {
+        false
+    }
+    /// mirin: called when `is_suspended` changes.
+    fn on_suspended_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
+    /// mirin: for platforms that stop asking for frames while nothing changes
+    /// (Wayland: no commit, so no frame callback), a function that schedules
+    /// a frame. GPUI calls it when the window becomes dirty or wants its next
+    /// frame. Platforms that tick at the display's rate return `None`.
+    fn redraw_waker(&self) -> Option<Rc<dyn Fn()>> {
+        None
+    }
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     // macOS specific methods
@@ -534,6 +580,16 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
+    /// Start dragging files out of the window (mirin; Wayland only): see
+    /// [`crate::Window::start_file_drag`]. False where it can't.
+    fn start_file_drag(
+        &self,
+        _paths: &[std::path::PathBuf],
+        _icon: Option<&std::path::Path>,
+        _icon_size: u32,
+    ) -> bool {
+        false
+    }
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
@@ -546,9 +602,20 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
+    // mirin: session-lock surfaces for a lock screen.
+    /// Unlock a session this window locked (`WindowOptions::session_lock`).
+    fn unlock_session(&self) {}
+
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+
+    // mirin: an input method only while a field takes its text.
+    /// Whether this frame set an input handler: a field that takes an input
+    /// method's text has the keyboard. Wayland turns text input on and off
+    /// with it, so an input method never sees what is typed anywhere else
+    /// (a password field, a list). Called when it changes. Default: nothing.
+    fn set_accepts_text(&self, _accepts: bool) {}
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -1132,6 +1199,99 @@ pub struct WindowOptions {
 
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
+
+    // mirin: layer-shell surfaces for desktop-shell UI.
+    /// Open the window as a wlr-layer-shell surface (panels, docks, launchers)
+    /// instead of a toplevel. Wayland only; opening fails when the compositor
+    /// lacks the protocol, and other platforms ignore it.
+    pub layer_shell: Option<LayerShellOptions>,
+
+    // mirin: session-lock surfaces for a lock screen.
+    /// Lock the session (ext-session-lock-v1) and show this window as the
+    /// lock surface on the first output. The session unlocks only through
+    /// [`Window::unlock_session`]; if the process exits without it, the
+    /// compositor stays locked. Wayland only.
+    pub session_lock: bool,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// A wlr-layer-shell surface: anchored to output edges on a stacking layer,
+/// optionally reserving an exclusive zone that other windows avoid.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LayerShellOptions {
+    /// Identifies the surface's purpose to the compositor ("panel", "dock").
+    pub namespace: String,
+    /// The stacking layer.
+    pub layer: Layer,
+    /// Output edges the surface attaches to. Anchoring both opposite edges
+    /// stretches the surface along that axis.
+    pub anchor: LayerAnchor,
+    /// Space reserved along the anchored edge: positive reserves that many
+    /// pixels, 0 avoids other surfaces' zones, -1 ignores them.
+    pub exclusive_zone: i32,
+    /// Distance from the anchored edges, in pixels.
+    pub margin: LayerMargin,
+    /// Keyboard focus policy.
+    pub keyboard_interactivity: KeyboardInteractivity,
+    /// The screen to show on, by its output name ("eDP-1", "DP-2"); the
+    /// compositor picks when unset or when no screen has that name.
+    pub output: Option<String>,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// The stacking layer of a [`LayerShellOptions`] surface, bottom to top.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layer {
+    /// Below everything (wallpapers).
+    Background,
+    /// Below windows (desktop widgets).
+    Bottom,
+    /// Above windows (panels, docks).
+    #[default]
+    Top,
+    /// Above everything, including fullscreen windows (launchers, OSD).
+    Overlay,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// Output edges a layer surface attaches to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayerAnchor {
+    /// Attach to the top edge.
+    pub top: bool,
+    /// Attach to the bottom edge.
+    pub bottom: bool,
+    /// Attach to the left edge.
+    pub left: bool,
+    /// Attach to the right edge.
+    pub right: bool,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// Distance from each anchored edge, in pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayerMargin {
+    /// From the top edge.
+    pub top: i32,
+    /// From the right edge.
+    pub right: i32,
+    /// From the bottom edge.
+    pub bottom: i32,
+    /// From the left edge.
+    pub left: i32,
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// When a layer surface receives keyboard focus.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyboardInteractivity {
+    /// Never (a clock, a dock).
+    #[default]
+    None,
+    /// When clicked, like a window (a panel with a search field).
+    OnDemand,
+    /// Always while mapped on the top or overlay layer (a launcher).
+    Exclusive,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1181,6 +1341,14 @@ pub(crate) struct WindowParams {
     pub window_min_size: Option<Size<Pixels>>,
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
+
+    // mirin: layer-shell surfaces for desktop-shell UI.
+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
+    pub layer_shell: Option<LayerShellOptions>,
+
+    // mirin: session-lock surfaces for a lock screen.
+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
+    pub session_lock: bool,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1239,6 +1407,8 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,
+            layer_shell: None,
+            session_lock: false,
         }
     }
 }

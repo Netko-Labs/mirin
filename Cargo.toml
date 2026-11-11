@@ -5,7 +5,7 @@ members = ["crates/mirin-codec", "crates/mirin-core", "crates/mirin-helper"]
 # dependency tree and GPU platform requirements; it builds standalone from its
 # directory (own lockfile) and stays out of workspace-wide build/clippy/test until
 # it graduates; CI checks it in its own `metal` job. See docs/metal.md.
-exclude = ["crates/mirin-metal"]
+exclude = ["crates/mirin-metal", "forks"]
 
 [workspace.package]
 version = "0.1.0-alpha.28"

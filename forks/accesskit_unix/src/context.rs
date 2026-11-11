@@ -24,7 +24,7 @@ use tokio_stream::{StreamExt, wrappers::UnboundedReceiverStream};
 use zbus::{Connection, connection::Builder, proxy::PropertyChanged};
 
 use crate::{
-    adapter::{AdapterState, Callback, Message},
+    adapter::{AdapterState, Callback, Message, focused_on_creation},
     atspi::{Bus, map_or_ignoring_recoverable_error, zbus_error_is_unrecoverable},
     executor::Executor,
     util::block_on,
@@ -33,7 +33,22 @@ use crate::{
 static APP_CONTEXT: OnceLock<Arc<RwLock<AppContext>>> = OnceLock::new();
 static MESSAGES: OnceLock<Sender<Message>> = OnceLock::new();
 
+// mirin: the name the program gave itself, if it gave one in time.
+static APP_NAME: OnceLock<String> = OnceLock::new();
+
+/// mirin: name the application on the accessibility bus (the name a screen
+/// reader says for it) instead of the executable's file name. Takes effect
+/// only before the first adapter goes active, and only once; returns whether
+/// it did.
+pub fn set_app_name(name: impl Into<String>) -> bool {
+    APP_CONTEXT.get().is_none() && APP_NAME.set(name.into()).is_ok()
+}
+
 fn app_name() -> Option<String> {
+    // mirin: the program's own name first.
+    if let Some(name) = APP_NAME.get() {
+        return Some(name.clone());
+    }
     std::env::current_exe().ok().and_then(|path| {
         path.file_name()
             .map(|name| name.to_string_lossy().to_string())
@@ -90,15 +105,17 @@ fn activate_adapter(entry: &mut AdapterEntry) {
     {
         *state = match entry.activation_handler.request_initial_tree() {
             Some(initial_state) => {
-                let r#impl = AdapterImpl::with_wrapped_action_handler(
+                // mirin: made unfocused, then focused (`focused_on_creation`).
+                let mut r#impl = AdapterImpl::with_wrapped_action_handler(
                     entry.id,
                     get_or_init_app_context(),
                     Callback::new(),
                     initial_state,
-                    *is_window_focused,
+                    false,
                     *root_window_bounds,
                     Arc::clone(action_handler),
                 );
+                focused_on_creation(&mut r#impl, *is_window_focused);
                 AdapterState::Active(r#impl)
             }
             None => AdapterState::Pending {

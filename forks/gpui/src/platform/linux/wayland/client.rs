@@ -1,7 +1,7 @@
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
-    os::fd::{AsRawFd, BorrowedFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd},
     path::PathBuf,
     rc::{Rc, Weak},
     time::{Duration, Instant},
@@ -62,10 +62,16 @@ use wayland_protocols::xdg::decoration::zv1::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+// mirin: session-lock surfaces for a lock screen.
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1,
+};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
+    dashi_chrome::{dashi_chrome_manager_v1, dashi_chrome_v1},
     display::WaylandDisplay,
     window::{ImeInput, WaylandWindowStatePtr},
 };
@@ -117,6 +123,14 @@ pub struct Globals {
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
+    // mirin: layer-shell surfaces for desktop-shell UI.
+    pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    // mirin: session-lock surfaces for a lock screen, on the first output.
+    pub session_lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
+    pub first_output: Option<wl_output::WlOutput>,
+    // mirin: Dashi's private chrome protocol (unified title bar); None on
+    // every other compositor.
+    pub dashi_chrome: Option<dashi_chrome_manager_v1::DashiChromeManagerV1>,
     pub executor: ForegroundExecutor,
 }
 
@@ -126,6 +140,7 @@ impl Globals {
         executor: ForegroundExecutor,
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
+        first_output: Option<wl_output::WlOutput>,
     ) -> Self {
         Globals {
             activation: globals.bind(&qh, 1..=1, ()).ok(),
@@ -148,12 +163,17 @@ impl Globals {
             primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             seat,
-            wm_base: globals.bind(&qh, 2..=5, ()).unwrap(),
+            // mirin: 6 for the toplevel's `suspended` state (out of sight).
+            wm_base: globals.bind(&qh, 2..=6, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            layer_shell: globals.bind(&qh, 1..=4, ()).ok(),
+            session_lock_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            first_output,
+            dashi_chrome: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
         }
@@ -208,6 +228,8 @@ pub(crate) struct WaylandClientState {
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
+    // mirin: the bound wl_output proxies, to put a layer surface on one by name.
+    output_proxies: HashMap<ObjectId, wl_output::WlOutput>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
@@ -243,7 +265,18 @@ pub struct DragState {
     data_offer: Option<wl_data_offer::WlDataOffer>,
     window: Option<WaylandWindowStatePtr>,
     position: Point<Pixels>,
+    /// A drag this client started (mirin: `start_file_drag`): its source,
+    /// and its icon's surface and buffer, kept until the drag ends.
+    out: Option<DragOut>,
 }
+
+pub struct DragOut {
+    source: wl_data_source::WlDataSource,
+    icon: Option<(wl_surface::WlSurface, wl_buffer::WlBuffer)>,
+}
+
+/// A drag source's data: the uri-list it offers.
+pub struct DragSourceData(String);
 
 pub struct ClickState {
     last_mouse_button: Option<MouseButton>,
@@ -284,6 +317,73 @@ impl WaylandClientStatePtr {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
     }
 
+    /// Start a drag of `paths` from `origin` (mirin): the compositor takes the
+    /// pointer until the drop. Offers `text/uri-list` for copying; the icon
+    /// (a file, drawn at `icon_size` logical pixels × `scale`) rides under the
+    /// pointer, centered. Must come while the button that pressed is held.
+    pub fn start_file_drag(
+        &self,
+        origin: &wl_surface::WlSurface,
+        paths: &[std::path::PathBuf],
+        icon: Option<&std::path::Path>,
+        icon_size: u32,
+        scale: i32,
+    ) -> bool {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        let (Some(manager), Some(device)) = (
+            state.globals.data_device_manager.clone(),
+            state.data_device.clone(),
+        ) else {
+            return false;
+        };
+        let uris: String = paths
+            .iter()
+            .filter_map(|path| Url::from_file_path(path).ok())
+            .map(|url| format!("{url}\r\n"))
+            .collect();
+        if uris.is_empty() {
+            return false;
+        }
+        if let Some(old) = state.drag.out.take() {
+            old.source.destroy();
+            if let Some((surface, buffer)) = old.icon {
+                surface.destroy();
+                buffer.destroy();
+            }
+        }
+        let qh = state.globals.qh.clone();
+        let source = manager.create_data_source(&qh, DragSourceData(uris));
+        source.offer(FILE_LIST_MIME_TYPE.to_string());
+        source.set_actions(DndAction::Copy);
+        let scale = scale.max(1);
+        let icon = icon.and_then(|path| {
+            let (pixels, width, height) =
+                super::drag_icon::rasterize(path, icon_size * scale as u32)?;
+            let buffer = shm_buffer(&state.globals.shm, &qh, &pixels, width, height)?;
+            let surface = state.globals.compositor.create_surface(&qh, ());
+            Some((surface, buffer, width as i32, height as i32))
+        });
+        let serial = state.serial_tracker.get(SerialKind::MousePress);
+        device.start_drag(Some(&source), origin, icon.as_ref().map(|i| &i.0), serial);
+        let icon = icon.map(|(surface, buffer, width, height)| {
+            // Centered under the pointer.
+            let (dx, dy) = (-width / scale / 2, -height / scale / 2);
+            if surface.version() >= 5 {
+                surface.attach(Some(&buffer), 0, 0);
+                surface.offset(dx, dy);
+            } else {
+                surface.attach(Some(&buffer), dx, dy);
+            }
+            surface.set_buffer_scale(scale);
+            surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
+            surface.commit();
+            (surface, buffer)
+        });
+        state.drag.out = Some(DragOut { source, icon });
+        true
+    }
+
     pub fn set_pending_activation(&self, window: ObjectId) {
         self.0.upgrade().unwrap().borrow_mut().pending_activation =
             Some(PendingActivation::Window(window));
@@ -292,6 +392,14 @@ impl WaylandClientStatePtr {
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+        // mirin: only for a window whose field takes text (`set_accepts_text`).
+        if !state
+            .keyboard_focused_window
+            .as_ref()
+            .is_some_and(|window| window.accepts_text())
+        {
+            return;
+        }
         let Some(mut text_input) = state.text_input.take() else {
             return;
         };
@@ -384,7 +492,8 @@ impl WaylandClientStatePtr {
         {
             state.keyboard_focused_window = Some(window);
         }
-        if state.windows.is_empty() {
+        // mirin: a resident host keeps its loop with no window (`set_quit_when_last_window_closes`).
+        if state.windows.is_empty() && crate::platform::quits_when_last_window_closes() {
             state.common.signal.stop();
         }
     }
@@ -453,8 +562,11 @@ impl WaylandClient {
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
+        // mirin: the output a lock surface goes on.
+        let mut first_output: Option<wl_output::WlOutput> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
+        let mut output_proxies = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -474,6 +586,8 @@ impl WaylandClient {
                             (),
                         );
                         in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        output_proxies.insert(output.id(), output.clone());
+                        first_output.get_or_insert(output);
                     }
                     _ => {}
                 }
@@ -506,6 +620,7 @@ impl WaylandClient {
             common.foreground_executor.clone(),
             qh.clone(),
             seat.clone(),
+            first_output,
         );
 
         let data_device = globals
@@ -565,6 +680,7 @@ impl WaylandClient {
             ime_pre_edit: None,
             composing: false,
             outputs: HashMap::default(),
+            output_proxies,
             in_progress_outputs,
             windows: HashMap::default(),
             common,
@@ -575,6 +691,7 @@ impl WaylandClient {
                 data_offer: None,
                 window: None,
                 position: Point::default(),
+                out: None,
             },
             click: ClickState {
                 last_click: Instant::now(),
@@ -616,6 +733,16 @@ impl WaylandClient {
             pending_activation: None,
             event_loop: Some(event_loop),
         }));
+
+        // mirin: hear the outputs out (name, mode, done) before any window
+        // opens. A layer surface asks for its screen by name, and the names
+        // arrive after the bind: without this a host that opens its window
+        // at once found no output of that name, and its surface landed on
+        // whichever screen the compositor picked.
+        let mut ptr = WaylandClientStatePtr(Rc::downgrade(&state));
+        if let Err(error) = event_queue.roundtrip(&mut ptr) {
+            log::warn!("wayland: the first roundtrip failed: {error}");
+        }
 
         WaylandSource::new(conn, event_queue)
             .insert(handle)
@@ -695,7 +822,23 @@ impl LinuxClient for WaylandClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
-        let parent = state.keyboard_focused_window.as_ref().map(|w| w.toplevel());
+        let parent = state
+            .keyboard_focused_window
+            .as_ref()
+            .and_then(|w| w.toplevel());
+
+        // mirin: a layer surface asked for a screen by name.
+        let layer_output = params
+            .layer_shell
+            .as_ref()
+            .and_then(|options| options.output.as_deref())
+            .and_then(|name| {
+                state
+                    .outputs
+                    .iter()
+                    .find(|(_, output)| output.name.as_deref() == Some(name))
+                    .and_then(|(id, _)| state.output_proxies.get(id).cloned())
+            });
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
@@ -705,6 +848,7 @@ impl LinuxClient for WaylandClient {
             params,
             state.common.appearance,
             parent,
+            layer_output,
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
@@ -922,6 +1066,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     state
                         .in_progress_outputs
                         .insert(output.id(), InProgressOutput::default());
+                    state.output_proxies.insert(output.id(), output);
                 }
                 _ => {}
             },
@@ -950,6 +1095,76 @@ delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextI
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
+// mirin: layer-shell surfaces for desktop-shell UI.
+delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
+// mirin: session-lock surfaces for a lock screen.
+delegate_noop!(WaylandClientStatePtr: ignore ext_session_lock_manager_v1::ExtSessionLockManagerV1);
+// mirin: Dashi's unified title bar.
+delegate_noop!(WaylandClientStatePtr: ignore dashi_chrome_manager_v1::DashiChromeManagerV1);
+
+// mirin: the compositor tells where its traffic lights are (`controls`).
+impl Dispatch<dashi_chrome_v1::DashiChromeV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &dashi_chrome_v1::DashiChromeV1,
+        event: dashi_chrome_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+        window.handle_chrome_event(event);
+    }
+}
+
+// mirin: session-lock surfaces for a lock screen. `finished` means the
+// compositor refused the lock (or ended it): the window closes.
+impl Dispatch<ext_session_lock_v1::ExtSessionLockV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &ext_session_lock_v1::ExtSessionLockV1,
+        event: ext_session_lock_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let ext_session_lock_v1::Event::Finished = event {
+            let client = this.get_client();
+            let mut state = client.borrow_mut();
+            let Some(window) = get_window(&mut state, surface_id) else {
+                return;
+            };
+            drop(state);
+            window.close();
+        }
+    }
+}
+
+impl Dispatch<ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ObjectId>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _: &ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+        event: ext_session_lock_surface_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+        window.handle_lock_surface_event(event);
+    }
+}
 
 impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     fn event(
@@ -1081,6 +1296,29 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
         let should_close = window.handle_toplevel_event(event);
 
         if should_close {
+            // The close logic will be handled in drop_window()
+            window.close();
+        }
+    }
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+        if window.handle_layer_surface_event(event) {
             // The close logic will be handled in drop_window()
             window.close();
         }
@@ -2044,6 +2282,77 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
             {
                 offer.add_mime_type(mime_type);
             }
+        }
+    }
+}
+
+/// `pixels` (premultiplied BGRA) in a new shm buffer.
+fn shm_buffer(
+    shm: &wl_shm::WlShm,
+    qh: &QueueHandle<WaylandClientStatePtr>,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<wl_buffer::WlBuffer> {
+    use std::io::Write;
+    // SAFETY: memfd_create takes a NUL-terminated name and flags; it returns a new fd or -1.
+    let fd = unsafe { libc::memfd_create(c"gpui-drag-icon".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return None;
+    }
+    // SAFETY: the fd was just created and nothing else owns it.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    file.write_all(pixels).ok()?;
+    let pool = shm.create_pool(file.as_fd(), pixels.len() as i32, qh, ());
+    let buffer = pool.create_buffer(
+        0,
+        width as i32,
+        height as i32,
+        width as i32 * 4,
+        wl_shm::Format::Argb8888,
+        qh,
+        (),
+    );
+    pool.destroy();
+    Some(buffer)
+}
+
+impl Dispatch<wl_data_source::WlDataSource, DragSourceData> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        data_source: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        data: &DragSourceData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_source::Event::Send { fd, .. } => {
+                use std::io::Write;
+                let mut file = std::fs::File::from(fd);
+                if let Err(error) = file.write_all(data.0.as_bytes()) {
+                    log::warn!("writing a drag's uri-list: {error}");
+                }
+            }
+            wl_data_source::Event::Cancelled | wl_data_source::Event::DndFinished => {
+                let client = this.get_client();
+                let mut state = client.borrow_mut();
+                if state
+                    .drag
+                    .out
+                    .as_ref()
+                    .is_some_and(|out| &out.source == data_source)
+                {
+                    if let Some(out) = state.drag.out.take()
+                        && let Some((surface, buffer)) = out.icon
+                    {
+                        surface.destroy();
+                        buffer.destroy();
+                    }
+                }
+                data_source.destroy();
+            }
+            _ => {}
         }
     }
 }

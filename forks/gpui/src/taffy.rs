@@ -231,6 +231,18 @@ impl TaffyLayoutEngine {
             .expect(EXPECT_MESSAGE);
     }
 
+    /// mirin: how far a node's content reaches from its top left, its end
+    /// border included: its scrollable overflow (children's margin boxes and
+    /// what overflows them visibly, then its end padding), as taffy measured
+    /// it. A scroll view scrolls by this less its size.
+    pub fn layout_scroll_extent(&self, id: LayoutId, scale_factor: f32) -> Size<Pixels> {
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        size(
+            Pixels((layout.content_size.width + layout.border.right) / scale_factor),
+            Pixels((layout.content_size.height + layout.border.bottom) / scale_factor),
+        )
+    }
+
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;
@@ -309,7 +321,8 @@ impl ToTaffy<taffy::style::Style> for Style {
             unit: &Option<u16>,
         ) -> Vec<taffy::GridTemplateComponent<T>> {
             // grid-template-columns: repeat(<number>, minmax(0, 1fr));
-            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])])
+            // mirin: typed literals (float fallback is being phased out of rustc).
+            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0_f32), fr(1.0_f32))])])
                 .unwrap_or_default()
         }
 
@@ -336,8 +349,19 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size, scale_factor),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
-            grid_template_rows: to_grid_repeat(&self.grid_rows),
-            grid_template_columns: to_grid_repeat(&self.grid_cols),
+            // mirin: explicit track lists win over `repeat(N, minmax(0, 1fr))`.
+            grid_template_rows: self
+                .grid_template_rows
+                .as_deref()
+                .map(|tracks| to_grid_tracks(tracks, scale_factor))
+                .unwrap_or_else(|| to_grid_repeat(&self.grid_rows)),
+            grid_template_columns: self
+                .grid_template_columns
+                .as_deref()
+                .map(|tracks| to_grid_tracks(tracks, scale_factor))
+                .unwrap_or_else(|| to_grid_repeat(&self.grid_cols)),
+            justify_items: self.justify_items.map(|x| x.into()),
+            justify_self: self.justify_self.map(|x| x.into()),
             grid_row: self
                 .grid_location
                 .as_ref()
@@ -351,6 +375,36 @@ impl ToTaffy<taffy::style::Style> for Style {
             ..Default::default()
         }
     }
+}
+
+// mirin: explicit grid tracks.
+fn to_grid_tracks<T: taffy::style::CheapCloneStr>(
+    tracks: &[crate::GridTrack],
+    scale_factor: f32,
+) -> Vec<taffy::GridTemplateComponent<T>> {
+    use crate::TrackBreadth;
+    use taffy::style::{MaxTrackSizingFunction as Max, MinTrackSizingFunction as Min};
+    tracks
+        .iter()
+        .map(|track| {
+            let min = match track.min {
+                TrackBreadth::Pixels(px) => Min::length(px * scale_factor),
+                TrackBreadth::Percent(fraction) => Min::percent(fraction),
+                TrackBreadth::MinContent => Min::min_content(),
+                TrackBreadth::MaxContent => Min::max_content(),
+                TrackBreadth::Auto | TrackBreadth::Fr(_) => Min::auto(),
+            };
+            let max = match track.max {
+                TrackBreadth::Pixels(px) => Max::length(px * scale_factor),
+                TrackBreadth::Percent(fraction) => Max::percent(fraction),
+                TrackBreadth::Fr(fr) => Max::fr(fr),
+                TrackBreadth::MinContent => Max::min_content(),
+                TrackBreadth::MaxContent => Max::max_content(),
+                TrackBreadth::Auto => Max::auto(),
+            };
+            taffy::GridTemplateComponent::Single(taffy::geometry::MinMax { min, max })
+        })
+        .collect()
 }
 
 impl ToTaffy<f32> for AbsoluteLength {

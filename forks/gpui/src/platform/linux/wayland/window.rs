@@ -2,7 +2,7 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     ffi::c_void,
     ptr::NonNull,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -13,9 +13,14 @@ use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
-use wayland_client::{Proxy, protocol::wl_surface};
+use wayland_client::{
+    Proxy,
+    protocol::{wl_output, wl_surface},
+};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
+// mirin: Dashi's unified title bar.
+use super::dashi_chrome::dashi_chrome_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols::{
@@ -23,6 +28,11 @@ use wayland_protocols::{
     xdg::shell::client::xdg_toplevel::XdgToplevel,
 };
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+// mirin: session-lock surfaces for a lock screen.
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_surface_v1, ext_session_lock_v1,
+};
 
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
@@ -38,7 +48,9 @@ use crate::{
         linux::wayland::{display::WaylandDisplay, serial::SerialKind},
     },
 };
-use crate::{WindowKind, scene::Scene};
+use crate::{
+    KeyboardInteractivity, Layer, LayerAnchor, LayerShellOptions, WindowKind, scene::Scene,
+};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -51,6 +63,10 @@ pub(crate) struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    // mirin: the compositor's traffic-light area changed.
+    chrome_changed: Option<Box<dyn FnMut()>>,
+    // mirin: the compositor suspended the toplevel, or stopped suspending it.
+    suspended_changed: Option<Box<dyn FnMut()>>,
 }
 
 struct RawWindow {
@@ -82,15 +98,80 @@ struct InProgressConfigure {
     tiling: Tiling,
 }
 
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// The role of a window's surface: an xdg toplevel, or a wlr-layer-shell
+/// surface (panels, docks), which has no title, decorations, or window
+/// management requests.
+pub(crate) enum SurfaceRole {
+    Toplevel {
+        xdg_surface: xdg_surface::XdgSurface,
+        toplevel: xdg_toplevel::XdgToplevel,
+    },
+    Layer {
+        surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        anchor: LayerAnchor,
+    },
+    // mirin: session-lock surfaces for a lock screen.
+    Lock {
+        lock: ext_session_lock_v1::ExtSessionLockV1,
+        surface: ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+    },
+}
+
+impl SurfaceRole {
+    fn toplevel(&self) -> Option<&xdg_toplevel::XdgToplevel> {
+        match self {
+            Self::Toplevel { toplevel, .. } => Some(toplevel),
+            Self::Layer { .. } | Self::Lock { .. } => None,
+        }
+    }
+
+    fn xdg_surface(&self) -> Option<&xdg_surface::XdgSurface> {
+        match self {
+            Self::Toplevel { xdg_surface, .. } => Some(xdg_surface),
+            Self::Layer { .. } | Self::Lock { .. } => None,
+        }
+    }
+
+    fn destroy(&self) {
+        match self {
+            Self::Toplevel {
+                xdg_surface,
+                toplevel,
+            } => {
+                toplevel.destroy();
+                xdg_surface.destroy();
+            }
+            Self::Layer { surface, .. } => surface.destroy(),
+            // The lock object is left alone: destroying it once locked is a
+            // protocol error, and a lock screen that goes away without
+            // `unlock_session` must leave the session locked.
+            Self::Lock { surface, .. } => surface.destroy(),
+        }
+    }
+}
+
 pub struct WaylandWindowState {
-    xdg_surface: xdg_surface::XdgSurface,
+    role: SurfaceRole,
     acknowledged_first_configure: bool,
+    // mirin: a frame callback is on its way (a drawn frame asked for one).
+    // Without one the window is idle: nothing commits, so the compositor
+    // has nothing to draw, until GPUI wakes it (`redraw_waker`).
+    frame_pending: bool,
+    // mirin: this frame drew (and so committed); otherwise there's nothing
+    // to commit.
+    drew: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    // mirin: set when the window asked Dashi for the unified title bar, and
+    // the area the compositor's traffic lights cover (None: no such area).
+    chrome: Option<dashi_chrome_v1::DashiChromeV1>,
+    chrome_controls: Option<Bounds<Pixels>>,
+    // mirin: the last configure said `suspended` (xdg-shell 6): out of sight.
+    suspended: bool,
     app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
-    toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
@@ -114,6 +195,8 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
+    // mirin: a field that takes an input method's text has the keyboard.
+    accepts_text: bool,
 }
 
 #[derive(Clone)]
@@ -126,9 +209,9 @@ impl WaylandWindowState {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         surface: wl_surface::WlSurface,
-        xdg_surface: xdg_surface::XdgSurface,
-        toplevel: xdg_toplevel::XdgToplevel,
+        role: SurfaceRole,
         decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+        chrome: Option<dashi_chrome_v1::DashiChromeV1>,
         appearance: WindowAppearance,
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
@@ -158,13 +241,17 @@ impl WaylandWindowState {
         };
 
         Ok(Self {
-            xdg_surface,
+            role,
             acknowledged_first_configure: false,
+            frame_pending: false,
+            drew: false,
             surface,
             decoration,
+            chrome,
+            chrome_controls: None,
+            suspended: false,
             app_id: None,
             blur: None,
-            toplevel,
             viewport,
             globals,
             outputs: HashMap::default(),
@@ -185,6 +272,7 @@ impl WaylandWindowState {
             appearance,
             handle,
             active: false,
+            accepts_text: false,
             hovered: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
@@ -240,14 +328,16 @@ impl Drop for WaylandWindow {
         if let Some(decoration) = &state.decoration {
             decoration.destroy();
         }
+        if let Some(chrome) = &state.chrome {
+            chrome.destroy();
+        }
         if let Some(blur) = &state.blur {
             blur.release();
         }
-        state.toplevel.destroy();
+        state.role.destroy();
         if let Some(viewport) = &state.viewport {
             viewport.destroy();
         }
-        state.xdg_surface.destroy();
         state.surface.destroy();
 
         let state_ptr = self.0.clone();
@@ -280,20 +370,60 @@ impl WaylandWindow {
         params: WindowParams,
         appearance: WindowAppearance,
         parent: Option<XdgToplevel>,
+        layer_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
-        let xdg_surface = globals
-            .wm_base
-            .get_xdg_surface(&surface, &globals.qh, surface.id());
-        let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
+        let session_lock = params.session_lock;
+        // mirin: layer-shell and session-lock surfaces for desktop-shell UI.
+        let role = match &params.layer_shell {
+            _ if params.session_lock => match create_lock_surface(&globals, &surface) {
+                Ok((lock, lock_surface)) => SurfaceRole::Lock {
+                    lock,
+                    surface: lock_surface,
+                },
+                Err(error) => {
+                    surface.destroy();
+                    return Err(error);
+                }
+            },
+            Some(options) => {
+                match create_layer_surface(
+                    &globals,
+                    &surface,
+                    options,
+                    params.bounds.size,
+                    layer_output.as_ref(),
+                ) {
+                    Ok(layer_surface) => SurfaceRole::Layer {
+                        surface: layer_surface,
+                        anchor: options.anchor,
+                    },
+                    Err(error) => {
+                        surface.destroy();
+                        return Err(error);
+                    }
+                }
+            }
+            None => {
+                let xdg_surface =
+                    globals
+                        .wm_base
+                        .get_xdg_surface(&surface, &globals.qh, surface.id());
+                let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
 
-        if params.kind == WindowKind::Floating {
-            toplevel.set_parent(parent.as_ref());
-        }
+                if params.kind == WindowKind::Floating {
+                    toplevel.set_parent(parent.as_ref());
+                }
 
-        if let Some(size) = params.window_min_size {
-            toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
-        }
+                if let Some(size) = params.window_min_size {
+                    toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
+                }
+                SurfaceRole::Toplevel {
+                    xdg_surface,
+                    toplevel,
+                }
+            }
+        };
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -303,8 +433,26 @@ impl WaylandWindow {
         let decoration = globals
             .decoration_manager
             .as_ref()
-            .map(|decoration_manager| {
-                decoration_manager.get_toplevel_decoration(&toplevel, &globals.qh, surface.id())
+            .zip(role.toplevel())
+            .map(|(decoration_manager, toplevel)| {
+                decoration_manager.get_toplevel_decoration(toplevel, &globals.qh, surface.id())
+            });
+
+        // mirin: a window with a transparent title bar asks Dashi for the
+        // unified chrome: no title bar, the compositor's traffic lights over
+        // our surface. Before the first commit, so the window opens placed
+        // for it. Without the protocol the window keeps the standard
+        // server-side title bar and `chrome_controls` stays None.
+        let chrome = params
+            .titlebar
+            .as_ref()
+            .is_some_and(|titlebar| titlebar.appears_transparent)
+            .then(|| globals.dashi_chrome.as_ref().zip(role.toplevel()))
+            .flatten()
+            .map(|(manager, toplevel)| {
+                let chrome = manager.get_chrome(toplevel, &globals.qh, surface.id());
+                chrome.set_style(dashi_chrome_v1::Style::Unified);
+                chrome
             });
 
         let viewport = globals
@@ -316,9 +464,9 @@ impl WaylandWindow {
             state: Rc::new(RefCell::new(WaylandWindowState::new(
                 handle,
                 surface.clone(),
-                xdg_surface,
-                toplevel,
+                role,
                 decoration,
+                chrome,
                 appearance,
                 viewport,
                 client,
@@ -329,8 +477,11 @@ impl WaylandWindow {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         });
 
-        // Kick things off
-        surface.commit();
+        // Kick things off. A lock surface is configured without one (mirin:
+        // committing before its first ack_configure is a protocol error).
+        if !session_lock {
+            surface.commit();
+        }
 
         Ok((this, surface.id()))
     }
@@ -345,8 +496,8 @@ impl WaylandWindowStatePtr {
         self.state.borrow().surface.clone()
     }
 
-    pub fn toplevel(&self) -> xdg_toplevel::XdgToplevel {
-        self.state.borrow().toplevel.clone()
+    pub fn toplevel(&self) -> Option<xdg_toplevel::XdgToplevel> {
+        self.state.borrow().role.toplevel().cloned()
     }
 
     pub fn ptr_eq(&self, other: &Self) -> bool {
@@ -355,7 +506,10 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
-        state.surface.frame(&state.globals.qh, state.surface.id());
+        // mirin: the next frame callback is asked for only when this frame
+        // draws (`draw`), so an unchanged window stops committing.
+        state.frame_pending = false;
+        state.drew = false;
         state.resize_throttle = false;
         drop(state);
 
@@ -363,6 +517,22 @@ impl WaylandWindowStatePtr {
         if let Some(fun) = cb.request_frame.as_mut() {
             fun(Default::default());
         }
+    }
+
+    /// mirin: GPUI has something to draw. An idle window (no frame callback
+    /// coming) draws now; otherwise the coming callback will.
+    pub fn wake(&self) {
+        let idle = {
+            let state = self.state.borrow();
+            state.acknowledged_first_configure && !state.frame_pending
+        };
+        if idle {
+            self.frame();
+        }
+    }
+
+    fn downgrade(&self) -> (Weak<RefCell<WaylandWindowState>>, Weak<RefCell<Callbacks>>) {
+        (Rc::downgrade(&self.state), Rc::downgrade(&self.callbacks))
     }
 
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
@@ -413,7 +583,10 @@ impl WaylandWindowStatePtr {
                 }
             }
             let mut state = self.state.borrow_mut();
-            state.xdg_surface.ack_configure(serial);
+            let Some(xdg_surface) = state.role.xdg_surface().cloned() else {
+                return;
+            };
+            xdg_surface.ack_configure(serial);
 
             let window_geometry = inset_by_tiling(
                 state.bounds.map_origin(|_| px(0.0)),
@@ -423,7 +596,7 @@ impl WaylandWindowStatePtr {
             .map(|v| v.0 as i32)
             .map_size(|v| if v <= 0 { 1 } else { v });
 
-            state.xdg_surface.set_window_geometry(
+            xdg_surface.set_window_geometry(
                 window_geometry.origin.x,
                 window_geometry.origin.y,
                 window_geometry.size.width,
@@ -436,6 +609,95 @@ impl WaylandWindowStatePtr {
                 drop(state);
                 self.frame();
             }
+        }
+    }
+
+    // mirin: layer-shell surfaces for desktop-shell UI.
+    /// Handle a layer surface event; returns whether the compositor closed it.
+    pub fn handle_layer_surface_event(&self, event: zwlr_layer_surface_v1::Event) -> bool {
+        match event {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
+                // Zero on an axis leaves the size the client asked for.
+                if width > 0 && height > 0 {
+                    let new_size = size(px(width as f32), px(height as f32));
+                    self.state.borrow_mut().window_bounds = Bounds {
+                        origin: Point::default(),
+                        size: new_size,
+                    };
+                    self.resize(new_size);
+                }
+                let mut state = self.state.borrow_mut();
+                if let SurfaceRole::Layer { surface, .. } = &state.role {
+                    surface.ack_configure(serial);
+                }
+                if !state.acknowledged_first_configure {
+                    state.acknowledged_first_configure = true;
+                    drop(state);
+                    self.frame();
+                }
+                false
+            }
+            zwlr_layer_surface_v1::Event::Closed => true,
+            _ => false,
+        }
+    }
+
+    // mirin: session-lock surfaces for a lock screen.
+    /// Handle a lock surface's configure: the compositor sizes it to the output.
+    pub fn handle_lock_surface_event(&self, event: ext_session_lock_surface_v1::Event) {
+        let ext_session_lock_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        else {
+            return;
+        };
+        if width > 0 && height > 0 {
+            let new_size = size(px(width as f32), px(height as f32));
+            self.state.borrow_mut().window_bounds = Bounds {
+                origin: Point::default(),
+                size: new_size,
+            };
+            self.resize(new_size);
+        }
+        let mut state = self.state.borrow_mut();
+        if let SurfaceRole::Lock { surface, .. } = &state.role {
+            surface.ack_configure(serial);
+        }
+        if !state.acknowledged_first_configure {
+            state.acknowledged_first_configure = true;
+            drop(state);
+            self.frame();
+        }
+    }
+
+    // mirin: the compositor's traffic-light area (`controls`); an empty
+    // rectangle means none (standard style, or unified was not honored).
+    pub fn handle_chrome_event(&self, event: dashi_chrome_v1::Event) {
+        let dashi_chrome_v1::Event::Controls {
+            x,
+            y,
+            width,
+            height,
+        } = event;
+        let controls = (width > 0 && height > 0).then(|| Bounds {
+            origin: crate::point(px(x as f32), px(y as f32)),
+            size: size(px(width as f32), px(height as f32)),
+        });
+        {
+            let mut state = self.state.borrow_mut();
+            if state.chrome_controls == controls {
+                return;
+            }
+            state.chrome_controls = controls;
+        }
+        if let Some(changed) = self.callbacks.borrow_mut().chrome_changed.as_mut() {
+            changed();
         }
     }
 
@@ -494,6 +756,7 @@ impl WaylandWindowStatePtr {
                 let mut fullscreen = false;
                 let mut maximized = false;
                 let mut resizing = false;
+                let mut suspended = false;
 
                 for state in states {
                     match state {
@@ -504,6 +767,8 @@ impl WaylandWindowStatePtr {
                             fullscreen = true;
                         }
                         xdg_toplevel::State::Resizing => resizing = true,
+                        // mirin: minimized, on another desktop, or covered.
+                        xdg_toplevel::State::Suspended => suspended = true,
                         xdg_toplevel::State::TiledTop => {
                             tiling.top = true;
                         }
@@ -534,6 +799,13 @@ impl WaylandWindowStatePtr {
                     resizing,
                     tiling,
                 });
+                let changed = std::mem::replace(&mut state.suspended, suspended) != suspended;
+                drop(state);
+                if changed {
+                    if let Some(callback) = self.callbacks.borrow_mut().suspended_changed.as_mut() {
+                        callback();
+                    }
+                }
 
                 false
             }
@@ -664,10 +936,24 @@ impl WaylandWindowStatePtr {
             drop(state);
             if let Some(selection) = input_handler.marked_text_range() {
                 bounds = input_handler.bounds_for_range(selection.start..selection.start);
+            } else if let Some(selection) = input_handler.selected_text_range(true) {
+                // mirin: with nothing composed yet the caret is the area, so
+                // text input turned on says where it is from the start.
+                let caret = if selection.reversed {
+                    selection.range.start
+                } else {
+                    selection.range.end
+                };
+                bounds = input_handler.bounds_for_range(caret..caret);
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
         bounds
+    }
+
+    // mirin: see `PlatformWindow::set_accepts_text`.
+    pub fn accepts_text(&self) -> bool {
+        self.state.borrow().accepts_text
     }
 
     pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {
@@ -762,6 +1048,103 @@ impl WaylandWindowStatePtr {
     }
 }
 
+// mirin: session-lock surfaces for a lock screen.
+/// Lock the session and make `surface` its lock surface on the first output;
+/// the compositor's configure sizes it.
+fn create_lock_surface(
+    globals: &Globals,
+    surface: &wl_surface::WlSurface,
+) -> anyhow::Result<(
+    ext_session_lock_v1::ExtSessionLockV1,
+    ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+)> {
+    let Some(manager) = globals.session_lock_manager.as_ref() else {
+        anyhow::bail!("the compositor has no ext-session-lock-v1");
+    };
+    let Some(output) = globals.first_output.as_ref() else {
+        anyhow::bail!("no output to lock");
+    };
+    let lock = manager.lock(&globals.qh, surface.id());
+    let lock_surface = lock.get_lock_surface(surface, output, &globals.qh, surface.id());
+    Ok((lock, lock_surface))
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// Create and configure the layer surface for `options`; the first commit
+/// (made by the caller) asks the compositor for its configure.
+fn create_layer_surface(
+    globals: &Globals,
+    surface: &wl_surface::WlSurface,
+    options: &LayerShellOptions,
+    size: Size<Pixels>,
+    output: Option<&wl_output::WlOutput>,
+) -> anyhow::Result<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1> {
+    let Some(layer_shell) = globals.layer_shell.as_ref() else {
+        anyhow::bail!("the compositor does not support wlr-layer-shell");
+    };
+    let layer = match options.layer {
+        Layer::Background => zwlr_layer_shell_v1::Layer::Background,
+        Layer::Bottom => zwlr_layer_shell_v1::Layer::Bottom,
+        Layer::Top => zwlr_layer_shell_v1::Layer::Top,
+        Layer::Overlay => zwlr_layer_shell_v1::Layer::Overlay,
+    };
+    let layer_surface = layer_shell.get_layer_surface(
+        surface,
+        output,
+        layer,
+        options.namespace.clone(),
+        &globals.qh,
+        surface.id(),
+    );
+    let mut anchor = zwlr_layer_surface_v1::Anchor::empty();
+    for (set, edge) in [
+        (options.anchor.top, zwlr_layer_surface_v1::Anchor::Top),
+        (options.anchor.bottom, zwlr_layer_surface_v1::Anchor::Bottom),
+        (options.anchor.left, zwlr_layer_surface_v1::Anchor::Left),
+        (options.anchor.right, zwlr_layer_surface_v1::Anchor::Right),
+    ] {
+        if set {
+            anchor |= edge;
+        }
+    }
+    let (width, height) = layer_request_size(options.anchor, size);
+    layer_surface.set_size(width, height);
+    layer_surface.set_anchor(anchor);
+    layer_surface.set_exclusive_zone(options.exclusive_zone);
+    let margin = options.margin;
+    layer_surface.set_margin(margin.top, margin.right, margin.bottom, margin.left);
+    // On-demand focus arrived in version 4; older compositors get none.
+    let keyboard = match options.keyboard_interactivity {
+        KeyboardInteractivity::None => zwlr_layer_surface_v1::KeyboardInteractivity::None,
+        KeyboardInteractivity::OnDemand if layer_shell.version() >= 4 => {
+            zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand
+        }
+        KeyboardInteractivity::OnDemand => zwlr_layer_surface_v1::KeyboardInteractivity::None,
+        KeyboardInteractivity::Exclusive => {
+            zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive
+        }
+    };
+    layer_surface.set_keyboard_interactivity(keyboard);
+    Ok(layer_surface)
+}
+
+// mirin: layer-shell surfaces for desktop-shell UI.
+/// The size a layer surface requests: 0 along an axis anchored to both
+/// edges, which stretches it to the output.
+fn layer_request_size(anchor: LayerAnchor, size: Size<Pixels>) -> (u32, u32) {
+    let width = if anchor.left && anchor.right {
+        0
+    } else {
+        size.width.0.max(1.0) as u32
+    };
+    let height = if anchor.top && anchor.bottom {
+        0
+    } else {
+        size.height.0.max(1.0) as u32
+    };
+    (width, height)
+}
+
 fn extract_states<'a, S: TryFrom<u32> + 'a>(states: &'a [u8]) -> impl Iterator<Item = S> + 'a
 where
     <S as TryFrom<u32>>::Error: 'a,
@@ -839,16 +1222,40 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
+        // mirin: a maximized or full-screen toplevel keeps its size; a resize
+        // asked meanwhile moves the size it goes back to by as much (an app
+        // growing to show a sidebar while zoomed). Setting the geometry would
+        // have the compositor take it out of the maximized state.
+        {
+            let mut state = self.borrow_mut();
+            if (state.maximized || state.fullscreen)
+                && matches!(state.role, SurfaceRole::Toplevel { .. })
+            {
+                let restored = restored_size(state.window_bounds.size, state.bounds.size, size);
+                state.window_bounds.size = restored;
+                return;
+            }
+        }
         let state = self.borrow();
         let state_ptr = self.0.clone();
         let dp_size = size.to_device_pixels(self.scale_factor());
 
-        state.xdg_surface.set_window_geometry(
-            state.bounds.origin.x.0 as i32,
-            state.bounds.origin.y.0 as i32,
-            dp_size.width.0,
-            dp_size.height.0,
-        );
+        match &state.role {
+            SurfaceRole::Toplevel { xdg_surface, .. } => xdg_surface.set_window_geometry(
+                state.bounds.origin.x.0 as i32,
+                state.bounds.origin.y.0 as i32,
+                dp_size.width.0,
+                dp_size.height.0,
+            ),
+            // mirin: a layer surface asks; the compositor's configure resizes it.
+            SurfaceRole::Layer { surface, anchor } => {
+                let (width, height) = layer_request_size(*anchor, size);
+                surface.set_size(width, height);
+                return;
+            }
+            // A lock surface takes the output's size from the compositor.
+            SurfaceRole::Lock { .. } => return,
+        }
 
         state
             .globals
@@ -937,12 +1344,23 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_title(&mut self, title: &str) {
-        self.borrow().toplevel.set_title(title.to_string());
+        if let Some(toplevel) = self.borrow().role.toplevel() {
+            toplevel.set_title(title.to_string());
+        }
+    }
+
+    // mirin: xdg_toplevel's least size is double-buffered; the next frame's commit applies it.
+    fn set_min_size(&mut self, size: Size<Pixels>) {
+        if let Some(toplevel) = self.borrow().role.toplevel() {
+            toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
+        }
     }
 
     fn set_app_id(&mut self, app_id: &str) {
         let mut state = self.borrow_mut();
-        state.toplevel.set_app_id(app_id.to_owned());
+        if let Some(toplevel) = state.role.toplevel() {
+            toplevel.set_app_id(app_id.to_owned());
+        }
         state.app_id = Some(app_id.to_owned());
     }
 
@@ -953,24 +1371,32 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn minimize(&self) {
-        self.borrow().toplevel.set_minimized();
+        if let Some(toplevel) = self.borrow().role.toplevel() {
+            toplevel.set_minimized();
+        }
     }
 
     fn zoom(&self) {
         let state = self.borrow();
+        let Some(toplevel) = state.role.toplevel() else {
+            return;
+        };
         if !state.maximized {
-            state.toplevel.set_maximized();
+            toplevel.set_maximized();
         } else {
-            state.toplevel.unset_maximized();
+            toplevel.unset_maximized();
         }
     }
 
     fn toggle_fullscreen(&self) {
-        let mut state = self.borrow_mut();
+        let state = self.borrow();
+        let Some(toplevel) = state.role.toplevel() else {
+            return;
+        };
         if !state.fullscreen {
-            state.toplevel.set_fullscreen(None);
+            toplevel.set_fullscreen(None);
         } else {
-            state.toplevel.unset_fullscreen();
+            toplevel.unset_fullscreen();
         }
     }
 
@@ -1013,18 +1439,61 @@ impl PlatformWindow for WaylandWindow {
     fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
     }
 
+    // mirin: Dashi's unified title bar.
+    fn chrome_controls(&self) -> Option<Bounds<Pixels>> {
+        self.borrow().chrome_controls
+    }
+
+    fn on_chrome_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().chrome_changed = Some(callback);
+    }
+
+    // mirin: xdg_toplevel's `suspended` state.
+    fn is_suspended(&self) -> bool {
+        self.borrow().suspended
+    }
+
+    fn on_suspended_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().suspended_changed = Some(callback);
+    }
+
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+        // mirin: ask for the next frame callback before presenting, so the
+        // present's commit carries it.
+        state.surface.frame(&state.globals.qh, state.surface.id());
+        state.frame_pending = true;
+        state.drew = true;
         state.renderer.draw(scene);
     }
 
     fn completed_frame(&self) {
         let state = self.borrow();
-        state.surface.commit();
+        // mirin: an unchanged frame commits nothing; committing anyway kept
+        // the compositor drawing at the display's rate for idle windows.
+        if state.drew {
+            state.surface.commit();
+        }
+    }
+
+    fn redraw_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let (state, callbacks) = self.0.downgrade();
+        let executor = self.borrow().globals.executor.clone();
+        Some(Rc::new(move || {
+            let (state, callbacks) = (state.clone(), callbacks.clone());
+            // Later, on the event loop: this runs while GPUI is mid-update.
+            executor
+                .spawn(async move {
+                    if let (Some(state), Some(callbacks)) = (state.upgrade(), callbacks.upgrade()) {
+                        WaylandWindowStatePtr { state, callbacks }.wake();
+                    }
+                })
+                .detach();
+        }))
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1034,8 +1503,11 @@ impl PlatformWindow for WaylandWindow {
 
     fn show_window_menu(&self, position: Point<Pixels>) {
         let state = self.borrow();
+        let Some(toplevel) = state.role.toplevel() else {
+            return;
+        };
         let serial = state.client.get_serial(SerialKind::MousePress);
-        state.toplevel.show_window_menu(
+        toplevel.show_window_menu(
             &state.globals.seat,
             serial,
             position.x.0 as i32,
@@ -1045,13 +1517,33 @@ impl PlatformWindow for WaylandWindow {
 
     fn start_window_move(&self) {
         let state = self.borrow();
+        let Some(toplevel) = state.role.toplevel() else {
+            return;
+        };
         let serial = state.client.get_serial(SerialKind::MousePress);
-        state.toplevel._move(&state.globals.seat, serial);
+        toplevel._move(&state.globals.seat, serial);
+    }
+
+    fn start_file_drag(
+        &self,
+        paths: &[std::path::PathBuf],
+        icon: Option<&std::path::Path>,
+        icon_size: u32,
+    ) -> bool {
+        let state = self.borrow();
+        let surface = state.surface.clone();
+        let scale = state.scale.ceil() as i32;
+        let client = state.client.clone();
+        drop(state);
+        client.start_file_drag(&surface, paths, icon, icon_size, scale)
     }
 
     fn start_window_resize(&self, edge: crate::ResizeEdge) {
         let state = self.borrow();
-        state.toplevel.resize(
+        let Some(toplevel) = state.role.toplevel() else {
+            return;
+        };
+        toplevel.resize(
             &state.globals.seat,
             state.client.get_serial(SerialKind::MousePress),
             edge.to_xdg(),
@@ -1092,6 +1584,33 @@ impl PlatformWindow for WaylandWindow {
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
         state.client.update_ime_position(bounds);
+    }
+
+    // mirin: text input is on only while a field takes text and this window
+    // has the keyboard (the client checks `accepts_text` when text input
+    // enters too).
+    fn set_accepts_text(&self, accepts: bool) {
+        let mut state = self.borrow_mut();
+        state.accepts_text = accepts;
+        if !state.active {
+            return;
+        }
+        let client = state.client.clone();
+        drop(state);
+        if accepts {
+            client.enable_ime();
+        } else {
+            client.disable_ime();
+        }
+    }
+
+    // mirin: session-lock surfaces for a lock screen.
+    fn unlock_session(&self) {
+        let state = self.borrow();
+        if let SurfaceRole::Lock { lock, surface } = &state.role {
+            surface.destroy();
+            lock.unlock_and_destroy();
+        }
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
@@ -1216,4 +1735,21 @@ fn inset_by_tiling(mut bounds: Bounds<Pixels>, inset: Pixels, tiling: Tiling) ->
     }
 
     bounds
+}
+
+/// mirin: the size a maximized or full-screen window goes back to after a
+/// resize to `asked` while it is `current`: `restored` changed by as much
+/// (never under a pixel).
+fn restored_size(
+    restored: Size<Pixels>,
+    current: Size<Pixels>,
+    asked: Size<Pixels>,
+) -> Size<Pixels> {
+    let by = |restored: Pixels, current: Pixels, asked: Pixels| {
+        (restored + (asked - current)).max(px(1.))
+    };
+    Size {
+        width: by(restored.width, current.width, asked.width),
+        height: by(restored.height, current.height, asked.height),
+    }
 }

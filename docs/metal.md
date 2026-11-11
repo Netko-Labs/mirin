@@ -437,7 +437,7 @@ in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
 
 A window learns when no one can see it. On Wayland the compositor says so
 with xdg_toplevel's `suspended` state (xdg-shell 6; mirin's GPUI fork binds
-`xdg_wm_base` up to 6 and reads it, `vendor/gpui/MIRIN.md`): minimized, on
+`xdg_wm_base` up to 6 and reads it, `forks/gpui/MIRIN.md`): minimized, on
 a desktop that isn't shown, fully covered where the compositor tracks that.
 The host sends `{"type":"visibility","nodeId":"root","visible":false}` when
 it is suspended and `true` when it is seen again; only changes are sent and
@@ -546,7 +546,7 @@ Radeon 890M with Mesa RADV:
   every frame callback, drawn or not, so an unchanged window commits at the
   display's rate and an on-demand compositor never goes idle. The fork asks
   for a frame callback only when a frame draws and wakes idle windows when
-  they become dirty (`vendor/gpui/MIRIN.md`). Measured in dashi-comp: an
+  they become dirty (`forks/gpui/MIRIN.md`). Measured in dashi-comp: an
   idle desktop draws nothing.
 
 ### Unified title bar (Dashi)
@@ -558,14 +558,14 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
 `dashi_chrome_v1`; `set_style(standard | unified)`; the event
 `controls(x, y, width, height)`). The XML lives in dashi-comp
 (`comp/protocols/dashi-chrome-v1.xml`) and is copied into the GPUI fork
-(`vendor/gpui/protocols/`).
+(`forks/gpui/protocols/`).
 
 - **Ask for it.** `spawnNativeHost(binary, { titleBar: "unified" })`, or
   `MIRIN_METAL_TITLEBAR=unified`. The value is `standard` (default) or
   `unified`; anything else makes the host exit with status 2. In the host it
   becomes `TitlebarOptions::appears_transparent`, and the Wayland client binds
   the manager when it is advertised and sets the style before the window's
-  first commit (`vendor/gpui/MIRIN.md`). Windows still ask for server-side
+  first commit (`forks/gpui/MIRIN.md`). Windows still ask for server-side
   decorations, which Dashi needs to honor the style.
 - **What the compositor does.** No title bar and no title text; the surface
   starts at the top of the frame. Dashi still draws the rounded corners, the
@@ -647,7 +647,7 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   first window's title, never the host binary's file name (AccessKit's
   default, which made Orca call every app "mirin-metal-host"). The first
   window of a host names it for the host's life. The name is set through
-  mirin's fork of AccessKit's Unix adapter (`vendor/accesskit_unix/MIRIN.md`).
+  mirin's fork of AccessKit's Unix adapter (`forks/accesskit_unix/MIRIN.md`).
 - **Windows shown and gone.** A window that has the keyboard when its tree
   first reaches the bus announces itself: `window:activate`, then the
   focused node, so Orca reads a resident launcher's field each time it is
@@ -744,7 +744,7 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   private virtual KWin session (own D-Bus, so Spectacle talks to it) for
   visual review without touching the desktop. Fixes it drove: native grid and
   `has-*` (above); text min-content; a taffy fork for fit-content flex base
-  sizes (`crates/mirin-metal/vendor/taffy/MIRIN.md`); flex's zero minimum no
+  sizes (`forks/taffy/MIRIN.md`); flex's zero minimum no
   longer overrides explicit `min-w`/`min-h`; `w-full` on inputs is width,
   not growth; the full Tailwind v4 palette (generated).
 
@@ -770,7 +770,7 @@ more) are React on `@mirinjs/metal` and `@mirinjs/metal-ui`, each window drawn b
 a `mirin-metal-host` process its driver spawns (`spawnNativeHost`). Dashi
 depends on the packages by path (`"@mirinjs/metal": "file:../mirin/..."`, see
 section 6 on sharing one React) and builds the host from this crate. Most of
-the GPUI fork's changes (`vendor/gpui/MIRIN.md`) came from Dashi's needs:
+the GPUI fork's changes (`forks/gpui/MIRIN.md`) came from Dashi's needs:
 layer-shell and session-lock surfaces, the unified title bar on Dashi's
 compositor, idle windows that stop drawing, text input only while a field
 takes text, truncation and wrapping fixes, and scroll views that end where
@@ -788,11 +788,13 @@ cargo clippy --all-targets -- -D warnings
 cargo test                      # headless: GPUI's test platform, no display
 ```
 
-The GPUI fork's own tests build it alone with this crate's lockfile:
+The forks live at the repository root (`forks/gpui`, `forks/taffy`,
+`forks/accesskit_unix`; `forks/README.md` explains the upstream branch). The
+GPUI fork's own tests build it alone with this crate's lockfile:
 
 ```sh
-cd vendor/gpui && cp ../../Cargo.lock . \
-  && CARGO_TARGET_DIR=../../target/gpui-alone cargo test --lib --features test-support; \
+cd ../../forks/gpui && cp ../../crates/mirin-metal/Cargo.lock . \
+  && CARGO_TARGET_DIR=../../crates/mirin-metal/target/gpui-alone cargo test --lib --features test-support; \
   rm Cargo.lock
 ```
 
@@ -837,12 +839,12 @@ last word (a zoomed, tiled, or full-screen window keeps its size, and a later
 configure may restore the size it chose). A maximized or full-screen window
 is not resized at all: the size it goes back to moves by as much as the
 request differs from its size now, so a sidebar shown while zoomed still has
-its room once the window is restored (`vendor/gpui`, `MIRIN.md`); the app learns the size it got from
+its room once the window is restored (`forks/gpui/MIRIN.md`); the app learns the size it got from
 the root's layout, as ever (the root fills the window, so its `onLayout`
 reports the window's size on every change: a tile, an edge dragged, a zoom).
 A `{"minSize":{"width":W,"height":H}}` line changes the least size afterwards
 (`setMinSize()` on the transport; GPUI's `Window::set_window_min_size`,
-`vendor/gpui`, `MIRIN.md`): an app that needs more room while it shows more
+`forks/gpui/MIRIN.md`): an app that needs more room while it shows more
 (Calculator's tape beside its keypad). It doesn't resize the window; send a
 size too (the host applies the least size first). A host from before either
 refuses the line on stderr and ignores the variable.
@@ -877,7 +879,7 @@ window any other way (the person, the compositor) still ends the host. An
 `open` while the window is shown, and a `hide` while it is hidden or on a host
 that isn't deferred, are refused with a log line. GPUI's Linux clients stop
 their event loop with the last window, so mirin's fork turns that off for a
-deferred host (`gpui::set_quit_when_last_window_closes`, vendor/gpui/MIRIN.md)
+deferred host (`gpui::set_quit_when_last_window_closes`, forks/gpui/MIRIN.md)
 and the host quits itself on a real close. A host binary that does all this
 names `MIRIN_METAL_RESIDENT` (the `RESIDENT_MARKER` const), as one that knows
 deferred hosts names `MIRIN_METAL_DEFERRED`; a driver checks for it before it

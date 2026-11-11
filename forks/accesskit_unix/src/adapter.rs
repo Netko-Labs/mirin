@@ -77,6 +77,19 @@ impl AdapterCallback for Callback {
     }
 }
 
+/// mirin: an adapter for a window that has the keyboard already is made
+/// unfocused and then focused, so assistive technology hears the window
+/// activate and then the focused node (`window:activate`, then
+/// `object:state-changed:focused`). Made focused, it heard only the focus,
+/// from a window it never saw activate, and Orca ignores focus outside its
+/// active window: a window that took the keyboard before its tree reached
+/// the bus (a launcher shown again) said nothing.
+pub(crate) fn focused_on_creation(r#impl: &mut AdapterImpl, is_window_focused: bool) {
+    if is_window_focused {
+        r#impl.update_window_focus_state(true);
+    }
+}
+
 pub(crate) enum AdapterState {
     Inactive {
         is_window_focused: bool,
@@ -203,15 +216,17 @@ impl Adapter {
                 action_handler,
             } => {
                 let initial_state = update_factory();
-                let r#impl = AdapterImpl::with_wrapped_action_handler(
+                // mirin: made unfocused, then focused (`focused_on_creation`).
+                let mut r#impl = AdapterImpl::with_wrapped_action_handler(
                     self.id,
                     get_or_init_app_context(),
                     Callback::new(),
                     initial_state,
-                    *is_window_focused,
+                    false,
                     *root_window_bounds,
                     Arc::clone(action_handler),
                 );
+                focused_on_creation(&mut r#impl, *is_window_focused);
                 *state = AdapterState::Active(r#impl);
             }
             AdapterState::Active(r#impl) => r#impl.update(update_factory()),

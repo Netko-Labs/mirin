@@ -5,7 +5,7 @@
 //!
 //! The handler is set while painting the focused field, never a secure one:
 //! a password field takes no input method (GPUI turns text input off while
-//! no handler is set; vendor/gpui/MIRIN.md), so what is typed there never
+//! no handler is set; forks/gpui/MIRIN.md), so what is typed there never
 //! reaches one. Plain typing still arrives as keys (`input.rs`); a commit
 //! of one ASCII character does too (GPUI on Wayland), so it edits exactly as
 //! that key would.

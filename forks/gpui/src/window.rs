@@ -95,6 +95,9 @@ struct WindowInvalidatorInner {
     pub dirty: bool,
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
+    // mirin: tells an idle platform window to schedule a frame (see
+    // `PlatformWindow::redraw_waker`).
+    pub waker: Option<Rc<dyn Fn()>>,
 }
 
 #[derive(Clone)]
@@ -109,6 +112,7 @@ impl WindowInvalidator {
                 dirty: true,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
+                waker: None,
             })),
         }
     }
@@ -117,11 +121,28 @@ impl WindowInvalidator {
         let mut inner = self.inner.borrow_mut();
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
+            let became_dirty = !inner.dirty;
             inner.dirty = true;
+            drop(inner);
+            if became_dirty {
+                self.wake();
+            }
             cx.push_effect(Effect::Notify { emitter: entity });
             true
         } else {
             false
+        }
+    }
+
+    pub fn set_waker(&self, waker: Rc<dyn Fn()>) {
+        self.inner.borrow_mut().waker = Some(waker);
+    }
+
+    /// Ask the platform for a frame, for windows that only draw when asked.
+    pub fn wake(&self) {
+        let waker = self.inner.borrow().waker.clone();
+        if let Some(waker) = waker {
+            waker();
         }
     }
 
@@ -130,7 +151,15 @@ impl WindowInvalidator {
     }
 
     pub fn set_dirty(&self, dirty: bool) {
-        self.inner.borrow_mut().dirty = dirty
+        let became_dirty = {
+            let mut inner = self.inner.borrow_mut();
+            let became_dirty = dirty && !inner.dirty;
+            inner.dirty = dirty;
+            became_dirty
+        };
+        if became_dirty {
+            self.wake();
+        }
     }
 
     pub fn set_phase(&self, phase: DrawPhase) {
@@ -859,6 +888,12 @@ pub struct Window {
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
+    // mirin: observers of the compositor-drawn controls' area.
+    pub(crate) chrome_observers: SubscriberSet<(), AnyObserver>,
+    // mirin: observers of the window going out of sight and back.
+    pub(crate) suspended_observers: SubscriberSet<(), AnyObserver>,
+    // mirin: whether the last frame set an input handler (`set_accepts_text`).
+    accepts_text: bool,
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
@@ -948,6 +983,8 @@ impl Window {
             window_decorations,
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
+            layer_shell,
+            session_lock,
         } = options;
 
         let bounds = window_bounds
@@ -968,6 +1005,8 @@ impl Window {
                 window_min_size,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
+                layer_shell,
+                session_lock,
             },
         )?;
 
@@ -987,6 +1026,9 @@ impl Window {
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let invalidator = WindowInvalidator::new();
+        if let Some(waker) = platform_window.redraw_waker() {
+            invalidator.set_waker(waker);
+        }
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
@@ -1086,6 +1128,34 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
+                    .log_err();
+            }
+        }));
+        // mirin: the compositor's window controls moved or went away.
+        platform_window.on_chrome_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window
+                            .chrome_observers
+                            .clone()
+                            .retain(&(), |callback| callback(window, cx));
+                    })
+                    .log_err();
+            }
+        }));
+        // mirin: the compositor suspended the window or showed it again.
+        platform_window.on_suspended_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window
+                            .suspended_observers
+                            .clone()
+                            .retain(&(), |callback| callback(window, cx));
+                    })
                     .log_err();
             }
         }));
@@ -1242,6 +1312,9 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
+            chrome_observers: SubscriberSet::new(),
+            suspended_observers: SubscriberSet::new(),
+            accepts_text: false,
             active,
             hovered,
             needs_present,
@@ -1323,6 +1396,57 @@ impl Window {
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let (subscription, activate) = self.appearance_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    // mirin: Dashi's unified title bar. When the window asked for a
+    // transparent title bar and the compositor draws its window controls over
+    // the window (Dashi), this is their area in window coordinates, which
+    // the app keeps empty. `None` on every other compositor.
+    /// The area of the compositor-drawn window controls over this window.
+    pub fn chrome_controls(&self) -> Option<Bounds<Pixels>> {
+        self.platform_window.chrome_controls()
+    }
+
+    // mirin: see `chrome_controls`.
+    /// Registers a callback to be invoked when `chrome_controls` changes.
+    /// It also runs once right away.
+    pub fn observe_window_chrome(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.chrome_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    // mirin: whether the compositor says the window is out of sight
+    // (Wayland's xdg_toplevel `suspended`: minimized, on another desktop).
+    /// Whether the compositor has suspended the window: it is not seen.
+    pub fn is_window_suspended(&self) -> bool {
+        self.platform_window.is_suspended()
+    }
+
+    // mirin: see `is_window_suspended`.
+    /// Registers a callback to be invoked when `is_window_suspended` changes.
+    pub fn observe_window_suspended(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.suspended_observers.insert(
             (),
             Box::new(move |window, cx| {
                 callback(window, cx);
@@ -1643,6 +1767,8 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+        // mirin: an idle window has no next frame coming until asked.
+        self.invalidator.wake();
     }
 
     /// Schedule a frame to be drawn on the next animation frame.
@@ -1747,6 +1873,21 @@ impl Window {
         self.platform_window.show_window_menu(position)
     }
 
+    /// Start dragging `paths` out of the window (mirin; Wayland only), with the
+    /// image at `icon` (PNG, JPEG, or SVG) `icon_size` pixels across under
+    /// the pointer. The compositor takes the pointer until the drop; any
+    /// app's window that takes files, this one included, gets them (as a
+    /// file drop). Call it while the pressed button is still held. False
+    /// where it can't start.
+    pub fn start_file_drag(
+        &self,
+        paths: &[std::path::PathBuf],
+        icon: Option<&std::path::Path>,
+        icon_size: u32,
+    ) -> bool {
+        self.platform_window.start_file_drag(paths, icon, icon_size)
+    }
+
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
@@ -1778,6 +1919,14 @@ impl Window {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);
+    }
+
+    /// mirin: change the smallest the window may be made, after it opened
+    /// (`WindowOptions::window_min_size` is the first). Applied with the next
+    /// frame; platforms without it keep the first.
+    pub fn set_window_min_size(&mut self, size: Size<Pixels>) {
+        self.platform_window.set_min_size(size);
+        self.refresh();
     }
 
     /// Sets the application identifier.
@@ -1927,9 +2076,17 @@ impl Window {
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
-        if let Some(input_handler) = self.next_frame.input_handlers.pop() {
+        let accepts_text = if let Some(input_handler) = self.next_frame.input_handlers.pop() {
             self.platform_window
                 .set_input_handler(input_handler.unwrap());
+            true
+        } else {
+            false
+        };
+        // mirin: the platform hears when a field starts or stops taking text.
+        if accepts_text != self.accepts_text {
+            self.accepts_text = accepts_text;
+            self.platform_window.set_accepts_text(accepts_text);
         }
 
         self.layout_engine.as_mut().unwrap().clear();
@@ -3279,6 +3436,19 @@ impl Window {
         self.layout_engine = Some(layout_engine);
     }
 
+    /// mirin: how far an element's content reaches from its top left (its
+    /// scrollable overflow and end border; see `TaffyLayoutEngine::layout_scroll_extent`).
+    ///
+    /// This method should only be called as part of element drawing.
+    pub fn layout_scroll_extent(&mut self, layout_id: LayoutId) -> Size<Pixels> {
+        self.invalidator.debug_assert_prepaint();
+        let scale_factor = self.scale_factor();
+        self.layout_engine
+            .as_ref()
+            .unwrap()
+            .layout_scroll_extent(layout_id, scale_factor)
+    }
+
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method will usually be invoked by
     /// GPUI itself automatically in order to pass your element its `Bounds` automatically.
     ///
@@ -3656,6 +3826,8 @@ impl Window {
                 }
                 FileDropEvent::Exited => {
                     cx.active_drag.take();
+                    // mirin: draw again, so views hear the drag is gone.
+                    self.refresh();
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
             },
@@ -4370,6 +4542,13 @@ impl Window {
                 .dispatch_tree
                 .on_action(action_type, Rc::new(listener));
         }
+    }
+
+    // mirin: session-lock surfaces for a lock screen.
+    /// Unlock the session this window locked (`WindowOptions::session_lock`).
+    /// The only way a lock surface unlocks: closing or exiting does not.
+    pub fn unlock_session(&self) {
+        self.platform_window.unlock_session();
     }
 
     /// Read information about the GPU backing this window.

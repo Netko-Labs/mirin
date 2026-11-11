@@ -255,7 +255,7 @@ fn open_window(
         titlebar: Some(TitlebarOptions {
             title: Some(options.title.clone()),
             // The unified style: GPUI's Wayland backend asks Dashi
-            // to leave the title bar to the app (vendor/gpui/MIRIN.md).
+            // to leave the title bar to the app (forks/gpui/MIRIN.md).
             appears_transparent: unified,
             ..Default::default()
         }),

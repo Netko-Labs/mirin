@@ -448,8 +448,13 @@ impl ListState {
         let height = state
             .scrollbar_drag_start_height
             .unwrap_or_else(|| state.items.summary().height);
+        // mirin: the list's padding scrolls with its items (`scroll` counts it).
+        let padding = state.last_padding.unwrap_or_default();
 
-        Size::new(Pixels::ZERO, Pixels::ZERO.max(height - bounds.size.height))
+        Size::new(
+            Pixels::ZERO,
+            Pixels::ZERO.max(height + padding.top + padding.bottom - bounds.size.height),
+        )
     }
 
     /// Returns the current scroll offset adjusted for the scrollbar
@@ -492,19 +497,18 @@ impl StateInner {
         current_view: EntityId,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> bool {
         // Drop scroll events after a reset, since we can't calculate
         // the new logical scroll top without the item heights
         if self.reset {
-            return;
+            return false;
         }
 
         let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
-        let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
-            .max(px(0.))
-            .min(scroll_max);
+        let old_scroll_top = self.scroll_top(scroll_top);
+        let new_scroll_top = (old_scroll_top - delta.y).max(px(0.)).min(scroll_max);
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
@@ -534,6 +538,8 @@ impl StateInner {
         }
 
         cx.notify(current_view);
+        // mirin: whether it moved; at its end the wheel goes on to the view around it.
+        new_scroll_top != old_scroll_top
     }
 
     fn logical_scroll_top(&self) -> ListOffset {
@@ -1082,14 +1088,17 @@ impl Element for List {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
-                list_state.0.borrow_mut().scroll(
+                let moved = list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
                     pixel_delta,
                     current_view,
                     window,
                     cx,
-                )
+                );
+                if moved {
+                    cx.stop_propagation();
+                }
             }
         });
     }

@@ -4,7 +4,7 @@
 //! active descendant, names, states). Its handlers run on its own thread.
 //!
 //! A shown window that has the keyboard announces itself (`window:activate`,
-//! then the focused node: the vendored adapter, vendor/accesskit_unix), and
+//! then the focused node: the vendored adapter, forks/accesskit_unix), and
 //! one that goes (closed, or hidden by a resident host) deactivates first.
 
 use std::sync::{Arc, Mutex};

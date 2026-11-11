@@ -15,7 +15,7 @@ both reference.
   platform status, findings, gaps, and milestone history.
 - `docs/metal.md` owns Metal, the CEF-free GPUI flavor: the element-tree
   protocol, process model decisions, platform findings, and milestones.
-  `crates/mirin-metal/vendor/*/MIRIN.md` lists every change in the vendored
+  `forks/*/MIRIN.md` lists every change in the monorepo
   forks.
 - Code is allowed to move, but source-of-truth docs must move with the behavior
   in the same change.
@@ -478,7 +478,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-and, when `vendor/gpui` changes, the fork's own tests (`docs/metal.md`,
+and, when `forks/gpui` changes, the fork's own tests (`docs/metal.md`,
 section 6). `bun run test` covers `@mirinjs/metal` and `@mirinjs/metal-ui`; it
 runs metal-ui's tests from that package's directory, where its JSX runtime
 applies.

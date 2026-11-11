@@ -1,6 +1,6 @@
 # mirin's taffy fork
 
-`taffy` 0.9.0 from crates.io (DioxusLabs, MIT), vendored because GPUI pins
+`taffy` 0.9.0 from crates.io (DioxusLabs, MIT), forked in the monorepo (`forks/taffy`) because GPUI pins
 `taffy = "=0.9.0"` and its flexbox base-size step diverges from the spec in a
 way shadcn layouts hit. Every change is marked with a `// mirin:` comment.
 
@@ -12,7 +12,6 @@ way shadcn layouts hit. Every change is marked with a `// mirin:` comment.
 | Fit-content cross size for the hypothetical cross size of a non-stretched item in a column | `src/compute/flexbox.rs` (`determine_hypothetical_cross_size`; tested in mirin-metal's `render::one_line_tests`) | Spec 9.4.7 sizes an item with an auto cross size at fit-content. taffy measured an `align-items: center` item at its max-content width, so a box of one long line centered in a narrower column (Dashi's notice over a 480 pt window) overflowed both edges instead of wrapping. Upstreamable. |
 | A flex item's end margins count toward its container's content size (scrollable overflow) | `src/compute/flexbox.rs` (`calculate_flex_item`, test `mirin_tests`) | CSS Overflow 3 counts an in-flow item's margin box; taffy counted its border box, so a scroll view (mirin's GPUI scrolls by this size) stopped short of its last item's `margin-bottom`. Upstreamable. |
 
-To update: copy the new release over this directory (minus `examples/`,
-`benches/`, `Cargo.lock`, `Cargo.toml.orig`, and the `[[example]]` entries in
-`Cargo.toml`), then re-apply the changes above. Keep the version equal to the
+To update: see `../README.md` (merge the `forks-upstream` branch), then
+reconcile the changes above. Keep the version equal to the
 one GPUI pins.

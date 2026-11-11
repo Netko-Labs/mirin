@@ -1,6 +1,6 @@
 # mirin's GPUI fork
 
-`gpui` 0.2.2 from crates.io (Zed Industries, Apache-2.0), vendored so
+`gpui` 0.2.2 from crates.io (Zed Industries, Apache-2.0), forked in the monorepo (`forks/gpui`) so
 `mirin-metal` can extend layout where the published crate stops short. Every
 change is listed here and marked with a `// mirin:` comment in the source.
 Upstreaming candidates are marked as such.
@@ -32,11 +32,10 @@ Upstreaming candidates are marked as such.
 | The wheel scrolls the innermost view that can still move, then the one around it (`wheel_scroll`; `ListState::scroll` says whether it moved) | `src/elements/div.rs`, `src/elements/list.rs` (tested in mirin-metal's `render::scroll_tests`) | Every scroll view under the pointer took every turn, unclamped until the next frame, so a list in a page scrolled the page with it. Now a view that moved stops the event; at its end it lets it bubble. Upstreamable. |
 | A list's scroll bar range counts its padding (`ListState::max_offset_for_scrollbar`) | `src/elements/list.rs` | `scroll` counted the list's padding in its range and the scroll bar's range didn't, so a thumb never reached the end of its track. Upstreamable. |
 
-To update: copy the new release over this directory (minus `examples/`,
-`Cargo.lock`, `Cargo.toml.orig`, and the `[[example]]` entries in
-`Cargo.toml`), then re-apply the changes above.
+To update: see `../README.md` (merge the `forks-upstream` branch), then
+reconcile the changes above.
 
 To run the fork's own tests (the `mirin` ones among them): it isn't a
 workspace member, so build it alone with mirin-metal's lockfile:
-`cp ../../Cargo.lock . && CARGO_TARGET_DIR=../../target/gpui-alone cargo test --lib --features test-support`,
+`cp ../../crates/mirin-metal/Cargo.lock . && CARGO_TARGET_DIR=../../crates/mirin-metal/target/gpui-alone cargo test --lib --features test-support`,
 then remove the copied `Cargo.lock`.
