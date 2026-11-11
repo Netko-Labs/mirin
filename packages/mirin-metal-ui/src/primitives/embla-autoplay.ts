@@ -2,7 +2,11 @@
  * `embla-carousel-autoplay` on Metal: a timer that advances the carousel
  * every `delay` ms (wrapping to the first slide at the end). `stop`,
  * `play`, and `reset` follow the plugin's semantics: `reset` restarts the
- * timer only while autoplay is active.
+ * timer only while autoplay is active. Like the plugin, a `pointerDown` on
+ * the carousel stops it for good with `stopOnInteraction` (else it pauses
+ * until `pointerUp`), and with `stopOnMouseEnter` the pointer over the track
+ * pauses it (resuming on leave unless `stopOnInteraction`). The stand-in has
+ * no drag, so `pointerDown` comes only from code that emits it.
  */
 
 import type { EmblaCarouselType, EmblaPluginType } from "./embla.tsx";
@@ -21,6 +25,8 @@ export type AutoplayOptionsType = {
 export interface AutoplayType extends EmblaPluginType {
   name: "autoplay";
   options: AutoplayOptionsType;
+  /** The pointer entered (`true`) or left the track (`useEmblaTrack` calls it). */
+  hover: (inside: boolean) => void;
   play: (jump?: boolean) => void;
   stop: () => void;
   reset: () => void;
@@ -65,9 +71,34 @@ export default function Autoplay(userOptions: AutoplayOptionsType = {}): Autopla
   function stop() {
     clear();
     active = false;
+    paused = false;
   }
   function reset() {
     if (active) play();
+  }
+  /** Pause without forgetting that autoplay is on, for a press or a hover. */
+  let paused = false;
+  function pause() {
+    if (!active) return;
+    clear();
+    paused = true;
+  }
+  function resume() {
+    if (!paused) return;
+    paused = false;
+    play();
+  }
+  const interaction = () => {
+    if (options.stopOnInteraction) stop();
+    else pause();
+  };
+  const released = () => {
+    if (!options.stopOnInteraction) resume();
+  };
+  function hover(inside: boolean) {
+    if (!options.stopOnMouseEnter) return;
+    if (inside) interaction();
+    else resume();
   }
 
   return {
@@ -75,12 +106,15 @@ export default function Autoplay(userOptions: AutoplayOptionsType = {}): Autopla
     options,
     init(instance) {
       api = instance;
+      instance.on("pointerDown", interaction).on("pointerUp", released);
       if (options.playOnInit && options.active !== false) play();
     },
     destroy() {
+      api?.off("pointerDown", interaction).off("pointerUp", released);
       stop();
       api = undefined;
     },
+    hover,
     play,
     stop,
     reset,

@@ -235,6 +235,12 @@ export default function useEmblaCarousel(
   return [ref.current, api.current];
 }
 
+function hoverPlugins(engine: Engine | undefined, inside: boolean): void {
+  for (const plugin of engine?.plugins ?? []) {
+    if (typeof plugin.hover === "function") plugin.hover(inside);
+  }
+}
+
 /** Props for the track element (embla's container): slide metrics in, offset out. */
 export function useEmblaTrack(
   api: EmblaCarouselType | undefined,
@@ -270,6 +276,9 @@ export function useEmblaTrack(
     viewStyle: vertical
       ? { position: "relative", top: -offset }
       : { position: "relative", left: -offset },
+    // Plugins that follow the pointer over the track (autoplay's stopOnMouseEnter).
+    onMouseEnter: () => hoverPlugins(engine, true),
+    onMouseLeave: () => hoverPlugins(engine, false),
     onLayout: (bounds: Bounds) =>
       setSize((current) =>
         current.width === bounds.width && current.height === bounds.height
