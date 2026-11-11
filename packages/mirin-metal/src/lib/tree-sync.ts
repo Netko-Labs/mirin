@@ -26,17 +26,38 @@ export class TreeSync {
   private root: HostInstance | null = null;
   /** The newest whole tree, while it is what the host holds. */
   private last: string | null = null;
+  /**
+   * Nothing is sent until the host says which protocol it takes
+   * (`lib/handshake.ts`): commits until then are held, and the tree goes
+   * out once, when it says or when it is taken to never say.
+   */
+  private waiting: boolean;
 
   constructor(
     private readonly container: Container,
     private readonly send: (line: string) => void,
     private readonly fields: FieldTexts,
-  ) {}
+    options: { awaitHost?: boolean } = {},
+  ) {
+    this.waiting = options.awaitHost === true;
+  }
 
   /** The host applies patches of `version`: send the whole tree with every id now, patches after. */
   hostPatches(version: number): void {
-    if (version !== PATCH_PROTOCOL || this.patching) return;
+    const waited = this.waiting;
+    this.waiting = false;
+    if (version !== PATCH_PROTOCOL || this.patching) {
+      if (waited) this.resync();
+      return;
+    }
     this.patching = true;
+    this.resync();
+  }
+
+  /** The host said nothing in time: it takes whole trees; send the one held, if any. */
+  hostSilent(): void {
+    if (!this.waiting) return;
+    this.waiting = false;
     this.resync();
   }
 
@@ -50,6 +71,8 @@ export class TreeSync {
   /** After a commit: send what it changed. */
   commit(): void {
     const log = takeLog();
+    // Held for the host's word: the whole tree goes then, whatever this changed.
+    if (this.waiting) return;
     const root = rootOf(this.container);
     if (!root) return;
     if (!this.patching || this.wholeNext || root !== this.root) {

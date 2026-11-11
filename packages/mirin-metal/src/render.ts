@@ -10,6 +10,7 @@ import ReactReconciler from "react-reconciler";
 import { ConcurrentRoot } from "react-reconciler/constants";
 import { ChromeStore, chromeFromEvent, withChrome } from "./chrome.ts";
 import { FieldTexts } from "./lib/field-texts.ts";
+import { announces, HOST_WORD_MS } from "./lib/handshake.ts";
 import { hostConfig } from "./lib/host-config.ts";
 import type { Container, HostInstance } from "./lib/instances.ts";
 import { TreeSync } from "./lib/tree-sync.ts";
@@ -68,7 +69,19 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       sync.commit();
     },
   };
-  const sync = new TreeSync(container, (line) => transport.send(line), fields);
+  // A host that says its protocol first gets the first tree once, after it has said it.
+  const awaitHost = announces(transport);
+  const sync = new TreeSync(container, (line) => transport.send(line), fields, { awaitHost });
+  let silence: ReturnType<typeof setTimeout> | null = awaitHost
+    ? setTimeout(() => {
+        silence = null;
+        sync.hostSilent();
+      }, HOST_WORD_MS)
+    : null;
+  const heard = (): void => {
+    if (silence !== null) clearTimeout(silence);
+    silence = null;
+  };
   // A node's handlers are its current props: what the host was last sent.
   const view = (id: string) => {
     const node: HostInstance | undefined = sync.instance(id);
@@ -161,6 +174,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         chrome.set(chromeFromEvent(event));
         break;
       case "protocol":
+        heard();
         sync.hostPatches(event.patches);
         break;
       case "resync":
@@ -192,6 +206,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
 
   return {
     unmount() {
+      heard();
       reconciler.updateContainer(null, root, null, null);
       transport.close();
     },
