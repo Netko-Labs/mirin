@@ -710,21 +710,47 @@ impl Style {
             let border_widths = self.border_widths.to_pixels(rem_size);
             let max_border_width = border_widths.max();
             let max_corner_radius = corner_radii.max();
+            // mirin: the bands each side's border is drawn in (as deep as
+            // the border, or the corners for the top and bottom ones) are
+            // snapped up onto the device grid where scaling is not exact
+            // (`Grid::snap_up`): a band 6 px deep at 1.1 ends 6.6 device
+            // pixels in, on no grid, and its subtree could not move. Deeper
+            // by less than an eighth of a pixel, they clip the same border
+            // (the quad has no background to show), and never deeper than
+            // half the box, so opposite bands overlap only where they did.
+            let scale_factor = window.scale_factor();
+            let grid = window.grid();
+            let snap_up = |depth: Pixels, across: Pixels| {
+                let device = depth.0 * scale_factor;
+                let snapped = grid.snap_up(device);
+                let half = Pixels(across.0 / 2.);
+                if snapped == device {
+                    depth
+                } else if snapped <= half.0 * scale_factor {
+                    Pixels(snapped / scale_factor)
+                } else if depth <= half {
+                    half
+                } else {
+                    depth
+                }
+            };
+            let depth = snap_up(max_border_width.max(max_corner_radius), bounds.size.height);
+            let side = snap_up(max_border_width, bounds.size.width);
 
             let top_bounds = Bounds::from_corners(
                 bounds.origin,
-                bounds.top_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                bounds.top_right() + point(Pixels::ZERO, depth),
             );
             let bottom_bounds = Bounds::from_corners(
-                bounds.bottom_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                bounds.bottom_left() - point(Pixels::ZERO, depth),
                 bounds.bottom_right(),
             );
             let left_bounds = Bounds::from_corners(
                 top_bounds.bottom_left(),
-                bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
+                bottom_bounds.origin + point(side, Pixels::ZERO),
             );
             let right_bounds = Bounds::from_corners(
-                top_bounds.bottom_right() - point(max_border_width, Pixels::ZERO),
+                top_bounds.bottom_right() - point(side, Pixels::ZERO),
                 bottom_bounds.top_right(),
             );
 

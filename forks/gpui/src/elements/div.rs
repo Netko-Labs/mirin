@@ -1425,6 +1425,12 @@ impl Element for Div {
         if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
             scroll_handle.scroll_to_active_item();
         }
+        // mirin: a view with a tracked scroll handle hands its listener its
+        // children's bounds too, where they are painted (scrolled), which
+        // are known once its scroll offset is (below).
+        let scrolled_children = (has_prepaint_listener
+            && self.interactivity.tracked_scroll_handle.is_some())
+        .then_some(&request_layout.child_layout_ids);
 
         // mirin: a scroll view scrolls as far as taffy found its content
         // reaches (CSS's scrollable overflow), not over the span between its
@@ -1452,6 +1458,13 @@ impl Element for Div {
                 }
 
                 window.with_element_offset(scroll_offset, |window| {
+                    if let Some(child_layout_ids) = scrolled_children {
+                        children_bounds.extend(
+                            child_layout_ids
+                                .iter()
+                                .map(|child_layout_id| window.layout_bounds(*child_layout_id)),
+                        );
+                    }
                     for child in &mut self.children {
                         child.prepaint(window, cx);
                     }

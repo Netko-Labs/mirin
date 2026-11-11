@@ -10,10 +10,9 @@
 //!
 //! The frames are the tree's (`walk.rs`), the groups the last paint's
 //! (`layout.rs`). Where the two agree a node's place is read off the layout
-//! as it stands; where they don't (a frame not painted yet, a row of a
-//! virtualized list, a tree newer than the paint) the node is *loose*: placed
-//! by where things are in the window, and looked at again whenever anything
-//! moved.
+//! as it stands; where they don't (a frame not painted yet, a tree newer
+//! than the paint) the node is *loose*: placed by where things are in the
+//! window, and looked at again whenever anything moved.
 
 use std::collections::HashMap;
 

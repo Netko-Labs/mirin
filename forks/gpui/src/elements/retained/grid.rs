@@ -64,6 +64,31 @@ impl Grid {
         (off <= SNAP).then_some((nearest, off <= ON))
     }
 
+    /// A distance something is drawn from its box (a shadow's offset), in
+    /// device pixels, on the grid: the nearest grid point where scaling is
+    /// not exact (a logical pixel at 1.1 is 1.125 device pixels; at 1.25 or
+    /// 1.5 it is on the grid already, and stays as it is), unchanged where
+    /// it is. Added to a position on the grid it stays on it.
+    pub(crate) fn snap_distance(&self, device: f32) -> f32 {
+        if self.exact || !(device.abs() < FAR) {
+            return device;
+        }
+        (device * STEP).round() / STEP
+    }
+
+    /// A depth something is drawn to inside its box (a border's band), in
+    /// device pixels: the same where it is on the grid (or scaling is
+    /// exact), else the next grid point up, so it is never less.
+    pub(crate) fn snap_up(&self, device: f32) -> f32 {
+        if self.exact || !(device.abs() < FAR) {
+            return device;
+        }
+        match self.near(device) {
+            Some((point, true)) => point,
+            _ => (device * STEP).ceil() / STEP,
+        }
+    }
+
     /// A device position settled, and whether it is on the grid.
     pub(crate) fn settle(&self, value: f32) -> (f32, bool) {
         if !(value.abs() < FAR) {
@@ -203,6 +228,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_distance_snaps_to_the_grid_only_where_it_is_off_it() {
+        let grid = Grid::new(1.1);
+        assert_eq!(grid.snap_distance(1.1), 1.125);
+        assert_eq!(grid.snap_distance(-2.2), -2.25);
+        for scale in [1.25, 1.5, 1.75, 3.] {
+            let grid = Grid::new(scale);
+            for logical in [1., 2., -1., 4., 0.5] {
+                assert_eq!(grid.snap_distance(logical * scale), logical * scale);
+            }
+        }
+        assert_eq!(Grid::new(2.).snap_distance(2.2), 2.2);
+        // Up, never less: a border's band still holds the border.
+        let grid = Grid::new(1.1);
+        assert_eq!(grid.snap_up(6. * 1.1), 6.625);
+        assert_eq!(grid.snap_up(3. * 1.1), 3.375);
+        assert_eq!(Grid::new(1.25).snap_up(6. * 1.25), 7.5);
+        assert_eq!(Grid::new(1.).snap_up(6.3), 6.3);
     }
 
     #[test]

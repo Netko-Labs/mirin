@@ -227,12 +227,15 @@ fn render_view_content(
     let scrolls_along = scrolls_along_its_direction(props);
     // A scroll view's content is a group of the layout map: what is drawn in
     // it is placed in it, and a scroll moves the group alone (`layout/scroll.rs`).
-    // (Its marker is a child before the others; GPUI hands a view that
-    // scrolls no bounds for its children, so it shifts none recorded below.)
+    // Its marker is a child before the others, so its bounds come first.
     let around = view.group;
+    let mut content = around;
+    let mut markers = 0;
     if let Some((group, marker)) = crate::layout::scroll_frame(props, view) {
         element = element.child(marker);
         view.group = Some(group);
+        content = Some(group);
+        markers = 1;
     }
     let mut element = element.children(children.iter().map(|child| {
         view.keeps_length = scrolls_along;
@@ -244,11 +247,11 @@ fn render_view_content(
     if child_ids.iter().any(Option::is_some) {
         let layout = view.layout.clone();
         let events = view.events.clone();
-        let group = view.group;
         element = element.on_children_prepainted(move |bounds, _window, _cx| {
+            let bounds = bounds.into_iter().skip(markers);
             for ((id, watch), bounds) in child_ids.iter().zip(&child_watch).zip(bounds) {
                 if let Some(id) = id {
-                    record_child_bounds(&layout, &events, id, *watch, bounds, group);
+                    record_child_bounds(&layout, &events, id, *watch, bounds, content);
                 }
             }
         });

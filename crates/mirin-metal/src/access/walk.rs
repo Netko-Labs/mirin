@@ -237,11 +237,11 @@ impl<'a> Walk<'a> {
 
     /// The group view `props` moves its content as, if it does: a scroll
     /// view's content, or a retained subtree.
-    fn frame_of(&self, props: &ViewProps, children: &[NodeSpec]) -> Option<u64> {
+    fn frame_of(&self, props: &ViewProps) -> Option<u64> {
         let id = props.id.as_deref()?;
         if props.scroll || props.scroll_x {
-            // A virtualized list draws its rows itself, in no group.
-            return (!crate::list::virtualizes(props, children)).then(|| scroll_group(id));
+            // A virtualized list's rows are its content's group too (`list.rs`).
+            return Some(scroll_group(id));
         }
         (self.facts.retained)(id)
     }
@@ -264,7 +264,7 @@ impl<'a> Walk<'a> {
         // Whether it is a group is read where the tree changed: a view
         // becomes a retained subtree, or stops being one, only with a
         // change at or under it (`retain.rs` looks where a patch reached).
-        let frame = self.frame_of(props, children);
+        let frame = self.frame_of(props);
         let mut making = Making::after(old);
         // What is under it is placed in its frame, when it has one.
         let around = self.space;

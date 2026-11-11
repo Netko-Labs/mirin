@@ -1,8 +1,9 @@
 /**
  * What an assistive technology reads of an app as its content moves: drives
- * a page (a grid of cards and a form in a `<ScrollView>` under a banner)
- * through scrolls, a banner that grows, a selection, typing and a row that
- * comes and goes, and after each step writes the app's whole AT-SPI tree
+ * a page (a grid of cards and a form in a `<ScrollView>` under a banner,
+ * and a long list below it, which the host virtualizes) through scrolls, a
+ * banner that grows, a selection, typing and a row that comes and goes, and
+ * the list's scrolls, and after each step writes the app's whole AT-SPI tree
  * (`dump.py`: roles, names, states, `Component.GetExtents`, actions, text)
  * to `<out-dir>/<step>.txt`.
  *
@@ -39,6 +40,7 @@ const display = args.includes("--visible") ? null : await startHeadlessDisplay()
 const APP = "extents check";
 const ROWS = 30;
 const COLS = 8;
+const LIST_ROWS = 120;
 
 const complaints: string[] = [];
 // `--trace=<path>`: the host's trace with each step's action and reads in it.
@@ -128,6 +130,14 @@ function Page() {
           <Text style={{ color: "#f4f4f5" }}>Last</Text>
         </View>
       </ScrollView>
+      {/* Long enough to be virtualized: its rows are drawn by GPUI's list. */}
+      <ScrollView testID="list" style={{ height: 120 }}>
+        {Array.from({ length: LIST_ROWS }, (_, row) => (
+          <View key={row} testID={`item:${row}`} onPress={() => {}} style={{ height: 18 }}>
+            <Text style={{ color: "#a1a1aa" }}>item {row}</Text>
+          </View>
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -187,6 +197,11 @@ await Bun.sleep(200);
 await after("patch-type", () => transport.simulate({ kind: "type", text: "ab" }));
 await after("scroll-to-the-end", scroll(5000));
 await after("scroll-to-the-start", scroll(-5000));
+const scrollList = (dy: number) => () => transport.simulate({ kind: "scroll", id: id("list"), dy });
+await after("list-scroll-40", scrollList(40));
+await after("list-scroll-13", scrollList(13));
+await after("list-scroll-far", scrollList(900));
+await after("list-scroll-back", scrollList(-300));
 // Accessibility turned off and on again under the app (`run.sh`), as a
 // screen reader quitting and starting does: the tree is whole again, and
 // follows what moves after that.

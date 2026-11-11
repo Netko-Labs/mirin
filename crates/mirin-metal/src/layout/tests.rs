@@ -330,3 +330,24 @@ fn any_run_of_frames_paints_what_the_old_map_did() {
     }
     assert!(quiet > 300, "frames in which nothing moved say so");
 }
+
+#[test]
+fn a_node_moved_with_its_group_is_where_laying_it_out_there_puts_it() {
+    // GPUI places a node on the grid with one division: at device
+    // position `at` in a group whose top left went from `from` to `to`
+    // (device pixels), laying it out there gives (at + to - from) / scale.
+    for scale in [1.25_f32, 1.5, 1.75, 3.0, 1.1, 2.0, 1.0] {
+        for at in [0.0_f32, 7.0, 333.0, 1001.5, 4095.0] {
+            for (from, to) in [
+                (40.0, 100.0),
+                (100.0, 40.0),
+                (-3000.0, -2960.0),
+                (0.0, 13.0),
+            ] {
+                let laid = (at + to - from) / scale;
+                let moved = super::state::moved_along(scale, at / scale, from / scale, to / scale);
+                assert_eq!(moved, laid, "{scale} {at} {from} {to}");
+            }
+        }
+    }
+}

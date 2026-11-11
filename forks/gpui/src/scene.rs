@@ -575,6 +575,12 @@ impl Primitive {
             Primitive::MonochromeSprite(mut sprite_) => {
                 sprite_.order = 0;
                 sprite_.tile = sprite(&sprite_.tile);
+                // Which subpixel variant of the glyph it is (`pad`, see
+                // `Window::paint_line_glyph`), only when asked: a scene
+                // described so is told from one described without it.
+                if !(cfg!(test) || GLYPH_VARIANTS.load(std::sync::atomic::Ordering::Relaxed)) {
+                    sprite_.pad = 0;
+                }
                 format!("{sprite_:?}")
             }
             Primitive::PolychromeSprite(mut sprite_) => {
@@ -1051,6 +1057,19 @@ impl Default for TransformationMatrix {
     fn default() -> Self {
         Self::unit()
     }
+}
+
+/// mirin: whether a scene's description (`Window::scene_drawn`) says which
+/// subpixel variant each glyph is (`describe_glyph_variants`).
+static GLYPH_VARIANTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// mirin: make a scene's description (`Window::scene_drawn`) say which
+/// subpixel variant each glyph is drawn as: for checking that a glyph moved
+/// with a retained subtree is the one drawing it there gives. A scene
+/// described so differs from one described without it.
+#[doc(hidden)]
+pub fn describe_glyph_variants(on: bool) {
+    GLYPH_VARIANTS.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[derive(Clone, Debug)]

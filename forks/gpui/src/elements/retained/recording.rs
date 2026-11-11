@@ -15,9 +15,12 @@
 //!   that is hidden but inside the region is kept as a paint operation. What
 //!   is left out all the same narrows where the drawing is whole
 //!   ([`Recording::valid`]).
-//! - Positions that round. A glyph is snapped to the pixel grid from its
-//!   own position, so a subtree with text is only moved along the other
-//!   axis, or not at all when a glyph sits within rounding of a pixel edge.
+//! - Positions that round. A glyph of a line is placed across from the
+//!   line's position on the grid and its own distance from it apart
+//!   (`place_glyph_x`), so a line moved by whole device pixels draws the
+//!   same pixels there; down, it snaps to a pixel from its own position, so
+//!   a subtree is not moved down when a glyph sits within rounding of a
+//!   pixel edge.
 //!   Everything else is settled on the device grid (`grid`), and what is
 //!   off it keeps the subtree where it is along that axis.
 
@@ -29,11 +32,22 @@ use crate::{
     size,
 };
 
-use super::{RetainedRecord, masks::MaskNode, region::Region};
+use super::{RetainedRecord, grid::Grid, masks::MaskNode, region::Region};
 
 /// How far past its content mask a subtree drawn anew keeps what it draws
 /// (hidden): one scrolled into view by less than this is whole already.
 const KEEP_MARGIN: Pixels = px(256.);
+
+/// Past this (device pixels) a grid point plus a whole move may not be
+/// exact in `f32`: a glyph's line there pins its subtree across.
+const GLYPH_FAR: f32 = 524_288.;
+
+/// Where a glyph is painted across: the device pixel its raster is placed
+/// from, and which of its subpixel variants is drawn.
+pub(crate) struct PlacedGlyphX {
+    pub(crate) pixel: ScaledPixels,
+    pub(crate) variant: u8,
+}
 
 /// How close to a pixel edge a glyph's position may be for the pixel it
 /// snaps to not to depend on rounding: far more than `f32` loses at any
@@ -281,22 +295,44 @@ impl Window {
         }
     }
 
-    /// A glyph is painted at `origin`, in device pixels (`subpixel`: it is
-    /// drawn at a fraction of a pixel across).
-    pub(crate) fn record_glyph(&mut self, origin: Point<ScaledPixels>, _subpixel: bool) {
+    /// A glyph is painted at `origin`, in device pixels: whether it lands
+    /// on the same pixel down wherever it is moved to.
+    pub(crate) fn record_glyph(&mut self, origin: Point<ScaledPixels>) {
         let Some(recording) = self.recordings.last_mut() else {
             return;
         };
-        // Across, it snaps to a fraction of a pixel (or to a pixel, for an
-        // emoji) from a position that is rarely exact: never moved across.
-        recording.fixed[0] = true;
-        // Down, to a pixel (or a fraction, off Linux and Windows).
+        // Down, it snaps to a pixel (or a fraction, off Linux and Windows).
         let down = (origin.y.0 * crate::SUBPIXEL_VARIANTS_Y as f32)
             .fract()
             .abs();
         if down != 0. && !(EDGE..=1. - EDGE).contains(&down) {
             recording.fixed[1] = true;
         }
+    }
+
+    /// A glyph painted from its own position across (`paint_glyph`): it
+    /// snaps to a fraction of a pixel from a position that is rarely exact,
+    /// so the retained subtree being drawn anew is never moved across.
+    pub(crate) fn pin_glyph_across(&mut self) {
+        if let Some(recording) = self.recordings.last_mut() {
+            recording.fixed[0] = true;
+        }
+    }
+
+    /// The pixel and subpixel position across of a glyph `offset` (logical)
+    /// from the start of a line at `line_x`. The line's device position is
+    /// settled on the grid, and the glyph's distance from it is added to its
+    /// fraction alone, so a line moved a whole number of device pixels puts
+    /// each glyph exactly that much further, on the same subpixel position.
+    /// A line off the grid (or past where a grid point plus a whole move
+    /// stays exact) keeps the retained subtree being drawn anew from moving
+    /// across.
+    pub(crate) fn place_glyph_x(&mut self, line_x: Pixels, offset: Pixels) -> PlacedGlyphX {
+        let (placed, steady) = glyph_x(&self.grid(), self.scale_factor(), line_x, offset);
+        if !steady {
+            self.pin_glyph_across();
+        }
+        placed
     }
 
     /// Something drawn is on the device grid across and down, or not
@@ -351,5 +387,59 @@ impl Window {
             recording.pinned = true;
             recording.stays |= stays;
         }
+    }
+}
+
+/// `Window::place_glyph_x` at scale factor `scale`, and whether the line is
+/// on the grid (where a whole move puts each glyph exactly that far).
+fn glyph_x(grid: &Grid, scale: f32, line_x: Pixels, offset: Pixels) -> (PlacedGlyphX, bool) {
+    let (line, on) = grid.settle(line_x.0 * scale);
+    let pixel = line.floor();
+    let within = (line - pixel) + offset.0 * scale;
+    let whole = within.floor();
+    let placed = PlacedGlyphX {
+        pixel: ScaledPixels(pixel + whole),
+        variant: ((within - whole) * crate::SUBPIXEL_VARIANTS_X as f32).floor() as u8,
+    };
+    (placed, on && line.abs() < GLYPH_FAR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_glyph_moved_by_whole_device_pixels_lands_on_the_same_subpixel_position() {
+        let mut before = 0;
+        for scale in [1.0, 2.0, 1.25, 1.5, 1.75, 3.0] {
+            let grid = Grid::new(scale);
+            for at in (0..4000).step_by(37) {
+                // Where layout puts a line: a device position, in a scroll
+                // view scrolled some way.
+                let line_x = grid.place(at as f32 + 0.125 * (at % 8) as f32, px(-50.0 / scale));
+                for by in [1.0, 3.0, 40.0, 333.0, -7.0, 1999.0] {
+                    let moved = grid.moved(line_x, by);
+                    for step in 0..60 {
+                        let offset = px(step as f32 * 3.17 + 0.013);
+                        let (here, steady) = glyph_x(&grid, scale, line_x, offset);
+                        let (there, _) = glyph_x(&grid, scale, moved, offset);
+                        assert!(steady);
+                        assert_eq!(there.pixel.0, here.pixel.0 + by, "{scale} {at} {by}");
+                        assert_eq!(there.variant, here.variant, "{scale} {at} {by}");
+                        // Placed from where it is in the window, as GPUI
+                        // did, it lands elsewhere now and then.
+                        let old = |line_x: Pixels| {
+                            let x = (line_x.0 + offset.0) * scale;
+                            (x.floor(), (x.fract() * 4.0).floor())
+                        };
+                        let (old_here, old_there) = (old(line_x), old(moved));
+                        if old_there != (old_here.0 + by, old_here.1) {
+                            before += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(before > 0);
     }
 }

@@ -30,8 +30,12 @@ pub fn list(
         render_item: Box::new(render_item),
         style: StyleRefinement::default(),
         sizing_behavior: ListSizingBehavior::default(),
+        content_origin_listener: None,
     }
 }
+
+// mirin: `List::on_content_origin`.
+type ContentOriginFn = dyn Fn(Point<Pixels>, &mut Window, &mut App) + 'static;
 
 /// A list element
 pub struct List {
@@ -39,12 +43,25 @@ pub struct List {
     render_item: Box<RenderItemFn>,
     style: StyleRefinement,
     sizing_behavior: ListSizingBehavior,
+    content_origin_listener: Option<Box<ContentOriginFn>>,
 }
 
 impl List {
     /// Set the sizing behavior for the list.
     pub fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
         self.sizing_behavior = behavior;
+        self
+    }
+
+    /// mirin: hear where the list's content has its top left in each
+    /// prepaint, scrolled (where the first item would be painted, past the
+    /// top padding), before its items are prepainted: the items move with
+    /// it as one when the list scrolls.
+    pub fn on_content_origin(
+        mut self,
+        listener: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.content_origin_listener = Some(Box::new(listener));
         self
     }
 }
@@ -790,6 +807,7 @@ impl StateInner {
         padding: Edges<Pixels>,
         autoscroll: bool,
         render_item: &mut RenderItemFn,
+        content_origin_listener: Option<&ContentOriginFn>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<LayoutItemsResponse, ListOffset> {
@@ -828,6 +846,11 @@ impl StateInner {
                     .max(px(0.));
                 let painted = -window.painted_scroll(-(above + offset_in_item), scroll_max);
                 item_origin.y -= painted - above;
+                // mirin: `List::on_content_origin`.
+                if let Some(listener) = content_origin_listener {
+                    let content_top = bounds.origin.y + padding.top - painted;
+                    listener(point(bounds.origin.x, content_top), window, cx);
+                }
                 for item in &mut layout_response.item_layouts {
                     window.with_content_mask(Some(ContentMask { bounds }), |window| {
                         item.element.prepaint_at(item_origin, window, cx);
@@ -1057,16 +1080,32 @@ impl Element for List {
         let padding = style
             .padding
             .to_pixels(bounds.size.into(), window.rem_size());
-        let layout =
-            match state.prepaint_items(bounds, padding, true, &mut self.render_item, window, cx) {
-                Ok(layout) => layout,
-                Err(autoscroll_request) => {
-                    state.logical_scroll_top = Some(autoscroll_request);
-                    state
-                        .prepaint_items(bounds, padding, false, &mut self.render_item, window, cx)
-                        .unwrap()
-                }
-            };
+        let listener = self.content_origin_listener.as_deref();
+        let layout = match state.prepaint_items(
+            bounds,
+            padding,
+            true,
+            &mut self.render_item,
+            listener,
+            window,
+            cx,
+        ) {
+            Ok(layout) => layout,
+            Err(autoscroll_request) => {
+                state.logical_scroll_top = Some(autoscroll_request);
+                state
+                    .prepaint_items(
+                        bounds,
+                        padding,
+                        false,
+                        &mut self.render_item,
+                        listener,
+                        window,
+                        cx,
+                    )
+                    .unwrap()
+            }
+        };
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);

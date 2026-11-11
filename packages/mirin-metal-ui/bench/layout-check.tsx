@@ -15,23 +15,35 @@
  * non-zero on any difference. Runs in an off-screen compositor unless
  * `--visible`.
  *
+ * `across` is the cards in columns in a view that scrolls across
+ * (`overflow: "scroll-x"`), under a centered and a right-aligned caption
+ * each, scrolled across by whole and half pixels, with a strip before them
+ * that widens, and presses and pointer moves by window coordinates. It
+ * scrolls with the simulation's `dx`, which hosts before round 4 lack, so
+ * it is for comparing a host with itself (`--env-b=MIRIN_METAL_RETAIN=0`)
+ * or with one built with that alone.
+ *
  * `scroll-fractional` is the `scroll` app scrolled by fractions of a pixel
  * (a touchpad's steps, small ones that add up, the ends). A scroll view
  * paints its content at whole device pixels (`MIRIN_METAL_SCROLL_SNAP`),
  * which a host from before that does not, so it is for comparing one host
  * with itself: `--scene --env-b=MIRIN_METAL_RETAIN=0`, and at another scale
  * factor with `--env-a=MIRIN_METAL_SCALE=1.5 --env-b=MIRIN_METAL_SCALE=1.5`.
- * There, pass `--bounds-digits=3` too: bounds are then compared to that many
- * decimals. What is drawn is the same to the bit (`--scene`), but the layout
- * map moves a copied subtree's nodes by a logical distance, which at a
- * scale factor that is not a power of two differs from laying them out
- * there in the last digits a float holds.
+ * A host from round 3 needs `--bounds-digits=3` there (bounds compared to
+ * that many decimals): its layout map moved a copied subtree's nodes by a
+ * logical distance, which at a scale factor that is not a power of two
+ * differs from laying them out there in the last digits a float holds.
+ * Since round 4 it moves them on the device grid, and they are the same
+ * to the bit.
  *
  * `--scene` also compares what each host drew after every step: a digest of
  * the frame's primitives and hitboxes, which a host traces with
  * `MIRIN_METAL_TRACE_SCENE=1` (hosts from before that have none). With
  * `--env-b=MIRIN_METAL_RETAIN=0` and the same host twice, that checks
- * retained subtrees draw what drawing everything does. To find what
+ * retained subtrees draw what drawing everything does; add
+ * `--env-a=MIRIN_METAL_TRACE_SCENE_GLYPHS=1 --env-b=MIRIN_METAL_TRACE_SCENE_GLYPHS=1`
+ * to compare which subpixel variant each glyph is drawn as too (the
+ * digest then differs from a host's without it). To find what
  * differs, give each host a file with
  * `--env-a=MIRIN_METAL_TRACE_SCENE=<path>` (every frame's drawing is
  * appended to it), and `LAYOUT_CHECK_TRACE=1` echoes the hosts' trace.
@@ -55,9 +67,10 @@ import { ThemeProvider } from "../src/provider.tsx";
 
 const args = Bun.argv.slice(2);
 const [app, hostA, hostB] = args.filter((arg) => !arg.startsWith("--"));
-if (!app || !hostA || !hostB || !["browser", "grid", "scroll", "scroll-fractional"].includes(app)) {
+const apps = ["browser", "grid", "scroll", "scroll-fractional", "across"];
+if (!app || !hostA || !hostB || !apps.includes(app)) {
   console.error(
-    "usage: bun bench/layout-check.tsx <browser|grid|scroll|scroll-fractional> <host-a> <host-b> [--visible] [--scene]",
+    "usage: bun bench/layout-check.tsx <browser|grid|scroll|scroll-fractional|across> <host-a> <host-b> [--visible] [--scene]",
   );
   process.exit(2);
 }
@@ -168,6 +181,43 @@ function Scrolled() {
   );
 }
 
+/**
+ * The cards in columns that scroll across, each under two captions (text
+ * placed from where its line ends and from its middle), after a strip that
+ * widens when pressed.
+ */
+function Across() {
+  const [wide, setWide] = useState(false);
+  return (
+    <View style={{ flex: 1, backgroundColor: "#09090b", padding: 8, gap: 8 }}>
+      <Text style={{ color: "#f4f4f5", fontSize: 14 }}>across</Text>
+      <View testID="scroller" style={{ flex: 1, overflow: "scroll-x" }}>
+        <View style={{ flexDirection: "row", gap: 2, alignItems: "flex-start" }}>
+          <View
+            testID="banner"
+            onPress={() => setWide((value) => !value)}
+            style={{ width: wide ? 47 : 12, height: 400, backgroundColor: "#3f3f46" }}
+          />
+          {Array.from({ length: 80 }, (_, column) => (
+            <View key={column} style={{ gap: 2 }}>
+              {Array.from({ length: 12 }, (_, row) => (
+                // Every third column hears hovers: it is never left undrawn.
+                <Card key={row} index={column * 12 + row} hovers={column % 3 === 1} />
+              ))}
+              <Text style={{ width: 44, textAlign: "center", fontSize: 10, color: "#a1a1aa" }}>
+                col {column}
+              </Text>
+              <Text style={{ width: 44, textAlign: "right", fontSize: 10, color: "#a1a1aa" }}>
+                {(column * 7919) % 1000}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 type Step = {
   name: string;
   /** `at`: a point inside the border of the node with a test id, as last laid out. */
@@ -179,6 +229,10 @@ type Step = {
 const scroll = (dy: number): Step => ({
   name: `scroll ${dy}`,
   command: (id) => ({ kind: "scroll", id: id("scroller"), dy }),
+});
+const across = (dx: number): Step => ({
+  name: `across ${dx}`,
+  command: (id) => ({ kind: "scroll", id: id("scroller"), dy: 0, dx }),
 });
 /** A press by window coordinates on a card's edge: on whichever node is drawn there. */
 const press = (index: number): Step => ({
@@ -297,8 +351,45 @@ const steps: Step[] =
           { name: "type", command: () => ({ kind: "type", text: "but" }) },
         ];
 
+/** `across`: scrolled across, as `scroll` is down, and by fractions of a pixel. */
+const acrossSteps: Step[] = [
+  across(40),
+  across(40),
+  across(13),
+  press(130),
+  point(160),
+  point(110),
+  across(700),
+  press(400),
+  point(460),
+  // What is before the columns widens: every column moves.
+  { name: "widen", command: (id) => ({ kind: "click", id: id("banner") }) },
+  point(405),
+  press(430),
+  across(-320),
+  press(300),
+  point(250),
+  { name: "narrow", command: (id) => ({ kind: "click", id: id("banner") }) },
+  across(60.5),
+  press(330),
+  across(19.5),
+  across(13.3),
+  across(0.3),
+  across(0.3),
+  across(0.3),
+  point(340),
+  across(5000),
+  point(900),
+  press(910),
+  across(-0.4),
+  across(-5000.5),
+  point(35),
+  { name: "move off", command: () => ({ kind: "move", x: 2, y: 2 }) },
+];
+
 /** The steps the app is driven through. */
-const driven: Step[] = app === "scroll-fractional" ? fractionalSteps : steps;
+const driven: Step[] =
+  app === "scroll-fractional" ? fractionalSteps : app === "across" ? acrossSteps : steps;
 
 type Snapshot = Map<string, string>;
 
@@ -333,6 +424,8 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
   const root = render(
     app === "scroll" || app === "scroll-fractional" ? (
       <Scrolled />
+    ) : app === "across" ? (
+      <Across />
     ) : app === "grid" ? (
       <Grid />
     ) : (

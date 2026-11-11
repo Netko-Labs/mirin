@@ -20,8 +20,12 @@ impl RetainedState {
         let (ranges, origin, whole) = {
             let mut drawn = self.record.drawn.borrow_mut();
             // Only a drawing with nothing left out (one made out of view
-            // has little in it) that may be copied elsewhere is of use.
-            let whole = drawn.valid.is_everywhere() && !drawn.pinned;
+            // has little in it) that may be copied elsewhere is of use. And
+            // not one the pointer is over: it may show hover styles, which
+            // no pointer move takes away while it is out of the frame.
+            let pointer = window.mouse_position();
+            let hovered = drawn.extent.is_some_and(|extent| extent.contains(&pointer));
+            let whole = drawn.valid.is_everywhere() && !drawn.pinned && !hovered;
             (drawn.ranges.take(), drawn.bounds.origin, whole)
         };
         let parked = ranges.and_then(|ranges| {

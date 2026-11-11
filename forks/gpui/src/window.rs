@@ -1,5 +1,6 @@
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
+use crate::elements::retained::PlacedGlyphX;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
@@ -3332,12 +3333,40 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
+        let grid = self.grid();
         for shadow in shadows {
-            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+            // mirin: where scaling is not exact, the shadow's offset and
+            // spread are snapped to the device grid (`Grid::snap_distance`),
+            // so a shadow sits on the grid when its box does and its
+            // retained subtree can move (a logical pixel down is 1.1 device
+            // pixels at 1.1, which is on no grid).
+            let shadow_bounds = if grid.is_exact() {
+                (bounds + shadow.offset)
+                    .dilate(shadow.spread_radius)
+                    .scale(scale_factor)
+            } else {
+                let snap = |distance: Pixels| grid.snap_distance(distance.0 * scale_factor);
+                let (spread, x, y) = (
+                    snap(shadow.spread_radius),
+                    snap(shadow.offset.x),
+                    snap(shadow.offset.y),
+                );
+                let scaled = bounds.scale(scale_factor);
+                Bounds {
+                    origin: point(
+                        ScaledPixels(scaled.origin.x.0 + x - spread),
+                        ScaledPixels(scaled.origin.y.0 + y - spread),
+                    ),
+                    size: size(
+                        ScaledPixels(scaled.size.width.0 + 2. * spread),
+                        ScaledPixels(scaled.size.height.0 + 2. * spread),
+                    ),
+                }
+            };
             self.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: shadow_bounds.scale(scale_factor),
+                bounds: shadow_bounds,
                 content_mask: content_mask.scale(scale_factor),
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
@@ -3470,50 +3499,106 @@ impl Window {
         color: Hsla,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
-
-        let element_opacity = self.element_opacity();
-        let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
-
-        let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
+        let glyph_origin = origin.scale(self.scale_factor());
+        // mirin: where a glyph lands decides its pixels (`elements::retained`).
+        self.record_glyph(glyph_origin);
+        self.pin_glyph_across();
+        let x = PlacedGlyphX {
+            pixel: glyph_origin.x.floor(),
+            variant: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
         };
+        self.paint_placed_glyph(x, glyph_origin.y, font_id, glyph_id, font_size, Some(color))
+    }
+
+    /// mirin: paint a glyph of a line laid out from `line_x`, `offset`
+    /// across from it (logical pixels; `y` is where the glyph is, as
+    /// `paint_glyph`'s). The pixel and subpixel position across are worked
+    /// out from the line's device position and the glyph's distance from it
+    /// apart, so the same line moved a whole number of device pixels lands
+    /// on the same subpixel position, and a retained subtree with text can
+    /// be moved across (`elements::retained`). `color: None` is an emoji.
+    pub(crate) fn paint_line_glyph(
+        &mut self,
+        line_x: Pixels,
+        offset: Pixels,
+        y: Pixels,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Option<Hsla>,
+    ) -> Result<()> {
+        self.invalidator.debug_assert_paint();
+        let scale_factor = self.scale_factor();
+        let glyph_y = y.scale(scale_factor);
+        self.record_glyph(point(ScaledPixels(0.), glyph_y));
+        let x = self.place_glyph_x(line_x, offset);
+        self.paint_placed_glyph(x, glyph_y, font_id, glyph_id, font_size, color)
+    }
+
+    fn paint_placed_glyph(
+        &mut self,
+        x: PlacedGlyphX,
+        y: ScaledPixels,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Option<Hsla>,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
             font_size,
-            subpixel_variant,
+            // We don't render emojis with subpixel variants.
+            subpixel_variant: match color {
+                Some(_) => Point {
+                    x: x.variant,
+                    y: (y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
+                },
+                None => Point::default(),
+            },
             scale_factor,
-            is_emoji: false,
+            is_emoji: color.is_none(),
         };
-
-        // mirin: where a glyph lands decides its pixels (`elements::retained`).
-        self.record_glyph(glyph_origin, true);
-
         let raster_bounds = self.text_system().raster_bounds(&params)?;
-        if !raster_bounds.is_zero() {
-            let tile = self
-                .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                    Ok(Some((size, Cow::Owned(bytes))))
-                })?
-                .expect("Callback above only errors or returns Some");
-            let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.content_mask().scale(scale_factor);
-            self.insert_primitive(MonochromeSprite {
+        if raster_bounds.is_zero() {
+            return Ok(());
+        }
+        let tile = self
+            .sprite_atlas
+            .get_or_insert_with(&params.clone().into(), &mut || {
+                let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                Ok(Some((size, Cow::Owned(bytes))))
+            })?
+            .expect("Callback above only errors or returns Some");
+        let bounds = Bounds {
+            origin: point(x.pixel, y.floor()) + raster_bounds.origin.map(Into::into),
+            size: tile.bounds.size.map(Into::into),
+        };
+        let content_mask = self.content_mask().scale(scale_factor);
+        let opacity = self.element_opacity();
+        match color {
+            Some(color) => self.insert_primitive(MonochromeSprite {
                 order: 0,
-                pad: 0,
+                // mirin: the subpixel variant, for a scene's description
+                // (`scene::describe_glyph_variants`); the GPU never reads it.
+                pad: u32::from(params.subpixel_variant.x),
                 bounds,
                 content_mask,
-                color: color.opacity(element_opacity),
+                color: color.opacity(opacity),
                 tile,
                 transformation: TransformationMatrix::unit(),
-            });
+            }),
+            None => self.insert_primitive(PolychromeSprite {
+                order: 0,
+                pad: 0,
+                grayscale: false,
+                bounds,
+                corner_radii: Default::default(),
+                content_mask,
+                tile,
+                opacity,
+            }),
         }
         Ok(())
     }
@@ -3534,50 +3619,15 @@ impl Window {
         font_size: Pixels,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
-
-        let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
-        let params = RenderGlyphParams {
-            font_id,
-            glyph_id,
-            font_size,
-            // We don't render emojis with subpixel variants.
-            subpixel_variant: Default::default(),
-            scale_factor,
-            is_emoji: true,
-        };
+        let glyph_origin = origin.scale(self.scale_factor());
         // mirin: where a glyph lands decides its pixels (`elements::retained`).
-        self.record_glyph(glyph_origin, false);
-
-        let raster_bounds = self.text_system().raster_bounds(&params)?;
-        if !raster_bounds.is_zero() {
-            let tile = self
-                .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                    Ok(Some((size, Cow::Owned(bytes))))
-                })?
-                .expect("Callback above only errors or returns Some");
-
-            let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.content_mask().scale(scale_factor);
-            let opacity = self.element_opacity();
-
-            self.insert_primitive(PolychromeSprite {
-                order: 0,
-                pad: 0,
-                grayscale: false,
-                bounds,
-                corner_radii: Default::default(),
-                content_mask,
-                tile,
-                opacity,
-            });
-        }
-        Ok(())
+        self.record_glyph(glyph_origin);
+        self.pin_glyph_across();
+        let x = PlacedGlyphX {
+            pixel: glyph_origin.x.floor(),
+            variant: 0,
+        };
+        self.paint_placed_glyph(x, glyph_origin.y, font_id, glyph_id, font_size, None)
     }
 
     /// Paint a monochrome SVG into the scene for the next frame at the current stacking context.

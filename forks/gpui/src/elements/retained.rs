@@ -61,7 +61,7 @@ pub use draw::take_built_apart;
 pub(crate) use grid::Grid;
 pub(crate) use masks::{MaskMap, MaskNode};
 pub(crate) use parked::Parking;
-pub(crate) use recording::Recording;
+pub(crate) use recording::{PlacedGlyphX, Recording};
 pub(crate) use state::Drawn;
 use state::{Plan, RetainedState, Statics};
 
