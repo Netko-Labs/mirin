@@ -7,6 +7,7 @@
 //! then the focused node: the vendored adapter, vendor/accesskit_unix), and
 //! one that goes (closed, or hidden by a resident host) deactivates first.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use accesskit::{
@@ -18,10 +19,15 @@ use accesskit_unix::Adapter;
 /// The newest tree, for a screen reader that starts listening later.
 type Latest = Arc<Mutex<Option<TreeUpdate>>>;
 
-struct Activation(Latest);
+/// Whether a screen reader is listening (the adapter asked for the tree and
+/// hasn't let it go since); set from the adapter's thread.
+type Listening = Arc<AtomicBool>;
+
+struct Activation(Latest, Listening);
 
 impl ActivationHandler for Activation {
     fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
+        self.1.store(true, Ordering::Relaxed);
         self.0.lock().ok().and_then(|latest| latest.clone())
     }
 }
@@ -38,10 +44,12 @@ impl<F: Fn(Action, NodeId) + Send> ActionHandler for Actions<F> {
     }
 }
 
-struct Deactivation;
+struct Deactivation(Listening);
 
 impl DeactivationHandler for Deactivation {
-    fn deactivate_accessibility(&mut self) {}
+    fn deactivate_accessibility(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
 }
 
 /// Name the application on the accessibility bus; only the first name, given
@@ -53,6 +61,7 @@ pub(crate) fn name_app(name: &str) {
 pub(crate) struct Publisher {
     adapter: Adapter,
     latest: Latest,
+    listening: Listening,
 }
 
 impl Drop for Publisher {
@@ -67,12 +76,22 @@ impl Publisher {
     /// `press` gets what a screen reader asked (a click or a focus) and its node.
     pub(crate) fn new(press: impl Fn(Action, NodeId) + Send + 'static) -> Self {
         let latest: Latest = Arc::default();
+        let listening: Listening = Arc::default();
         let adapter = Adapter::new(
-            Activation(Arc::clone(&latest)),
+            Activation(Arc::clone(&latest), Arc::clone(&listening)),
             Actions(press),
-            Deactivation,
+            Deactivation(Arc::clone(&listening)),
         );
-        Self { adapter, latest }
+        Self {
+            adapter,
+            latest,
+            listening,
+        }
+    }
+
+    /// Whether a screen reader is listening to this window's tree.
+    pub(crate) fn listening(&self) -> bool {
+        self.listening.load(Ordering::Relaxed)
     }
 
     /// Hand the adapter a full tree, and whether the window has the keyboard.

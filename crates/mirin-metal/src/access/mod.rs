@@ -16,10 +16,12 @@
 
 #[cfg(target_os = "linux")]
 mod linux;
+mod pace;
 mod tree;
 
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use accesskit::{Action, NodeId, Rect};
 
@@ -67,12 +69,24 @@ struct Built {
 }
 
 impl Built {
-    fn same(&self, other: &Self) -> bool {
+    /// Built from the same tree, focus, window state and title: only the
+    /// bounds may differ.
+    fn same_but_layout(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.tree, &other.tree)
-            && self.layout == other.layout
             && self.focused == other.focused
             && self.window_active == other.window_active
             && self.title == other.title
+    }
+}
+
+/// What changed in `now` since `last` was built (`pace.rs`).
+fn change(last: Option<&Built>, now: &Built) -> pace::Change {
+    match last {
+        Some(last) if last.same_but_layout(now) && last.layout == now.layout => {
+            pace::Change::Nothing
+        }
+        Some(last) if last.same_but_layout(now) => pace::Change::BoundsOnly,
+        _ => pace::Change::New,
     }
 }
 
@@ -80,6 +94,10 @@ impl Built {
 pub(crate) struct Accessibility {
     title: String,
     last: Option<Built>,
+    /// When the tree was last built, and whether a repaint is asked for to
+    /// publish bounds held back since (`pace.rs`).
+    built_at: Option<Instant>,
+    waiting: bool,
     /// Where a screen reader's press or focus goes (shared with the adapter's thread).
     targets: Arc<Mutex<tree::Targets>>,
     #[cfg(target_os = "linux")]
@@ -126,10 +144,20 @@ impl Accessibility {
         Some(Self {
             title: title.to_owned(),
             last: None,
+            built_at: None,
+            waiting: false,
             targets,
             #[cfg(target_os = "linux")]
             publisher: linux::Publisher::new(press),
         })
+    }
+
+    /// Whether a screen reader is listening to this window's tree now.
+    fn listening(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return self.publisher.listening();
+        #[cfg(not(target_os = "linux"))]
+        false
     }
 
     pub(crate) fn retitle(&mut self, title: &str) {
@@ -137,14 +165,16 @@ impl Accessibility {
     }
 
     /// Publish the tree for `tree` as just painted (bounds from `layout`),
-    /// unless nothing it is built from changed since the last time.
+    /// unless nothing it is built from changed since the last time, or only
+    /// bounds did and they wait (`pace.rs`): then the wait after which the
+    /// caller repaints, the first time it is held back.
     pub(crate) fn refresh(
         &mut self,
         tree: &Rc<NodeSpec>,
         layout: &LayoutMap,
         focused: Option<Focused>,
         window_active: bool,
-    ) {
+    ) -> Option<Duration> {
         let now = Built {
             tree: Rc::clone(tree),
             layout: layout.revision(),
@@ -152,8 +182,15 @@ impl Accessibility {
             window_active,
             title: self.title.clone(),
         };
-        if self.last.as_ref().is_some_and(|last| last.same(&now)) {
-            return;
+        let since = self.built_at.map(|at| at.elapsed());
+        match pace::step(change(self.last.as_ref(), &now), self.listening(), since) {
+            pace::Step::Skip => return None,
+            pace::Step::Defer(wait) => {
+                let first = !self.waiting;
+                self.waiting = true;
+                return first.then_some(wait);
+            }
+            pace::Step::Build => {}
         }
         let bounds = |id: &str| {
             layout.bounds(id).map(|bounds| {
@@ -188,12 +225,57 @@ impl Accessibility {
         #[cfg(not(target_os = "linux"))]
         let _ = built.update;
         self.last = Some(now);
+        self.built_at = Some(Instant::now());
+        self.waiting = false;
+        None
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::app_name;
+    use std::rc::Rc;
+
+    use super::{app_name, change, pace::Change, Built};
+    use crate::tree::{parse_tree, NodeSpec};
+
+    fn built(tree: &Rc<NodeSpec>, layout: u64) -> Built {
+        Built {
+            tree: Rc::clone(tree),
+            layout,
+            focused: None,
+            window_active: true,
+            title: "Files".to_owned(),
+        }
+    }
+
+    fn a_tree() -> Rc<NodeSpec> {
+        Rc::new(parse_tree(r#"{"type":"view","props":{"id":"1"},"children":[]}"#).expect("a tree"))
+    }
+
+    #[test]
+    fn what_changed_since_the_last_build() {
+        let tree = a_tree();
+        let last = built(&tree, 1);
+        assert_eq!(change(None, &last), Change::New, "the first frame");
+        assert_eq!(change(Some(&last), &built(&tree, 1)), Change::Nothing);
+        assert_eq!(
+            change(Some(&last), &built(&tree, 2)),
+            Change::BoundsOnly,
+            "a scroll"
+        );
+        assert_eq!(
+            change(Some(&last), &built(&a_tree(), 2)),
+            Change::New,
+            "a new tree"
+        );
+        let mut away = built(&tree, 2);
+        away.window_active = false;
+        assert_eq!(
+            change(Some(&last), &away),
+            Change::New,
+            "the window lost the keyboard"
+        );
+    }
 
     #[test]
     fn the_driver_names_the_app() {
