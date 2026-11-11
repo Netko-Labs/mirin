@@ -5,14 +5,16 @@
  * multiplies.
  *
  *   bun bench/footprint.tsx [host-binary] [--app=counter|browser] [--runs=3]
- *       [--launch=run|bun] [--env=KEY=VALUE]... [--unset=KEY]... [--json] [--visible]
+ *       [--launch=run|bun] [--entry=<file>] [--env=KEY=VALUE]... [--unset=KEY]... [--json] [--visible]
  *
  * Each run starts the app as it really runs: a driver process
  * (`mirin-metal run demo/counter.tsx`, or metal-ui's `demo/browser.tsx` from
  * its own package directory, where its JSX runtime and `bunfig.toml` apply)
  * that spawns the host. `--launch=bun` starts it as `bun demo/counter.tsx`
  * instead, without the environment `mirin-metal run` gives a driver
- * (`driverEnv()`, docs/metal.md section 6). Reported per run, and as medians:
+ * (`driverEnv()`, docs/metal.md section 6). `--entry` runs another file as
+ * the app's driver, from the app's directory (a bundle of it). Reported per
+ * run, and as medians:
  * - startup: driver spawn to the host's `first content frame painted` trace
  *   line, the host's own share of it, and the CPU each process used by then
  *   (the host's includes the children it waited for, the Vulkan probe).
@@ -79,7 +81,9 @@ const APPS: Record<string, AppCommand> = {
     args: ["button-demo"],
   },
 };
-const chosenApp = APPS[appName];
+const entry = flag("entry");
+const listed = APPS[appName];
+const chosenApp = listed && entry ? { ...listed, script: entry } : listed;
 if (!chosenApp) {
   console.error(`--app is one of: ${Object.keys(APPS).join(", ")}`);
   process.exit(2);
