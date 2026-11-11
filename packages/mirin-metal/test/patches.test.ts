@@ -207,6 +207,30 @@ describe("tree patches", () => {
     );
   });
 
+  test("a Text's one string is its own; to several strings and back, each sends its text", async () => {
+    const content = control<ReactNode>("a");
+    const after = control("x");
+    function App() {
+      return createElement(
+        View,
+        null,
+        createElement(Text, null, content.use()),
+        // A string placed in the view after it: its id is the one it always had.
+        createElement(Text, null, after.use(), "!"),
+      );
+    }
+    const { step, root } = await mounted(createElement(App));
+    const texts = (): string => root.lastTree() ?? "";
+    for (const next of ["b", "", 7, ["#", 7], ["#", 8], "c", null, "d", 0n as unknown as string]) {
+      const line = await step(() => content.set(next));
+      // Each change is one set of the text node, nothing else.
+      const ops = (JSON.parse(line) as { patch: Op[] }).patch.filter((op) => op.op === "set");
+      expect(ops).toHaveLength(1);
+    }
+    expect(texts()).toContain('"children":["0"]');
+    await step(() => after.set("y"));
+  });
+
   test("keyed reorders move nodes; new and removed rows insert and remove", async () => {
     const rows = control(["a", "b", "c", "d"]);
     function App() {

@@ -27,7 +27,7 @@ import type {
   HostParent,
   RawTextInstance,
 } from "./instances.ts";
-import { forgetHints, insertNodeBefore, removeNode } from "./instances.ts";
+import { forgetHints, insertNodeBefore, ownText, removeNode } from "./instances.ts";
 import { committed } from "./rest.ts";
 
 type HostType =
@@ -99,7 +99,11 @@ export const hostConfig: HostConfig = {
     if (type === INPUT_TYPE) return { kind: "input", props: props as TextInputProps, ...base };
     if (type === SVG_TYPE) return { kind: "svg", props: props as SvgProps, ...base };
     if (type === IMAGE_TYPE) return { kind: "image", props: props as ImageProps, ...base };
-    if (type === TEXT_TYPE_NAME) return { kind: "text", props: props as TextProps, ...base };
+    if (type === TEXT_TYPE_NAME) {
+      // Its own text takes a string's id, as the node React no longer makes for it did.
+      if (ownText(props as TextProps) !== null) nextTextId += 1;
+      return { kind: "text", props: props as TextProps, ...base };
+    }
     // An unknown host type (e.g. a library rendering "form" with React's own
     // JSX runtime): keep its children visible as a plain view.
     warnUnknownHost(type);
@@ -115,9 +119,11 @@ export const hostConfig: HostConfig = {
   finalizeInitialChildren() {
     return false;
   },
-  shouldSetTextContent() {
-    return false;
+  shouldSetTextContent(type, props) {
+    return type === TEXT_TYPE_NAME && typeof (props as TextProps).children !== "object";
   },
+  // A `<Text>` whose one string became several: they come as nodes next.
+  resetTextContent() {},
   getRootHostContext() {
     return HOST_CONTEXT;
   },
@@ -192,6 +198,13 @@ export const hostConfig: HostConfig = {
     instance.props = nextProps;
     // A new props object every render; only a change that may be sent is logged.
     if (!sameProps(prevProps, nextProps, instance)) logDirty(instance);
+    // A `<Text>`'s own string is its children, which props compare leaves out.
+    else if (
+      instance.kind === "text" &&
+      ownText(prevProps as TextProps) !== ownText(nextProps as TextProps)
+    ) {
+      logDirty(instance);
+    }
   },
   clearContainer(container) {
     for (const child of [...container.children]) remove(container, child);

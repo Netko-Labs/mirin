@@ -23,6 +23,7 @@ import type {
   TextInstance,
   ViewInstance,
 } from "./instances.ts";
+import { ownText } from "./instances.ts";
 import { type AccessNodeProps, accessOf, viewHeadJson } from "./view-props.ts";
 
 interface TextNodeProps {
@@ -196,9 +197,14 @@ function serializeImage(instance: ImageInstance, id: string | undefined): ImageN
 }
 
 function serializeText(instance: TextInstance, id: string | undefined): TextNode {
-  const children = instance.children
-    .filter((child): child is RawTextInstance => child.kind === "raw")
-    .map((child) => child.text);
+  // One string is the text's own (`shouldSetTextContent`), several its nodes.
+  const own = ownText(instance.props);
+  const children =
+    own !== null
+      ? [own]
+      : instance.children
+          .filter((child): child is RawTextInstance => child.kind === "raw")
+          .map((child) => child.text);
   return textNode(instance.props.style ?? {}, instance.props.numberOfLines, children, id);
 }
 

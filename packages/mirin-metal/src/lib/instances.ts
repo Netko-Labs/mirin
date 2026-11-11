@@ -134,3 +134,17 @@ export function insertNodeBefore(
     list.push(child);
   }
 }
+
+/**
+ * A `<Text>`'s children when they are one string or number: React then makes
+ * no node of its own for them (`shouldSetTextContent`), and the text node
+ * reads them from its props (`lib/serialize.ts`). Several (`#{index}`) are
+ * nodes, as in any other parent. Null when they are not one.
+ */
+export function ownText(props: { children?: unknown }): string | null {
+  const children = props.children;
+  const kind = typeof children;
+  if (kind === "string") return children === "" ? null : (children as string);
+  if (kind === "number" || kind === "bigint") return String(children);
+  return null;
+}
