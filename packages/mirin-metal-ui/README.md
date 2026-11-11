@@ -25,7 +25,7 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Input, ThemeProvider 
 | Import | Contents |
 | --- | --- |
 | `@mirinjs/metal-ui` | every component, `cn`/`cva`, `ThemeProvider`, themes, `tw()` |
-| `@mirinjs/metal-ui/icons` | all lucide icons under their `lucide-react` names |
+| `@mirinjs/metal-ui/icons` | all lucide icons under their `lucide-react` names; an icon reads its data when it first renders |
 | `@mirinjs/metal-ui/primitives` | Radix-compatible namespaces (`Dialog.Root`, …) |
 | `@mirinjs/metal-ui/charts` | the recharts subset the chart component uses |
 | `@mirinjs/metal-ui/jsx-runtime` | the JSX runtime that renders `<div>`, `<button>`, `<input>`, `<svg>`, … |
@@ -34,7 +34,8 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Input, ThemeProvider 
 
 - **JSX runtime.** Lowercase tags render through metal-ui's runtime, so
   upstream files keep writing `<div className="…">`.
-- **Tailwind engine.** Class strings translate to Metal styles at render time.
+- **Tailwind engine.** Class strings translate to Metal styles at render time,
+  once per class string, theme and variant outcome (`src/tw/cache.ts`).
   Variants (`data-[state=open]:`, `aria-invalid:`, `group-data-*`, `dark:`,
   `sm:`/`md:`/`lg:`, `first:`/`last:`) evaluate against the element's own
   attributes, and CSS custom properties (`--sidebar-width`, `size-(--cell-size)`)

@@ -1133,6 +1133,131 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   builds nothing while off, and is whole again, as the app then is, when
   turned back on.
 
+- **The driver (2026-11-11).** With the host cheap, the app's own Bun
+  process is the larger half of what an app costs, so it has benches of its
+  own, on a stand-in host (a transport that announces the patch protocol and
+  counts lines: no process, no compositor, so nothing is timed by a frame
+  callback): `packages/mirin-metal-ui/bench/driver.tsx` (`startup`: fresh
+  processes, wall and CPU to each part of the start; `interact`: per switch
+  of example, character typed, theme toggle and window resize on the example
+  browser, with `--profile` the main thread's samples by part, taken with
+  JavaScriptCore's sampling profiler through `node:inspector`; `memory`: the
+  heap after the start and after rounds of 50 interactions; `record`: every
+  line sent over a scripted session) and `packages/mirin-metal/bench/driver.tsx`
+  (a keyed list of 2,500 memoized rows changed sixteen ways, `--scale` for
+  how each grows). Measured on the Ryzen laptop, medians of interleaved runs
+  (the machine was shared: ±30% between runs, the ratios repeat):
+
+  | example browser, driver alone | before | after |
+  | --- | --- | --- |
+  | start: modules loaded | 46 ms | 30 ms |
+  | start: first tree sent, wall / CPU | 67 ms / 120 ms | 49 ms / 93 ms |
+  | start: the example's tree sent, wall / CPU | 77 ms / 150 ms | 55 ms / 111 ms |
+  | heap in use / RSS after the start | 10.4 / 78 MB | 6.8 / 69 MB |
+  | heap after 200 interactions / RSS at rest | 11.8 / 82 MB | 9.9 / 75 MB |
+  | switch example: event → patch sent, CPU | 5.8 ms, 9.9 ms | 5.1 ms, 8.8 ms |
+  | type a character in the search field | 1.9 ms | 1.6 ms |
+  | toggle the theme (every node set, 89 KB) | 7.9 ms | 4.8 ms |
+  | window resized by a pixel | 6.3 ms | 0.24 ms |
+  | with the real host: spawn → first content frame | 97 ms | 77 ms |
+  | with the real host: driver CPU by that frame | 210 ms | 130 ms |
+  | with the real host: driver RSS / PSS / anonymous | 71 / 49 / 40 MB | 62 / 40 / 32 MB |
+
+  What the lines sent are did not change: the wire record of a session that
+  opens all 243 examples, hovers, types in and presses inside each, types
+  in the search field and toggles the theme (826 lines, 2.2 MB; timers on
+  the session's own clock, `Math.random` seeded, so one build records the
+  same bytes twice) is identical before and after, to the byte, for a host
+  that takes patches and for one that takes whole trees, and so is the
+  list bench's (`--record`). What changed, by what it bought:
+
+  - *Icons.* `@mirinjs/metal-ui/icons` imported the whole `lucide` package
+    and made 2,271 components over it: 22 ms and 16 MB of every start. An
+    icon now names its file of `lucide` and reads it when it first renders
+    (`createLucideIcon(name, () => require(…))`), the twenty icons the
+    components themselves draw carry their data in a module of their own
+    (`core.generated.ts`: a process's first `require()` costs 2 to 4 ms),
+    and every icon is marked pure, so a bundle keeps only the ones used. A
+    module with 6,800 exports still costs a start 10 ms and 9 MB however
+    little each does; an app that imports no icon of its own doesn't load it.
+  - *Modules.* `date-fns` came whole for six functions (250 modules: 12 ms,
+    40 ms of CPU, 9 MB for any app importing `@mirinjs/metal-ui`'s entry)
+    and `node:crypto` for one hash (3 ms): each function from its own file,
+    `Bun.CryptoHasher`. Importing the whole entry: 52 ms, 90 ms of CPU and
+    34 MB → 12 ms, 25 ms and 9 MB.
+  - *Class strings.* Every element translated its class string when it
+    mounted and when the theme changed. A string is now split once, and its
+    style kept per theme (by the tokens' values) and per what its variants
+    resolved to (`src/tw/cache.ts`; frozen, shared by every element with
+    that string): the first render translates each distinct string once,
+    and a theme toggled back finds its styles.
+  - *Resize.* The window's width was part of the theme every element reads,
+    so each pixel of a resize re-rendered the whole app (6 ms a step here)
+    to send nothing. Elements now read the theme through `useStyleTheme()`,
+    whose width is the widest breakpoint reached: it changes when one is
+    crossed. `useTheme().viewportWidth` is still the width.
+  - *Per element.* The `has-*` owner hooks make nothing for an element that
+    owns no registry (six hooks → three), attributes are collected in one
+    loop. Of a switch's 6.2 ms on the main thread, React is now 2.9 ms,
+    metal-ui 1.6 ms (it was 2.7), the host config, commit log, tree sync
+    and serialization 0.5 ms; the rest is the app's own render and the
+    bench finding the node to press.
+  - *Lists.* A commit's `removeChild`/`insertBefore` searched the parent's
+    children from the start each time, and a new child was searched for
+    before it was added: a commit of n mutations now looks beside the last
+    one first, and a new child is searched for in no list; ids are spelled
+    once per node. Removing 2,500 rows: 2.4 → 1.2 ms; changing every row's
+    text: 6.0 → 4.2 ms; a swap's share that is ours: 3.4 → 1.6 ms. What is
+    left in the large operations is React's: its commit looks for each
+    placed fiber's next sibling past every other one placed (`getHostSibling`),
+    so 2,500 rows appended to 2,500 in one commit take 15 ms and 5,000 to
+    5,000 take 45, more than half of it there, and swapping two rows 2,480
+    apart is 2,480 moves, 12 ms of it and 145 KB of patch.
+  - *The start's environment.* `driverEnv()` and `mirin-metal run`
+    (section 6): React's production build for an app outside this
+    repository (its development build takes a third longer and 40% more
+    CPU to the first tree, 90 ms and 168 ms of CPU where production took
+    67 and 120 in the same run, and 8 MB more), and one collector thread.
+
+  Idle: nothing of Metal's wakes the driver (no timer of its own, no event
+  from an idle host). The 240–760 wakeups per 5 s measured after the start
+  are Bun's collection timer, which ticks every second for about half a
+  minute after the heap last changed size; each collection wakes
+  JavaScriptCore's seven helper threads. 45 s after the start the driver
+  makes no wakeup at all in 5 s. With `BUN_JSC_numberOfGCMarkers=1` the half minute after
+  activity costs 40 wakeups per 5 s instead of 500; `BUN_GC_TIMER_INTERVAL`
+  (ms) or `BUN_GC_TIMER_DISABLE=1` take the rest to 5.
+
+  Not landed, with numbers. *A bundle*: the same entry built with
+  `Bun.build` (`target: "bun"`, minified, `process.env.NODE_ENV` defined)
+  sends its first tree at 32 ms where the source takes 65 in the same run,
+  with 64 ms of CPU for 116 and 13 MB less; with `--bytecode` (CommonJS
+  output) 21 ms and 49 ms of CPU. Before the icons were pure a bundle
+  bought little (58 ms: it evaluated all of `lucide`). So packaging (`mirin
+  build` for Metal, as Dashi's applets already do) should emit one
+  `main.js` per app (ESM, or CommonJS with bytecode when the entry has no
+  top-level `await`), with React inside it once, the app's files beside it
+  for what it reads through `import.meta.dir`, and no `import()` of a path
+  made at run time (the example browser's own, which is why it is not
+  bundled here); start it with `driverEnv()`. *Bun's transpiler cache*
+  already saves 10 to 18 ms of a start from source (off: 55 ms to load the
+  modules for 37). *The first tree goes out three times*: the host says it
+  takes patches as it starts, but the driver is rendering by then and reads
+  that after its first commits, so it sends the tree without ids, the same
+  bytes again after a commit that changes nothing (the overlay layer
+  learning its view: 3 ms and 10 ms of CPU), and a third time with ids
+  (three serializations, three parses of 90 KB). Waiting one turn of the
+  event loop for the host's word sends it once, and the overlay layer could
+  reach its portals without a commit; both change the lines sent (fewer of
+  the same), and the first showed nothing above the noise in two runs. *JavaScriptCore
+  options*: `BUN_JSC_useDFGJIT=0` saves 10 MB and 18 ms of start CPU and
+  makes a switch 7.3 ms for 5.2; `BUN_JSC_useJIT=0` leaves a 47 MB driver
+  whose switch takes 22 ms; `BUN_JSC_numberOfDFGCompilerThreads=1` saves
+  15 ms of start CPU for nothing measured; `--smol` costs 30 ms of it.
+  *Coalescing moves* in the tree sync (the fewest moves for a parent's new
+  order, instead of React's) would send a swap as two ops, not 2,480; the
+  12 ms React spends placing them would remain.
+
 Open: React work per update (the demo re-renders its whole list on select);
 a scroll by a fraction of a pixel (a touchpad) or at a scale factor other
 than 1, 2 or 4 moves nothing (every row in view is redrawn from its kept
@@ -1144,7 +1269,11 @@ while it is out of view). For the accessibility tree: comparing every
 node's bounds when any moved (about 0.4 µs a node; the layout could say
 which moved), a scroll's bounds going out every frame (they could wait for
 it to settle), and the tree a session with accessibility on but nothing
-reading it still pays for once.
+reading it still pays for once. For the driver: apps started from source
+(a bundle halves the start), the first tree sent three times, serializing
+a view (seventy style fields looked at for each), and four fibers for
+every HTML element in metal-ui (the element, its view, its place among its
+siblings, what it hands down).
 
 ### Footprint: what one small app costs
 
@@ -1188,8 +1317,9 @@ of CPU and 200–760 wakeups per 5 s, nearly all from JavaScriptCore's seven
 heap helper threads. With `BUN_JSC_numberOfGCMarkers=1` in the driver's
 environment it is: 1–3 ms and 20 wakeups per 5 s, 10–12 threads where it had
 16–19, the same memory and the same start (collections mark on one thread,
-which a small app's heap doesn't notice). Nothing in Metal sets it: the
-driver is the parent process, so whatever launches apps would.
+which a small app's heap doesn't notice). The driver is the parent process,
+so whatever launches the app sets it: `mirin-metal run` and `driverEnv()` do
+(section 6), and "The driver" above has what the driver itself costs now.
 
 Where it went, and what changed (fork changes in `forks/gpui/MIRIN.md` and
 `forks/blade-graphics/MIRIN.md`):
@@ -1316,6 +1446,33 @@ Run a demo:
 cd crates/mirin-metal && cargo build --bin mirin-metal-host
 cd ../../packages/mirin-metal && bun demo/counter.tsx
 ```
+
+Start an app's driver as a resident app wants it. The driver is the app's
+own Bun process, and two things about it are decided before its first line
+runs, so only what starts it can set them: `NODE_ENV=production` (Bun leaves
+it unset, and React then runs its development build: the example browser's
+first render takes twice the time and CPU, and 10 MB more) and
+`BUN_JSC_numberOfGCMarkers=1` (JavaScriptCore marks on one thread: for half
+a minute after an app last did something Bun collects once a second, and
+each collection wakes seven helper threads; section 5b, "The driver").
+Nothing sets them behind an app's back. Three ways, each the app's or its
+launcher's choice:
+
+```sh
+bunx mirin-metal run app.tsx          # @mirinjs/metal's bin: sets both, then becomes `bun app.tsx`
+bunx mirin-metal run --dev app.tsx    # the same with React's development build
+NODE_ENV=production BUN_JSC_numberOfGCMarkers=1 bun app.tsx   # by hand, or in a desktop entry's Exec=env …
+```
+
+and a launcher that spawns apps itself (Dashi's shell) passes
+`driverEnv()` from `@mirinjs/metal` as the child's environment
+(`Bun.spawn([bun, "app.tsx"], { env: driverEnv() })`): the caller's
+environment with those two set, and whatever it already says kept.
+`mirin-metal run` replaces its own process with the app's (`execve`), so no
+launcher stays behind; a `bunfig.toml` `define` of `process.env.NODE_ENV`
+in the app's directory (as `packages/mirin-metal-ui` has) is a fourth way
+for that one variable. An app that ships should also be bundled
+(`Bun.build`, `target: "bun"`, that `define`): section 5b has what it buys.
 
 The host reads `MIRIN_METAL_TITLE` and `MIRIN_METAL_SIZE=1280x820`.
 `MIRIN_METAL_SURFACE=<json>` opens a Wayland layer-shell surface (a panel, a

@@ -19,7 +19,7 @@ function markNow(name: string): Mark {
 function mark(name: string): void {
   marks.push(markNow(name));
 }
-/** The newest send after the first two: the example's own tree. */
+/** The newest patch: the example's own tree. */
 let later: Mark | null = null;
 
 mark("bun, react");
@@ -37,12 +37,21 @@ mark("app modules (browser, button)");
 async function show(): Promise<void> {
   // As the real host: the first tree goes out before the host has said it takes patches.
   let announce: (() => void) | null = null;
+  let whole = 0;
+  let withIds = false;
   const host = standIn({
     patches: false,
-    onSend() {
-      if (host.sends === 1) mark("first tree sent (render, commit, serialize)");
-      if (host.sends === 2) mark("tree again with ids (the host takes patches)");
-      if (host.sends > 2) later = markNow("example loaded and sent");
+    onSend(line) {
+      // A patch is the example; a whole tree has ids on its texts once the host takes patches.
+      if (line.startsWith('{"patch"')) later = markNow("example loaded and sent");
+      else if (/"type":"text","props":\{"id"/.test(line)) {
+        if (!withIds) mark("tree again with ids (the host takes patches)");
+        withIds = true;
+      } else {
+        whole += 1;
+        if (whole === 1) mark("first tree sent (render, commit, serialize)");
+        else mark("the same tree again (nothing changed)");
+      }
       announce?.();
       announce = null;
     },
@@ -54,7 +63,7 @@ async function show(): Promise<void> {
   );
   // BENCH_UNTIL_TREE: the start alone, for a build that cannot load the example (a bundle).
   if (process.env.BENCH_UNTIL_TREE) {
-    while (host.sends < 2) await Bun.sleep(1);
+    while (!withIds) await Bun.sleep(1);
     return;
   }
   await quiet(host, 40);
