@@ -28,11 +28,12 @@ impl ActivationHandler for Activation {
 
 struct Actions<F>(F);
 
-impl<F: Fn(NodeId) + Send> ActionHandler for Actions<F> {
+impl<F: Fn(Action, NodeId) + Send> ActionHandler for Actions<F> {
     fn do_action(&mut self, request: ActionRequest) {
-        // A press, or moving the keyboard to a field: both are a click on it.
+        // A press, or moving the keyboard to a field; the targets decide
+        // which nodes each one clicks (`tree::Targets::element_for`).
         if matches!(request.action, Action::Click | Action::Focus) {
-            (self.0)(request.target_node);
+            (self.0)(request.action, request.target_node);
         }
     }
 }
@@ -63,8 +64,8 @@ impl Drop for Publisher {
 }
 
 impl Publisher {
-    /// `press` gets the node a screen reader pressed or focused.
-    pub(crate) fn new(press: impl Fn(NodeId) + Send + 'static) -> Self {
+    /// `press` gets what a screen reader asked (a click or a focus) and its node.
+    pub(crate) fn new(press: impl Fn(Action, NodeId) + Send + 'static) -> Self {
         let latest: Latest = Arc::default();
         let adapter = Adapter::new(
             Activation(Arc::clone(&latest)),

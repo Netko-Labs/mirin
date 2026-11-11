@@ -638,8 +638,10 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   as its active descendant, so the selection is announced as it moves while
   the keyboard stays in the field; a live region is announced when it
   changes. Node ids are hashes of the elements' ids, stable across trees.
-- **Actions.** A screen reader's press or focus is a simulated click on that
-  element (`sim.rs`), the same path the person's click takes.
+- **Actions.** A screen reader's press, or its focus on a field, is a
+  simulated click on that element (`sim.rs`), the same path the person's
+  click takes. Focusing a button or any other pressable view never presses
+  it.
 - **The application.** The AT-SPI application is named by the driver
   (`MIRIN_METAL_APP_NAME`, `appName` on `spawnNativeHost`), else by the
   first window's title, never the host binary's file name (AccessKit's

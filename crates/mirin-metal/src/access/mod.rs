@@ -2,8 +2,9 @@
 //! window. Built from the element tree and the renderer's own state
 //! (`tree.rs`), published over AT-SPI on Linux through AccessKit
 //! (`linux.rs`), and nowhere yet on other platforms. A screen reader's
-//! "press" or "focus" comes back as a simulated click on that element
-//! (`sim.rs`), so it does exactly what the person's click does.
+//! "press", or its "focus" on a field, comes back as a simulated click on
+//! that element (`sim.rs`), so it does exactly what the person's click does;
+//! focusing a button never presses it.
 //!
 //! On by default; `MIRIN_METAL_ACCESSIBLE=0` turns it off. A driver checks
 //! the host binary for `ACCESSIBLE_MARKER` before it sends `access` props:
@@ -17,11 +18,10 @@
 mod linux;
 mod tree;
 
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use accesskit::{NodeId, Rect};
+use accesskit::{Action, NodeId, Rect};
 
 use crate::sim::{LayoutMap, SimCommand};
 use crate::tree::NodeSpec;
@@ -76,8 +76,8 @@ impl Built {
 pub(crate) struct Accessibility {
     title: String,
     last: Option<Built>,
-    /// Node → the element a screen reader's press goes to (shared with the adapter's thread).
-    targets: Arc<Mutex<HashMap<NodeId, String>>>,
+    /// Where a screen reader's press or focus goes (shared with the adapter's thread).
+    targets: Arc<Mutex<tree::Targets>>,
     #[cfg(target_os = "linux")]
     publisher: linux::Publisher,
 }
@@ -89,14 +89,14 @@ impl Accessibility {
         if !wanted() {
             return None;
         }
-        let targets: Arc<Mutex<HashMap<NodeId, String>>> = Arc::default();
+        let targets: Arc<Mutex<tree::Targets>> = Arc::default();
         let press = {
             let targets = Arc::clone(&targets);
-            move |node: NodeId| {
+            move |action: Action, node: NodeId| {
                 let id = targets
                     .lock()
                     .ok()
-                    .and_then(|targets| targets.get(&node).cloned());
+                    .and_then(|targets| targets.element_for(action, node).map(str::to_owned));
                 if let Some(id) = id {
                     act(SimCommand::Click {
                         id: Some(id),

@@ -17,7 +17,7 @@
 //! field has one), or of its parent's and its place for text, so a screen
 //! reader keeps its place when a new tree arrives.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use accesskit::{Action, Live, Node, NodeId, Rect, Role, Toggled, TreeId, TreeInfo, TreeUpdate};
 
@@ -41,8 +41,30 @@ pub(crate) struct Facts<'a> {
 /// A tree to hand the adapter, and which element each pressable node is.
 pub(crate) struct Built {
     pub update: TreeUpdate,
-    /// Node → the element id a click or focus goes to.
-    pub targets: HashMap<NodeId, String>,
+    pub targets: Targets,
+}
+
+/// Where a screen reader's action on a node goes.
+#[derive(Default)]
+pub(crate) struct Targets {
+    /// Node → the element id a click goes to.
+    press: HashMap<NodeId, String>,
+    /// Fields: nodes whose focus is a click too (a click is how a field
+    /// takes the keyboard).
+    fields: HashSet<NodeId>,
+}
+
+impl Targets {
+    /// The element `action` on `node` clicks: any pressable node for a click,
+    /// only a field for a focus. Focusing a button never presses it.
+    pub(crate) fn element_for(&self, action: Action, node: NodeId) -> Option<&str> {
+        match action {
+            Action::Click => self.press.get(&node),
+            Action::Focus if self.fields.contains(&node) => self.press.get(&node),
+            _ => None,
+        }
+        .map(String::as_str)
+    }
 }
 
 /// A stable node id for `key` (FNV-1a), never the root's.
@@ -129,7 +151,7 @@ fn apply_state(node: &mut Node, access: &AccessProps) {
 struct Walk<'a, 'f> {
     facts: &'a Facts<'f>,
     nodes: Vec<(NodeId, Node)>,
-    targets: HashMap<NodeId, String>,
+    targets: Targets,
     /// The focused field's node; where it is in `nodes` when it is a combo box; the selected options seen.
     focus: Option<NodeId>,
     combobox: Option<usize>,
@@ -199,7 +221,7 @@ impl Walk<'_, '_> {
         self.place(&mut node, id);
         if props.on_press {
             node.add_action(Action::Click);
-            self.targets.insert(node_id, id.to_owned());
+            self.targets.press.insert(node_id, id.to_owned());
         }
         // A focusable view with the keyboard is the focus (`focus/`).
         if props.focusable {
@@ -247,7 +269,8 @@ impl Walk<'_, '_> {
         node.add_action(Action::Focus);
         node.add_action(Action::Click);
         self.place(&mut node, &props.id);
-        self.targets.insert(node_id, props.id.clone());
+        self.targets.press.insert(node_id, props.id.clone());
+        self.targets.fields.insert(node_id);
         if self.facts.focused == Some(props.id.as_str()) {
             self.focus = Some(node_id);
             if role == Role::EditableComboBox {
@@ -264,7 +287,7 @@ pub(crate) fn build(tree: &NodeSpec, facts: &Facts) -> Built {
     let mut walk = Walk {
         facts,
         nodes: Vec::new(),
-        targets: HashMap::new(),
+        targets: Targets::default(),
         focus: None,
         combobox: None,
         selected: Vec::new(),
@@ -353,8 +376,13 @@ mod tests {
         assert_eq!(first.is_selected(), Some(true));
         assert!(first.children().is_empty(), "its label stands for its text");
         assert_eq!(
-            built.targets.get(&node_id("r2")).map(String::as_str),
+            built.targets.element_for(Action::Click, node_id("r2")),
             Some("r2")
+        );
+        assert_eq!(
+            built.targets.element_for(Action::Focus, node_id("field")),
+            Some("field"),
+            "focusing a field clicks it, which gives it the keyboard"
         );
         assert_eq!(find(&built, node_id("note")).live(), Some(Live::Polite));
         let root = find(&built, ROOT);
@@ -402,6 +430,15 @@ mod tests {
         let save = find(&built, node_id("save"));
         assert_eq!(save.role(), Role::Button);
         assert!(save.supports_action(Action::Focus));
+        assert_eq!(
+            built.targets.element_for(Action::Focus, node_id("save")),
+            None,
+            "focusing a button never presses it"
+        );
+        assert_eq!(
+            built.targets.element_for(Action::Click, node_id("save")),
+            Some("save")
+        );
         // Focusable but not pressable: still a node, so the focus has one.
         assert_eq!(find(&built, node_id("group")).role(), Role::Group);
     }
