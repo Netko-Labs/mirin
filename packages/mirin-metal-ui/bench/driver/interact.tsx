@@ -23,6 +23,8 @@ interface Sample {
 
 interface Interaction {
   name: string;
+  /** Put back what the steps changed (the search field emptied), outside what is timed. */
+  after?(session: Session): Promise<void>;
   /** The event of step `index` (its node looked up here, outside what is timed). */
   event(session: Session, index: number): NativeEvent;
 }
@@ -43,6 +45,10 @@ const INTERACTIONS: Interaction[] = [
   {
     name: "type in search (one character)",
     event: (session, index) => session.changeOf("search", QUERY[index % QUERY.length] ?? ""),
+    async after(session) {
+      session.type("search", "");
+      await session.settle();
+    },
   },
   {
     name: "toggle theme",
@@ -111,10 +117,12 @@ export async function interact(rounds: number, withProfile: boolean, json: boole
         `${interaction.name}\n  event → own commit sent ${row.syncMs.toFixed(2)} ms, → next free turn ${row.turnMs.toFixed(2)} ms, → last line sent ${row.lastMs.toFixed(2)} ms, process CPU ${row.cpuMs.toFixed(2)} ms, ${row.sends} lines, ${row.kb.toFixed(1)} KB`,
       );
     }
+    await interaction.after?.(session);
     if (withProfile) {
       const { profile } = await profiled(async () => {
         for (let index = 0; index < rounds; index += 1) await measure(session, interaction, index);
       });
+      await interaction.after?.(session);
       const attribution = attribute(profile);
       if (json) report[`${interaction.name}: profile`] = attribution;
       else console.log(attributionTable(attribution, rounds, "ms per interaction, main thread"));

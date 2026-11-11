@@ -148,6 +148,15 @@ interface AccessNodeProps {
 
 /** The accessibility props as the host takes them; undefined when there are none. */
 function accessOf(props: AccessibilityProps): AccessNodeProps | undefined {
+  // Most nodes say nothing about accessibility: nothing to build for them.
+  if (
+    props.accessibilityRole === undefined &&
+    props.accessibilityLabel === undefined &&
+    props.accessibilityState === undefined &&
+    props.accessibilityLiveRegion === undefined
+  ) {
+    return undefined;
+  }
   const state = props.accessibilityState ?? {};
   const access: AccessNodeProps = {
     ...(props.accessibilityRole !== undefined ? { role: props.accessibilityRole } : {}),
@@ -289,7 +298,7 @@ export function headJson(
 }
 
 function head(node: HostNode, parent: HostInstance | null, options: HeadOptions): TreeNode {
-  const id = options.ids ? nodeKey(node) : undefined;
+  const id = options.ids ? node.key : undefined;
   switch (node.kind) {
     case "raw": {
       const style = parent?.kind === "view" ? (parent.props.textStyle ?? {}) : {};
@@ -310,11 +319,6 @@ function head(node: HostNode, parent: HostInstance | null, options: HeadOptions)
     case "image":
       return serializeImage(node, id);
   }
-}
-
-/** The id a node has in the tree: a host instance's number, a string's own. */
-export function nodeKey(node: HostNode): string {
-  return node.kind === "raw" ? node.key : String(node.id);
 }
 
 function serializeSvg(instance: SvgInstance, id: string | undefined): SvgNode {
@@ -370,7 +374,7 @@ function dimension(value: Dimension | undefined): { px?: number; fraction?: numb
 
 function viewProps(instance: ViewInstance): ViewNodeProps {
   const style = instance.props.style ?? {};
-  const props: ViewNodeProps = { id: String(instance.id) };
+  const props: ViewNodeProps = { id: instance.key };
   if (style.flexDirection) props.direction = style.flexDirection;
   if (style.gap !== undefined) props.gap = style.gap;
   if (style.padding !== undefined) props.padding = style.padding;
@@ -571,7 +575,7 @@ function offset(value: number): number {
 }
 
 function inputProps(instance: InputInstance): InputNodeProps {
-  const id = String(instance.id);
+  const id = instance.key;
   const { props: input } = instance;
   const style: TextInputStyle = input.style ?? {};
   const props: InputNodeProps = { id, value: input.value };

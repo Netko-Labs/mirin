@@ -34,6 +34,13 @@ const inPath = (part: string) => (frame: CallFrame) => frame.url.includes(part);
 
 /** The driver's parts, most specific first. */
 export const DRIVER_RULES: Rule[] = [
+  // `root.nodeId(testID)`: the bench finding the node to act on, not the driver's own work.
+  [
+    "bench (testID lookup)",
+    (frame) =>
+      frame.url.includes("/mirin-metal/src/lib/tree-sync.ts") &&
+      (frame.functionName === "visit" || frame.functionName === "nodeId"),
+  ],
   ["className translation (tw/)", inPath("/mirin-metal-ui/src/tw/")],
   ["cn/cva (lib/cn.ts)", inPath("/mirin-metal-ui/src/lib/cn.ts")],
   ["css vars (runtime/vars.ts)", inPath("/mirin-metal-ui/src/runtime/vars.ts")],
