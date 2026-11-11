@@ -405,8 +405,10 @@ struct FrameCache {
 
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
-    lines_index: usize,
-    wrapped_lines_index: usize,
+    // mirin: crate-visible so a retained subtree can move a range it keeps
+    // along with what it was copied with (`elements::retained`).
+    pub(crate) lines_index: usize,
+    pub(crate) wrapped_lines_index: usize,
 }
 
 impl LineLayoutCache {
@@ -445,6 +447,15 @@ impl LineLayoutCache {
             }
             current_frame.used_wrapped_lines.push(key.clone());
         }
+    }
+
+    /// mirin: whether `range` lies within last frame's layouts.
+    pub(crate) fn layouts_range_valid(&self, range: &Range<LineLayoutIndex>) -> bool {
+        let previous_frame = self.previous_frame.lock();
+        range.start.lines_index <= range.end.lines_index
+            && range.end.lines_index <= previous_frame.used_lines.len()
+            && range.start.wrapped_lines_index <= range.end.wrapped_lines_index
+            && range.end.wrapped_lines_index <= previous_frame.used_wrapped_lines.len()
     }
 
     pub fn truncate_layouts(&self, index: LineLayoutIndex) {

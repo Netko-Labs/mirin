@@ -352,6 +352,12 @@ impl WindowTextSystem {
         self.line_layout_cache.reuse_layouts(index)
     }
 
+    /// mirin: whether `index` is a range of last frame's layouts (a retained
+    /// subtree checks before reusing what it drew).
+    pub(crate) fn layouts_range_valid(&self, index: &Range<LineLayoutIndex>) -> bool {
+        self.line_layout_cache.layouts_range_valid(index)
+    }
+
     pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
         self.line_layout_cache.truncate_layouts(index)
     }
