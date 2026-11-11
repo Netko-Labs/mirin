@@ -1417,6 +1417,107 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   order, instead of React's) would send a swap as two ops, not 2,480; the
   12 ms React spends placing them would remain.
 
+- **The driver at rest, its start, its fibers (2026-11-11, round 4).** What
+  round 3 left open on the driver, measured on the same Ryzen laptop with
+  the real host (`ref/host-r3`, `bench/footprint.tsx`, two rounds of three
+  runs, interleaved with the driver as it was) and on the stand-in
+  (`bench/driver.tsx` in both packages). Nothing the host draws changed:
+  `layout-check --scene` with the driver before and after on `ref/host-r3`
+  is identical for `grid`, `browser`, `scroll` and `scroll-fractional` (node
+  by node and frame digest by frame digest), and so is the host against
+  itself with `MIRIN_METAL_RETAIN=0`.
+
+  | counter app, real host | before (`bun app.tsx`) | round 3's `driverEnv` | now (`mirin-metal run`) |
+  | --- | --- | --- | --- |
+  | driver idle, per 5 s (6 s after the start) | 17–19 ms CPU, 651–685 wakeups | 1.3–1.5 ms, 17 | 0.3–0.5 ms, 4–5 |
+  | driver threads | 16–17 | 10 | 4 (bundle), 10 (sources) |
+  | driver RSS / PSS / anonymous | 29.7 / 9.7 / 7.6 MB | 29.2 / 9.2 / 7.0 MB | 24.4 / 6.4 / 4.5 MB (bundle) |
+  | spawn → first content frame | 54, 57 ms | 56, 51 ms | 52, 52 ms (bundle); 58, 64 (sources) |
+
+  The example browser (which `mirin-metal run` can't bundle: it imports its
+  examples by name): idle 27–35 ms of CPU and 669–771 wakeups per 5 s →
+  1.2–2.1 ms and 5; 18–19 threads → 11–12; RSS 62 → 58 MB, PSS 35 → 31,
+  anonymous 31.7 → 27.5 (fewer fibers). Spawn → first content frame: 94,
+  95 ms before; 92, 85 started bare with the new environment (round 3's
+  `driverEnv`: 92, 84); 100, 101 through `mirin-metal run`, whose second
+  Bun start costs an app it can't bundle 5–10 ms (a launcher that spawns
+  apps itself passes `driverEnv()` and has no second start).
+
+  - *Idle.* What woke the driver was Bun's collection timer: once a second
+    while the heap changes size, and for thirty seconds after, each a
+    collection that wakes JavaScriptCore's helper threads (seven, or the
+    one `BUN_JSC_numberOfGCMarkers=1` leaves), and mimalloc's scavenger
+    after it. Nothing of Metal's (no timer, no polling: the host's stdout is
+    one pending read). `driverEnv()`, and so `mirin-metal run`, now also
+    sets `BUN_GC_TIMER_DISABLE=1`, and the driver collects once itself,
+    two seconds after its last commit (`lib/rest.ts`: `bun:jsc`'s
+    `fullGC`, about 1 ms for the counter, 10–25 ms for the example browser
+    after a hundred interactions; `Bun.gc(false)` only asks for a
+    collection, which a process asleep in its event loop never finishes).
+    After a hundred interactions on the example browser (stand-in) the
+    heap 11 s later is 7.4 MB (with the timer, 1.8–7.4 MB, depending on
+    where its collections fell), and the driver wakes 5–12 times per 5 s
+    instead of 13–24 (350–550 without `driverEnv`). The
+    footprint bench now starts apps through `mirin-metal run`, as they run
+    (`--launch=bun` for a bare `bun`).
+  - *Start.* `mirin-metal run` starts an app from a bundle of itself kept
+    in the user's cache while every file it was built from is unchanged,
+    and from its sources (building the bundle in the background for the
+    next start) otherwise (section 6). Spawn → first tree on a host
+    stand-in (a process that announces patches and notes the first line):
+    the counter 21.2 ms from sources, 14.5 from the bundle, 21.1 through
+    `mirin-metal run` with its bundle; metal-ui's smoke page 47.0, 28.7 and
+    31.8. With the real host the counter's start is bound by the host's own
+    (GPU context and first frame, ~35 ms of the 52), so the bundle buys
+    back the launcher's second Bun start and a little more; the driver's
+    memory is what changes there (above). The launcher loads only what
+    checks the bundle (no `node:fs`, which alone took 2 ms): ~4 ms to its
+    `exec`, 1 ms of it the check.
+  - *The first tree, once.* The host says it takes patches as it starts,
+    but the driver was rendering by then: it sent the tree without ids,
+    the same tree after the overlay layer's commit, and again with ids.
+    A transport from `spawnNativeHost` now holds the driver's commits until
+    the host has said so (250 ms at most, for a host from before patches)
+    and sends the tree once, with ids (section 2, "Negotiation"). Lines
+    the host gets: fewer of the same; what it draws: identical (above).
+  - *Serializing a view.* A view's head looked at every field a view could
+    have (some seventy property misses on a megamorphic style) for each
+    view. It now visits its style's own keys and its props (a string
+    `switch` each), gathers the fields by slot and writes them as JSON text
+    in the order they always had (`lib/view-props.ts`): 0.69 → 0.42 µs a
+    view head, over 142k views and inputs the example browser makes, each
+    head byte for byte what it was. The wire records (the example
+    browser's session, the list bench) are identical to the byte.
+  - *Fibers in metal-ui.* An HTML element was its `Box`, `@mirinjs/metal`'s
+    `View` function, the host view, a `SiblingContext` provider for its
+    place among its siblings and, when it changed what flows down, an
+    `InheritedContext` provider; a run of text was `TextRun`, `Text` and
+    the host text. A box now makes the host view and text itself and hands
+    a child box both values as props on its element; only a child that is
+    not a box reads them from context (section 2b). The example browser's
+    pages: 3,790 → 1,768 fibers (button page, 1,171 host nodes), 3,918 →
+    1,859 (card), 4,317 → 2,182 (table). A box also no longer adds or
+    drops a provider above its view when what it hands down starts or
+    stops differing, which remounted its whole subtree (a cmdk group
+    filtered out and back). Main-thread time per interaction on the
+    stand-in (sampled, 80 rounds): switching example 6.2 → 5.1 ms
+    (badge/button) and 5.7 → 4.7 (card/table), a character typed 2.8 →
+    2.7, the theme toggled 5.7 → 5.0; React's own share of the
+    badge/button switch 2.7 → 1.1 ms. The stand-in's start (the example
+    sent, medians of four interleaved rounds of nine) 76 → 69 ms, CPU 138
+    → 122 ms. The session's wire record now differs from
+    round 3's there, a set where it had a remove and an insert, 20 KB less
+    in all, and the host's tree after every one of its 826 lines is the
+    same, ids aside.
+  - *React per update.* Nothing in the host config or the tree sync scales
+    with the tree: a commit's work is its mutations and the nodes React
+    gave new props. The stress demo's whole-grid re-render (on the stand-in,
+    production React, 2,500 cards) is 7.4 ms, 65% of it React's own
+    (render and the commit's walks), 22% `sameProps` on each of the 12,500
+    host nodes it re-rendered (needed to send nothing for them), 1% the
+    patch. What the app re-renders is the app's: memoized cards make it a
+    card's worth.
+
 - Scrolling between pixels, other scale factors, rows that come back
   (2026-11-11; release host, `bench/stress.tsx`, medians of two runs each
   of the host before (`moved and unseen` above, built with only
@@ -1544,11 +1645,15 @@ scroll of one moves each row in view on its own; a scroll view's own
 children get no bounds from GPUI (`on_children_prepainted` hands a view
 with a tracked scroll handle none), so they are in no layout answer and a
 screen reader is told no extents for them; and the tree a session with
-accessibility on but nothing reading it still pays for once. For the driver: apps started from source
-(a bundle halves the start), the first tree sent three times, serializing
-a view (seventy style fields looked at for each), and four fibers for
-every HTML element in metal-ui (the element, its view, its place among its
-siblings, what it hands down).
+accessibility on but nothing reading it still pays for once. For the
+driver ("The driver at rest, its start, its fibers" above has what round 4
+closed): an app that imports a path it makes at run time (the example
+browser) is not bundled; `mirin-metal run` is a second Bun start (~5 ms);
+React's own commit is now the larger half of an update (a stress-sized
+re-render is 65% React, 22% `sameProps` on each host node it re-rendered);
+a keyed swap is still React's 2,480 moves; and Bun's thread pool (seven
+threads after a start from sources) and JavaScriptCore's warm-up thread
+remain, idle.
 
 ### Footprint: what one small app costs
 
