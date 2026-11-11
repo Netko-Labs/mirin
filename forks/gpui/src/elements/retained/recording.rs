@@ -18,6 +18,8 @@
 //! - Positions that round. A glyph is snapped to the pixel grid from its
 //!   own position, so a subtree with text is only moved along the other
 //!   axis, or not at all when a glyph sits within rounding of a pixel edge.
+//!   Everything else is settled on the device grid (`grid`), and what is
+//!   off it keeps the subtree where it is along that axis.
 
 use std::rc::Rc;
 
@@ -53,11 +55,11 @@ pub(crate) struct Recording {
     pub(crate) nested: Vec<Rc<RetainedRecord>>,
     /// Its drawing can't be moved: something in it knows where it is.
     pub(crate) pinned: bool,
-    /// It has glyphs, which snap to pixels across (subpixel positions).
-    pub(crate) glyphs: bool,
-    /// A glyph sits so close to a pixel edge that where it snaps to
-    /// depends on rounding.
-    pub(crate) uneven: bool,
+    /// Its drawing can't be moved across, or down: it has glyphs, which
+    /// snap to a fraction of a pixel across; a glyph sits so close to a
+    /// pixel edge that where it snaps to depends on rounding; or a
+    /// primitive, hitbox or mask is off the device grid (`Grid`).
+    pub(crate) fixed: [bool; 2],
     /// It can't be left undrawn: something in it lives outside its drawing.
     pub(crate) stays: bool,
     /// A subtree inside was drawn though nothing of it shows: drawing this
@@ -81,8 +83,8 @@ impl Recording {
             self.reach(extent);
         }
         self.pinned |= child.pinned;
-        self.glyphs |= child.glyphs;
-        self.uneven |= child.uneven;
+        self.fixed[0] |= child.fixed[0];
+        self.fixed[1] |= child.fixed[1];
         self.stays |= !child.inert;
         self.prunable |= child.prunable;
         if child.ranges.is_none() {
@@ -166,8 +168,7 @@ impl Window {
                 extent: None,
                 nested: Vec::new(),
                 pinned: false,
-                glyphs: false,
-                uneven: false,
+                fixed: [false; 2],
                 stays: false,
                 prunable: false,
             },
@@ -216,11 +217,15 @@ impl Window {
     /// it counts toward how far the subtree reaches, and one left out
     /// narrows where its drawing is whole.
     pub(crate) fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
-        let primitive = primitive.into();
+        let mut primitive = primitive.into();
+        // Settled whether or not anything is recorded: a drawing is the
+        // same with retained subtrees and without.
+        let on = primitive.settle(&self.grid());
         if self.recordings.is_empty() {
             self.next_frame.scene.insert_primitive(primitive);
             return;
         }
+        self.record_off_grid(on);
         let scale_factor = self.scale_factor();
         let scaled = *primitive.bounds();
         let bounds = Bounds {
@@ -279,32 +284,58 @@ impl Window {
         };
         // Across, it snaps to a fraction of a pixel (or to a pixel, for an
         // emoji) from a position that is rarely exact: never moved across.
-        recording.glyphs = true;
+        recording.fixed[0] = true;
         // Down, to a pixel (or a fraction, off Linux and Windows).
         let down = (origin.y.0 * crate::SUBPIXEL_VARIANTS_Y as f32)
             .fract()
             .abs();
         if down != 0. && !(EDGE..=1. - EDGE).contains(&down) {
-            recording.uneven = true;
+            recording.fixed[1] = true;
         }
     }
 
-    /// An icon is painted with its top left at `origin` (device pixels,
-    /// before rounding) and `transformation`.
-    pub(crate) fn record_svg(
+    /// Something drawn is on the device grid across and down, or not
+    /// (`Grid`): off it, the retained subtree being drawn anew is not moved
+    /// along that axis.
+    pub(crate) fn record_off_grid(&mut self, on: [bool; 2]) {
+        if let Some(recording) = self.recordings.last_mut() {
+            recording.fixed[0] |= !on[0];
+            recording.fixed[1] |= !on[1];
+        }
+    }
+
+    /// The pixel an icon with its top left at `origin` (device pixels) is
+    /// painted from. One the same drawing moved would not land on the same
+    /// way pins the retained subtree being drawn anew.
+    pub(crate) fn svg_origin(
         &mut self,
         origin: Point<ScaledPixels>,
         transformation: &TransformationMatrix,
-    ) {
-        let Some(recording) = self.recordings.last_mut() else {
-            return;
+    ) -> Point<ScaledPixels> {
+        let grid = self.grid();
+        // Where scaling is exact, as upstream: a half pixel rounds away
+        // from zero, not the same way wherever it is. Elsewhere halves are
+        // common (a logical pixel is a pixel and a half) and positions
+        // carry what `f32` lost: settled first, and a half always rounds
+        // up, wherever it is; only one off the grid and next to a half
+        // could land either way.
+        let round = |value: ScaledPixels| {
+            if grid.is_exact() {
+                return (value.round(), value.0.fract().abs() != 0.5);
+            }
+            let (settled, on) = grid.settle(value.0);
+            let from_half = ((settled - settled.floor()) - 0.5).abs();
+            (
+                ScaledPixels((settled + 0.5).floor()),
+                on || from_half > EDGE,
+            )
         };
-        // A rotation is about a point of the window, and a half pixel
-        // rounds away from zero, not the same way wherever it is.
-        let half = |value: ScaledPixels| value.0.fract().abs() == 0.5;
-        if *transformation != TransformationMatrix::unit() || half(origin.x) || half(origin.y) {
-            recording.pinned = true;
+        let ((x, steady_x), (y, steady_y)) = (round(origin.x), round(origin.y));
+        // A rotation is about a point of the window.
+        if *transformation != TransformationMatrix::unit() || !steady_x || !steady_y {
+            self.pin_recordings(false);
         }
+        point(x, y)
     }
 
     /// Something in the retained subtree being drawn anew knows where it is

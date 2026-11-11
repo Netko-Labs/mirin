@@ -75,7 +75,8 @@ fn measure_with<'a>(
 }
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
-    absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
+    // mirin: in device pixels (`layout_bounds_device`).
+    absolute_layout_bounds: FxHashMap<LayoutId, Bounds<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
     // mirin: the tree is kept across frames so a retained subtree
     // (`elements::retained`) keeps its nodes, and taffy's cache, from one frame
@@ -494,26 +495,28 @@ impl TaffyLayoutEngine {
         )
     }
 
-    pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
+    /// mirin: a node's bounds in device pixels from the root of its
+    /// layout, as taffy has them (whole ones). Upstream's `layout_bounds`
+    /// divided each node's position by the scale factor and added those up;
+    /// at a scale factor that is not a power of two each division loses a
+    /// little, so where a node landed depended on how deep it is.
+    /// `Window::layout_bounds` divides once, with the element offset
+    /// (`elements::retained::Grid::place`).
+    pub(crate) fn layout_bounds_device(&mut self, id: LayoutId) -> Bounds<f32> {
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;
         }
 
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
         let mut bounds = Bounds {
-            origin: point(
-                Pixels(layout.location.x / scale_factor),
-                Pixels(layout.location.y / scale_factor),
-            ),
-            size: size(
-                Pixels(layout.size.width / scale_factor),
-                Pixels(layout.size.height / scale_factor),
-            ),
+            origin: point(layout.location.x, layout.location.y),
+            size: size(layout.size.width, layout.size.height),
         };
 
         if let Some(parent_id) = self.taffy.parent(id.0) {
-            let parent_bounds = self.layout_bounds(parent_id.into(), scale_factor);
-            bounds.origin += parent_bounds.origin;
+            let parent_bounds = self.layout_bounds_device(parent_id.into());
+            bounds.origin.x += parent_bounds.origin.x;
+            bounds.origin.y += parent_bounds.origin.y;
         }
         self.absolute_layout_bounds.insert(id, bounds);
 

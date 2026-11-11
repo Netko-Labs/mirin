@@ -13,11 +13,12 @@
 //!   dispatch nodes, listeners and scene primitives are copied;
 //! - somewhere else, laid out as it was (it scrolled, or what is above it
 //!   grew): the same are copied, moved, each under the content mask it has
-//!   there (`recording`). Only by whole device pixels, at a scale factor
-//!   that keeps positions exact, and only a drawing that is whole where it
+//!   there (`recording`). Only by whole device pixels between places on
+//!   the device grid (`grid`), and only a drawing that is whole where it
 //!   now shows; the caller says it may be ([`Retained::movable`]);
 //! - where nothing of it shows: nothing at all, if the caller says so
-//!   ([`Retained::skippable`]);
+//!   ([`Retained::skippable`]); its drawing is put aside, within a budget,
+//!   and copied back when it shows again (`parked`);
 //! - otherwise its elements are built again and drawn, onto the layout it
 //!   kept (`TaffyLayoutEngine::begin_bind`), so nothing is laid out and the
 //!   retained subtrees inside it are each drawn their own cheapest way.
@@ -47,15 +48,19 @@ use crate::{
 };
 
 mod draw;
+mod grid;
 mod masks;
 mod moved;
+mod parked;
 mod recording;
 mod region;
 mod state;
 
 #[doc(hidden)]
 pub use draw::take_built_apart;
+pub(crate) use grid::Grid;
 pub(crate) use masks::{MaskMap, MaskNode};
+pub(crate) use parked::Parking;
 pub(crate) use recording::Recording;
 pub(crate) use state::Drawn;
 use state::{Plan, RetainedState, Statics};
@@ -169,10 +174,10 @@ pub struct RetainedLayout {
 pub enum RetainedPrepaint {
     /// Drawn this frame.
     Drawn(AnyElement),
-    /// Last frame's drawing is copied, this far from where it was (`None`:
-    /// as it is); `whole`: what shows of it is what did.
+    /// Last frame's drawing is copied, this many device pixels from where
+    /// it was (`None`: as it is); `whole`: what shows of it is what did.
     Reused {
-        moved: Option<Point<Pixels>>,
+        moved: Option<Point<f32>>,
         whole: bool,
     },
     Skipped,

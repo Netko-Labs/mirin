@@ -1809,7 +1809,13 @@ impl Interactivity {
             }
             self.scroll_max.set(scroll_max);
 
-            *scroll_offset
+            // mirin: the content is painted at whole device pixels
+            // (`Window::set_scroll_snap`); the offset itself keeps its
+            // fraction, for the next wheel step and whoever reads it.
+            point(
+                window.painted_scroll(scroll_offset.x, scroll_max.width),
+                window.painted_scroll(scroll_offset.y, scroll_max.height),
+            )
         } else {
             Point::default()
         }

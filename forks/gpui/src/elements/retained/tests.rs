@@ -39,6 +39,8 @@ struct Scene {
     /// Counts each row's builds; with it, every build of a row but its
     /// first has one more (empty) element in it.
     unsteady: Option<Rc<RefCell<HashMap<usize, usize>>>>,
+    /// How often a row's elements, and a cell's, were made.
+    builds: Rc<Cell<(usize, usize)>>,
 }
 
 struct Rows {
@@ -113,19 +115,26 @@ impl Render for Rows {
                 let (tint, unsteady) = (scene.tint.clone(), scene.unsteady.clone());
                 let cell_markers = self.cell_markers.clone();
                 let cell_draws = self.draws.clone();
+                let builds = scene.builds.clone();
                 retained(
                     ("kept", index),
                     self.markers[index].entity_id(),
                     version,
                     move |_, _| {
+                        let (rows, cells) = builds.get();
+                        builds.set((rows + 1, cells));
                         let cells = (0..scene_cells)
                             .map(|cell_index| {
                                 let marker =
                                     cell_markers[index * scene_cells + cell_index].entity_id();
                                 let draws = cell_draws.clone();
                                 retained(("kept-cell", index * 100 + cell_index), marker, 1, {
-                                    let tint = tint.clone();
-                                    move |_, _| cell(index, cell_index, tint.get())
+                                    let (tint, builds) = (tint.clone(), builds.clone());
+                                    move |_, _| {
+                                        let (rows, cells) = builds.get();
+                                        builds.set((rows, cells + 1));
+                                        cell(index, cell_index, tint.get())
+                                    }
                                 })
                                 .movable(loose)
                                 .skippable(loose)
@@ -193,6 +202,7 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         loose: true,
         tint: Rc::default(),
         unsteady: None,
+        builds: Rc::default(),
     }
 }
 
@@ -205,6 +215,18 @@ struct Opened<'a> {
 }
 
 fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
+    open_at(cx, scene, retain, 2.0, false)
+}
+
+/// `open`, on a display of the scale factor `scale` (a test window's is
+/// 2), with scroll views painting at whole device pixels or not (`snap`).
+fn open_at(
+    cx: &mut TestAppContext,
+    scene: Scene,
+    retain: bool,
+    scale: f32,
+    snap: bool,
+) -> Opened<'_> {
     let shared = Rc::new(RefCell::new(scene));
     let (count, cells) = {
         let scene = shared.borrow();
@@ -224,6 +246,10 @@ fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
         }
     });
     let cell_markers = cx.update(|_, cx| view.read(cx).cell_markers.clone());
+    cx.update(|window, _| window.set_scroll_snap(snap));
+    if scale != 2.0 {
+        cx.simulate_rescale(scale);
+    }
     cx.simulate_resize(size(px(300.0), px(400.0)));
     cx.run_until_parked();
     draw(cx);
@@ -245,6 +271,7 @@ fn plain(rows: Vec<Row>) -> Scene {
         loose: false,
         tint: Rc::default(),
         unsteady: None,
+        builds: Rc::default(),
     }
 }
 
@@ -316,6 +343,27 @@ fn kept_and_redrawn_rows_draw_what_drawing_everything_does(cx: &mut TestAppConte
     assert_eq!(again, whole);
 }
 
+/// Two frames drew the same (`drawn`); the failure names what only one has.
+fn assert_same(kept: &(Vec<String>, String), whole: &(Vec<String>, String), what: &str) {
+    if kept.0 != whole.0 {
+        let only = |a: &[String], b: &[String]| {
+            a.iter()
+                .filter(|drawn| !b.contains(drawn))
+                .map(|drawn| drawn.split(" over ").next().unwrap_or_default().to_owned())
+                .take(3)
+                .collect::<Vec<_>>()
+        };
+        panic!(
+            "primitives of {what}: {} kept, {} whole\nonly kept: {:#?}\nonly whole: {:#?}",
+            kept.0.len(),
+            whole.0.len(),
+            only(&kept.0, &whole.0),
+            only(&whole.0, &kept.0),
+        );
+    }
+    assert_eq!(kept.1, whole.1, "hitboxes of {what}");
+}
+
 /// Drive the same steps with retained rows and without, and compare every
 /// frame. `step` changes the scene and may scroll (the offset down).
 fn compare(
@@ -323,8 +371,19 @@ fn compare(
     scene: Scene,
     steps: &[&dyn Fn(&mut Scene) -> Option<f32>],
 ) -> HashMap<RetainedDraw, usize> {
+    compare_at(cx, scene, 2.0, false, steps)
+}
+
+/// `compare`, at a scale factor and with or without scroll snapping.
+fn compare_at(
+    cx: &mut TestAppContext,
+    scene: Scene,
+    scale: f32,
+    snap: bool,
+    steps: &[&dyn Fn(&mut Scene) -> Option<f32>],
+) -> HashMap<RetainedDraw, usize> {
     let run = |cx: &mut TestAppContext, retain: bool| {
-        let opened = open(cx, scene.clone(), retain);
+        let opened = open_at(cx, scene.clone(), retain, scale, snap);
         let mut frames = vec![drawn(opened.cx)];
         for step in steps {
             let to = step(&mut opened.scene.borrow_mut());
@@ -339,8 +398,7 @@ fn compare(
     let (kept, draws) = run(cx, true);
     let (whole, _) = run(cx, false);
     for (index, (kept, whole)) in kept.iter().zip(&whole).enumerate() {
-        assert_eq!(kept.0, whole.0, "primitives of frame {index}");
-        assert_eq!(kept.1, whole.1, "hitboxes of frame {index}");
+        assert_same(kept, whole, &format!("frame {index} at {scale}"));
     }
     draws
 }
@@ -529,4 +587,234 @@ fn rows_that_may_not_move_are_drawn_where_they_land(cx: &mut TestAppContext) {
     assert!(!draws.contains_key(&RetainedDraw::Skipped), "{draws:?}");
     assert!(draws[&RetainedDraw::Redrawn] > 30, "{draws:?}");
     assert!(draws[&RetainedDraw::Reused] > 30, "{draws:?}");
+}
+
+fn count(draws: &HashMap<RetainedDraw, usize>, draw: RetainedDraw) -> usize {
+    draws.get(&draw).copied().unwrap_or(0)
+}
+
+/// Scrolls that land between pixels, a row growing, and a way back.
+const UNEVEN_STEPS: &[&dyn Fn(&mut Scene) -> Option<f32>] = &[
+    &|_| None,
+    &|_| Some(8.0),
+    &|_| Some(17.3),
+    &|_| Some(21.9),
+    &|_| Some(260.4),
+    &|_| Some(231.0),
+    &|scene| {
+        scene.rows[3].height = 41.0;
+        scene.rows[3].version += 1;
+        None
+    },
+    &|_| Some(0.0),
+    &|_| Some(40.5),
+    &|_| Some(41.5),
+    &|_| Some(42.0),
+    &|_| Some(60.9),
+    &|_| Some(13.3),
+];
+
+#[gpui::test]
+fn rows_move_by_whole_device_pixels_at_any_scale_factor(cx: &mut TestAppContext) {
+    // A scroll view that paints at whole device pixels moves its rows by
+    // whole device pixels whatever a logical pixel is: 2 is exact, the rest
+    // lose a little at every position, and 1.1 is not even a fraction a
+    // float holds.
+    for scale in [1.0, 2.0, 1.25, 1.5, 1.75, 3.0, 1.1] {
+        let draws = compare_at(cx, scrolled(30, 3), scale, true, UNEVEN_STEPS);
+        // At 1.1 a row's shadow, a logical pixel below its box, is on no
+        // grid a float holds: the rows are drawn again, the cells moved.
+        let rows = if scale == 1.1 { 0 } else { 60 };
+        assert!(
+            count(&draws, RetainedDraw::Moved) > rows,
+            "{scale}: {draws:?}"
+        );
+        assert!(
+            count(&draws, RetainedDraw::Skipped) > 100,
+            "{scale}: {draws:?}"
+        );
+        // Without cells, a row is one drawing.
+        let draws = compare_at(cx, scrolled(30, 0), scale, true, UNEVEN_STEPS);
+        let rows = if scale == 1.1 { 0 } else { 30 };
+        assert!(
+            count(&draws, RetainedDraw::Moved) >= rows,
+            "{scale}: {draws:?}"
+        );
+    }
+}
+
+#[gpui::test]
+fn rows_scrolled_between_device_pixels_are_drawn_where_they_land(cx: &mut TestAppContext) {
+    // Painted at the offset itself (no snapping): what does not land a
+    // whole number of device pixels away is drawn again, at any scale.
+    for scale in [1.0, 1.25, 1.5, 1.75, 3.0] {
+        let draws = compare_at(cx, scrolled(30, 3), scale, false, UNEVEN_STEPS);
+        assert!(
+            count(&draws, RetainedDraw::Redrawn) > 20,
+            "{scale}: {draws:?}"
+        );
+    }
+}
+
+#[gpui::test]
+fn small_wheel_steps_add_up_to_whole_pixel_moves(cx: &mut TestAppContext) {
+    use crate::{Modifiers, ScrollDelta, ScrollWheelEvent, TouchPhase};
+    // A touchpad's steps of a fraction of a pixel: the offset keeps them
+    // all, and the rows are painted at the nearest device pixel.
+    const STEP: f32 = 0.3;
+    const STEPS: usize = 40;
+    for scale in [1.0, 1.5, 2.0] {
+        let wheeled = |cx: &mut TestAppContext, retain: bool| {
+            let opened = open_at(cx, scrolled(30, 3), retain, scale, true);
+            // The pointer rests where the wheel turns, over a row.
+            opened
+                .cx
+                .simulate_mouse_move(point(px(100.0), px(60.0)), None, Modifiers::default());
+            let mut frames = Vec::new();
+            for _ in 0..STEPS {
+                opened.cx.simulate_event(ScrollWheelEvent {
+                    position: point(px(100.0), px(60.0)),
+                    delta: ScrollDelta::Pixels(point(px(0.0), px(-STEP))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Moved,
+                });
+                draw(opened.cx);
+                frames.push((drawn(opened.cx), opened.scroll.offset().y.0));
+            }
+            (frames, opened.draws.borrow().clone())
+        };
+        let (kept, draws) = wheeled(cx, true);
+        // Nothing lost: forty steps of 0.3 are twelve pixels.
+        let offset = kept.last().map_or(0.0, |(_, offset)| *offset);
+        assert!((offset + STEP * STEPS as f32).abs() < 1e-3, "{offset}");
+        // What a view scrolled to each rounded offset paints, drawn whole
+        // and without snapping.
+        let expected = open_at(cx, scrolled(30, 3), false, scale, false);
+        expected
+            .cx
+            .simulate_mouse_move(point(px(100.0), px(60.0)), None, Modifiers::default());
+        let mut device = 0.0f32;
+        let mut moves = 0;
+        for (index, (frame, offset)) in kept.iter().enumerate() {
+            let rounded = (offset * scale).round();
+            moves += usize::from(rounded != device);
+            device = rounded;
+            expected
+                .scroll
+                .set_offset(point(px(0.0), px(rounded / scale)));
+            draw(expected.cx);
+            assert_same(
+                frame,
+                &drawn(expected.cx),
+                &format!("step {index} at {scale}"),
+            );
+        }
+        assert!(moves.abs_diff((STEP * STEPS as f32 * scale).round() as usize) <= 1);
+        // Every row in view moved once per pixel, and stayed otherwise.
+        assert!(
+            count(&draws, RetainedDraw::Moved) >= moves,
+            "{scale}: {draws:?}"
+        );
+        assert!(
+            count(&draws, RetainedDraw::Reused) > STEPS - moves,
+            "{scale}: {draws:?}"
+        );
+    }
+}
+
+/// Scroll to each of `stops` in turn, with retained rows; what each frame
+/// drew, and how many rows and cells had been built by then.
+fn scroll_through(
+    cx: &mut TestAppContext,
+    cells: usize,
+    budget: Option<usize>,
+    stops: &[f32],
+) -> Vec<((Vec<String>, String), (usize, usize), usize)> {
+    let scene = scrolled(30, cells);
+    let builds = scene.builds.clone();
+    let opened = open(cx, scene, true);
+    if let Some(budget) = budget {
+        opened
+            .cx
+            .update(|window, _| window.parking.set_budget(budget));
+    }
+    stops
+        .iter()
+        .map(|to| {
+            opened.scroll.set_offset(point(px(0.0), px(-to)));
+            draw(opened.cx);
+            let held = opened.cx.update(|window, _| window.parking.held());
+            (drawn(opened.cx), builds.get(), held)
+        })
+        .collect()
+}
+
+/// What drawing everything gives at each of `stops`.
+fn whole_at(cx: &mut TestAppContext, cells: usize, stops: &[f32]) -> Vec<(Vec<String>, String)> {
+    let opened = open(cx, scrolled(30, cells), false);
+    stops
+        .iter()
+        .map(|to| {
+            opened.scroll.set_offset(point(px(0.0), px(-to)));
+            draw(opened.cx);
+            drawn(opened.cx)
+        })
+        .collect()
+}
+
+/// Down until the first rows are well out of view and back, three times.
+const THERE_AND_BACK: &[f32] = &[
+    0., 70., 140., 210., 140., 70., 0., 70., 140., 210., 140., 70., 0., 210., 0.,
+];
+
+#[gpui::test]
+fn rows_scrolled_out_and_back_are_copied_not_built_again(cx: &mut TestAppContext) {
+    for cells in [0, 3] {
+        let kept = scroll_through(cx, cells, None, THERE_AND_BACK);
+        let whole = whole_at(cx, cells, THERE_AND_BACK);
+        for (index, ((kept, _, _), whole)) in kept.iter().zip(&whole).enumerate() {
+            assert_same(kept, whole, &format!("stop {index} with {cells} cells"));
+        }
+        // Once every row that shows on the way has been drawn where it
+        // shows whole (the first way down and back), nothing is built for
+        // coming back into view. A row with cells is itself built again
+        // (it comes in clipped, and its cells are copied one by one).
+        let (rows_before, cells_before) = kept[6].1;
+        let (rows_after, cells_after) = kept[kept.len() - 1].1;
+        assert_eq!(cells_after, cells_before, "cells, with {cells} cells");
+        if cells == 0 {
+            assert_eq!(rows_after, rows_before);
+        }
+        // Something was put aside on the way.
+        assert!(kept.iter().any(|(_, _, held)| *held > 0));
+    }
+}
+
+#[gpui::test]
+fn drawings_put_aside_past_the_budget_are_dropped_and_built_again(cx: &mut TestAppContext) {
+    for cells in [0, 3] {
+        let roomy = scroll_through(cx, cells, None, THERE_AND_BACK);
+        let most = roomy.iter().map(|(_, _, held)| *held).max().unwrap_or(0);
+        // Room for about a third of what the way puts aside.
+        let budget = most / 3;
+        let tight = scroll_through(cx, cells, Some(budget), THERE_AND_BACK);
+        let whole = whole_at(cx, cells, THERE_AND_BACK);
+        for (index, ((tight, _, held), whole)) in tight.iter().zip(&whole).enumerate() {
+            assert_same(tight, whole, &format!("stop {index} with {cells} cells"));
+            assert!(*held <= budget, "{held} parked of {budget}");
+        }
+        // What was dropped is built again when it shows.
+        let built = |frames: &[((Vec<String>, String), (usize, usize), usize)]| {
+            let (rows, cells) = frames[frames.len() - 1].1;
+            rows + cells
+        };
+        assert!(built(&tight) > built(&roomy), "with {cells} cells");
+        // With no room at all nothing is put aside, as before.
+        let none = scroll_through(cx, cells, Some(0), THERE_AND_BACK);
+        for (index, ((none, _, held), whole)) in none.iter().zip(&whole).enumerate() {
+            assert_same(none, whole, &format!("stop {index} with {cells} cells"));
+            assert_eq!(*held, 0);
+        }
+        assert!(built(&none) > built(&tight), "with {cells} cells");
+    }
 }

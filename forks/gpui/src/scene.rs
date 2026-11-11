@@ -488,6 +488,9 @@ pub(crate) enum Inserted {
     Dropped,
 }
 
+// mirin: `Clone`, for a retained subtree's drawing put aside
+// (`elements::retained::Parked`).
+#[derive(Clone)]
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
     // mirin: the layer's bounds as given and its content mask (`Scene::push_layer`).
@@ -622,6 +625,29 @@ impl Primitive {
             Primitive::PolychromeSprite(sprite) => sprite.content_mask = content_mask,
             Primitive::Surface(surface) => surface.content_mask = content_mask,
         }
+    }
+
+    // mirin: its bounds and content mask settled on the device grid
+    // (`elements::retained::Grid`); whether its position is on it across
+    // and down. A path's points are where they were worked out: one drawn
+    // where scaling is not exact is never on it.
+    pub(crate) fn settle(&mut self, grid: &crate::elements::retained::Grid) -> [bool; 2] {
+        let (bounds, content_mask) = match self {
+            Primitive::Shadow(shadow) => (&mut shadow.bounds, &mut shadow.content_mask),
+            Primitive::Quad(quad) => (&mut quad.bounds, &mut quad.content_mask),
+            Primitive::Path(path) => (&mut path.bounds, &mut path.content_mask),
+            Primitive::Underline(underline) => (&mut underline.bounds, &mut underline.content_mask),
+            Primitive::MonochromeSprite(sprite) => (&mut sprite.bounds, &mut sprite.content_mask),
+            Primitive::PolychromeSprite(sprite) => (&mut sprite.bounds, &mut sprite.content_mask),
+            Primitive::Surface(surface) => (&mut surface.bounds, &mut surface.content_mask),
+        };
+        let (settled, on) = grid.settle_device(*bounds);
+        *bounds = settled;
+        content_mask.bounds = grid.settle_device(content_mask.bounds).0;
+        if matches!(self, Primitive::Path(_)) && !grid.is_exact() {
+            return [false; 2];
+        }
+        on
     }
 
     // mirin: the primitive where it is drawn `offset` away (whole device pixels).

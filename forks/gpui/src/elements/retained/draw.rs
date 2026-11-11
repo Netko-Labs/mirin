@@ -14,29 +14,48 @@ use super::{
 };
 
 impl RetainedState {
-    /// Leave it undrawn at `bounds`: nothing of it shows.
+    /// Leave it undrawn at `bounds`: nothing of it shows. Its drawing, when
+    /// last frame has it, is put aside for when it shows again (`parked`).
     pub(super) fn skip(&mut self, bounds: Bounds<Pixels>, window: &mut Window) {
-        let mut drawn = self.record.drawn.borrow_mut();
-        if drawn.ranges.take().is_some() {
+        let (ranges, origin, whole) = {
+            let mut drawn = self.record.drawn.borrow_mut();
+            // Only a drawing with nothing left out (one made out of view
+            // has little in it) that may be copied elsewhere is of use.
+            let whole = drawn.valid.is_everywhere() && !drawn.pinned;
+            (drawn.ranges.take(), drawn.bounds.origin, whole)
+        };
+        let parked = ranges.and_then(|ranges| {
             // What is inside goes with it (once: nothing is there after).
-            for record in &self.nested {
-                record.drawn.borrow_mut().ranges = None;
-            }
+            let nested = self
+                .nested
+                .iter()
+                .map(|record| record.drawn.borrow_mut().ranges.take())
+                .collect();
+            whole
+                .then(|| window.park(&self.record, ranges, origin, nested))
+                .flatten()
+        });
+        let mut drawn = self.record.drawn.borrow_mut();
+        if parked.is_some() {
+            drawn.parked = parked;
         }
+        // Where it would be drawn, and how far it would reach: what the
+        // subtree around it records of it. The mask stays the one its
+        // drawing was made under.
         let offset = bounds.origin - drawn.bounds.origin;
         drawn.shift(offset);
         drawn.bounds.origin = bounds.origin;
-        drawn.mask = Some(window.content_mask().bounds);
         drawn.prunable = false;
     }
 
-    /// Copy last frame's prepaint, `moved` away when given.
+    /// Copy last frame's prepaint, `moved` device pixels away when given.
     pub(super) fn reuse_prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        moved: Option<Point<Pixels>>,
+        moved: Option<Point<f32>>,
         window: &mut Window,
     ) {
+        let grid = window.grid();
         let mut drawn = self.record.drawn.borrow_mut();
         let Some(ranges) = &mut drawn.ranges else {
             return;
@@ -60,12 +79,12 @@ impl RetainedState {
                 nested.ranges = None;
             }
             if let Some(moved) = moved {
-                nested.shift(moved);
+                nested.shift_device(moved, &grid);
                 nested.mask = None;
             }
         }
         if let Some(moved) = moved {
-            drawn.shift(moved);
+            drawn.shift_device(moved, &grid);
         }
         drawn.bounds.origin = bounds.origin;
         drawn.mask = Some(window.content_mask().bounds);
@@ -75,7 +94,7 @@ impl RetainedState {
     /// `Scene::replay_moved`).
     pub(super) fn reuse_paint(
         &mut self,
-        moved: Option<Point<Pixels>>,
+        moved: Option<Point<f32>>,
         whole: bool,
         window: &mut Window,
     ) {
@@ -192,8 +211,10 @@ impl RetainedState {
         self.recording = Some(window.end_recording());
         self.statics = Some(Statics::of(window));
         let mut drawn = self.record.drawn.borrow_mut();
-        // Not whole until it is painted.
+        // Not whole until it is painted; a drawing put aside is of what it
+        // was.
         drawn.known = false;
+        drawn.parked = None;
         drawn.ranges = Some(Ranges {
             prepaint: start..window.prepaint_index(),
             paint: Default::default(),
@@ -242,8 +263,7 @@ impl RetainedState {
         drawn.valid = recording.valid;
         drawn.extent = recording.extent;
         drawn.pinned = recording.pinned || placed;
-        drawn.glyphs = recording.glyphs;
-        drawn.uneven = recording.uneven;
+        drawn.fixed = recording.fixed;
         drawn.inert = !(recording.stays || placed || takes_keys);
         drawn.prunable = recording.prunable;
         drawn.known = true;

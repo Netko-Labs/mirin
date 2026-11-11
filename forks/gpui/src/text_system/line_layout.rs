@@ -403,6 +403,13 @@ struct FrameCache {
     used_wrapped_lines: Vec<Arc<CacheKey>>,
 }
 
+/// mirin: layouts kept out of the frames' caches (`LineLayoutCache::park_layouts`).
+#[derive(Default)]
+pub(crate) struct ParkedLayouts {
+    lines: Vec<(Arc<CacheKey>, Option<Arc<LineLayout>>)>,
+    wrapped_lines: Vec<(Arc<CacheKey>, Option<Arc<WrappedLineLayout>>)>,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
     // mirin: crate-visible so a retained subtree can move a range it keeps
@@ -447,6 +454,54 @@ impl LineLayoutCache {
             }
             current_frame.used_wrapped_lines.push(key.clone());
         }
+    }
+
+    /// mirin: last frame's layouts in `range`, for a retained subtree's
+    /// drawing put aside while nothing of it shows
+    /// (`elements::retained::Parked`).
+    pub(crate) fn park_layouts(&self, range: Range<LineLayoutIndex>) -> ParkedLayouts {
+        let previous_frame = self.previous_frame.lock();
+        ParkedLayouts {
+            lines: previous_frame.used_lines[range.start.lines_index..range.end.lines_index]
+                .iter()
+                .map(|key| (key.clone(), previous_frame.lines.get(key).cloned()))
+                .collect(),
+            wrapped_lines: previous_frame.used_wrapped_lines
+                [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
+                .iter()
+                .map(|key| (key.clone(), previous_frame.wrapped_lines.get(key).cloned()))
+                .collect(),
+        }
+    }
+
+    /// mirin: put layouts `park_layouts` took back at the end of last
+    /// frame's, for `reuse_layouts` to carry on; the range they are now in.
+    pub(crate) fn unpark_layouts(&self, parked: ParkedLayouts) -> Range<LineLayoutIndex> {
+        let previous_frame = &mut *self.previous_frame.lock();
+        let start = LineLayoutIndex {
+            lines_index: previous_frame.used_lines.len(),
+            wrapped_lines_index: previous_frame.used_wrapped_lines.len(),
+        };
+        for (key, line) in parked.lines {
+            if let Some(line) = line {
+                previous_frame.lines.entry(key.clone()).or_insert(line);
+            }
+            previous_frame.used_lines.push(key);
+        }
+        for (key, line) in parked.wrapped_lines {
+            if let Some(line) = line {
+                previous_frame
+                    .wrapped_lines
+                    .entry(key.clone())
+                    .or_insert(line);
+            }
+            previous_frame.used_wrapped_lines.push(key);
+        }
+        let end = LineLayoutIndex {
+            lines_index: previous_frame.used_lines.len(),
+            wrapped_lines_index: previous_frame.used_wrapped_lines.len(),
+        };
+        start..end
     }
 
     /// mirin: whether `range` lies within last frame's layouts.

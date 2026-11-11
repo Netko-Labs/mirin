@@ -816,7 +816,18 @@ impl StateInner {
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
-                item_origin.y -= layout_response.scroll_top.offset_in_item;
+                // mirin: the items are painted at whole device pixels
+                // (`Window::set_scroll_snap`): the list's whole offset is
+                // rounded, not the part of it inside the first item, so a
+                // scroll moves every item by whole pixels whichever item is
+                // first.
+                let offset_in_item = layout_response.scroll_top.offset_in_item;
+                let above = self.scroll_top(&layout_response.scroll_top) - offset_in_item;
+                let scroll_max = (self.items.summary().height + padding.top + padding.bottom
+                    - bounds.size.height)
+                    .max(px(0.));
+                let painted = -window.painted_scroll(-(above + offset_in_item), scroll_max);
+                item_origin.y -= painted - above;
                 for item in &mut layout_response.item_layouts {
                     window.with_content_mask(Some(ContentMask { bounds }), |window| {
                         item.element.prepaint_at(item_origin, window, cx);

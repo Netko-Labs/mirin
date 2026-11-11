@@ -697,7 +697,8 @@ pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
+    // mirin: crate-visible, for `elements::retained::Parked`.
+    pub(crate) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -901,6 +902,12 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
+    // mirin: the device positions a kept drawing moves between exactly,
+    // at this scale factor (`elements::retained::Grid`).
+    grid: crate::elements::retained::Grid,
+    // mirin: scroll views paint their content at whole device pixels
+    // (`set_scroll_snap`).
+    scroll_snap: bool,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -924,6 +931,9 @@ pub struct Window {
     // region elements cull against instead of the content mask (`cull_mask`).
     pub(crate) mask_id_stack: Vec<u32>,
     pub(crate) cull_stack: Vec<Bounds<Pixels>>,
+    // mirin: the drawings of retained subtrees left undrawn, kept for when
+    // they show again (`elements::retained::Parking`).
+    pub(crate) parking: crate::elements::retained::Parking,
     // mirin: the element states of the retained subtrees being drawn, innermost last.
     pub(crate) element_state_scopes: Vec<ElementStateScope>,
     active: Rc<Cell<bool>>,
@@ -1357,6 +1367,8 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
+            grid: crate::elements::retained::Grid::new(scale_factor),
+            scroll_snap: false,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -1369,6 +1381,7 @@ impl Window {
             recordings: Vec::new(),
             mask_id_stack: Vec::new(),
             cull_stack: Vec::new(),
+            parking: Default::default(),
             element_state_scopes: Vec::new(),
             active,
             hovered,
@@ -1861,6 +1874,7 @@ impl Window {
 
     fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
+        self.grid = crate::elements::retained::Grid::new(self.scale_factor);
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
 
@@ -2024,6 +2038,35 @@ impl Window {
     /// be rendered as two pixels on screen.
     pub fn scale_factor(&self) -> f32 {
         self.scale_factor
+    }
+
+    // mirin: see the `grid` field.
+    pub(crate) fn grid(&self) -> crate::elements::retained::Grid {
+        self.grid
+    }
+
+    /// mirin: whether scroll views (`overflow_scroll` and `list`) paint
+    /// their content at whole device pixels: the offset they are scrolled
+    /// to keeps its fraction (a touchpad's small steps add up, a scroll
+    /// bar reads it), and the content is drawn at the nearest device pixel,
+    /// as browsers do. A scrolled frame then moves what it drew by whole
+    /// pixels, which retained subtrees copy instead of drawing again
+    /// (`elements::retained`). Off by default, as upstream.
+    pub fn set_scroll_snap(&mut self, snap: bool) {
+        self.scroll_snap = snap;
+    }
+
+    /// mirin: where a scroll view scrolled to `offset` along one axis (zero
+    /// or less) of at most `max` paints its content: at the nearest device
+    /// pixel when `set_scroll_snap` is on, except at the very end, which
+    /// is painted where it is.
+    pub fn painted_scroll(&self, offset: Pixels, max: Pixels) -> Pixels {
+        if !self.scroll_snap || offset <= -max {
+            return offset;
+        }
+        let scale_factor = self.scale_factor;
+        let snapped = Pixels((offset.0 * scale_factor).round() / scale_factor);
+        snapped.clamp(-max.max(Pixels::ZERO), Pixels::ZERO)
     }
 
     /// The size of an em for the base font of the application. Adjusting this value allows the
@@ -2456,13 +2499,15 @@ impl Window {
     }
 
     /// mirin: `reuse_prepaint`, for a retained subtree (`elements::retained`)
-    /// that may have moved: with `moved`, every hitbox is `moved` away from
-    /// where it was, under the content mask it would have there.
+    /// that may have moved: with `moved`, every hitbox is `moved` device
+    /// pixels away from where it was, under the content mask it would have
+    /// there.
     pub(crate) fn reuse_prepaint_moved(
         &mut self,
         range: Range<PrepaintStateIndex>,
-        moved: Option<Point<Pixels>>,
+        moved: Option<Point<f32>>,
     ) {
+        let grid = self.grid();
         let masks = self.reuse_masks(
             range.start.content_masks_index..range.end.content_masks_index,
             moved,
@@ -2474,7 +2519,7 @@ impl Window {
         {
             let mut hitbox = hitbox.clone();
             if let Some(moved) = moved {
-                hitbox.bounds.origin += moved;
+                hitbox.bounds.origin = grid.moved_point(hitbox.bounds.origin, moved);
                 hitbox.content_mask = ContentMask {
                     bounds: masks.mask(*mask_id),
                 };
@@ -2531,8 +2576,9 @@ impl Window {
     fn reuse_masks(
         &mut self,
         range: Range<usize>,
-        moved: Option<Point<Pixels>>,
+        moved: Option<Point<f32>>,
     ) -> crate::elements::retained::MaskMap {
+        let grid = self.grid();
         let mut map = crate::elements::retained::MaskMap::new(
             range.clone(),
             self.next_frame.content_masks.len(),
@@ -2540,7 +2586,9 @@ impl Window {
             self.content_mask().bounds,
         );
         for node in &self.rendered_frame.content_masks[range] {
-            self.next_frame.content_masks.push(map.push(node, moved));
+            self.next_frame
+                .content_masks
+                .push(map.push(node, moved, &grid));
         }
         map
     }
@@ -2564,15 +2612,16 @@ impl Window {
     }
 
     /// mirin: `reuse_paint`, for a retained subtree (`elements::retained`)
-    /// that may have moved: with `moved`, every primitive is `moved` away
-    /// from where it was, under the content mask it would have there.
-    /// `whole`: what shows of it is what did (`Scene::replay_moved`).
+    /// that may have moved: with `moved`, every primitive is `moved` device
+    /// pixels away from where it was, under the content mask it would have
+    /// there. `whole`: what shows of it is what did (`Scene::replay_moved`).
     pub(crate) fn reuse_paint_moved(
         &mut self,
         range: Range<PaintIndex>,
-        moved: Option<Point<Pixels>>,
+        moved: Option<Point<f32>>,
         whole: bool,
     ) {
+        let grid = self.grid();
         let masks = self.reuse_masks(
             range.start.content_masks_index..range.end.content_masks_index,
             moved,
@@ -2612,10 +2661,13 @@ impl Window {
         self.next_frame.scene.replay_moved(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
-            moved.map(|moved| moved.scale(scale_factor)),
+            moved.map(|moved| point(ScaledPixels(moved.x), ScaledPixels(moved.y))),
             |mask_id| {
+                // Settled as a primitive drawn under it is (`insert_primitive`).
                 let content_mask = moved.map(|_| ContentMask {
-                    bounds: masks.mask(mask_id).scale(scale_factor),
+                    bounds: grid
+                        .settle_device(masks.mask(mask_id).scale(scale_factor))
+                        .0,
                 });
                 (masks.id(mask_id), content_mask)
             },
@@ -2809,8 +2861,16 @@ impl Window {
             // mirin: the mask as given is kept too (`push_mask_node`), so a
             // retained subtree drawn again elsewhere gets the mask it would
             // have there.
-            let culls = self.push_mask_node(mask.bounds);
-            let mask = mask.intersect(&self.content_mask());
+            // mirin: both settled (`elements::retained::Grid`): what the
+            // mask clips to is then the same wherever it is worked out from.
+            let grid = self.grid();
+            let (bounds, on, sized) = grid.settle_bounds(mask.bounds);
+            self.record_off_grid([on[0] && sized[0], on[1] && sized[1]]);
+            let culls = self.push_mask_node(bounds);
+            let mask = ContentMask { bounds }.intersect(&self.content_mask());
+            let mask = ContentMask {
+                bounds: grid.settle_bounds(mask.bounds).0,
+            };
             self.content_mask_stack.push(mask);
             let result = f(self);
             self.content_mask_stack.pop();
@@ -3235,10 +3295,15 @@ impl Window {
         // mirin: the scene keeps the layer's own bounds and mask, and (for a
         // retained subtree drawn anew, `elements::retained`) one that is
         // hidden where it is; one left out is a hole in the drawing.
+        let grid = self.grid();
+        let (layer_bounds, on) = grid.settle_device(bounds.scale(scale_factor));
+        self.record_off_grid(on);
         let pushed = self.next_frame.scene.push_layer(
-            bounds.scale(scale_factor),
-            content_mask.scale(scale_factor),
-            clipped_bounds.scale(scale_factor),
+            layer_bounds,
+            ContentMask {
+                bounds: grid.settle_device(content_mask.bounds.scale(scale_factor)).0,
+            },
+            grid.settle_device(clipped_bounds.scale(scale_factor)).0,
         );
         if pushed == crate::scene::Inserted::Dropped {
             self.record_left_out(bounds);
@@ -3563,15 +3628,16 @@ impl Window {
                 .map(|value| ScaledPixels(value.0 as f32 / SMOOTH_SVG_SCALE_FACTOR)),
         };
 
-        // mirin: a rotated icon, or one that rounds a half pixel, is not
-        // the same drawing moved (`elements::retained`).
-        self.record_svg(svg_bounds.origin, &transformation);
+        // mirin: a rotated icon, or one that could round either way, is
+        // not the same drawing moved (`elements::retained`).
+        let origin = self.svg_origin(svg_bounds.origin, &transformation);
         self.insert_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
-            bounds: svg_bounds
-                .map_origin(|origin| origin.round())
-                .map_size(|size| size.ceil()),
+            bounds: Bounds {
+                origin,
+                size: svg_bounds.size.map(|size| size.ceil()),
+            },
             content_mask,
             color: color.opacity(element_opacity),
             tile,
@@ -3782,14 +3848,25 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let scale_factor = self.scale_factor();
-        let mut bounds = self
+        // mirin: placed from its device position (taffy lays out in whole
+        // device pixels) and the offset around it, so where it lands does
+        // not depend on how it got there (`elements::retained::Grid`).
+        let device = self
             .layout_engine
             .as_mut()
             .unwrap()
-            .layout_bounds(layout_id, scale_factor)
-            .map(Into::into);
-        bounds.origin += self.element_offset();
-        bounds
+            .layout_bounds_device(layout_id);
+        let (grid, offset) = (self.grid(), self.element_offset());
+        Bounds {
+            origin: point(
+                grid.place(device.origin.x, offset.x),
+                grid.place(device.origin.y, offset.y),
+            ),
+            size: size(
+                Pixels(device.size.width / scale_factor),
+                Pixels(device.size.height / scale_factor),
+            ),
+        }
     }
 
     /// This method should be called during `prepaint`. You can use
@@ -3800,6 +3877,11 @@ impl Window {
     pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
+        // mirin: settled, so a retained subtree's hitboxes copied elsewhere
+        // are what inserting them there gives (`elements::retained::Grid`);
+        // one off the grid keeps the subtree where it is.
+        let (bounds, on, _) = self.grid().settle_bounds(bounds);
+        self.record_off_grid(on);
         let content_mask = self.content_mask();
         let mut id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();

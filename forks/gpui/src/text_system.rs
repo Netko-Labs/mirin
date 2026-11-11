@@ -358,6 +358,16 @@ impl WindowTextSystem {
         self.line_layout_cache.layouts_range_valid(index)
     }
 
+    // mirin: see `LineLayoutCache::park_layouts`.
+    pub(crate) fn park_layouts(&self, index: Range<LineLayoutIndex>) -> ParkedLayouts {
+        self.line_layout_cache.park_layouts(index)
+    }
+
+    // mirin: see `LineLayoutCache::unpark_layouts`.
+    pub(crate) fn unpark_layouts(&self, parked: ParkedLayouts) -> Range<LineLayoutIndex> {
+        self.line_layout_cache.unpark_layouts(parked)
+    }
+
     pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
         self.line_layout_cache.truncate_layouts(index)
     }

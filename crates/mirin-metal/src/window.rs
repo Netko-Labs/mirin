@@ -509,6 +509,7 @@ impl Render for RootView {
                         crate::trace::since_start_ms()
                     ));
                 }
+                trace_scale(window.scale_factor());
                 if let Some(dump) = scene_traced() {
                     // For a check that two hosts draw the same (`layout-check --scene`).
                     let digest = window.scene_digest();
@@ -542,6 +543,15 @@ impl Render for RootView {
             .child(marker)
             .children(access)
             .into_any_element()
+    }
+}
+
+/// Trace the scale factor frames are drawn at when it is not the last one
+/// traced: what a benchmark at another scale ran at (`MIRIN_METAL_SCALE`).
+fn trace_scale(scale: f32) {
+    static TRACED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if TRACED.swap(scale.to_bits(), std::sync::atomic::Ordering::Relaxed) != scale.to_bits() {
+        crate::trace::log(format_args!("scale factor {scale}"));
     }
 }
 
