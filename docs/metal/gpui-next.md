@@ -3,6 +3,11 @@
 Date: 2026-11-10. Branch `perf-gpui-next`. Spike code: `spikes/gpui-next/`
 (its README says how to build it and repeat the numbers).
 
+Round 4 (2026-11-11, branch `gpui-next-port`) made the migration real:
+upstream GPUI is in the tree as forks (`forks/zed`, `forks/taffy-next`),
+mirin-metal builds on it beside the fork (`crates/mirin-metal/next`), and
+retained subtrees run on it in place. Section 6 has where that stands.
+
 Metal's GPUI fork (`forks/gpui`) is the crates.io release gpui 0.2.2 plus 29
 mirin changes (about 3,070 added lines over 23 files, `forks/gpui/MIRIN.md`),
 on a taffy 0.9.0 fork with 9 more (480 lines, `forks/taffy/MIRIN.md`). gpui
@@ -489,6 +494,269 @@ Risks: layout or text differences across Dashi's apps that only show on
 screen (step 7 is there for that); the retained port taking longer than
 estimated, during which the old fork stays the default; upstream changing the
 frame internals under the port (sync before starting step 5, not during).
+
+## 6. Round 4: the migration under way
+
+Branch `gpui-next-port` (from `metal-forks` at `a494f9c`). Sections 1–5 are
+the spike; this one is what is real now, and replaces the spike's
+`spikes/gpui-next/` way of building (kept for its numbers).
+
+### What is in the tree
+
+- **Upstream as forks.** `forks/zed/` holds the GPUI crates of zed at
+  `f8cfc7ed` (the spike's commit; a day old, so not worth a newer one) in
+  zed's own layout, and `forks/taffy-next/` holds taffy 0.15.0, the version
+  upstream GPUI pins. Both came in pristine on the branch
+  `forks-upstream-next` (made from `forks-upstream`, one commit) and were
+  merged into this branch, as `forks/README.md` describes; that README now
+  says what was taken and how to re-sync. 20 crates, the ones a build of
+  mirin-metal resolves on any target, `examples/` left out (6.9 MB of files).
+  Every one is `Apache-2.0` in its manifest, with `LICENSE-APACHE` beside it;
+  none of zed's GPL crates is in. taffy is MIT. The old forks
+  (`forks/gpui`, `forks/taffy`, `forks/blade-graphics`) are untouched.
+- **A second build, side by side.** `crates/mirin-metal/next/Cargo.toml`
+  builds the same `../src` on `forks/zed` with the `gpui-next` feature, its
+  own lockfile (the spike's, which started from zed's) and its own
+  `target/`. `crates/mirin-metal/Cargo.toml` builds what it built; its only
+  change declares the `gpui-next` cfg so the lint knows it. Every API that
+  differs in shape is one function in `src/gpui_api/` (`fork.rs` and
+  `upstream.rs`, the same signatures; 17 + 157 + 229 lines), so the rest of
+  the crate has no `cfg` for them: focus with `cx`, the app's start, quit
+  mode, window-closed callbacks, `AsyncApp::update`, scroll ranges as a
+  point, `ShapedLine::paint`'s alignment, `BoxShadow::inset`, keystroke
+  parsing, `on_scroll`, layer-shell options as a window kind, visibility for
+  suspension. What upstream lacks altogether is ported into `forks/zed` with
+  the fork's API instead, and the shim goes; 8 stand-ins marked `GAP` remain
+  (Dashi chrome, session lock, file drag-out, per-paragraph sizes; the
+  screen a layer surface names). Tests that need a fork-only feature are
+  `cfg`'d with a comment: the fork's three helper tests (`reuses_layout`,
+  `cut_line`, `ink_end_x`), the scroll-snap switch, and the moved-count
+  assertion. mirin-metal's source grew by 564 lines and lost 117, most of
+  it `gpui_api/` and `cx` passed down for focus.
+
+  ```sh
+  cd crates/mirin-metal/next
+  cargo build --release --bin mirin-metal-host    # ~2 min from cold
+  cargo test --lib                                 # 188 pass, 1 ignored
+  cargo clippy --all-targets -- -D warnings
+  ```
+
+### Fork changes, against upstream (updated)
+
+`forks/zed/MIRIN.md` and `forks/taffy-next/MIRIN.md` list what is ported.
+Against `forks/gpui/MIRIN.md`'s 49 rows (29 from the spike's count, 20 more
+from rounds 2 and 3):
+
+| Status | Rows |
+| --- | --- |
+| Ported (`forks/zed`) | grid track lists; `justify_items`/`justify_self`; text min-content is the widest word; scroll by taffy's content size; wheel scrolls the innermost view; list scroll bar counts padding; narrow ellipsis draws nothing; `set_window_min_size` (Wayland); resize while maximized; `scene_drawn`/`scene_digest`; retained subtrees in place, with the layout tree kept across frames (below) |
+| Ported (`forks/taffy-next`) | relayout at a min/max width; fit-content base size; fit-content hypothetical cross size; end margins in the scrollable overflow; `remove` keeps a re-parented child; `contains` |
+| Upstream has it | layer shell; a layer surface's screen (by `DisplayId`); typed float literals; idle windows stop committing; loop outlives its last window; text input only while a field takes it; suspended state (as visibility); layout reused only for the same truncation width; a line cut from a copy of its runs; no-break spaces and quotes (UAX #14); `DispatchEventResult` public; **scroll views paint at whole device pixels** (round 3: upstream snaps every element offset to device pixels in `Window::layout_bounds`, always, so `MIRIN_METAL_SCROLL_SNAP=0` has no effect there); taffy's negative-margin fix |
+| Moot | blade's shared pipelines and the blade-graphics fork's allocator (no blade; the wgpu renderer needs its own look); taffy's incremental rounding and detached layout (GPUI rounds itself; a copy laid out apart is a root with its twin's size) |
+| Still applies, not ported | **retained: moves, the device grid at any scale, parked drawings, skips, rebuilding onto kept nodes, whole/region recordings, `insert_spanning`** (below); per-paragraph font sizes; `fit_to`; ink-end alignment; session lock; Dashi's unified title bar; a layer surface's screen by connector name and the stretched axis; file drag-out with an icon; `MIRIN_METAL_SCALE` test scale; startup milestones log; the footprint rows that live outside blade: path textures only while paths show, a font face loaded when first picked, system fonts read on a thread, the compose table read at the first key, four background threads, a renderer that starts with the window's transparency |
+| Its own question | accessibility: upstream GPUI brings AccessKit 0.24 and accesskit_unix 0.22 and publishes a tree of elements with a role (none in mirin-metal); mirin-metal's `access/` and the accesskit_unix fork (0.24) still publish its tree, so both are in the build (step 6) |
+
+### Retained subtrees on upstream GPUI
+
+**Design.** Upstream's frame is still 0.2.2's (section 4): request layout,
+prepaint, paint of the whole tree, `reuse_prepaint`/`reuse_paint` copying
+ranges of last frame's lists for `AnyView::cached`, and a taffy tree made
+from nothing each frame. The port keeps the fork's model and fits it to
+that frame in steps, each usable alone:
+
+1. *In place* (done). `elements/retained.rs` (444 lines) is the fork's
+   element, minus what later steps add. A subtree whose version, view and
+   statics (text style, scale, rem size, opacity) are unchanged hands its
+   kept taffy root to its parent instead of building; taffy's own cache
+   answers for it. When it lands where it was drawn, at its size, under the
+   same content mask, its last prepaint and paint ranges are copied with
+   upstream's own `reuse_prepaint`/`reuse_paint` (hitboxes, dispatch nodes,
+   tooltips, deferred draws, element states, line layouts; scene, listeners,
+   cursors, input handlers, tab stops), as a cached view's are. Nested
+   subtrees: each one drawn inside another registers its record with it
+   (`Window::retained_nested`), and a copied subtree moves every nested
+   record's ranges along (`PrepaintStateIndex::rebase`, `PaintIndex::rebase`,
+   `LineLayoutIndex::rebase`), so they name the right stretch next frame
+   whichever of them is drawn then. Ranges are checked before use
+   (`prepaint_range_valid`, `paint_range_valid`, the font generation).
+   The layout engine keeps a tree across frames: nodes made while a subtree
+   builds are its own (`begin_owned`/`end_owned`), freed when its state goes
+   (`released`); the frame's own nodes are freed at its end, children first;
+   with nothing retained the tree is cleared whole, as before. taffy-next's
+   `remove` keeps a child a new parent adopted.
+   Anywhere else (it moved, or its size or mask changed) the subtree is
+   built again and laid out *apart*, as a root with its twin's size, its
+   edges rounded from where the twin sits (`place_detached`: upstream snaps
+   absolute edges, so the copy's origin is the twin's unrounded one), and
+   the subtrees inside it are built with it. That is what the fork did
+   before round 2, and it gives the same layout, which the tests check.
+2. *Moves* (next; the gate for grow and scroll). Copy a drawing that moved
+   by whole device pixels, as the fork's `reuse_*_moved`: hitboxes and
+   primitives shifted, each under the content mask it has there. That needs
+   what 0.2.2 needed: a record of which mask each primitive and hitbox was
+   pushed under (the fork's `MaskMap`), so masks inside the subtree move
+   with it and are clipped again by the ones around it; pins for what keeps
+   its place (tooltips, deferred draws, input handlers, drags, drops, group
+   styles, a pointer over it); and the device grid (`Grid`) at scale
+   factors that are not powers of two. Upstream's absolute edge rounding
+   helps: a move by whole device pixels rounds every edge inside as it was,
+   except a half pixel exactly on either side of zero
+   (`round_half_toward_zero`), which the plan must refuse. Also
+   `insert_spanning`: upstream's `Scene::replay` inserts every primitive
+   into the bounds tree again, a third of a reused frame on the fork.
+   A first cut that stays exact without the mask map, for drawings that are
+   whole on both sides of the move (every row of a grid that grows above
+   it, every row of a scroll view but the two at its edges): record, while
+   a subtree paints, whether anything of it was left out or clipped by the
+   mask around it (`Scene::insert_primitive`'s early return, a glyph culled
+   in `paint_line`, a layer pushed clipped, a mask pushed that the one
+   around it cuts), and its extent (every primitive's and hitbox's bounds,
+   every mask not the one around it). Move it only when nothing was left
+   out, the mask around it then held its extent and the one now holds the
+   extent moved, the unrounded origin of its root moved by whole device
+   pixels at a scale factor of 1, 2 or 4, it draws no path (vertices), its
+   ranges hold no tooltip, deferred draw or input handler, no `div` in it
+   pinned it (drag, drop, tooltip, group styles), and the pointer is over
+   neither its old nor its new extent. Then a copied primitive or hitbox
+   takes the mask around it now where it had the one around it then, and
+   its own moved otherwise; a layer moves; the nested records' bounds and
+   masks move too. The mask map then lifts the "whole" condition for the
+   rows at a scroll view's edges, and the grid lifts the scale-factor one.
+   Estimate 3–4 days.
+3. *Skips and parked drawings* (round 2/3's `skippable`, `parked`,
+   `Recording`/`Region`: a subtree nothing shows of is left out; its
+   drawing is kept within a budget and copied back). Needs 2. 2–3 days.
+4. *Building onto kept nodes* (round 2's `begin_bind`: a subtree drawn
+   again keeps its layout, and the subtrees inside it are each copied,
+   moved or left out), with taffy-next's `inner_changed_since`,
+   `last_measure_inputs` and `asked_since`, and *element state scopes* (a
+   reused subtree carrying its elements' states as one entry; upstream still
+   moves each one). 2–3 days.
+
+**Measured** (step 1; release hosts, `bench/stress.tsx`, ~15k nodes,
+`ref/host-r3` and this branch's upstream host back to back, two runs
+each, medians; `frame` per update):
+
+| stress bench (15k nodes), frame | host-r3 (fork, rounds 1–3) | upstream, step 1 | upstream, nothing retained (spike, section 2) |
+| --- | --- | --- | --- |
+| select | 2.8–3.0 ms (median 3.0) | 4.2–5.5 ms (4.9) | 96–204 ms |
+| type | 1.7–1.9 ms (1.8) | 3.9–4.5 ms (4.2) | 98–246 ms |
+| hover | 2.8–2.9 ms (2.9) | 4.2–4.9 ms (4.8) | 96–239 ms |
+| select, the grid in a scroll view | 2.9–3.4 ms (3.0) | 4.8–10.5 ms (5.5) | — |
+| grow (every row moves) | 3.7–4.2 ms (4.1) | 108–133 ms (108) | — |
+| grow, the grid in a scroll view | 3.9–4.7 ms (4.5) | 112–266 ms (138) | — |
+| scroll, 40 px a step | 3.3–4.0 ms (3.5) | 113–140 ms (129) | — |
+| resize, 100 px a step | 15.7–16.7 ms (16.2) | 116–209 ms (134) | — |
+| host CPU per update, select | 5.0–6.0 ms | 7.5–8.5 ms | — |
+| RSS idle | 243–260 MB | 271–275 MB | 229–233 MB |
+
+Four runs each, alternating with host-r3 (the last two upstream runs are
+`host-next-4`, the same retained code with ink-end alignment); the second
+upstream run had a loaded machine (its grow in the scroll view and its
+resize are the high ends). Patch
+parse and apply, the driver, `KB` and accessibility are the same on both
+hosts (they are mirin-metal's). `MIRIN_METAL_ACCESS_CHECK=1` on the
+upstream host: no complaints over the whole bench.
+
+Footprint (`bench/footprint.tsx --app=counter`, three starts each, medians):
+
+| counter demo, 800×600 | host-r3 | upstream |
+| --- | --- | --- |
+| host start → first content frame | 77 ms | 95 ms |
+| host RSS / PSS / anonymous | 58.7 / 24.4 / 7.6 MB | 103.9 / 45.6 / 17.4 MB |
+| GPU memory (gtt) | 12.7 MB | 52.2 MB |
+| threads | 15 | 45 |
+| idle wakeups per 5 s | 10 | 0 |
+
+Round 2's footprint work is what that table shows missing: GL loaded beside
+Vulkan, a background thread per core (24 workers), every face of a font
+family loaded, path textures and an allocator sized for a prototype. Each
+has a row above under "still applies"; none ports as written (blade is
+gone), all port in spirit (step 6).
+
+So step 1 gives upstream what round 1 gave the fork for changes made in place:
+copied in place, a select, a keystroke or a hover costs 4–5 ms of frame
+where upstream without retention costs ~100 ms, within 1.5–2.5 ms of host-r3
+(the rest is what host-r3 has and step 1 does not: element states carried
+as one entry, a replayed drawing placed once in the bounds tree). What
+moves (grow, scroll, resize) is drawn again with everything inside it, as
+upstream does without retention: step 2 is the gate.
+
+### Tests and layout against host-r3
+
+- mirin-metal's tests on the upstream build: 188 pass, 1 ignored (the one
+  the fork ignores too); 3 are left out, each testing a fork helper
+  upstream has its own way of (`reuses_layout` twice, `cut_line`). The
+  default build: 191 pass, as before.
+- `layout-check` of `ref/host-r3` against the upstream host (step 1 not
+  yet; the same holds with it): `grid` 2,990 of 3,044 nodes differ at every
+  step, `scroll` 4,536 of 4,562, `browser` 1 of 52–60 on most steps, 13 on
+  the accordion and list steps, 20 on the card example and 38 while typing
+  in search. The cause is the one the spike found: upstream rounds a
+  measured leaf's size *up* to the device pixel
+  (`snap_measured_size_to_device_pixels`, `ceil`), where the fork's taffy
+  rounds every edge to the nearest; a line of text 14.x px tall is 15 px
+  upstream and 14 on the fork, so each card is a pixel taller and every row
+  below sits lower. Not quite: a host built with that rounding changed to
+  the nearest pixel (as the fork's taffy does) gives the same differences
+  to the node (2,990 on `grid`, 102 on `browser`), so it is the text's
+  line height itself that comes out 15 px upstream where it is 14 on the
+  fork, for the same 11 px text, a difference in how the text's metrics
+  reach the line height (upstream snaps the line height to the device
+  pixel, `window.pixel_snap`, and shapes with cosmic-text 0.19). Which
+  text sizes it hits and whether to match the fork is step 7's question.
+- The upstream host against itself, retention on and off
+  (`--scene --env-b=MIRIN_METAL_RETAIN=0`): `grid` and `browser`
+  identical, layouts and drawings, at every step. `scroll` and
+  `scroll-fractional` laid out the same but drew one card differently at
+  each pointer move after a scroll: a card's hover color was copied stale.
+  Upstream paints a hover style from the hit test but notifies the view
+  only when a mouse move changes the element's `hover_state`, which only
+  mouse moves set; a card scrolled under a resting pointer was painted
+  hovered with its state still "not hovered", so when the pointer left
+  nothing was notified, and a retained card copied in place kept the color
+  (drawing everything hid it). The listener now compares with what the
+  frame painted (`div.rs`, a `forks/zed` row). A second fix went in on the
+  way: a notified view is marked dirty itself, not only the views on its
+  dispatch path, which starts at the last sibling view set on the same node
+  (`Window::mark_view_dirty`). With both (`host-next-6`), all four apps
+  (`grid`, `browser`, `scroll`, `scroll-fractional`) lay out and draw the
+  same with retention and without, at every step.
+- GPUI's own tests are not run from `forks/zed`: they need zed's workspace
+  (its root manifest's member list cut to the kept crates, and
+  `util_macros` and `tooling/perf` imported), left for step 6. taffy-next's
+  own tests (`cargo test --lib` with the next build's lockfile): 169 pass.
+
+What changes on screen with upstream, in short: text boxes a pixel taller
+where the line height has a fraction (most text sizes but 16 px), rows
+under them a pixel lower each; a scrolled view's content at the device pixel
+upstream picks (halves toward zero, where the fork rounded them to nearest);
+a box laid out with a fractional width now has its right edge where the
+next one starts (absolute edge rounding, upstream's "closure").
+
+### State, what is left, and the default
+
+The branch builds both hosts, the default exactly as before; the upstream
+host runs every bench and passes its tests, with in-place retention. Left
+of section 5's steps, updated:
+
+| Step | What is left | Effort |
+| --- | --- | --- |
+| 1 | done (import, side-by-side build, re-sync recipe) | — |
+| 2 | per-paragraph sizes, `fit_to`, ink-end alignment (~250 lines; text painting was restructured) | 2–3 days |
+| 3 | done | — |
+| 4 | session lock, Dashi chrome, screen by name and stretched layer surfaces, file drag icon, X11 min size (~400 lines in `gpui_linux`) | 3–4 days |
+| 5 | retained: moves, skips and parked drawings, building onto kept nodes, element state scopes, `insert_spanning` (above) | 7–10 days |
+| 6 | accessibility (keep `access/`, or move onto GPUI's tree), wgpu limited to Vulkan, the footprint rows that still apply (fonts, threads, compose, path textures) | 4–6 days |
+| 7 | decide the measured-size rounding (keep upstream's `ceil`, or round as the fork did and keep Dashi's layouts), check every Dashi app, benches, footprint; switch the default; delete `forks/gpui`, `forks/taffy`, `forks/blade-graphics` | 3–5 days |
+
+About 19–28 working days remain of the 23–34 the spike estimated; the
+retained port is still the largest and least certain part.
+
+**Not switching the default.** The upstream host does not match host-r3 on
+every bench (grow, scroll and resize draw everything that moves until step
+2 lands) nor on every check (layouts differ by the pixel above), so the
+default stays on `forks/gpui` this round, as the brief asks.
 
 ## How this was measured
 
