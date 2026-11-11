@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createElement, Fragment, memo, type ReactNode, useState } from "react";
 import { Text, TextInput, View } from "../src/components.ts";
+import { HOST_WORD_MS, markAnnounces } from "../src/lib/handshake.ts";
 import { createPortal, render } from "../src/render.ts";
 import type { NativeEvent, NativeRoot, NativeTransport } from "../src/types.ts";
 
@@ -382,6 +383,77 @@ describe("tree patches", () => {
     expect(host.lines.at(-1)?.startsWith('{"type":"view"')).toBe(true);
     const line = await step(() => swap.set(true));
     expect(line.startsWith('{"type":"text"')).toBe(true);
+  });
+});
+
+describe("a host that says its protocol first", () => {
+  /** A transport like `spawnNativeHost`'s: its host's word comes later, or never. */
+  function announcing(sent: string[]): NativeTransport & { emit(event: NativeEvent): void } {
+    const listeners: Array<(event: NativeEvent) => void> = [];
+    return markAnnounces({
+      send: (line: string) => {
+        sent.push(line);
+      },
+      onEvent(listener: (event: NativeEvent) => void) {
+        listeners.push(listener);
+      },
+      emit(event: NativeEvent) {
+        for (const listener of listeners) listener(event);
+      },
+      onClose() {},
+      simulate() {},
+      close() {},
+    });
+  }
+
+  test("gets the first tree once, with ids, when it has said it takes patches", async () => {
+    const sent: string[] = [];
+    const count = control(0);
+    function App() {
+      return createElement(View, null, createElement(Text, null, String(count.use())));
+    }
+    const transport = announcing(sent);
+    const root = render(createElement(App), transport);
+    await nextCommit();
+    // Commits before the word are held.
+    count.set(1);
+    await nextCommit();
+    expect(sent).toHaveLength(0);
+    transport.emit({ type: "protocol", nodeId: "root", patches: 1 });
+    expect(sent).toHaveLength(1);
+    const tree = JSON.parse(sent[0] ?? "") as Node;
+    const text = tree.children?.[0];
+    expect(text).toMatchObject({ type: "text", children: ["1"] });
+    expect(typeof text === "string" ? undefined : text?.props.id).toBeString();
+    // Patches after it.
+    count.set(2);
+    await nextCommit();
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toStartWith('{"patch":[');
+    root.unmount();
+  });
+
+  test("a host that says nothing in time gets whole trees, as before", async () => {
+    const sent: string[] = [];
+    const count = control(0);
+    function App() {
+      return createElement(View, null, createElement(Text, null, String(count.use())));
+    }
+    const root = render(createElement(App), announcing(sent));
+    await nextCommit();
+    expect(sent).toHaveLength(0);
+    await Bun.sleep(HOST_WORD_MS + 25);
+    expect(sent).toHaveLength(1);
+    expect((JSON.parse(sent[0] ?? "") as Node).children?.[0]).toEqual({
+      type: "text",
+      props: {},
+      children: ["0"],
+    });
+    count.set(1);
+    await nextCommit();
+    expect(sent).toHaveLength(2);
+    expect(root.lastTree()).toBe(sent.at(-1) ?? null);
+    root.unmount();
   });
 });
 

@@ -6,10 +6,20 @@
  * handlers (`onClick`, `onMouseEnter`, …) receive DOM-shaped events.
  */
 
-import { Text, type TextStyle, View, type ViewStyle } from "@mirinjs/metal";
+import {
+  type Bounds,
+  type PointerInfo,
+  type PressInfo,
+  Text,
+  type TextStyle,
+  View,
+  type ViewProps,
+  type ViewStyle,
+} from "@mirinjs/metal";
 import {
   Children,
   cloneElement,
+  createElement,
   Fragment,
   isValidElement,
   type ReactElement,
@@ -209,6 +219,35 @@ function pickInherited(text: TextStyle): TextStyle {
   return out;
 }
 
+/**
+ * The host elements `<View>` and `<Text>` render (`@mirinjs/metal`'s own
+ * components are one function each that makes them). A box makes them
+ * itself: each HTML element is then the box and its view, not a third
+ * fiber between them. Made with React's `createElement`: this package's
+ * JSX runtime would take a string type for an HTML tag.
+ */
+const VIEW = (View({}) as ReactElement).type;
+const TEXT = (Text({}) as ReactElement).type;
+
+/** A run of text in the style `inherited` hands down, as the host text it is. */
+function textRun(
+  text: string,
+  inherited: Inherited,
+  truncate: boolean | undefined,
+  key: string | undefined,
+  style?: TextStyle,
+): ReactElement {
+  return createElement(
+    TEXT,
+    {
+      key,
+      numberOfLines: truncate ? 1 : undefined,
+      style: { ...inherited.text, ...style },
+    },
+    transformText(text, inherited.transform),
+  );
+}
+
 /** A run of text with the inherited style. */
 export function TextRun({
   children,
@@ -219,38 +258,7 @@ export function TextRun({
   style?: TextStyle;
   truncate?: boolean;
 }) {
-  const inherited = useInherited();
-  return (
-    <Text numberOfLines={truncate ? 1 : undefined} style={{ ...inherited.text, ...style }}>
-      {transformText(children, inherited.transform)}
-    </Text>
-  );
-}
-
-function renderChildren(
-  items: ReactNode[],
-  tw: TwStyle,
-  list: "disc" | "decimal" | undefined,
-): ReactNode[] {
-  return items.map((item, index) => {
-    if (isText(item)) {
-      return (
-        <TextRun key={`t${index}`} truncate={tw.truncate}>
-          {String(item)}
-        </TextRun>
-      );
-    }
-    if (list && tagOf(item) === "li") {
-      const marker = list === "disc" ? "•" : `${index + 1}.`;
-      return (
-        <View key={`li${index}`} style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
-          <TextRun>{marker}</TextRun>
-          <View style={{ flex: 1, flexDirection: "column" }}>{item}</View>
-        </View>
-      );
-    }
-    return item;
-  });
+  return textRun(children, useInherited(), truncate, undefined, style);
 }
 
 const POSITIONS: SiblingPosition[] = [
@@ -260,17 +268,58 @@ const POSITIONS: SiblingPosition[] = [
   { first: false, last: false },
 ];
 
-/** Tell each child element whether it is first/last (`first:`/`last:` variants). */
-function withSiblingPositions(nodes: ReactNode[]): ReactNode[] {
-  const last = nodes.length - 1;
-  return nodes.map((node, index) => {
-    if (!isValidElement(node)) return node;
-    const position = POSITIONS[(index === 0 ? 0 : 2) + (index === last ? 0 : 1)];
-    return (
-      <SiblingContext.Provider key={node.key ?? `s${index}`} value={position ?? null}>
-        {node}
-      </SiblingContext.Provider>
-    );
+/** The props a box takes from the box it is in, in place of their contexts. */
+interface Handed {
+  __inherited?: Inherited;
+  __sibling?: SiblingPosition;
+}
+
+/**
+ * A child element as a box places it, told what the box hands down (the
+ * text style and layout that flow down, `Inherited`) and its place among
+ * its siblings (`first:`/`last:` variants). A child that is itself a box
+ * takes both as props, set on its element: no fiber. Any other element (a
+ * component, a control, an icon) reads them from context, so it gets a
+ * provider of each, always, so that it is never moved under one and
+ * remounted.
+ */
+function placed(node: ReactNode, position: SiblingPosition, inherited: Inherited): ReactNode {
+  if (!isValidElement(node)) return node;
+  if (node.type === Box) {
+    const handed: Handed = { __sibling: position, __inherited: inherited };
+    return cloneElement(node, handed);
+  }
+  return (
+    <InheritedContext.Provider key={node.key ?? undefined} value={inherited}>
+      <SiblingContext.Provider value={position}>{node}</SiblingContext.Provider>
+    </InheritedContext.Provider>
+  );
+}
+
+function renderChildren(
+  items: ReactNode[],
+  tw: TwStyle,
+  list: "disc" | "decimal" | undefined,
+  inherited: Inherited,
+): ReactNode[] {
+  const last = items.length - 1;
+  return items.map((item, index) => {
+    if (isText(item)) return textRun(String(item), inherited, tw.truncate, `t${index}`);
+    const position = POSITIONS[(index === 0 ? 0 : 2) + (index === last ? 0 : 1)] as SiblingPosition;
+    if (list && tagOf(item) === "li") {
+      const marker = list === "disc" ? "•" : `${index + 1}.`;
+      return createElement(
+        VIEW,
+        { key: `li${index}`, style: { flexDirection: "row", gap: 8, alignItems: "flex-start" } },
+        textRun(marker, inherited, undefined, undefined),
+        createElement(
+          VIEW,
+          { style: { flex: 1, flexDirection: "column" } },
+          placed(item, position, inherited),
+        ),
+      );
+    }
+    return placed(item, position, inherited);
   });
 }
 
@@ -297,7 +346,10 @@ export function Box(props: BoxProps): ReactNode {
     onSubmit,
   } = props;
   const theme = useStyleTheme();
-  const inherited = useInherited();
+  // From the box this one is in, as props (`Handed`), or else from context.
+  const { __inherited, __sibling } = props as Handed;
+  const contextInherited = useInherited();
+  const inherited = __inherited ?? contextInherited;
   const groups = useContext(GroupContext);
   const form = useContext(FormContext);
   const vars = useContext(VarsContext);
@@ -307,7 +359,8 @@ export function Box(props: BoxProps): ReactNode {
     ? substituteVars(className ?? "", scopeVars, theme.colors)
     : className;
   const attrs = collectAttrs(props);
-  const sibling = useContext(SiblingContext);
+  const contextSibling = useContext(SiblingContext);
+  const sibling = __sibling ?? contextSibling;
   if (sibling) {
     attrs["data-metal-first"] ??= sibling.first;
     attrs["data-metal-last"] ??= sibling.last;
@@ -460,62 +513,60 @@ export function Box(props: BoxProps): ReactNode {
   const href = typeof props.href === "string" ? props.href : undefined;
   const pressable = interactive && (onClick || onMouseDown || isSubmit || (tag === "a" && href));
 
+  // What this box hands down: as it was given, unless it changes something.
+  const handsDown =
+    textChanged ||
+    direction !== inherited.parentDirection ||
+    isGrid !== (inherited.parentGrid ?? false) ||
+    nextInherited.clipRadius !== inherited.clipRadius ||
+    nextInherited.parentStretches !== inherited.parentStretches;
+  const handed = handsDown ? nextInherited : inherited;
   const listStyle = tag === "ul" || tag === "ol" ? tw.listStyle : undefined;
-  let body: ReactNode[];
-  if (textOnly) {
-    body = [
-      <TextRun key="text" truncate={tw.truncate}>
-        {items.map(String).join("")}
-      </TextRun>,
-    ];
-  } else {
-    body = withSiblingPositions(renderChildren(items, tw, listStyle));
-  }
+  const body = textOnly
+    ? [textRun(items.map(String).join(""), handed, tw.truncate, "text")]
+    : renderChildren(items, tw, listStyle, handed);
 
-  const element: ReactElement = (
-    <View
-      ref={tag === "form" ? undefined : (ref as never)}
-      textStyle={nextInherited.text}
-      testID={
+  const element: ReactElement = createElement(
+    VIEW,
+    {
+      ref: tag === "form" ? undefined : ref,
+      textStyle: nextInherited.text,
+      testID:
         testID ??
         (typeof props["data-testid"] === "string" ? props["data-testid"] : undefined) ??
-        (typeof props["data-slot"] === "string" ? props["data-slot"] : undefined)
-      }
-      occlude={occlude}
-      dragRegion={dragRegion ?? (props["data-drag-region"] === true || undefined)}
-      onLayout={onLayout}
-      style={{ ...view, ...viewStyle }}
-      onPress={
-        pressable
-          ? ({ bounds }) => {
-              const event = syntheticEvent("click", { bounds });
-              onMouseDown?.(event);
-              onClick?.(event);
-              if (!event.defaultPrevented && formAction) {
-                const target = resolveForm(form, props.form);
-                if (formAction === "reset") target?.reset();
-                else target?.submit();
-              }
-              if (!event.defaultPrevented && tag === "a" && href && !onClick) openExternal(href);
+        (typeof props["data-slot"] === "string" ? props["data-slot"] : undefined),
+      occlude,
+      dragRegion: dragRegion ?? (props["data-drag-region"] === true || undefined),
+      onLayout,
+      style: { ...view, ...viewStyle },
+      onPress: pressable
+        ? ({ bounds }: PressInfo) => {
+            const event = syntheticEvent("click", { bounds });
+            onMouseDown?.(event);
+            onClick?.(event);
+            if (!event.defaultPrevented && formAction) {
+              const target = resolveForm(form, props.form);
+              if (formAction === "reset") target?.reset();
+              else target?.submit();
             }
-          : undefined
-      }
-      onHoverChange={
+            if (!event.defaultPrevented && tag === "a" && href && !onClick) openExternal(href);
+          }
+        : undefined,
+      onHoverChange:
         interactive && (onMouseEnter || onMouseLeave)
-          ? (hovered, bounds) => {
+          ? (hovered: boolean, bounds?: Bounds) => {
               const event = syntheticEvent(hovered ? "mouseenter" : "mouseleave", { bounds });
               (hovered ? onMouseEnter : onMouseLeave)?.(event);
             }
-          : undefined
-      }
-      onContextMenu={
+          : undefined,
+      onContextMenu:
         interactive && onContextMenu
-          ? ({ x, y }) => onContextMenu(syntheticEvent("contextmenu", { x, y }))
-          : undefined
-      }
-      onPointer={
+          ? ({ x, y }: { x: number; y: number }) =>
+              onContextMenu(syntheticEvent("contextmenu", { x, y }))
+          : undefined,
+      onPointer:
         interactive && (onPointerDown || onPointerMove || onPointerUp)
-          ? (info) => {
+          ? (info: PointerInfo) => {
               const event = syntheticEvent(`pointer${info.phase}`, {
                 x: info.x,
                 y: info.y,
@@ -525,11 +576,9 @@ export function Box(props: BoxProps): ReactNode {
               else if (info.phase === "move") onPointerMove?.(event);
               else onPointerUp?.(event);
             }
-          : undefined
-      }
-    >
-      {body}
-    </View>
+          : undefined,
+    } satisfies ViewProps,
+    body,
   );
 
   let wrapped: ReactNode = element;
@@ -550,17 +599,6 @@ export function Box(props: BoxProps): ReactNode {
       <GroupContext.Provider value={{ ...groups, [tw.group]: attrs }}>
         {wrapped}
       </GroupContext.Provider>
-    );
-  }
-  if (
-    textChanged ||
-    direction !== inherited.parentDirection ||
-    isGrid !== (inherited.parentGrid ?? false) ||
-    nextInherited.clipRadius !== inherited.clipRadius ||
-    nextInherited.parentStretches !== inherited.parentStretches
-  ) {
-    wrapped = (
-      <InheritedContext.Provider value={nextInherited}>{wrapped}</InheritedContext.Provider>
     );
   }
   if (definedVars) {

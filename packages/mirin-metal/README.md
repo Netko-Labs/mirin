@@ -53,10 +53,13 @@ cd packages/mirin-metal && bun demo/counter.tsx
 
 ## Starting an app
 
-`bun app.tsx` runs React's development build (Bun leaves `NODE_ENV` unset)
-and JavaScriptCore's eight collector threads. An app people keep open starts
-through the package's bin, which sets `NODE_ENV=production` and
-`BUN_JSC_numberOfGCMarkers=1` and then becomes `bun app.tsx`:
+`bun app.tsx` runs React's development build (Bun leaves `NODE_ENV` unset),
+JavaScriptCore's eight collector threads and Bun's once-a-second collection
+timer. An app people keep open starts through the package's bin, which sets
+`NODE_ENV=production`, `BUN_JSC_numberOfGCMarkers=1` and
+`BUN_GC_TIMER_DISABLE=1` and then becomes `bun app.tsx`, or a bundle of it
+kept in the user's cache while the app's files are as they were when it was
+built (`--dev` and `MIRIN_METAL_BUNDLE=0` always run the sources):
 
 ```sh
 bunx mirin-metal run app.tsx

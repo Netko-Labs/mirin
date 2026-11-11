@@ -35,32 +35,41 @@ mark("app modules (browser, button)");
 
 /** Render the browser and wait for the example. */
 async function show(): Promise<void> {
-  // As the real host: the first tree goes out before the host has said it takes patches.
+  // As the real host: it says it takes patches a moment after it starts
+  // (the driver is rendering by then), and the driver holds its first tree
+  // for that word. `BENCH_LATE_WORD`: a transport that isn't known to say it
+  // first (the first tree goes out without ids, then again with them).
+  const late = process.env.BENCH_LATE_WORD !== undefined;
   let announce: (() => void) | null = null;
   let whole = 0;
   let withIds = false;
   const host = standIn({
     patches: false,
+    announces: !late,
     onSend(line) {
+      // The bench's own resync below is timed apart.
+      if (resyncing) return;
       // A patch is the example; a whole tree has ids on its texts once the host takes patches.
       if (line.startsWith('{"patch"')) later = markNow("example loaded and sent");
-      else if (/"type":"text","props":\{"id"/.test(line)) {
-        if (!withIds) mark("tree again with ids (the host takes patches)");
-        withIds = true;
-      } else {
+      else {
         whole += 1;
+        const ids = /"type":"text","props":\{"id"/.test(line);
         if (whole === 1) mark("first tree sent (render, commit, serialize)");
+        else if (ids && !withIds) mark("tree again with ids (the host takes patches)");
         else mark("the same tree again (nothing changed)");
+        withIds ||= ids;
       }
       announce?.();
       announce = null;
     },
   });
-  announce = () => setImmediate(() => host.emit({ type: "protocol", nodeId: "root", patches: 1 }));
+  const word = () => host.emit({ type: "protocol", nodeId: "root", patches: 1 });
+  if (late) announce = () => setImmediate(word);
   metal.render(
     createElement(ThemeProvider, null, createElement(Browser, { initial: "button-demo" })),
     host.transport,
   );
+  if (!late) setImmediate(word);
   // BENCH_UNTIL_TREE: the start alone, for a build that cannot load the example (a bundle).
   if (process.env.BENCH_UNTIL_TREE) {
     while (!withIds) await Bun.sleep(1);
@@ -70,12 +79,14 @@ async function show(): Promise<void> {
   if (later) marks.push(later);
   // The whole tree once more: what serializing it alone costs.
   const sent = host.bytes;
+  resyncing = true;
   const from = Bun.nanoseconds();
   host.emit({ type: "resync", nodeId: "root", reason: "bench" });
   serializeMs = (Bun.nanoseconds() - from) / 1e6;
   treeBytes = host.bytes - sent;
 }
 
+let resyncing = false;
 let serializeMs = 0;
 let treeBytes = 0;
 let table: string | undefined;

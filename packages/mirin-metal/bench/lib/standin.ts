@@ -6,6 +6,7 @@
  */
 
 import type { NativeEvent, NativeTransport, SimCommand } from "../../src/index.ts";
+import { markAnnounces } from "../../src/lib/handshake.ts";
 
 export interface StandIn {
   transport: NativeTransport;
@@ -28,6 +29,11 @@ export interface StandInOptions {
   patches?: boolean;
   /** Called with each line (after it is counted). */
   onSend?: (line: string) => void;
+  /**
+   * Say, as `spawnNativeHost` does, that the host announces its protocol
+   * first: the driver holds its first tree for the word (`emit` it).
+   */
+  announces?: boolean;
 }
 
 export function standIn(options: StandInOptions = {}): StandIn {
@@ -40,7 +46,7 @@ export function standIn(options: StandInOptions = {}): StandIn {
     emit(event) {
       for (const listener of listeners) listener(event);
     },
-    transport: {
+    transport: (options.announces ? markAnnounces : <T>(transport: T) => transport)({
       send(line) {
         host.sends += 1;
         host.bytes += line.length;
@@ -55,7 +61,7 @@ export function standIn(options: StandInOptions = {}): StandIn {
       onClose() {},
       simulate(_command: SimCommand) {},
       close() {},
-    },
+    }),
   };
   return host;
 }

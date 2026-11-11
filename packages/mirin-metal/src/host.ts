@@ -5,6 +5,7 @@
  * eventual in-process FFI transport.
  */
 
+import { markAnnounces } from "./lib/handshake.ts";
 import { parseToplevelEvent, toplevelCommand } from "./lib/toplevels.ts";
 import type {
   Bounds,
@@ -380,7 +381,9 @@ export function spawnNativeHost(
     }
   })();
 
-  return {
+  // The host's first line says which patch protocol it takes (or a host
+  // from before patches says nothing): the first tree waits for it.
+  return markAnnounces<NativeHostTransport>({
     send(treeJson) {
       child.stdin.write(`${treeJson}\n`);
       void child.stdin.flush();
@@ -438,7 +441,7 @@ export function spawnNativeHost(
       void child.stdin.end();
       child.kill();
     },
-  };
+  });
 }
 
 /** Read a byte stream as text and hand each complete line to `onLine`. */

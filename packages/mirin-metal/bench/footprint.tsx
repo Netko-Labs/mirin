@@ -5,12 +5,16 @@
  * multiplies.
  *
  *   bun bench/footprint.tsx [host-binary] [--app=counter|browser] [--runs=3]
- *       [--env=KEY=VALUE]... [--unset=KEY]... [--json] [--visible]
+ *       [--launch=run|bun] [--entry=<file>] [--env=KEY=VALUE]... [--unset=KEY]... [--json] [--visible]
  *
- * Each run starts the app as it really runs: a driver process (`bun
- * demo/counter.tsx`, or metal-ui's `demo/browser.tsx` from its own package
- * directory, where its JSX runtime and `bunfig.toml` apply) that spawns the
- * host. Reported per run, and as medians:
+ * Each run starts the app as it really runs: a driver process
+ * (`mirin-metal run demo/counter.tsx`, or metal-ui's `demo/browser.tsx` from
+ * its own package directory, where its JSX runtime and `bunfig.toml` apply)
+ * that spawns the host. `--launch=bun` starts it as `bun demo/counter.tsx`
+ * instead, without the environment `mirin-metal run` gives a driver
+ * (`driverEnv()`, docs/metal.md section 6). `--entry` runs another file as
+ * the app's driver, from the app's directory (a bundle of it). Reported per
+ * run, and as medians:
  * - startup: driver spawn to the host's `first content frame painted` trace
  *   line, the host's own share of it, and the CPU each process used by then
  *   (the host's includes the children it waited for, the Vulkan probe).
@@ -53,6 +57,13 @@ const binary =
   [`${target}release/mirin-metal-host`, `${target}debug/mirin-metal-host`].find(existsSync) ??
   "";
 const appName = flag("app") ?? "counter";
+const launch = flag("launch") ?? "run";
+if (launch !== "run" && launch !== "bun") {
+  console.error("--launch is run or bun");
+  process.exit(2);
+}
+/** `mirin-metal run`: it becomes the app (`execve`), so the driver keeps this pid. */
+const runner = launch === "run" ? [new URL("../src/cli.ts", import.meta.url).pathname, "run"] : [];
 const runs = Number(flag("runs") ?? 3);
 const idleMs = 5000;
 
@@ -70,7 +81,9 @@ const APPS: Record<string, AppCommand> = {
     args: ["button-demo"],
   },
 };
-const chosenApp = APPS[appName];
+const entry = flag("entry");
+const listed = APPS[appName];
+const chosenApp = listed && entry ? { ...listed, script: entry } : listed;
 if (!chosenApp) {
   console.error(`--app is one of: ${Object.keys(APPS).join(", ")}`);
   process.exit(2);
@@ -138,7 +151,7 @@ async function runOnce(app: AppCommand): Promise<Run> {
   let cpuAtFrame: { host: number; driver: number } | null = null;
   let hostPid: number | null = null;
   const spawned = Date.now();
-  const driver = Bun.spawn([process.execPath, app.script, binary, ...app.args], {
+  const driver = Bun.spawn([process.execPath, ...runner, app.script, binary, ...app.args], {
     cwd: app.cwd,
     stdin: "ignore",
     stdout: "ignore",
@@ -255,6 +268,7 @@ const processSummary = (pick: (run: Run) => ProcessReport) => ({
 const summary = {
   host: binary,
   app: appName,
+  launch,
   env: extraEnv,
   unset,
   runs: results.length,
@@ -289,7 +303,9 @@ const table = (groups: Group[]): string =>
     .join("\n");
 const last = results.at(-1);
 console.log(`host: ${binary}`);
-console.log(`app: ${appName} (${summary.window}), ${results.length} runs, medians`);
+console.log(
+  `app: ${appName} (${summary.window}), started with ${launch === "run" ? "mirin-metal run" : "bun"}, ${results.length} runs, medians`,
+);
 if (Object.keys(extraEnv).length + unset.length > 0) {
   console.log(`env: ${JSON.stringify(extraEnv)}, unset: ${unset.join(" ") || "none"}`);
 }
