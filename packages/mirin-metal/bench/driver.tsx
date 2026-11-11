@@ -8,17 +8,22 @@
  *
  *   bun bench/driver.tsx [--rows=2500] [--runs=5] [--scale] [--profile] [--json]
  *   bun bench/driver.tsx --record=<file> [--rows=300]
+ *   bun bench/driver.tsx --stress [--rows=100] [--cols=25] [--runs=20] [--profile] [--json]
  *
  * `--scale` repeats every operation at a quarter, a half, the whole and
  * twice the rows and prints how each grows: an operation on k rows should
  * cost about k times one, however long the list is.
  * `--record` writes every line sent while each operation runs once: two
  * builds of the driver that write the same file send a host the same bytes.
+ * `--stress` times the stress bench's dashboard instead (`lib/stress-standin.tsx`):
+ * typing, growing the banner and selecting a card, as the app is written
+ * (every card rendered again) and with its cards memoized.
  * `packages/mirin-metal-ui/bench/driver.tsx` times a whole app's driver.
  */
 
 import { memo, useState } from "react";
 import { render, Text, View } from "../src/index.ts";
+import { openInstructionCounter } from "./lib/instructions.ts";
 import { attribute, attributionTable, profiled } from "./lib/profile.ts";
 import { type StandIn, standIn } from "./lib/standin.ts";
 
@@ -197,7 +202,7 @@ const OPERATIONS: Operation[] = [
 
 interface Mounted {
   host: StandIn;
-  apply(change: Change): { ms: number; bytes: number };
+  apply(change: Change): { ms: number; minstr: number; bytes: number };
   unmount(): void;
 }
 
@@ -220,14 +225,19 @@ async function mount(
       pending = change;
       const bytes = host.bytes;
       const sends = host.sends;
+      const instructions = counter?.read() ?? 0;
       const start = Bun.nanoseconds();
       host.emit({ type: "press", nodeId: id });
       if (host.sends === sends) throw new Error("the change sent nothing");
-      return { ms: (host.lastSendAt - start) / 1e6, bytes: host.bytes - bytes };
+      const ms = (host.lastSendAt - start) / 1e6;
+      const minstr = ((counter?.read() ?? 0) - instructions) / 1e6;
+      return { ms, minstr, bytes: host.bytes - bytes };
     },
     unmount: () => root.unmount(),
   };
 }
+
+const counter = openInstructionCounter();
 
 const median = (values: number[]): number => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -239,6 +249,8 @@ interface Result {
   ms: number;
   kb: number;
   usPerRow: number;
+  /** Millions of main-thread instructions (`lib/instructions.ts`): steady where `ms` is not. */
+  minstr: number;
 }
 
 async function measure(
@@ -248,7 +260,7 @@ async function measure(
   const list = await mount(rows);
   const results: Result[] = [];
   for (const operation of OPERATIONS) {
-    const samples: Array<{ ms: number; bytes: number }> = [];
+    const samples: Array<{ ms: number; minstr: number; bytes: number }> = [];
     // The first is a warm-up: the code past its first tiers.
     for (let run = 0; run <= runs; run += 1) {
       const sample = list.apply(operation.change(rows));
@@ -263,6 +275,7 @@ async function measure(
       ms,
       kb: median(samples.map((sample) => sample.bytes)) / 1024,
       usPerRow: (ms * 1000) / operation.touched(rows),
+      minstr: median(samples.map((sample) => sample.minstr)),
     });
   }
   list.unmount();
@@ -270,7 +283,16 @@ async function measure(
 }
 
 const recordPath = flag("record");
-if (recordPath) {
+if (args.includes("--stress")) {
+  const { stressOnStandIn } = await import("./lib/stress-standin.tsx");
+  await stressOnStandIn({
+    rows: Number(flag("rows") ?? 100),
+    cols: Number(flag("cols") ?? 25),
+    runs: Number(flag("runs") ?? 20),
+    profile: args.includes("--profile"),
+    json: args.includes("--json"),
+  });
+} else if (recordPath) {
   const rows = Number(flag("rows") ?? 300);
   const list = await mount(rows, true);
   for (const operation of OPERATIONS) {
@@ -302,10 +324,12 @@ if (recordPath) {
     console.log(
       `${ROWS} rows (three nodes each), medians of ${RUNS}; first tree sent in ${mountMs.toFixed(1)} ms`,
     );
-    console.log(`${"".padEnd(30)} ${"ms".padStart(8)} ${"KB".padStart(9)} ${"µs/row".padStart(9)}`);
+    console.log(
+      `${"".padEnd(30)} ${"ms".padStart(8)} ${"KB".padStart(9)} ${"µs/row".padStart(9)} ${"M instr".padStart(9)}`,
+    );
     for (const result of results) {
       console.log(
-        `${result.name.padEnd(30)} ${result.ms.toFixed(2).padStart(8)} ${result.kb.toFixed(1).padStart(9)} ${result.usPerRow.toFixed(1).padStart(9)}`,
+        `${result.name.padEnd(30)} ${result.ms.toFixed(2).padStart(8)} ${result.kb.toFixed(1).padStart(9)} ${result.usPerRow.toFixed(1).padStart(9)} ${result.minstr.toFixed(2).padStart(9)}`,
       );
     }
   }
@@ -314,13 +338,15 @@ if (recordPath) {
     for (const name of ["append as many rows again", "swap two rows", "reverse the rows"]) {
       const operation = OPERATIONS.find((each) => each.name === name);
       if (!operation) continue;
+      // A swap and a reversal undo themselves: those are timed alone.
+      const alone = name !== "append as many rows again";
       const { profile } = await profiled(() => {
         for (let run = 0; run < RUNS; run += 1) {
           list.apply(operation.change(ROWS));
-          list.apply(reset(ROWS));
+          list.apply(alone ? operation.change(ROWS) : reset(ROWS));
         }
       });
-      console.log(`${name} (and the list put back), main thread:`);
+      console.log(`${name} (${alone ? "twice" : "and the list put back"}), main thread:`);
       console.log(attributionTable(attribute(profile), RUNS, "ms per round"));
     }
     list.unmount();

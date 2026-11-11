@@ -6,7 +6,7 @@
  * `bench/native.tsx`, ~900 nodes) is too small to show.
  *
  *   bun bench/stress.tsx [host-binary] [--rows=100] [--cols=25] [--visible] [--json] [--trace=<path>]
- *     [--only=scroll,grow] [--step=40] [--scroll-steps=24] [--shadow]
+ *     [--only=scroll,grow] [--step=40] [--scroll-steps=24] [--shadow] [--memo]
  *
  * Scenarios, each timed from the driver's action to the host's next painted
  * frame (`MIRIN_METAL_TRACE` log). `parse` is the host reading the line
@@ -34,21 +34,17 @@
  *
  * `--shadow` gives every card a small drop shadow (`shadow: "sm"`, a logical
  * pixel below it: off the device grid at a scale factor such as 1.1).
+ * `--memo` memoizes the cards (`lib/dashboard.tsx`): typing and growing the
+ * banner then render the dashboard and its rows, not every card, the floor
+ * of the `driver` column for this app. Without it, as an app that memoizes
+ * nothing. `bench/driver.tsx --stress` times the same app without a host.
  *
  * Runs in an off-screen compositor unless `--visible` (see `startHeadlessDisplay`).
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { useState } from "react";
-import {
-  render,
-  ScrollView,
-  spawnNativeHost,
-  startHeadlessDisplay,
-  Text,
-  TextInput,
-  View,
-} from "../src/index.ts";
+import { render, spawnNativeHost, startHeadlessDisplay } from "../src/index.ts";
+import { Dashboard } from "./lib/dashboard.tsx";
 
 const target = new URL("../../../crates/mirin-metal/target/", import.meta.url).pathname;
 const args = Bun.argv.slice(2);
@@ -99,101 +95,10 @@ transport.send = (json) => {
   send(json);
 };
 
-function Card({ index }: { index: number }) {
-  const [selected, setSelected] = useState(false);
-  return (
-    <View
-      testID={`card:${index}`}
-      onPress={() => setSelected((value) => !value)}
-      style={{
-        width: 44,
-        padding: 4,
-        gap: 2,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: selected ? "#3b82f6" : "#27272a",
-        backgroundColor: selected ? "#1e3a8a" : "#18181b",
-        hoverBackgroundColor: "#27272a",
-        shadow,
-      }}
-    >
-      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-        <Text style={{ fontSize: 9, color: "#a1a1aa" }}>#{index}</Text>
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#22c55e" }} />
-      </View>
-      <Text style={{ fontSize: 11, color: "#f4f4f5" }}>{(index * 7919) % 1000}</Text>
-    </View>
-  );
-}
-
-function Dashboard() {
-  const [query, setQuery] = useState("");
-  const [tall, setTall] = useState(false);
-  // How the cards are laid out: in the window, in a scroll view, or in
-  // columns in a view that scrolls across.
-  const [mode, setMode] = useState<"plain" | "scroll" | "wide">("plain");
-  const banner = (
-    <View
-      testID="banner"
-      onPress={() => setTall((value) => !value)}
-      style={{ height: tall ? 40 : 12, borderRadius: 4, backgroundColor: "#3f3f46" }}
-    />
-  );
-  const grid = Array.from({ length: rows }, (_, row) => (
-    <View key={row} style={{ flexDirection: "row", gap: 2 }}>
-      {Array.from({ length: cols }, (_, col) => (
-        <Card key={col} index={row * cols + col} />
-      ))}
-    </View>
-  ));
-  const perColumn = 12;
-  const columns = Array.from({ length: Math.ceil((rows * cols) / perColumn) }, (_, column) => (
-    <View key={column} style={{ gap: 2 }}>
-      {Array.from({ length: Math.min(perColumn, rows * cols - column * perColumn) }, (_, index) => (
-        <Card key={index} index={column * perColumn + index} />
-      ))}
-    </View>
-  ));
-  const next = { plain: "scroll", scroll: "wide", wide: "plain" } as const;
-  return (
-    <View style={{ flex: 1, backgroundColor: "#09090b", padding: 8, gap: 8 }}>
-      <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-        <Text style={{ color: "#f4f4f5", fontSize: 14 }}>
-          stress {rows}×{cols}
-        </Text>
-        <TextInput
-          testID="query"
-          value={query}
-          onChangeText={setQuery}
-          style={{ width: 240, height: 24, color: "#f4f4f5", backgroundColor: "#18181b" }}
-        />
-        <Text style={{ color: "#a1a1aa", fontSize: 12 }}>{query.length} chars</Text>
-        <View
-          testID="layout"
-          onPress={() => setMode((value) => next[value])}
-          style={{ width: 12, height: 12, backgroundColor: "#52525b" }}
-        />
-      </View>
-      {mode === "wide" ? (
-        <View testID="hscroller" style={{ flex: 1, overflow: "scroll-x" }}>
-          <View style={{ flexDirection: "row", gap: 2, alignItems: "flex-start" }}>{columns}</View>
-        </View>
-      ) : mode === "scroll" ? (
-        <ScrollView testID="scroller" style={{ flex: 1, gap: 8 }}>
-          {banner}
-          <View style={{ gap: 2 }}>{grid}</View>
-        </ScrollView>
-      ) : (
-        <>
-          {banner}
-          <View style={{ flex: 1, gap: 2, overflow: "hidden" }}>{grid}</View>
-        </>
-      )}
-    </View>
-  );
-}
-
-const root = render(<Dashboard />, transport);
+const root = render(
+  <Dashboard rows={rows} cols={cols} shadow={shadow} memo={args.includes("--memo")} />,
+  transport,
+);
 await Bun.sleep(4000);
 const hostPid = Number(
   Bun.spawnSync(["pgrep", "-n", "-P", String(process.pid)])
