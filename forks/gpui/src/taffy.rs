@@ -105,6 +105,11 @@ impl TaffyLayoutEngine {
         // the subtrees no longer drawn. Parents were made after their
         // children, so removing newest first never edits a parent's child
         // list that is about to go too.
+        if self.loose.len() == self.taffy.total_node_count() {
+            // Nothing retained: drop the tree at once, as upstream does.
+            self.taffy.clear();
+            self.loose.clear();
+        }
         for id in self.loose.drain(..).rev() {
             self.taffy.remove(id.into()).expect(EXPECT_MESSAGE);
         }
