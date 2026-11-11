@@ -173,7 +173,12 @@ const scrollAccess = accessSince(scrollStart);
 
 // Maximize and restore: time from the request to the last frame at the new
 // size once the driver has re-rendered for the new viewport (breakpoints).
+// `resized` counts the frames drawn at another size than before: a
+// compositor that ignores the request (a nested dashi-comp does) leaves it
+// at 0, and the time is then only when its next frame callback came.
 const resizes: number[] = [];
+let resized = 0;
+let lastSize = "1280x800";
 for (let round = 0; round < 4; round += 1) {
   const before = trace.length;
   const started = Date.now();
@@ -185,6 +190,10 @@ for (let round = 0; round < 4; round += 1) {
     .map((line) => ({ at: line.at, size: line.message.match(/render (\d+x\d+)/)?.[1] }));
   const settled = sizes.at(-1);
   if (settled) resizes.push(settled.at - started);
+  for (const { size } of sizes) {
+    if (size && size !== lastSize) resized += 1;
+    if (size) lastSize = size;
+  }
 }
 root.unmount();
 transport.close();
@@ -232,6 +241,7 @@ const rows: Array<[string, number]> = [
   ["scroll frame", median(scrollFrames)],
   ["scroll frame p95", p95(scrollFrames)],
   ["maximize/restore → settled frame", median(resizes)],
+  ["maximize/restore: frames at a new size", resized],
   ["accessibility per click", median(samples.map((s) => s.access))],
   ["accessibility per scroll update", median(scrollAccess.map((update) => update.ms))],
   ["host CPU per click", clicksCpu],
@@ -243,7 +253,8 @@ console.log(
   `samples: ${samples.length}/${clicks}, frames: ${renders.length}, scroll frames: ${scrollFrames.length}/${scrollSteps}`,
 );
 for (const [label, value] of rows) {
-  console.log(`${label.padEnd(38)} ${value.toFixed(1)}${label.endsWith("(KB)") ? "" : " ms"}`);
+  const unit = label.endsWith("(KB)") || label.includes("frames at") ? "" : " ms";
+  console.log(`${label.padEnd(38)} ${value.toFixed(1)}${unit}`);
 }
 console.log(
   `accessibility nodes made/handed over: per click ${nodes(samples.map((s) => s.accessBuilt))}/${nodes(
