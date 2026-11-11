@@ -80,13 +80,14 @@ normal React ──react-reconciler──▶ element tree JSON ──▶ mirin-m
 
 | Piece | Lives in | Role |
 | --- | --- | --- |
-| `@mirinjs/metal` | `packages/mirin-metal` | Custom React renderer. Host components `<View>` and `<Text>`; each commit serializes the host tree to JSON and sends it over a transport; events come back keyed by node id and invoke the matching handler. |
-| `mirin-metal` crate | `crates/mirin-metal` | Parses the tree strictly (`tree.rs`, unknown fields rejected), maps it to GPUI elements (`render.rs`), owns the window and GPUI's event loop (`window.rs`), and reports interactions (`events.rs`). |
-| `mirin-metal-host` | `crates/mirin-metal/src/bin/host.rs` | Alpha transport: a subprocess speaking newline-delimited JSON. Trees in on stdin, events out on stdout. |
+| `@mirinjs/metal` | `packages/mirin-metal` | Custom React renderer. Host components `<View>` and `<Text>`; the first commit sends the host tree as JSON over a transport, and each later one only what it changed (a patch, section "Patches") to a host that takes them; events come back keyed by node id and invoke the matching handler. |
+| `mirin-metal` crate | `crates/mirin-metal` | Parses trees and patches strictly (`tree.rs`, `patch/`; unknown fields, ops and ids rejected), keeps the tree and patches it in place (`patch::Document`), maps it to GPUI elements (`render.rs`), owns the window and GPUI's event loop (`window.rs`), and reports interactions (`events.rs`). |
+| `mirin-metal-host` | `crates/mirin-metal/src/bin/host.rs` | Alpha transport: a subprocess speaking newline-delimited JSON. Trees and patches in on stdin, events out on stdout. |
 
 The model deliberately mirrors React Native: the driver (React in Bun) owns
 state and describes UI; the renderer is a pure function of the latest tree.
-"Last write wins" per update tick; there is no diffing protocol yet.
+A whole tree replaces the last one ("last write wins" per update tick);
+patches change it in place, in order (section "Patches").
 
 ## 2. Element tree (v2)
 
@@ -362,6 +363,90 @@ and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
 selection color once), and
 `<ScrollView>` (a scrolling `<View>`).
 
+### Patches
+
+After its first whole tree, a driver sends only what each commit changed,
+and the host changes the tree it keeps in place (`src/patch/`). What a patch
+costs to send, parse and apply follows the change, not the tree: on the 15k
+node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
+
+- **Negotiation.** A host that takes patches says so on stdout as it starts,
+  before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
+  (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`). A driver
+  patches only a host that announced a version it speaks; until then, and
+  for a host that never announces (older ones), it sends the whole tree on
+  every commit, as before. Switching, it sends the whole tree once more, now
+  with ids on every node. An older driver never patches, so a new host takes
+  its whole trees as before. An old host given a patch line would refuse it
+  (a line it can't parse), never draw it wrong; the announcement keeps a new
+  driver from sending one.
+- **Ids.** Every node has an id: views and inputs their `id`, and a
+  patching driver also gives `text`, `svg` and `image` nodes an `id` prop
+  (only patches address them by it; they take no events). `@mirinjs/metal`
+  uses each host instance's number, and `r1`, `r2`, … for a string placed
+  directly in a view (a text node of its own). Ids are unique in the tree,
+  and the root has one, or no patch applies.
+- **Lines.** `{"patch":[op, …]}`, ops applied in order as one update:
+  - `{"op":"insert","parent":P,"before":B?,"node":N}`: the new subtree `N`
+    (a node as in a whole tree, children included) under the view `P`, in
+    front of its child `B`, or last without `before`. Every id in `N` is new.
+  - `{"op":"move","id":C,"parent":P,"before":B?}`: the node `C` already in
+    the tree, with its subtree, under `P` before `B` (a keyed reorder; React
+    only reorders within a parent, but the host allows another one, never
+    inside `C` itself).
+  - `{"op":"remove","id":C}`: `C` and its subtree go (never the root).
+  - `{"op":"set","id":C,"node":N}`: `C`'s own props, and a text node's
+    strings, become `N`'s; `N` keeps `C`'s type and id. A view keeps its
+    children (`N` has none); every other node is replaced whole.
+  Parsing is strict (`deny_unknown_fields`, unknown ops refused), and so is
+  applying: an unknown id, a `before` that is not a child of the parent, a
+  parent that is not a view, an id already in the tree, a set that changes
+  a type or an id. A root that is replaced (another host type, another root
+  component) goes as a whole tree.
+- **Resync.** A patch applies whole or not at all: when an op fails, the
+  ops before it are undone (`patch/undo.rs` keeps how to take each back),
+  so a frame never shows half a commit. The host logs `patch refused` on
+  stderr, sends `{"type":"resync","nodeId":"root","value":reason}`, and
+  drops every patch until a whole tree comes (they were made against a tree
+  it doesn't have); the driver sends one at once (`lib/tree-sync.ts`).
+  Patches before the window opens, or while a resident host's window is
+  hidden, apply to the tree it keeps for the next open.
+- **The runtime spec's v2.** `docs/metal/spec.html` §7 sketches the FFI
+  protocol's batches (`create`/`append`/`insert`/`update` with set and unset
+  lists, `ctx` for UI contexts, a length-prefixed commit). This stdio form
+  is its first step and differs: ops are objects, a set sends a node's
+  whole props (a node's head is small; a key-level diff can come with the
+  binary encoding), and there is no `ctx` yet. The ids, ordering,
+  atomicity, strictness and the whole-tree fallback are the same.
+- **What changed, for the renderer.** Every update (a whole tree, a patch)
+  has a generation, one more than the last (`Document::generation`).
+  `Document::own_generation(id)` is the update a node's own props, text, or
+  list of children last changed in, and `subtree_generation(id)` the update
+  anything at or under it did; a whole tree changes every node, and an id
+  the document doesn't know answers the newest generation. The renderer
+  keeps what it built for a subtree whose generation it has already drawn.
+  The host's own state follows the same way: after a patch it walks the
+  tree only for what the patch could concern (`patch::Touched`: fields,
+  key views, the Tab order, scroll views, height transitions, virtualized
+  lists, whose rows are refreshed when their list's generation moves), and
+  a field whose props changed is brought in line by itself.
+- **Trace.** With `MIRIN_METAL_TRACE=1` the host logs `line parsed (N KB)
+  in Xms` for every line, then `tree applied in Xms` for a whole tree or
+  `patch applied (N ops) in Xms` for a patch (`bench/stress.tsx` reads
+  both).
+- **Driver side.** The host config logs each mutation React makes
+  (`appendChild`, `insertBefore`, `removeChild`, the portal container's
+  own) and each node whose props or text changed (`lib/commit-log.ts`; a
+  shallow look first, so a re-render that changes only handlers or makes new
+  but equal `style` objects sends nothing), and `lib/tree-sync.ts` turns the
+  log into ops after the commit: a new subtree goes whole in its insert, a
+  node already sent is moved, and a set goes only when the node's head (its
+  JSON without children) differs from what was sent. Events find their
+  handler on the node's current props by id, so a handler that changed
+  needs nothing sent. `root.lastTree()` is the whole tree as the host now
+  has it, and `root.nodeId(testID)` the last node in document order with
+  that `testID`, as before.
+
 ### Focus
 
 Which view the keyboard goes to (`src/focus/`; the rules are pure and tested
@@ -518,9 +603,9 @@ Decisions, following §0:
    same feature modules (`engine/dialog`, `clipboard`, `notification`, …) so
    the Worker-side `mirinjs` code is shared verbatim; only window creation and
    the element-tree commands differ.
-3. **Diffing.** Whole-tree replacement is fine for the alpha; a patch protocol
-   (`insert` / `remove` / `update`) is a Metal-only change and can land whenever
-   trees get large, without touching `mirinjs`.
+3. **Diffing.** Landed 2026-11-10 as a Metal-only change, without touching
+   `mirinjs`: after the first whole tree a patching host gets `insert` /
+   `move` / `remove` / `set` ops (section 2, "Patches").
 
 ## 4. Platform notes
 
@@ -687,9 +772,9 @@ Renders through DirectX. Not yet verified.
   caret, focus, paste, change/submit events), scroll views, hover, borders,
   alignment, truncation, and monospace text landed 2026-10-29 and were driven
   with synthetic keyboard input on Fedora/KDE. Still open: press verified only
-  through the fake transport, image nodes, a tree patch protocol. (Text
-  selection landed 2026-11-06: caret placement, drag and Shift selection,
-  Cut and Copy, a controlled `selection`.)
+  through the fake transport, image nodes. (Text selection landed
+  2026-11-06: caret placement, drag and Shift selection, Cut and Copy, a
+  controlled `selection`. The tree patch protocol landed 2026-11-10.)
 - **M2 — in-process transport.** `libmirin_metal` C ABI + polled event queue
   replacing the stdio host; host/Worker boot shared with the CEF runtime;
   `docs/architecture.md` gains the Metal arm.
@@ -757,9 +842,39 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   laptop: the tree is in by ~60 ms) paint their content first, 76–97 ms
   after the host starts, where the stand-in painted 14–38 ms before it.
 
+- Patches (2026-11-10, B3; release host, `bench/stress.tsx` in
+  `packages/mirin-metal`, ~15k nodes, one card's style or one text per
+  update, medians of two runs each, baseline host and this one back to
+  back). `driver` is from the simulated input to the last line sent, so it
+  includes the host's turn to report the input; `parse` and `apply` are the
+  host's trace (whole tree, or patch):
+
+  | | whole tree | patches |
+  | --- | --- | --- |
+  | sent per update, select / type | 1367 KB / 1367 KB | 0.2 KB / 0.3 KB |
+  | driver, select | 12 ms | 1 ms |
+  | host parse + apply, select | 11.8–14.4 ms | 0.0–0.1 ms |
+  | host parse + apply, type | 11.8–12.6 ms | 0.0–0.1 ms |
+  | input → painted frame, select | 364–424 ms | 365–425 ms |
+
+  The driver alone (React and the send on a fake transport, no host): a
+  select 13.6 → 0.4 ms; typing 22.3 → 10.4 ms, where typing re-renders the
+  whole dashboard (no `memo`) and React's own reconciliation is the rest
+  (the stress bench's `driver` for typing, ~165–210 ms either way, waits
+  for the host to finish a frame before it reports the keystroke). Before
+  `patch::Touched`, a patch walked the whole tree once per kind of host state
+  (fields, focus, lists, …): 0.8–1.3 ms of the apply. The frame (GPUI's
+  layout and paint, ~130–160 ms at this size) is unchanged by patches and
+  dominates; the generations above are what it can use to skip unchanged
+  subtrees. On the example browser (`bench/native.tsx`, ~900 nodes, one
+  example swapped for another per click): 180.7 → 4.3 KB per click, parse
+  1.0 → 0.1 ms, apply 0.6 → 0.6–1.2 ms (the swapped example is inserted
+  under a scroll view, so its lists and scroll views are checked), driver
+  alone 7.7 → 6.5 ms; its click-to-frame time is the frame's.
+
 Open: React work per update (the demo re-renders its whole list on select),
-whole-tree JSON per update (the patch protocol, B3), GPUI's full relayout for
-trees that are not long lists.
+GPUI's full relayout for trees that are not long lists, and the
+accessibility tree, rebuilt whole after every update.
 
 ## 5c. Who uses it: Dashi
 

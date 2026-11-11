@@ -38,10 +38,34 @@ pub enum NodeSpec {
     Image { props: ImageProps },
 }
 
+impl NodeSpec {
+    /// A view with nothing in it (what a hidden window is left holding).
+    pub(crate) fn empty() -> Self {
+        NodeSpec::View {
+            props: Box::default(),
+            children: Vec::new(),
+        }
+    }
+
+    /// The id a patch addresses this node by (`patch/`): a view's or an
+    /// input's `id`, and the `id` a patching driver gives every other node.
+    pub fn key(&self) -> Option<&str> {
+        match self {
+            NodeSpec::View { props, .. } => props.id.as_deref(),
+            NodeSpec::Text { props, .. } => props.id.as_deref(),
+            NodeSpec::Input { props } => Some(props.id.as_str()),
+            NodeSpec::Svg { props } => props.id.as_deref(),
+            NodeSpec::Image { props } => props.id.as_deref(),
+        }
+    }
+}
+
 /// Props for an `svg` node.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct SvgProps {
+    /// Stable identity, only to address the node in a patch (`patch/`).
+    pub id: Option<String>,
     /// Complete `<svg>` document. Strokes and fills become the mask; the
     /// renderer paints it with `color`.
     pub markup: String,
@@ -56,6 +80,8 @@ pub struct SvgProps {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageProps {
+    /// Stable identity, only to address the node in a patch (`patch/`).
+    pub id: Option<String>,
     /// Absolute path to a PNG/JPEG/GIF/WebP/SVG file.
     pub src: String,
     pub width: Option<f32>,
@@ -275,6 +301,8 @@ pub struct DragFiles {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextProps {
+    /// Stable identity, only to address the node in a patch (`patch/`).
+    pub id: Option<String>,
     /// Text color, `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
     pub color: Option<String>,
     /// Font size in pixels.
