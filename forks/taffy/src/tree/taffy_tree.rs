@@ -124,9 +124,9 @@ struct NodeData {
     // mirin: the layout (`TaffyTree::layout_epoch`) that last changed
     // something inside it (`TaffyTree::inner_changed_since`).
     pub(crate) inner_changed_at: u32,
-    /// A measured leaf whose function was asked something else for its
-    /// final layout than the last time, since it was last rounded.
-    pub(crate) remeasured: bool,
+    /// A measured leaf: the layout that last asked its function again, not
+    /// counting the layout it was made in (`TaffyTree::asked_since`).
+    pub(crate) asked_at: u32,
     /// One of its edges, or of a node below it, sat close to half a pixel
     /// when it was last rounded (`TaffyTree::round_changed`).
     pub(crate) near_half: bool,
@@ -146,7 +146,7 @@ impl NodeData {
             ran: true,
             rounded_at: None,
             inner_changed_at: 0,
-            remeasured: false,
+            asked_at: 0,
             near_half: true,
             #[cfg(feature = "detailed_layout_info")]
             detailed_layout_info: DetailedLayoutInfo::None,
@@ -189,9 +189,9 @@ pub struct TaffyTree<NodeContext = ()> {
 
     // mirin: how many layouts were computed (`layout_epoch`).
     epoch: u32,
-    // mirin: what a measured leaf's function was last asked for its final
-    // layout (`final_measure_inputs`).
-    final_measures: SecondaryMap<DefaultKey, (Size<Option<f32>>, Size<AvailableSpace>)>,
+    // mirin: what a measured leaf's function was last asked
+    // (`last_measure_inputs`).
+    last_measures: SecondaryMap<DefaultKey, (Size<Option<f32>>, Size<AvailableSpace>)>,
 }
 
 impl Default for TaffyTree {
@@ -482,12 +482,13 @@ where
                     let style = &tree.taffy.nodes[node_key].style;
                     let has_context = tree.taffy.nodes[node_key].has_context;
                     let node_context = has_context.then(|| tree.taffy.node_context_data.get_mut(node_key)).flatten();
-                    // mirin: what the measure function is asked for the final
-                    // layout is kept (`TaffyTree::final_measure_inputs`).
-                    let is_final = has_context && inputs.run_mode == RunMode::PerformLayout;
+                    // mirin: what the measure function is asked is kept
+                    // (`TaffyTree::last_measure_inputs`), and that it was
+                    // asked again after the layout the node was made in
+                    // (`TaffyTree::asked_since`).
                     let mut asked = None;
                     let measure_function = |known_dimensions, available_space| {
-                        if is_final {
+                        if has_context {
                             asked = Some((known_dimensions, available_space));
                         }
                         (tree.measure_function)(known_dimensions, available_space, node, node_context, style)
@@ -495,9 +496,11 @@ where
                     // TODO: implement calc() in high-level API
                     let output = compute_leaf_layout(inputs, style, |_, _| 0.0, measure_function);
                     if let Some(asked) = asked {
-                        let before = tree.taffy.final_measures.insert(node_key, asked);
-                        if before.is_some_and(|before| before != asked) {
-                            tree.taffy.nodes[node_key].remeasured = true;
+                        tree.taffy.last_measures.insert(node_key, asked);
+                        let epoch = tree.taffy.epoch;
+                        let data = &mut tree.taffy.nodes[node_key];
+                        if data.rounded_at.is_some() {
+                            data.asked_at = epoch;
                         }
                     }
                     output
@@ -661,7 +664,7 @@ impl<NodeContext> TaffyTree<NodeContext> {
             node_context_data: SecondaryMap::with_capacity(capacity),
             config: TaffyConfig::default(),
             epoch: 0,
-            final_measures: SecondaryMap::new(),
+            last_measures: SecondaryMap::new(),
         }
     }
 
@@ -720,7 +723,7 @@ impl<NodeContext> TaffyTree<NodeContext> {
         self.children.clear();
         self.parents.clear();
         // mirin: what was kept per measured leaf goes with the nodes.
-        self.final_measures.clear();
+        self.last_measures.clear();
     }
 
     /// Remove a specific node from the tree and drop it
@@ -754,7 +757,7 @@ impl<NodeContext> TaffyTree<NodeContext> {
         // mirin: drop its context (a measure function and what it holds) now,
         // not when the slot is reused.
         let _ = self.node_context_data.remove(key);
-        let _ = self.final_measures.remove(key);
+        let _ = self.last_measures.remove(key);
 
         Ok(node)
     }
@@ -1085,17 +1088,16 @@ impl<NodeContext> TaffyTree<NodeContext> {
         let x = parent_x + unrounded.location.x;
         let y = parent_y + unrounded.location.y;
         let before = data.final_layout;
-        let remeasured = core::mem::take(&mut data.remeasured);
         data.final_layout = crate::compute::round_node(&unrounded, x, y);
         data.written = false;
         data.ran = false;
         data.rounded_at = Some((parent_x, parent_y));
         // mirin: what changed inside whom (`inner_changed_since`). Its own
-        // box changed, or (a measured leaf) what it was asked to fit: inside
-        // it. It only moved: inside its parent. An algorithm that ran again
-        // and placed everything as it was changed nothing.
+        // box changed: inside it. It only moved: inside its parent. An
+        // algorithm that ran again and placed everything as it was changed
+        // nothing.
         let after = data.final_layout;
-        if remeasured || (Layout { location: before.location, ..after }) != before {
+        if (Layout { location: before.location, ..after }) != before {
             self.mark_inner_changed(Some(node));
         } else if after.location != before.location {
             self.mark_inner_changed(self.parents[node.into()]);
@@ -1130,21 +1132,27 @@ impl<NodeContext> TaffyTree<NodeContext> {
     }
 
     /// mirin: whether a layout after `epoch` changed anything inside `node`:
-    /// its own size, border or padding, the rounded layout of any node below
-    /// it, or what a measured leaf below it was asked to fit for its final
-    /// layout (whatever it answered). Where `node` itself sits in its parent
-    /// is not inside it, and a layout that ran again inside it and came out
-    /// the same changed nothing.
+    /// its own size, border or padding, or the rounded layout of any node
+    /// below it. Where `node` itself sits in its parent is not inside it,
+    /// and a layout that ran again inside it and came out the same changed
+    /// nothing.
     pub fn inner_changed_since(&self, node: NodeId, epoch: u32) -> bool {
         !matches!(self.nodes.get(node.into()), Some(data) if data.inner_changed_at <= epoch)
     }
 
+    /// mirin: whether a layout after `epoch` asked the measured leaf `node`
+    /// again (the layout it was made in does not count). Until then it holds
+    /// what a layout from nothing leaves it with; after, what it holds
+    /// depends on which of its answers the cache still had.
+    pub fn asked_since(&self, node: NodeId, epoch: u32) -> bool {
+        !matches!(self.nodes.get(node.into()), Some(data) if data.asked_at <= epoch)
+    }
+
     /// mirin: the known dimensions and available space a measured leaf's
-    /// function was last asked for its final layout (not for a size its
-    /// parent was only trying out): what to ask a new function for the same
+    /// function was last asked: what to ask a new function for the same
     /// node so it holds what the old one did.
-    pub fn final_measure_inputs(&self, node: NodeId) -> Option<(Size<Option<f32>>, Size<AvailableSpace>)> {
-        self.final_measures.get(node.into()).copied()
+    pub fn last_measure_inputs(&self, node: NodeId) -> Option<(Size<Option<f32>>, Size<AvailableSpace>)> {
+        self.last_measures.get(node.into()).copied()
     }
 
     /// mirin: lay `node` out as `twin` is laid out where it sits: the same
@@ -1888,62 +1896,43 @@ mod mirin_tests {
     }
 
     #[test]
-    fn a_measured_leaf_asked_something_else_changed_inside() {
+    fn a_measured_leaf_asked_again_is_known() {
         let mut taffy: TaffyTree<u8> = TaffyTree::new();
         let text = taffy.new_leaf_with_context(Style::default(), 0).unwrap();
-        let column = |width: f32| Style {
-            flex_direction: FlexDirection::Column,
-            align_items: Some(AlignItems::Start),
-            size: Size { width: length(width), height: auto() },
-            ..Default::default()
-        };
-        let root = taffy.new_with_children(column(80.0), &[text]).unwrap();
-        // A text that always answers the same size, however wide its box.
-        let layout = |taffy: &mut TaffyTree<u8>| {
-            taffy
-                .compute_layout_with_measure(root, Size::MAX_CONTENT, |_, _, _, _, _| Size { width: 30.0, height: 12.0 })
-                .unwrap();
-            (*taffy.layout(text).unwrap(), taffy.final_measure_inputs(text))
-        };
-        let (narrow, asked_narrow) = layout(&mut taffy);
-        let drawn = taffy.layout_epoch();
-        // A wider box: laid out the same, but it may have wrapped otherwise
-        // if it was asked to fit something else.
-        taffy.set_style(root, column(90.0)).unwrap();
-        let (wide, asked_wide) = layout(&mut taffy);
-        assert_eq!(narrow, wide);
-        assert_eq!(taffy.inner_changed_since(text, drawn), asked_narrow != asked_wide);
-        // Laid out again in the same box: nothing changed.
-        let drawn = taffy.layout_epoch();
-        taffy.mark_dirty(text).unwrap();
-        layout(&mut taffy);
-        assert!(!taffy.inner_changed_since(text, drawn));
-    }
-
-    #[test]
-    fn a_measured_leaf_keeps_what_its_final_layout_asked() {
-        let mut taffy: TaffyTree<u8> = TaffyTree::new();
-        let text = taffy.new_leaf_with_context(Style::default(), 0).unwrap();
-        let plain = taffy.new_leaf(Style::default()).unwrap();
-        let root = taffy
-            .new_with_children(
-                Style { size: Size { width: length(80.0), height: auto() }, ..Default::default() },
-                &[text, plain],
-            )
-            .unwrap();
+        let other = taffy.new_leaf(Style::default()).unwrap();
+        let wide = |width: f32| Style { size: Size { width: length(width), height: auto() }, ..Default::default() };
+        let row = taffy.new_with_children(Style::default(), &[text]).unwrap();
+        let root = taffy.new_with_children(wide(80.0), &[row, other]).unwrap();
         let mut asked = Vec::new();
-        taffy
-            .compute_layout_with_measure(root, Size::MAX_CONTENT, |known, available, _, context, _| {
-                if context.is_some() {
-                    asked.push((known, available));
-                }
-                Size { width: 30.0, height: 12.0 }
-            })
-            .unwrap();
-        assert!(asked.len() > 1, "its parent tried sizes out before the final layout");
-        assert_eq!(taffy.final_measure_inputs(text), asked.last().copied());
-        assert_eq!(taffy.final_measure_inputs(plain), None);
+        let mut layout = |taffy: &mut TaffyTree<u8>| {
+            taffy
+                .compute_layout_with_measure(root, Size::MAX_CONTENT, |known, available, _, context, _| {
+                    if context.is_some() {
+                        asked.push((known, available));
+                    }
+                    Size { width: 30.0, height: 12.0 }
+                })
+                .unwrap();
+            asked.last().copied()
+        };
+        // The layout it is made in asks it (more than once): that is not again.
+        let last = layout(&mut taffy);
+        let made = taffy.layout_epoch();
+        assert_eq!(taffy.last_measure_inputs(text), last);
+        assert_eq!(taffy.last_measure_inputs(other), None);
+        assert!(!taffy.asked_since(text, 0));
+        // What is beside it changes: its answers are still in the cache.
+        taffy.set_style(other, wide(10.0)).unwrap();
+        layout(&mut taffy);
+        assert!(!taffy.asked_since(text, made));
+        // It is laid out again: asked again.
+        taffy.mark_dirty(text).unwrap();
+        let last = layout(&mut taffy);
+        assert!(taffy.asked_since(text, made));
+        assert!(!taffy.asked_since(other, made));
+        assert_eq!(taffy.last_measure_inputs(text), last);
+        assert!(!taffy.asked_since(text, taffy.layout_epoch()));
         taffy.remove(text).unwrap();
-        assert_eq!(taffy.final_measure_inputs(text), None);
+        assert_eq!(taffy.last_measure_inputs(text), None);
     }
 }
