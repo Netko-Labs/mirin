@@ -626,8 +626,13 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   renderer knows: painted bounds, which field has the keyboard, and what is
   typed in it (the buffer, not the driver's lagging value; never a password
   field's). The adapter watches whether assistive technology is on and hands
-  the tree to the accessibility bus only then; the tree is rebuilt only when
-  the element tree, the focus, the typed text, or the window's focus changed.
+  the tree to the accessibility bus only then; the tree is rebuilt at once
+  when the element tree, the focus, the typed text, or the window's focus
+  changed. Bounds that moved alone (a scroll, a resize) are rebuilt only
+  while assistive technology listens, at most every quarter second, and once
+  more after they stop (`src/access/pace.rs`): rebuilding on every frame of a
+  scroll cost a host about half again its CPU in Dashi, which keeps AT-SPI on
+  for its agents.
 - **What it says.** A view with `access` (`accessibilityRole`,
   `accessibilityLabel`, `accessibilityState`, `accessibilityLiveRegion` in
   `@mirinjs/metal`, React Native's names) is a node with that role, name and
