@@ -13,6 +13,13 @@ interface InstanceBase {
   parent: HostParent | null;
   /** Its head (`lib/serialize.ts`) as a patching host last got it. */
   wire?: string;
+  /**
+   * A view's or an input's head as a whole tree last wrote it, and the props
+   * it was written from: their head says nothing but their props, so the
+   * next whole tree writes it again only for props React has replaced.
+   */
+  head?: string;
+  headProps?: object;
 }
 
 export interface ViewInstance extends InstanceBase {

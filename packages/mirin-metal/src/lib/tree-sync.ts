@@ -103,8 +103,21 @@ export class TreeSync {
 
   /** A node and its subtree as JSON; with `fields`, also what the host now holds. */
   private wholeJson(node: HostNode, parent: HostInstance | null, fields: FieldList | null): string {
-    const wire = headJson(node, parent, { ids: this.patching, root: node === this.root });
+    const root = node === this.root;
+    // A view's or an input's head is its props and nothing else (the root's
+    // also says it fills the window): one written from these very props is
+    // still right. Only a tree that is sent reads it; `lastTree()` works
+    // every head out again, so a check against it reads no kept copy.
+    const kept = !root && (node.kind === "view" || node.kind === "input") ? node : null;
+    const wire =
+      fields && kept && kept.head !== undefined && kept.headProps === kept.props
+        ? kept.head
+        : headJson(node, parent, { ids: this.patching, root });
     if (fields) {
+      if (kept) {
+        kept.head = wire;
+        kept.headProps = kept.props;
+      }
       if (this.patching) node.wire = wire;
       this.nodes.set(node.key, node);
       if (node.kind === "input" && node.props.onSelectionChange) {
