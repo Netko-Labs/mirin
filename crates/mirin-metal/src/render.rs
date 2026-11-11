@@ -732,8 +732,6 @@ mod tests {
 
     /// GPUI paints a wrapped right-aligned line from where its ink ends,
     /// not after the space it broke at (forks/gpui `ink_end_x`).
-    // GAP: not ported to forks/zed yet.
-    #[cfg(not(feature = "gpui-next"))]
     #[test]
     fn a_wrapped_line_ends_before_the_space_it_broke_at() {
         // "4,420 + 316" 10 px a glyph, wrapped before "+": the line ends after "0".

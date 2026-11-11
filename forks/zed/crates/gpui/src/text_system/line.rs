@@ -145,6 +145,7 @@ impl ShapedLine {
         paint_line(
             origin,
             &self.layout,
+            &self.text,
             line_height,
             align,
             align_width,
@@ -172,6 +173,7 @@ impl ShapedLine {
         paint_line_background(
             origin,
             &self.layout,
+            &self.text,
             line_height,
             align,
             align_width,
@@ -401,6 +403,7 @@ impl LineLayout {
         paint_line(
             origin,
             self,
+            "",
             line_height,
             align,
             align_width,
@@ -433,6 +436,7 @@ impl LineLayout {
         paint_line_background(
             origin,
             self,
+            "",
             line_height,
             align,
             align_width,
@@ -480,6 +484,7 @@ impl WrappedLine {
         paint_line(
             origin,
             &self.layout.unwrapped_layout,
+            &self.text,
             line_height,
             align,
             align_width,
@@ -514,6 +519,7 @@ impl WrappedLine {
         paint_line_background(
             origin,
             &self.layout.unwrapped_layout,
+            &self.text,
             line_height,
             align,
             align_width,
@@ -530,6 +536,7 @@ impl WrappedLine {
 fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
+    text: &str,
     line_height: Pixels,
     align: TextAlign,
     align_width: Option<Pixels>,
@@ -571,6 +578,7 @@ fn paint_line(
                 px(0.0),
                 &align,
                 layout,
+                text,
                 wraps.peek(),
             ),
             origin.y,
@@ -634,6 +642,7 @@ fn paint_line(
                         glyph.position.x,
                         &align,
                         layout,
+                        text,
                         wraps.peek(),
                     );
                     glyph_origin.y += line_height;
@@ -808,6 +817,7 @@ fn has_background(decoration_runs: &[DecorationRun]) -> bool {
 fn paint_line_background(
     origin: Point<Pixels>,
     layout: &LineLayout,
+    text: &str,
     line_height: Pixels,
     align: TextAlign,
     align_width: Option<Pixels>,
@@ -837,6 +847,7 @@ fn paint_line_background(
                 px(0.0),
                 &align,
                 layout,
+                text,
                 wraps.peek(),
             ),
             origin.y,
@@ -877,6 +888,7 @@ fn paint_line_background(
                         glyph.position.x,
                         &align,
                         layout,
+                        text,
                         wraps.peek(),
                     );
                     glyph_origin.y += line_height;
@@ -1000,16 +1012,65 @@ fn line_paint_bounds(
     bounds
 }
 
+/// mirin: where a wrapped line's ink ends: before the spaces it broke at.
+/// They stay in the text (the next line starts after them) but take no room
+/// at the line's end, so a right-aligned or centered wrapped line lines up
+/// with the lines around it (a wrapped sum in Calculator's tape).
+fn wrapped_line_end_x(layout: &LineLayout, text: &str, boundary: &WrapBoundary) -> Pixels {
+    let boundary_x = layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+        .position
+        .x;
+    let before = layout.runs[..=boundary.run_ix]
+        .iter()
+        .enumerate()
+        .rev()
+        .flat_map(|(run_ix, run)| {
+            let upto = if run_ix == boundary.run_ix {
+                boundary.glyph_ix
+            } else {
+                run.glyphs.len()
+            };
+            run.glyphs[..upto].iter().rev()
+        })
+        .map(|glyph| (glyph.position.x, glyph.index));
+    ink_end_x(boundary_x, before, text)
+}
+
+/// mirin: where a line's ink ends when the next line starts at `boundary_x`:
+/// back over the glyphs `before` it (their x and byte index in `text`,
+/// nearest first) that are spaces. Public (hidden) so mirin-metal tests it.
+#[doc(hidden)]
+pub fn ink_end_x(
+    boundary_x: Pixels,
+    before: impl Iterator<Item = (Pixels, usize)>,
+    text: &str,
+) -> Pixels {
+    let mut end = boundary_x;
+    for (x, index) in before {
+        let is_space = text
+            .get(index..)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(char::is_whitespace);
+        if !is_space {
+            break;
+        }
+        end = x;
+    }
+    end
+}
+
 fn aligned_origin_x(
     origin: Point<Pixels>,
     align_width: Pixels,
     last_glyph_x: Pixels,
     align: &TextAlign,
     layout: &LineLayout,
+    text: &str,
     wrap_boundary: Option<&&WrapBoundary>,
 ) -> Pixels {
-    let end_of_line = if let Some(WrapBoundary { run_ix, glyph_ix }) = wrap_boundary {
-        layout.runs[*run_ix].glyphs[*glyph_ix].position.x
+    // mirin: a wrapped line ends where its ink does (`wrapped_line_end_x`).
+    let end_of_line = if let Some(boundary) = wrap_boundary {
+        wrapped_line_end_x(layout, text, boundary)
     } else {
         layout.width
     };
@@ -1408,6 +1469,7 @@ mod tests {
                 paint_line(
                     origin,
                     &wrapped.unwrapped_layout,
+                    &wrapped.text,
                     line_height,
                     TextAlign::Left,
                     Some(px(16.)),
