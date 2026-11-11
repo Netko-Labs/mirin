@@ -3,11 +3,14 @@
  * the JSON tree the renderer would receive, and fire the events the native
  * side would send (press, change, hover, pointer, resize). Every `onLayout`
  * node gets a synthetic resize after each commit so popups become visible.
+ * The transport takes patches, as the host does: the tree read is the one
+ * built from them, and it must be the whole tree the driver has.
  */
 
 import type { NativeEvent, NativeTransport, SimCommand } from "@mirinjs/metal";
 import { render } from "@mirinjs/metal";
 import type { ReactNode } from "react";
+import { PatchedTree } from "./patched-tree.ts";
 
 export interface TreeNode {
   type: string;
@@ -45,12 +48,24 @@ const WINDOW = { x: 0, y: 0, width: 1280, height: 800 };
 export async function mount(element: ReactNode): Promise<Harness> {
   const listeners: Array<(event: NativeEvent) => void> = [];
   let last = "";
+  const host = new PatchedTree();
+  // Thrown at the next settle: a throw in `send` would be React's to report.
+  let mismatch: string | null = null;
   const transport: NativeTransport = {
-    send(treeJson) {
-      last = treeJson;
+    send(line) {
+      try {
+        host.take(line);
+        last = JSON.stringify(host.tree);
+      } catch (error) {
+        mismatch ??= `${error instanceof Error ? error.message : String(error)}: ${line.slice(0, 200)}`;
+        return;
+      }
+      // What the patches built is what the driver has.
+      if (last !== root.lastTree()) mismatch ??= `patched tree differs after ${line.slice(0, 200)}`;
     },
     onEvent(listener) {
       listeners.push(listener);
+      listener({ type: "protocol", nodeId: "root", patches: 1 });
     },
     onClose() {},
     simulate(_command: SimCommand) {},
@@ -69,6 +84,7 @@ export async function mount(element: ReactNode): Promise<Harness> {
   };
 
   const settle = async () => {
+    if (mismatch) throw new Error(mismatch);
     for (let round = 0; round < 6; round += 1) {
       await Bun.sleep(5);
       if (!last) continue;
@@ -85,6 +101,7 @@ export async function mount(element: ReactNode): Promise<Harness> {
       if (!fired) break;
     }
     await Bun.sleep(5);
+    if (mismatch) throw new Error(mismatch);
   };
 
   const tree = () => JSON.parse(last || '{"type":"view","props":{}}') as TreeNode;

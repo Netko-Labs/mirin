@@ -242,19 +242,47 @@ fn generations_say_what_changed() {
 }
 
 #[test]
-fn a_failed_patch_marks_everything_changed() {
+fn a_failed_patch_applies_nothing_and_marks_everything_changed() {
     let mut doc = document();
     let failed = patch(
         &mut doc,
         r#"{"patch":[{"op":"remove","id":"a"},{"op":"remove","id":"zz"}]}"#,
     );
     assert!(failed.is_err());
-    // As far as it got, and every node counts as changed.
-    assert_eq!(children(&doc, "2"), ["b", "c"]);
+    // Never half a patch, and every node counts as changed.
+    assert_eq!(*doc, whole(TREE));
     assert_eq!(doc.subtree_generation("c"), doc.generation());
-    // A whole tree brings it back in step.
-    doc.replace(parse_tree(TREE).expect("test tree parses"));
+    // The document still takes patches (the host drops them until a whole
+    // tree comes, as the driver is ahead of it).
     patch(&mut doc, r#"{"patch":[{"op":"remove","id":"a"}]}"#).expect("patches apply again");
+}
+
+#[test]
+fn every_op_is_undone_when_a_later_one_fails() {
+    let mut doc = document();
+    let failed = patch(
+        &mut doc,
+        r##"{"patch":[
+          {"op":"move","id":"c","parent":"2","before":"a"},
+          {"op":"insert","parent":"a","before":"ta","node":{"type":"view","props":{"id":"n"},"children":[{"type":"text","props":{"id":"tn"},"children":["N"]}]}},
+          {"op":"set","id":"b","node":{"type":"view","props":{"id":"b","background":"#ff0000"}}},
+          {"op":"set","id":"tb","node":{"type":"text","props":{"id":"tb"},"children":["B2"]}},
+          {"op":"remove","id":"tc"},
+          {"op":"move","id":"f","parent":"a"},
+          {"op":"remove","id":"2"},
+          {"op":"set","id":"zz","node":{"type":"view","props":{"id":"zz"}}}
+        ]}"##,
+    );
+    assert!(failed.is_err());
+    assert_eq!(*doc, whole(TREE));
+    // And the ids are where they were: the same patch without its bad op applies.
+    patch(
+        &mut doc,
+        r#"{"patch":[{"op":"move","id":"c","parent":"2","before":"a"},{"op":"remove","id":"tc"}]}"#,
+    )
+    .expect("the patch applies");
+    assert_eq!(children(&doc, "2"), ["c", "a", "b"]);
+    assert!(children(&doc, "c").is_empty());
 }
 
 #[test]

@@ -56,12 +56,12 @@ export class TreeSync {
       this.sendWhole(root);
       return;
     }
+    // Worked out again when asked, from the instances: a check that it is
+    // what the patches built (the tests do) must not read a cached copy.
+    this.last = null;
     const line = this.patchLine(log);
     if (line === null) this.sendWhole(root);
-    else if (line) {
-      this.last = null;
-      this.send(line);
-    }
+    else if (line) this.send(line);
   }
 
   /** The mounted instance behind a node id, for its event. */

@@ -136,9 +136,9 @@ impl Document {
     }
 
     /// Apply a patch's ops in order, as one update, and say what renderer
-    /// state they may concern. On an error the ops before it stay applied,
-    /// every node counts as changed, and the tree is what it is until the
-    /// driver sends a whole one.
+    /// state they may concern. A patch applies whole or not at all: on an
+    /// error the ops before it are undone, so the tree is the one before the
+    /// patch (never half of it), and every node counts as changed.
     pub(crate) fn apply(&mut self, ops: Vec<PatchOp>) -> Result<Applied, PatchError> {
         self.generation += 1;
         let generation = self.generation;
@@ -162,9 +162,14 @@ impl Document {
             generation,
             changed: Vec::new(),
             applied: Applied::default(),
+            undo: Vec::new(),
         };
         for op in ops {
             if let Err(error) = apply_op(root, &mut index, op, &mut changes) {
+                for step in changes.undo.into_iter().rev() {
+                    step.revert(root);
+                }
+                // The index followed the ops; it is built again when next needed.
                 self.replaced_at = generation;
                 return Err(error);
             }
@@ -291,16 +296,14 @@ fn path(index: &Index, id: &str) -> Result<Vec<String>, PatchError> {
     Ok(path)
 }
 
-/// The node `id`, found from the root along its parents.
-fn locate<'a>(
-    root: &'a mut NodeSpec,
-    index: &Index,
-    id: &str,
-) -> Result<&'a mut NodeSpec, PatchError> {
+/// Where the node `id` is: the index of each node on the way down from the
+/// root, found along its parents.
+fn slot(root: &NodeSpec, index: &Index, id: &str) -> Result<Vec<usize>, PatchError> {
     let path = path(index, id)?;
     if path.is_empty() && root.key() != Some(id) {
         return Err(error(format!("node {id:?} is not under the root")));
     }
+    let mut slot = Vec::with_capacity(path.len());
     let mut node = root;
     for key in &path {
         let NodeSpec::View { children, .. } = node else {
@@ -312,9 +315,92 @@ fn locate<'a>(
             .iter()
             .position(|child| child.key() == Some(key.as_str()))
             .ok_or_else(|| error(format!("node {key:?} is not where the index has it")))?;
-        node = &mut children[at];
+        slot.push(at);
+        node = &children[at];
     }
-    Ok(node)
+    Ok(slot)
+}
+
+/// The node at `slot`, if the tree still has one there.
+fn at_slot<'a>(root: &'a mut NodeSpec, slot: &[usize]) -> Option<&'a mut NodeSpec> {
+    let mut node = root;
+    for &at in slot {
+        let NodeSpec::View { children, .. } = node else {
+            return None;
+        };
+        node = children.get_mut(at)?;
+    }
+    Some(node)
+}
+
+/// The node `id`, found from the root along its parents.
+fn locate<'a>(
+    root: &'a mut NodeSpec,
+    index: &Index,
+    id: &str,
+) -> Result<&'a mut NodeSpec, PatchError> {
+    let slot = slot(root, index, id)?;
+    at_slot(root, &slot).ok_or_else(|| error(format!("node {id:?} is not where the index has it")))
+}
+
+/// How to take back one applied op, by where it changed the tree (each
+/// slot is right in the tree as it was just after the op, so the steps
+/// undo in reverse order).
+enum Undo {
+    /// Take the child at `at` out of the view at `parent` (an insert).
+    Take { parent: Vec<usize>, at: usize },
+    /// Put `node` back at `at` in the view at `parent` (a remove).
+    Put {
+        parent: Vec<usize>,
+        at: usize,
+        node: NodeSpec,
+    },
+    /// Move the child at `to` in `into` back to `at` in `from` (a move).
+    Move {
+        from: Vec<usize>,
+        at: usize,
+        into: Vec<usize>,
+        to: usize,
+    },
+    /// Give the node at `node` its old props back (a set; a view's
+    /// children are not in `old`).
+    Set { node: Vec<usize>, old: NodeSpec },
+}
+
+impl Undo {
+    fn revert(self, root: &mut NodeSpec) {
+        match self {
+            Undo::Take { parent, at } => {
+                take(root, &parent, at);
+            }
+            Undo::Put { parent, at, node } => put(root, &parent, at, node),
+            Undo::Move { from, at, into, to } => {
+                if let Some(node) = take(root, &into, to) {
+                    put(root, &from, at, node);
+                }
+            }
+            Undo::Set { node, old } => match (at_slot(root, &node), old) {
+                (Some(NodeSpec::View { props, .. }), NodeSpec::View { props: old, .. }) => {
+                    *props = old;
+                }
+                (Some(target), old) => *target = old,
+                (None, _) => {}
+            },
+        }
+    }
+}
+
+fn take(root: &mut NodeSpec, parent: &[usize], at: usize) -> Option<NodeSpec> {
+    match at_slot(root, parent)? {
+        NodeSpec::View { children, .. } if at < children.len() => Some(children.remove(at)),
+        _ => None,
+    }
+}
+
+fn put(root: &mut NodeSpec, parent: &[usize], at: usize, node: NodeSpec) {
+    if let Some(NodeSpec::View { children, .. }) = at_slot(root, parent) {
+        children.insert(at.min(children.len()), node);
+    }
 }
 
 fn children_of<'a>(
@@ -354,6 +440,8 @@ struct Changes {
     /// Nodes whose own props or children changed, for `propagate`.
     changed: Vec<String>,
     applied: Applied,
+    /// How to take back each op applied, should a later one fail.
+    undo: Vec<Undo>,
 }
 
 /// How far up from a node whose children change a scroll view may make a
@@ -409,10 +497,15 @@ fn apply_op(
                 changes.applied.touched |= Touched::LISTS;
             }
             changes.applied.touched |= Touched::of_subtree(&node);
+            let parent_slot = slot(root, index, &parent)?;
             let children = children_of(root, index, &parent)?;
             let at = position(children, index, &parent, before.as_deref())?;
             add_subtree(index, &node, Some(&parent), generation)?;
             children.insert(at, *node);
+            changes.undo.push(Undo::Take {
+                parent: parent_slot,
+                at,
+            });
             touch(index, &parent, generation);
             changed.push(parent);
         }
@@ -426,11 +519,17 @@ fn apply_op(
             if near_scroll(root, index, &parent)? {
                 changes.applied.touched |= Touched::LISTS;
             }
+            let parent_slot = slot(root, index, &parent)?;
             let children = children_of(root, index, &parent)?;
             let at = position(children, index, &parent, Some(&id))?;
             let removed = children.remove(at);
             changes.applied.touched |= Touched::of_subtree(&removed);
             remove_entries(index, &removed);
+            changes.undo.push(Undo::Put {
+                parent: parent_slot,
+                at,
+                node: removed,
+            });
             touch(index, &parent, generation);
             changed.push(parent);
         }
@@ -456,13 +555,23 @@ fn apply_op(
             if near_scroll(root, index, &from)? || near_scroll(root, index, &parent)? {
                 changes.applied.touched |= Touched::LISTS;
             }
+            // Checked before anything changes: the new parent is a view.
+            children_of(root, index, &parent)?;
+            let from_slot = slot(root, index, &from)?;
             let children = children_of(root, index, &from)?;
             let at = position(children, index, &from, Some(&id))?;
             let node = children.remove(at);
             changes.applied.touched |= Touched::of_subtree(&node);
+            let into = slot(root, index, &parent)?;
             let children = children_of(root, index, &parent)?;
             let to = position(children, index, &parent, before.as_deref())?;
             children.insert(to, node);
+            changes.undo.push(Undo::Move {
+                from: from_slot,
+                at,
+                into,
+                to,
+            });
             if let Some(entry) = index.get_mut(&id) {
                 entry.parent = Some(parent.clone());
             }
@@ -478,7 +587,9 @@ fn apply_op(
             if matches!(&*node, NodeSpec::View { children, .. } if !children.is_empty()) {
                 return Err(error(format!("set {id:?}: a view's children are not set")));
             }
-            let target = locate(root, index, &id)?;
+            let target_slot = slot(root, index, &id)?;
+            let target = at_slot(root, &target_slot)
+                .ok_or_else(|| error(format!("node {id:?} is not where the index has it")))?;
             if std::mem::discriminant(target) != std::mem::discriminant(&*node) {
                 return Err(error(format!("set {id:?}: the node must keep its type")));
             }
@@ -488,10 +599,19 @@ fn apply_op(
             } else {
                 changes.applied.touched |= Touched::of_node(target) | Touched::of_node(&node);
             }
-            match (target, *node) {
-                (NodeSpec::View { props, .. }, NodeSpec::View { props: new, .. }) => *props = new,
-                (target, new) => *target = new,
-            }
+            let old = match (target, *node) {
+                (NodeSpec::View { props, .. }, NodeSpec::View { props: new, .. }) => {
+                    NodeSpec::View {
+                        props: std::mem::replace(props, new),
+                        children: Vec::new(),
+                    }
+                }
+                (target, new) => std::mem::replace(target, new),
+            };
+            changes.undo.push(Undo::Set {
+                node: target_slot,
+                old,
+            });
             touch(index, &id, generation);
             changed.push(id);
         }

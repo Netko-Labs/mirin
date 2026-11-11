@@ -812,4 +812,49 @@ mod tests {
             ]
         ));
     }
+
+    fn patch(json: &str) -> HostMessage {
+        HostMessage::Driver(DriverMessage::Patch(
+            crate::patch::parse_patch(json).expect("test patch parses"),
+        ))
+    }
+
+    fn background(first: &FirstTree) -> Option<String> {
+        match first.tree.as_deref() {
+            Some(crate::tree::NodeSpec::View { props, .. }) => props.background.clone(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn patches_before_the_window_opens_apply_until_one_fails() {
+        let mut first = FirstTree::default();
+        // A patch with no tree to apply to: the driver is asked for one.
+        first.take(patch(r#"{"patch":[{"op":"remove","id":"x"}]}"#));
+        assert_eq!(first.resyncs.len(), 1);
+        let whole = r##"{"type":"view","props":{"id":"1","background":"#000000"}}"##;
+        first.take(HostMessage::Driver(DriverMessage::Tree(Box::new(
+            parse_tree(whole).unwrap(),
+        ))));
+        assert!(!first.desynced);
+        let set = |color: &str| {
+            patch(&format!(
+                r#"{{"patch":[{{"op":"set","id":"1","node":{{"type":"view","props":{{"id":"1","background":"{color}"}}}}}}]}}"#
+            ))
+        };
+        first.take(set("#111111"));
+        assert_eq!(background(&first).as_deref(), Some("#111111"));
+        // One that fails changes nothing, and the ones after it are dropped
+        // until a whole tree comes.
+        first.take(patch(r#"{"patch":[{"op":"remove","id":"nope"}]}"#));
+        assert_eq!(first.resyncs.len(), 2);
+        first.take(set("#222222"));
+        assert_eq!(background(&first).as_deref(), Some("#111111"));
+        first.take(HostMessage::Driver(DriverMessage::Tree(Box::new(
+            parse_tree(whole).unwrap(),
+        ))));
+        first.take(set("#333333"));
+        assert_eq!(background(&first).as_deref(), Some("#333333"));
+        assert_eq!(first.resyncs.len(), 2);
+    }
 }
