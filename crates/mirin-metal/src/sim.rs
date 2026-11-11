@@ -88,6 +88,9 @@ pub(crate) struct LayoutMap(Rc<RefCell<LayoutState>>);
 pub(crate) struct LayoutState {
     frame: u64,
     nodes: HashMap<String, (Bounds<Pixels>, u64)>,
+    /// Bumped whenever a node's bounds change, one is painted anew, or one
+    /// is forgotten: what the accessibility tree checks before rebuilding.
+    revision: u64,
 }
 
 impl LayoutMap {
@@ -96,7 +99,16 @@ impl LayoutMap {
         let mut state = self.0.borrow_mut();
         state.frame += 1;
         let previous = state.frame - 1;
+        let before = state.nodes.len();
         state.nodes.retain(|_, (_, frame)| *frame >= previous);
+        if state.nodes.len() != before {
+            state.revision += 1;
+        }
+    }
+
+    /// Changes with any recorded bounds (see `LayoutState::revision`).
+    pub(crate) fn revision(&self) -> u64 {
+        self.0.borrow().revision
     }
 
     /// Record a node's bounds; returns whether they changed since it was last
@@ -104,7 +116,7 @@ impl LayoutMap {
     pub(crate) fn record(&self, id: &str, bounds: Bounds<Pixels>) -> bool {
         let mut state = self.0.borrow_mut();
         let frame = state.frame;
-        match state.nodes.get_mut(id) {
+        let changed = match state.nodes.get_mut(id) {
             Some(entry) => {
                 let changed = entry.0 != bounds;
                 *entry = (bounds, frame);
@@ -114,7 +126,11 @@ impl LayoutMap {
                 state.nodes.insert(id.to_string(), (bounds, frame));
                 true
             }
+        };
+        if changed {
+            state.revision += 1;
         }
+        changed
     }
 
     /// Bounds painted in the latest frame.
@@ -409,5 +425,37 @@ fn pressable(node: &NodeSpec, id: &str) -> bool {
         | NodeSpec::Input { .. }
         | NodeSpec::Svg { .. }
         | NodeSpec::Image { .. } => false,
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use gpui::{point, px, size, Bounds};
+
+    use super::LayoutMap;
+
+    fn at(x: f32) -> Bounds<gpui::Pixels> {
+        Bounds::new(point(px(x), px(0.)), size(px(10.), px(10.)))
+    }
+
+    #[test]
+    fn the_revision_moves_only_when_bounds_do() {
+        let layout = LayoutMap::default();
+        layout.begin_frame();
+        layout.record("a", at(0.));
+        let first = layout.revision();
+        layout.begin_frame();
+        layout.record("a", at(0.));
+        assert_eq!(layout.revision(), first, "the same bounds again");
+        layout.begin_frame();
+        layout.record("a", at(5.));
+        assert!(layout.revision() > first, "a scroll or resize moved it");
+        let moved = layout.revision();
+        layout.begin_frame();
+        layout.begin_frame();
+        assert!(
+            layout.revision() > moved,
+            "a node no longer painted is forgotten"
+        );
     }
 }

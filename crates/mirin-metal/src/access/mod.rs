@@ -58,6 +58,9 @@ pub(crate) struct Focused {
 /// tree is held, so a new one can't take its place in memory unnoticed.
 struct Built {
     tree: Rc<NodeSpec>,
+    /// The layout's revision: bounds that moved (a resize, a scroll) with the
+    /// same tree still need publishing.
+    layout: u64,
     focused: Option<Focused>,
     window_active: bool,
     title: String,
@@ -66,6 +69,7 @@ struct Built {
 impl Built {
     fn same(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.tree, &other.tree)
+            && self.layout == other.layout
             && self.focused == other.focused
             && self.window_active == other.window_active
             && self.title == other.title
@@ -141,6 +145,7 @@ impl Accessibility {
     ) {
         let now = Built {
             tree: Rc::clone(tree),
+            layout: layout.revision(),
             focused,
             window_active,
             title: self.title.clone(),
