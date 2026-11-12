@@ -107,6 +107,8 @@ impl Cache {
     }
 
     /// Try to retrieve a cached result from the cache
+    // mirin: an entry laid out under a min-content width answers a known width equal to the
+    // width it came out at only if it was itself laid out at a known width (`holds_at_its_width`).
     #[inline]
     pub fn get(
         &self,
@@ -120,7 +122,8 @@ impl Cache {
                 .filter(|entry| {
                     let cached_size = entry.content.size;
                     (known_dimensions.width == entry.known_dimensions.width
-                        || known_dimensions.width == Some(cached_size.width))
+                        || (known_dimensions.width == Some(cached_size.width)
+                            && holds_at_its_width(entry.known_dimensions, entry.available_space)))
                         && (known_dimensions.height == entry.known_dimensions.height
                             || known_dimensions.height == Some(cached_size.height))
                         && (known_dimensions.width.is_some()
@@ -134,7 +137,8 @@ impl Cache {
                     let cached_size = entry.content;
 
                     if (known_dimensions.width == entry.known_dimensions.width
-                        || known_dimensions.width == Some(cached_size.width))
+                        || (known_dimensions.width == Some(cached_size.width)
+                            && holds_at_its_width(entry.known_dimensions, entry.available_space)))
                         && (known_dimensions.height == entry.known_dimensions.height
                             || known_dimensions.height == Some(cached_size.height))
                         && (known_dimensions.width.is_some()
@@ -198,4 +202,18 @@ pub enum ClearState {
     Cleared,
     /// Everything was already cleared
     AlreadyEmpty,
+}
+
+// mirin: a min-content pass is not the layout at the width it came out at.
+/// Whether an entry's layout is the one its node has when it is given, as a known width, the
+/// width the entry came out at. It is when the entry was laid out for a definite or a
+/// max-content width: its lines were broken to fit that width, or not at all. It is not when
+/// the width was left to a min-content pass: there every wrapping row put each item on a line
+/// of its own and every text broke at its widest word, while the node came out as wide as its
+/// widest child, which may leave the others room to sit on one line. Reusing that entry for
+/// the same width kept the min-content pass's height: a card exactly as wide as its rows'
+/// least width came out taller than its rows (Dashi's Settings, Mouse, at 744 wide).
+#[inline]
+fn holds_at_its_width(known_dimensions: Size<Option<f32>>, available_space: Size<AvailableSpace>) -> bool {
+    known_dimensions.width.is_some() || available_space.width != AvailableSpace::MinContent
 }

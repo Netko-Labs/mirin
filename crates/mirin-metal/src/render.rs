@@ -565,6 +565,10 @@ mod one_line_tests;
 #[cfg(test)]
 mod baseline_tests;
 
+// A Settings card and its rows, laid out by GPUI on its test platform.
+#[cfg(test)]
+mod card_tests;
+
 // Where a wrapped text breaks, laid out by GPUI on its test platform.
 #[cfg(test)]
 mod wrap_tests;
