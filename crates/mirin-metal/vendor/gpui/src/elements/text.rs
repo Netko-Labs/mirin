@@ -155,6 +155,8 @@ pub struct StyledText {
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
     // mirin: per-paragraph font sizes.
     paragraph_sizes: Option<Vec<Option<Pixels>>>,
+    // mirin: tab stops.
+    tab_size: u32,
     layout: TextLayout,
 }
 
@@ -166,8 +168,17 @@ impl StyledText {
             runs: None,
             delayed_highlights: None,
             paragraph_sizes: None,
+            tab_size: crate::DEFAULT_TAB_SIZE,
             layout: TextLayout::default(),
         }
+    }
+
+    // mirin: tab stops.
+    /// Set this text's tab stops every `tab_size` `0`s of its font, in place
+    /// of [`crate::DEFAULT_TAB_SIZE`]. Zero is taken as one.
+    pub fn with_tab_size(mut self, tab_size: u32) -> Self {
+        self.tab_size = tab_size.max(1);
+        self
     }
 
     // mirin: per-paragraph font sizes.
@@ -290,7 +301,7 @@ impl Element for StyledText {
         let sizes = self.paragraph_sizes.take();
         let layout_id = self
             .layout
-            .layout_sized(self.text.clone(), runs, sizes, window, cx);
+            .layout_sized(self.text.clone(), runs, sizes, self.tab_size, window, cx);
         (layout_id, ())
     }
 
@@ -360,6 +371,8 @@ struct Fit {
     font_size: Pixels,
     suffix: SharedString,
     line_clamp: Option<usize>,
+    // mirin: tab stops.
+    tab_size: u32,
 }
 
 // mirin: whether a layout made for one query answers another. Both the wrap
@@ -469,7 +482,7 @@ impl TextLayout {
         window: &mut Window,
         cx: &mut App,
     ) -> LayoutId {
-        self.layout_sized(text, runs, None, window, cx)
+        self.layout_sized(text, runs, None, crate::DEFAULT_TAB_SIZE, window, cx)
     }
 
     fn layout_sized(
@@ -477,6 +490,7 @@ impl TextLayout {
         text: SharedString,
         runs: Option<Vec<TextRun>>,
         paragraph_sizes: Option<Vec<Option<Pixels>>>,
+        tab_size: u32,
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
@@ -503,6 +517,7 @@ impl TextLayout {
                     font_size,
                     suffix,
                     line_clamp: text_style.line_clamp,
+                    tab_size,
                 })
             });
 
@@ -607,12 +622,13 @@ impl TextLayout {
                             .to_pixels(size.into(), window.rem_size());
                         let shaped = window
                             .text_system()
-                            .shape_text(
+                            .shape_text_tabbed(
                                 SharedString::from(paragraph.to_string()),
                                 size,
                                 &runs_within(&runs, range),
                                 wrap_width,
                                 None,
+                                tab_size,
                             )
                             .log_err()
                             .unwrap_or_default();
@@ -643,12 +659,13 @@ impl TextLayout {
 
                 let Some(lines) = window
                     .text_system()
-                    .shape_text(
+                    .shape_text_tabbed(
                         text,
                         font_size,
                         &runs,
                         wrap_width,            // Wrap if we know the width.
                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
+                        tab_size,
                     )
                     .log_err()
                 else {
@@ -713,12 +730,13 @@ impl TextLayout {
             .truncate_line(fit.text.clone(), drawn, &fit.suffix, &mut runs);
         let Some(shaped) = window
             .text_system()
-            .shape_text(
+            .shape_text_tabbed(
                 text.clone(),
                 fit.font_size,
                 &runs,
                 inner.wrap_width,
                 fit.line_clamp,
+                fit.tab_size,
             )
             .log_err()
         else {

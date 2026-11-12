@@ -334,7 +334,11 @@ Native-style props: `<View style>` (`flex`, `alignItems` (with `"baseline"`: a r
 up by their first line of text, so small text beside larger text shares its baseline; GPUI's
 text names its first baseline to mirin's taffy fork, `set_first_baseline`), `justifyContent`,
 `overflow: "scroll" | "hidden"`, `hoverBackgroundColor`, …), `<Text
-numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
+numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>` (a one-line text is as wide
+as its box and cut with an ellipsis, so two of them side by side in a row each ask for the whole
+row and get half of it, whatever their words: put each in a `<View style={{ flexShrink: 0 }}>` to
+keep its own width, or give one `flex: 1`; nothing is kept from a text's earlier words, each
+frame measures the words it has: `render::one_line_tests`),
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
 (`onKeyPress` reports Escape, and ArrowUp and ArrowDown in a single-line field,
 for list navigation), React Native's `selection` (`{ start, end }`, controlled),
@@ -355,7 +359,8 @@ after land in the next field: a title, then its body), `submitBehavior`
 (`"submit"` makes Enter submit a multiline field instead of breaking its line:
 a title that wraps but is one paragraph; Ctrl/Cmd+Enter always submits) and `tabBehavior`
 (`"insert"` makes Tab type a tab in a multiline field instead of moving the keyboard on: a text
-editor's document; Shift+Tab still moves it back and Ctrl/Cmd+Tab on); a run's `color` may be
+editor's document; Shift+Tab still moves it back and Ctrl/Cmd+Tab on) and `tabSize` (how far
+apart the tab stops are, in `0`s of the field's font: 4 unless given; see "Tab stops"); a run's `color` may be
 translucent (GPUI blends a highlight's color over the text's, so the host
 sends it opaque with its alpha as a fade),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
@@ -433,6 +438,29 @@ in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
 - Not yet: focus moved by the driver (a `focus()` call), Home and End in a
   group, a grid's two-dimensional arrows, rings on views in a virtualized
   list that clip them.
+
+### Tab stops
+
+A tab in any text moves what follows it to the next tab stop of its line, so
+columns line up. Stops are counted from the line's start, every `tabSize`
+times the width of the font's `0` (CSS's `ch`): 4 by default; an `input` may
+set its own (`tabSize`, 1 to 64), and so may a `<Text>` (`style.tabSize`), so
+a text that mirrors a field wraps as the field does. In a fixed-pitch font that is as many
+spaces; in a proportional one a `0` is about twice a space, so four are wide
+enough to line words up (four spaces there are about one em, which lines
+nothing up). A tab always moves on: one that sits on a stop goes to the next.
+
+The stops are set in GPUI's line layout (`apply_tab_stops`,
+`vendor/gpui/src/text_system/line_layout.rs`), after the platform shaped the
+line, so every platform has the same ones and everything that reads a glyph's
+place follows: the caret, the selection's wash (a selected tab is as wide as
+it is drawn), a click, ↑ and ↓, the text's measured width and where it wraps.
+A line breaks after a tab, as after a space.
+
+Limits: on a line that soft-wraps, the stops of its later rows are still
+counted from where the paragraph began, not from each row's start; a line set
+right to left keeps the shaper's own tabs; a text cut with an ellipsis is
+measured for its cut with a tab as wide as one character.
 
 ### Visibility
 

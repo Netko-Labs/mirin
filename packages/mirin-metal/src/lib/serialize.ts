@@ -140,6 +140,7 @@ interface TextNodeProps {
   underline?: boolean;
   lineThrough?: boolean;
   lineHeight?: number;
+  tabSize?: number;
 }
 
 /** `access` on a view or an input: what the accessibility tree says of it (crates/mirin-metal/src/tree.rs `AccessProps`). */
@@ -198,6 +199,7 @@ interface InputNodeProps {
   focusNextOnSubmit?: boolean;
   submitOnEnter?: boolean;
   insertTab?: boolean;
+  tabSize?: number;
   onKey?: boolean;
   selection?: TextSelection;
   onSelection?: boolean;
@@ -565,6 +567,12 @@ function serializeText(instance: TextInstance): TextNode {
   return textNode(instance.props.style ?? {}, instance.props.numberOfLines, children);
 }
 
+/** A tab size as the renderer takes it: whole, from 1 to 64; none unless it is a number. */
+function tabStops(size: number | undefined): number | undefined {
+  if (typeof size !== "number" || !Number.isFinite(size)) return undefined;
+  return Math.min(Math.max(Math.round(size), 1), 64);
+}
+
 function textNode(
   style: TextStyle,
   numberOfLines: number | undefined,
@@ -582,6 +590,8 @@ function textNode(
   if (style.textDecorationLine === "underline") props.underline = true;
   if (style.textDecorationLine === "line-through") props.lineThrough = true;
   if (style.lineHeight !== undefined) props.lineHeight = style.lineHeight;
+  const tabSize = tabStops(style.tabSize);
+  if (tabSize !== undefined) props.tabSize = tabSize;
   return { type: "text", props, children };
 }
 
@@ -654,6 +664,8 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
   if (input.multiline && input.submitBehavior === "submit") props.submitOnEnter = true;
   if (input.multiline && input.tabBehavior === "insert") props.insertTab = true;
+  const tabSize = tabStops(input.tabSize);
+  if (tabSize !== undefined) props.tabSize = tabSize;
   if (input.onKeyPress) {
     props.onKey = true;
     handlers.key.set(id, input.onKeyPress);

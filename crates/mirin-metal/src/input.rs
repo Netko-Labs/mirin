@@ -154,6 +154,9 @@ pub(crate) fn render_input(
     };
     let mut text = StyledText::new(SharedString::from(display.text.clone()))
         .with_highlights(styled.highlights);
+    if let Some(tab_size) = props.tab_size {
+        text = text.with_tab_size(tab_size);
+    }
     if props.multiline && !styled.sizes.is_empty() {
         text = text.with_paragraph_sizes(styled.sizes);
     }
