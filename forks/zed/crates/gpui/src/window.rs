@@ -5262,8 +5262,7 @@ impl Window {
         }
     }
 
-    // mirin: crate-visible for `Quad::border_strips`.
-    pub(crate) fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
+    fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
         let radii = &quad.corner_radii;
         let widths = &quad.border_widths;
         let edge_radii = Edges {
@@ -5313,12 +5312,10 @@ impl Window {
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
-        // mirin: a border drawn in strips (below) under a mask pushed inside
-        // a retained subtree takes masks of its own from it.
-        if quad.background.is_transparent()
-            && !self.retained_recordings.is_empty()
-            && !self.retained_under_outer()
-        {
+        // mirin: a border drawn in strips (below) takes masks of its own:
+        // a retained subtree's drawing moves only where they were not
+        // clipped by the mask around it.
+        if quad.background.is_transparent() && !self.retained_recordings.is_empty() {
             self.retained_strict(quad.bounds);
         }
 
@@ -5343,6 +5340,7 @@ impl Window {
 
         // Splitting a border-only quad around its empty interior avoids shading
         // every transparent pixel inside large outlines.
+        let outer_bounds = quad.bounds;
         let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
@@ -5350,25 +5348,33 @@ impl Window {
             return;
         }
 
-        // mirin: the strips, shared with a retained subtree's drawing copied
-        // elsewhere (`Scene::replay_moved` works out each one's mask again).
-        let strips = quad.border_strips(inner_bounds);
-        // mirin: while a retained subtree is drawn anew, a strip the mask
-        // around it hides is kept unshown, so a copy moved where it shows is
-        // whole.
-        let keeps_hidden = self.retained_under_outer();
+        let strips = [
+            // Top
+            Bounds::from_corners(
+                outer_bounds.origin,
+                point(outer_bounds.right(), inner_bounds.top()),
+            ),
+            // Bottom
+            Bounds::from_corners(
+                point(outer_bounds.left(), inner_bounds.bottom()),
+                outer_bounds.bottom_right(),
+            ),
+            // Left
+            Bounds::from_corners(
+                point(outer_bounds.left(), inner_bounds.top()),
+                inner_bounds.bottom_left(),
+            ),
+            // Right
+            Bounds::from_corners(
+                inner_bounds.top_right(),
+                point(outer_bounds.right(), inner_bounds.bottom()),
+            ),
+        ];
 
         for strip in strips {
             let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
             if !content_mask_bounds.is_empty() {
                 self.next_frame.scene.insert_primitive(Quad {
-                    content_mask: ContentMask {
-                        bounds: content_mask_bounds,
-                    },
-                    ..quad
-                });
-            } else if keeps_hidden {
-                self.next_frame.scene.keep_hidden(Quad {
                     content_mask: ContentMask {
                         bounds: content_mask_bounds,
                     },

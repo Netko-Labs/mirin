@@ -13,7 +13,7 @@
 //!   kept unshown): a copy is whole where that stays hidden.
 //! - What must not have been clipped by the mask around it
 //!   ([`Recorded::strict`]): the masks pushed inside it, and borders and
-//!   underlines drawn in parts under them. Each primitive and hitbox then
+//!   underlines drawn in parts with masks of their own. Each primitive and hitbox then
 //!   takes the mask around it where it is copied, or its own (a mask pushed
 //!   inside, a border's strip) moved and clipped by that one.
 //! - What it rounds ([`Steadiness`]): the edges `layout_bounds` rounds and
@@ -42,7 +42,7 @@ pub struct Recorded {
     pub(crate) extent: Option<Bounds<Pixels>>,
     /// What must have stayed inside the mask around it for a copy moved
     /// under another to be whole: every mask pushed inside (as given), and
-    /// every border or underline drawn in parts under one of those.
+    /// every border or underline drawn in parts with masks of their own.
     pub(crate) strict: Option<Bounds<Pixels>>,
     /// What the mask around it hid and the drawing left out (past
     /// [`KEEP_MARGIN`]): it must stay hidden where a copy is moved.
@@ -210,14 +210,6 @@ impl Window {
                 union(&mut recording.recorded.strict, strict);
             }
         }
-    }
-
-    /// Whether a retained subtree is being drawn anew and the content mask is
-    /// the one around it.
-    pub(crate) fn retained_under_outer(&self) -> bool {
-        self.retained_recordings
-            .last()
-            .is_some_and(|recording| self.content_mask() == recording.outer)
     }
 
     /// Whether a glyph whose largest box is `bounds` is painted: where it
