@@ -37,12 +37,17 @@ struct Scene {
     cells: usize,
     /// Rows may be moved and left out (`Retained::movable`, `skippable`).
     loose: bool,
+    /// Rows and cells may not be left out (cells hear hovers, as a view with
+    /// `onHoverChange` keeps mirin-metal's subtrees around it drawn).
+    hears: bool,
     /// Added to every cell's color when it is built. Not part of any
     /// version: a cell hears of a change by being notified.
     tint: Rc<Cell<u32>>,
     /// Counts each row's builds; with it, every build of a row but its
     /// first has one more (empty) element in it.
     unsteady: Option<Rc<RefCell<HashMap<usize, usize>>>>,
+    /// How often a row's elements, and a cell's, were made.
+    builds: Rc<Cell<(usize, usize)>>,
 }
 
 struct Rows {
@@ -54,9 +59,17 @@ struct Rows {
     draws: Rc<RefCell<HashMap<RetainedDraw, usize>>>,
 }
 
+thread_local! {
+    /// What cells that hear hovers heard, in order.
+    static HEARD: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
 fn cell(row: usize, index: usize, tint: u32) -> AnyElement {
     div()
         .id(("cell", row * 100 + index))
+        .on_hover(move |hovered, _, _| {
+            HEARD.with(|heard| heard.borrow_mut().push(format!("{row}.{index} {hovered}")))
+        })
         .w(px(30.0))
         .h_full()
         // Its text runs past its box: clipped by a mask that moves with it.
@@ -110,25 +123,32 @@ impl Render for Rows {
                 }
                 let version = spec.version;
                 let draws = self.draws.clone();
-                let (cells, loose) = (scene.cells, scene.loose);
+                let (cells, loose, hears) = (scene.cells, scene.loose, scene.hears);
                 let (tint, unsteady) = (scene.tint.clone(), scene.unsteady.clone());
                 let cell_markers = self.cell_markers.clone();
                 let cell_draws = self.draws.clone();
+                let builds = scene.builds.clone();
                 retained(
                     ("kept", index),
                     self.markers[index].entity_id(),
                     version,
                     move |_, _| {
+                        let (rows, cells_built) = builds.get();
+                        builds.set((rows + 1, cells_built));
                         let kept_cells = (0..cells)
                             .map(|cell_index| {
                                 let marker = cell_markers[index * cells + cell_index].entity_id();
                                 let draws = cell_draws.clone();
-                                let tint = tint.clone();
+                                let (tint, builds) = (tint.clone(), builds.clone());
                                 retained(("kept-cell", index * 100 + cell_index), marker, 1, {
-                                    move |_, _| cell(index, cell_index, tint.get())
+                                    move |_, _| {
+                                        let (rows, cells_built) = builds.get();
+                                        builds.set((rows, cells_built + 1));
+                                        cell(index, cell_index, tint.get())
+                                    }
                                 })
                                 .movable(loose)
-                                .skippable(loose)
+                                .skippable(loose && !hears)
                                 .on_prepaint(move |draw, _, _, _| {
                                     *draws.borrow_mut().entry(draw).or_default() += 1
                                 })
@@ -139,7 +159,7 @@ impl Render for Rows {
                     },
                 )
                 .movable(scene.loose)
-                .skippable(scene.loose)
+                .skippable(scene.loose && !scene.hears)
                 .on_prepaint(move |draw, _, _, _| *draws.borrow_mut().entry(draw).or_default() += 1)
                 .into_any_element()
             })
@@ -184,8 +204,10 @@ fn plain(rows: Vec<Row>) -> Scene {
         viewport: 0.0,
         cells: 0,
         loose: false,
+        hears: false,
         tint: Rc::default(),
         unsteady: None,
+        builds: Rc::default(),
     }
 }
 
@@ -203,8 +225,10 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         viewport: 120.0,
         cells,
         loose: true,
+        hears: false,
         tint: Rc::default(),
         unsteady: None,
+        builds: Rc::default(),
     }
 }
 
@@ -546,4 +570,119 @@ fn rows_that_may_not_move_are_drawn_where_they_land(cx: &mut TestAppContext) {
     assert_eq!(count(&draws, RetainedDraw::Skipped), 0, "{draws:?}");
     assert!(count(&draws, RetainedDraw::Redrawn) > 30, "{draws:?}");
     assert!(count(&draws, RetainedDraw::Reused) > 30, "{draws:?}");
+}
+
+/// Scroll to each of `stops` in turn, with retained rows (`retain`) or
+/// without; what each frame drew, and how many rows and cells had been built
+/// by then.
+fn scroll_through(
+    cx: &mut TestAppContext,
+    cells: usize,
+    retain: bool,
+    stops: &[f32],
+) -> Vec<(Vec<String>, (usize, usize))> {
+    let scene = scrolled(30, cells);
+    let builds = scene.builds.clone();
+    let opened = open(cx, scene, retain);
+    stops
+        .iter()
+        .map(|to| {
+            opened.scroll.set_offset(point(px(0.0), px(-to)));
+            draw(opened.cx);
+            (drawn(opened.cx), builds.get())
+        })
+        .collect()
+}
+
+/// Down until the first rows are well out of view and back, three times.
+const THERE_AND_BACK: &[f32] = &[
+    0., 70., 140., 210., 140., 70., 0., 70., 140., 210., 140., 70., 0., 210., 0.,
+];
+
+#[gpui::test]
+fn rows_scrolled_out_and_back_are_copied_not_built_again(cx: &mut TestAppContext) {
+    for cells in [0, 3] {
+        let kept = scroll_through(cx, cells, true, THERE_AND_BACK);
+        let whole = scroll_through(cx, cells, false, THERE_AND_BACK);
+        for (index, ((kept, _), (whole, _))) in kept.iter().zip(&whole).enumerate() {
+            assert_same(kept, whole, &format!("stop {index} with {cells} cells"));
+        }
+        // Once every row that shows on the way has been drawn (the first way
+        // down and back), nothing is built for coming back into view. Rows
+        // with cells come in clipped, with the cells' own masks clipped by the
+        // view's: they are built again onto their kept nodes, unlike on the
+        // fork (whose mask map moves them): no layout, but builds.
+        let (rows_before, cells_before) = kept[6].1;
+        let (rows_after, cells_after) = kept[kept.len() - 1].1;
+        if cells == 0 {
+            assert_eq!(rows_after, rows_before, "rows");
+            assert_eq!(cells_after, cells_before, "cells");
+        }
+    }
+}
+
+#[gpui::test]
+fn a_row_under_the_pointer_when_it_leaves_the_view_is_not_kept_hovered(cx: &mut TestAppContext) {
+    // A row is hovered, scrolled out of view under a pointer that stays
+    // (no move tells it), the pointer moves far below, over where another
+    // row was, and both come back where they were: drawing them there shows
+    // the hover on the other one.
+    let run = |cx: &mut TestAppContext, retain: bool| {
+        let mut scene = scrolled(60, 0);
+        scene.viewport = 300.0;
+        let opened = open(cx, scene, retain);
+        let pointer = |cx: &mut VisualTestContext, y: f32| {
+            cx.simulate_mouse_move(point(px(80.0), px(y)), None, Modifiers::default());
+        };
+        pointer(opened.cx, 60.0);
+        let mut frames = Vec::new();
+        for (to, at) in [
+            (0.0, None),
+            (900.0, None),
+            (900.0, Some(250.0)),
+            (0.0, None),
+        ] {
+            if let Some(at) = at {
+                pointer(opened.cx, at);
+            }
+            opened.scroll.set_offset(point(px(0.0), px(-to)));
+            draw(opened.cx);
+            frames.push(drawn(opened.cx));
+        }
+        frames
+    };
+    let kept = run(cx, true);
+    let whole = run(cx, false);
+    for (index, (kept, whole)) in kept.iter().zip(&whole).enumerate() {
+        assert_same(kept, whole, &format!("frame {index}"));
+    }
+}
+
+#[gpui::test]
+fn cells_that_hear_hovers_hear_what_drawing_everything_tells_them(cx: &mut TestAppContext) {
+    // The pointer rests over the view while it scrolls, rows clipped at its
+    // edges move in and out, and the window is resized under it.
+    let run = |cx: &mut TestAppContext, retain: bool| {
+        HEARD.with(|heard| heard.borrow_mut().clear());
+        let mut scene = scrolled(40, 3);
+        scene.hears = true;
+        let opened = open(cx, scene, retain);
+        opened
+            .cx
+            .simulate_mouse_move(point(px(80.0), px(60.0)), None, Modifiers::default());
+        let mut frames = Vec::new();
+        for to in [0.0, 13.0, 40.0, 53.0, 93.0, 300.0, 270.0, 0.0] {
+            opened.scroll.set_offset(point(px(0.0), px(-to)));
+            draw(opened.cx);
+            opened.cx.run_until_parked();
+            frames.push((drawn(opened.cx), HEARD.with(|heard| heard.take())));
+        }
+        frames
+    };
+    let kept = run(cx, true);
+    let whole = run(cx, false);
+    for (index, ((kept, kept_heard), (whole, whole_heard))) in kept.iter().zip(&whole).enumerate() {
+        assert_eq!(kept_heard, whole_heard, "heard at frame {index}");
+        assert_same(kept, whole, &format!("frame {index}"));
+    }
 }

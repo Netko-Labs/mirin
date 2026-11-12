@@ -50,10 +50,12 @@ use crate::{
     GlobalElementId, InspectorElementId, LayoutId, Pixels, Point, TextStyle, Window,
 };
 
+mod parked;
 mod plan;
 mod recording;
 mod steady;
 
+pub(crate) use parked::Parking;
 pub(crate) use plan::Drawn;
 use plan::{Allowed, Place, Plan, plan};
 pub(crate) use recording::{Recorded, Recording};
@@ -197,6 +199,9 @@ struct RetainedState {
     /// Every retained subtree inside, at any depth.
     nested: Vec<Record>,
     accessed_entities: FxHashSet<EntityId>,
+    /// Its nodes can't be built onto again (`rebuild`): made anew the next
+    /// time it is laid out.
+    remake: bool,
     /// While it is left undrawn, its elements' states (and with them the
     /// retained subtrees inside), out of the frame until it is drawn again.
     kept_states: Vec<(
@@ -284,6 +289,7 @@ impl Element for Retained {
             let statics = Statics::of(window);
             let unchanged = state.as_ref().is_some_and(|state| {
                 state.version == version
+                    && !state.remake
                     && state.statics == statics
                     && !window.dirty_views.contains(&view)
                     && window.layout_engine_mut().contains(state.root)
@@ -342,6 +348,7 @@ impl Element for Retained {
                         nested: Vec::new(),
                         accessed_entities: FxHashSet::default(),
                         kept_states: Vec::new(),
+                        remake: false,
                     };
                     let layout = RetainedLayout {
                         element: Some(element),
@@ -391,10 +398,15 @@ impl Element for Retained {
                     skippable: skippable && !notified,
                     below_same,
                 };
-                let plan = match &built {
+                let mut plan = match &built {
                     Some(_) => Plan::Redraw,
                     None => plan(&state.drawn.borrow(), bounds, &mask, place, allowed, window),
                 };
+                // It shows again: its parked drawing goes back among last
+                // frame's, where it was drawn, and is copied from there.
+                if built.is_none() && matches!(plan, Plan::Redraw) && state.unpark(window) {
+                    plan = self::plan(&state.drawn.borrow(), bounds, &mask, place, allowed, window);
+                }
                 let draw = match (&built, &plan) {
                     (Some(_), _) => RetainedDraw::Built,
                     (None, Plan::Skip) => RetainedDraw::Skipped,
@@ -516,6 +528,7 @@ impl Element for Retained {
                 }
                 if !matches!(prepaint, RetainedPrepaint::Skipped) {
                     drawn.paint = Some(start..end);
+                    drawn.pointer = window.mouse_position();
                 }
                 // The subtree around it, if it is being drawn anew, takes in
                 // what this one's drawing is; one not known can't be moved.
@@ -536,6 +549,24 @@ impl RetainedState {
     /// is drawn again, and its drawing, with the ones inside, leaves the
     /// frame.
     fn skip(&mut self, bounds: Bounds<Pixels>, place: Option<Place>, window: &mut Window) {
+        let parked = {
+            let drawn = self.drawn.borrow();
+            // Only a drawing that may be copied elsewhere is of use, and not
+            // one the pointer is over (it may show hover styles no pointer
+            // move takes away while it is out of the frame), nor one only
+            // resized while out of view (it is stale).
+            let hovered = drawn
+                .recorded
+                .and_then(|recorded| recorded.extent)
+                .is_some_and(|extent| {
+                    extent.contains(&drawn.pointer) || extent.contains(&window.mouse_position())
+                });
+            let resized = drawn.place.map(|place| place.node) != place.map(|place| place.node);
+            let pinned = drawn.recorded.is_none_or(|recorded| recorded.pinned);
+            (!hovered && !resized && !pinned)
+                .then(|| window.park(&self.drawn, &drawn, &self.nested))
+                .flatten()
+        };
         let mut drawn = self.drawn.borrow_mut();
         let copies = drawn.prepaint.as_ref().is_some_and(|range| {
             window.prepaint_range_valid(range)
@@ -548,12 +579,53 @@ impl RetainedState {
             let states = window.take_element_states(prepaint, paint);
             self.kept_states.extend(states);
         }
+        if parked.is_some() {
+            drawn.parked = parked;
+        }
         drawn.skip(bounds, place);
         for nested in &self.nested {
             let mut nested = nested.borrow_mut();
             nested.prepaint = None;
             nested.paint = None;
         }
+    }
+
+    /// Put its parked drawing (if it has one and no drawing in last frame)
+    /// back at the end of last frame's lists, with its record as it was
+    /// drawn; whether it did.
+    fn unpark(&mut self, window: &mut Window) -> bool {
+        let parked = {
+            let mut drawn = self.drawn.borrow_mut();
+            if drawn.prepaint.is_some() {
+                return false;
+            }
+            match drawn.parked.take() {
+                Some(parked) => parked,
+                None => return false,
+            }
+        };
+        let mut drawn = self.drawn.borrow_mut();
+        drawn.bounds = parked.bounds;
+        drawn.mask = parked.mask.clone();
+        drawn.place = parked.place;
+        drawn.recorded = parked.recorded;
+        drawn.epoch = parked.epoch;
+        drawn.pointer = parked.pointer;
+        let ((prepaint, paint), nested) = window.unpark(parked);
+        drawn.prepaint = Some(prepaint);
+        drawn.paint = Some(paint);
+        drop(drawn);
+        for (record, ranges) in self.nested.iter().zip(nested) {
+            let mut record = record.borrow_mut();
+            (record.prepaint, record.paint) = match ranges {
+                Some((prepaint, paint)) => (Some(prepaint), Some(paint)),
+                None => (None, None),
+            };
+        }
+        // Its elements' states go back to last frame, where the copy finds
+        // them.
+        self.restore_states(window);
+        true
     }
 
     /// Its element states, kept while it was left undrawn, go back where
@@ -579,7 +651,12 @@ impl RetainedState {
     ) -> AnyElement {
         self.restore_states(window);
         let engine = window.layout_engine_mut();
-        if !engine.any_asked_since(&self.owned, self.made) {
+        if engine.any_asked_since(&self.owned, self.made) {
+            // What its texts hold is not what a layout from nothing leaves
+            // them with: built apart now, and made anew next time it is laid
+            // out, so later frames can build onto its nodes again.
+            self.remake = true;
+        } else {
             engine.begin_bind(self.owned.clone());
             window.retained_binding += 1;
             let (element, root) = window.with_rendered_view(view, |window| {
@@ -588,7 +665,8 @@ impl RetainedState {
                 (element, root)
             });
             window.retained_binding -= 1;
-            if window.end_bind(cx) && root == self.root {
+            let bound = window.end_bind(cx);
+            if bound && root == self.root {
                 return element;
             }
         }
@@ -627,8 +705,10 @@ impl RetainedState {
             None => window.reuse_prepaint(old.clone()),
         }
         let end = window.prepaint_index();
+        let pointer = window.mouse_position();
         for nested in &self.nested {
             let mut nested = nested.borrow_mut();
+            nested.pointer = pointer;
             nested.prepaint = nested.prepaint.as_ref().map(|range| {
                 range.start.rebase(&old.start, &start)..range.end.rebase(&old.start, &start)
             });

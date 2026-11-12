@@ -2,6 +2,7 @@ mod font_fallbacks;
 mod font_features;
 mod line;
 mod line_layout;
+pub(crate) use line_layout::ParkedLayouts;
 mod line_wrapper;
 
 pub use font_fallbacks::*;
@@ -662,6 +663,19 @@ impl WindowTextSystem {
 
     pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
         self.line_layout_cache.reuse_layouts(index)
+    }
+
+    /// mirin: see `LineLayoutCache::park_layouts`.
+    pub(crate) fn park_layouts(&self, range: Range<LineLayoutIndex>) -> line_layout::ParkedLayouts {
+        self.line_layout_cache.park_layouts(range)
+    }
+
+    /// mirin: see `LineLayoutCache::unpark_layouts`.
+    pub(crate) fn unpark_layouts(
+        &self,
+        parked: line_layout::ParkedLayouts,
+    ) -> Range<LineLayoutIndex> {
+        self.line_layout_cache.unpark_layouts(parked)
     }
 
     pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {

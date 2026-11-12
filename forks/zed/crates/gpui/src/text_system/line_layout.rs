@@ -507,7 +507,8 @@ struct FrameCache {
 
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
-    font_generation: usize,
+    // mirin: crate-visible for a parked retained drawing (`elements::retained`).
+    pub(crate) font_generation: usize,
     lines_index: usize,
     wrapped_lines_index: usize,
 }
@@ -526,7 +527,65 @@ impl LineLayoutIndex {
     }
 }
 
+/// mirin: the layouts a parked retained subtree's drawing used, out of any
+/// frame (`elements::retained`), with the fonts they were made with.
+#[derive(Default)]
+pub(crate) struct ParkedLayouts {
+    font_generation: usize,
+    lines: Vec<(Arc<CacheKey>, Option<Arc<LineLayout>>)>,
+    wrapped_lines: Vec<(Arc<CacheKey>, Option<Arc<WrappedLineLayout>>)>,
+}
+
 impl LineLayoutCache {
+    /// mirin: the layouts of last frame in `range`, kept for a drawing put
+    /// aside (`unpark_layouts` puts them back).
+    pub(crate) fn park_layouts(&self, range: Range<LineLayoutIndex>) -> ParkedLayouts {
+        let state = self.state.borrow();
+        let previous = &state.previous_frame;
+        ParkedLayouts {
+            font_generation: range.start.font_generation,
+            lines: previous.used_lines[range.start.lines_index..range.end.lines_index]
+                .iter()
+                .map(|key| (key.clone(), previous.lines.get(key).cloned()))
+                .collect(),
+            wrapped_lines: previous.used_wrapped_lines
+                [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
+                .iter()
+                .map(|key| (key.clone(), previous.wrapped_lines.get(key).cloned()))
+                .collect(),
+        }
+    }
+
+    /// mirin: put layouts `park_layouts` took back at the end of last
+    /// frame's, for `reuse_layouts` to carry on; the range they are now in
+    /// (empty when the fonts changed since).
+    pub(crate) fn unpark_layouts(&self, parked: ParkedLayouts) -> Range<LineLayoutIndex> {
+        let font_generation = self.clear_if_font_generation_changed();
+        let mut state = self.state.borrow_mut();
+        let previous = &mut state.previous_frame;
+        let index = |previous: &FrameCache| LineLayoutIndex {
+            font_generation,
+            lines_index: previous.used_lines.len(),
+            wrapped_lines_index: previous.used_wrapped_lines.len(),
+        };
+        let start = index(previous);
+        if parked.font_generation == font_generation {
+            for (key, line) in parked.lines {
+                if let Some(line) = line {
+                    previous.lines.entry(key.clone()).or_insert(line);
+                }
+                previous.used_lines.push(key);
+            }
+            for (key, line) in parked.wrapped_lines {
+                if let Some(line) = line {
+                    previous.wrapped_lines.entry(key.clone()).or_insert(line);
+                }
+                previous.used_wrapped_lines.push(key);
+            }
+        }
+        start..index(previous)
+    }
+
     /// mirin: whether `range` names layouts of last frame (with today's fonts).
     pub(crate) fn range_valid(&self, range: &Range<LineLayoutIndex>) -> bool {
         let font_generation = self.clear_if_font_generation_changed();

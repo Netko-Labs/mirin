@@ -28,6 +28,12 @@ pub(crate) struct Drawn {
     pub(super) inert: bool,
     /// The layout its drawing was made for (`TaffyLayoutEngine::epoch`).
     pub(super) epoch: u64,
+    /// Left out, its last drawing, kept until it shows again or what a
+    /// window keeps so is too much (`parked`).
+    pub(crate) parked: Option<Box<super::parked::Parked>>,
+    /// Where the pointer was for its hover styles and listeners: when it
+    /// was drawn, or copied where they were what they had been.
+    pub(super) pointer: Point<Pixels>,
 }
 
 /// Where a retained subtree's root is laid out (its unrounded origin in
@@ -214,7 +220,7 @@ pub(super) fn plan(
     // A hover style or listener is decided at paint from what the pointer
     // is over: a drawing it was over, or is over now, is copied only while
     // it has not moved (it may have jumped, as when the window is resized).
-    let (before, now) = (window.retained_pointer, window.mouse_position());
+    let (before, now) = (drawn.pointer, window.mouse_position());
     let hovers = |extent: Option<Bounds<Pixels>>, pointer: Point<Pixels>| {
         extent.is_some_and(|extent| extent.contains(&pointer))
     };
@@ -271,13 +277,12 @@ fn moved_by(
     {
         return None;
     }
-    // What takes masks of its own stays under the mask around it there and
-    // here, and that mask tells apart from every mask inside
-    // (`Scene::replay_moved`).
+    // What takes masks of its own was not clipped by the mask around it
+    // (so each of those masks, moved and clipped by the mask around it now,
+    // is what drawing it there gives), and that mask tells apart from every
+    // mask inside (`Scene::replay_moved`).
     let strict = recorded.strict.is_none_or(|strict| {
-        holds(&old_mask.bounds, &strict)
-            && holds(&mask.bounds, &(strict + offset))
-            && cover(&strict, scale) != cover(&old_mask.bounds, scale)
+        holds(&old_mask.bounds, &strict) && cover(&strict, scale) != cover(&old_mask.bounds, scale)
     });
     // What the drawing left out stays hidden.
     let whole = recorded.left_out.is_none_or(|left_out| {
@@ -291,7 +296,7 @@ fn moved_by(
     if let Some(extent) = recorded.extent {
         // A hover style is painted from what is under the pointer: it was
         // over neither where it was, nor is where it is now.
-        let (before, now) = (window.retained_pointer, window.mouse_position());
+        let (before, now) = (drawn.pointer, window.mouse_position());
         if extent.contains(&before) || (extent + offset).contains(&now) {
             return None;
         }

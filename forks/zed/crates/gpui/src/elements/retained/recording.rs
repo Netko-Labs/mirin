@@ -208,6 +208,14 @@ impl Window {
         }
     }
 
+    /// Whether a retained subtree is being drawn anew and the content mask is
+    /// the one around it.
+    pub(crate) fn retained_under_outer(&self) -> bool {
+        self.retained_recordings
+            .last()
+            .is_some_and(|recording| self.content_mask() == recording.outer)
+    }
+
     /// Whether a glyph whose largest box is `bounds` is painted: where it
     /// shows, or, while a retained subtree is drawn anew, where the mask
     /// around it hides it within [`KEEP_MARGIN`] (the scene keeps it

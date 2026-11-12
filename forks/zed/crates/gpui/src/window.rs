@@ -1042,7 +1042,7 @@ pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
+    pub(crate) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -1055,7 +1055,7 @@ pub(crate) struct Frame {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    pub(crate) debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1065,12 +1065,12 @@ pub(crate) struct Frame {
 
 #[derive(Clone, Default)]
 pub(crate) struct PrepaintStateIndex {
-    hitboxes_index: usize,
-    tooltips_index: usize,
-    deferred_draws_index: usize,
-    dispatch_tree_index: usize,
-    accessed_element_states_index: usize,
-    line_layout_index: LineLayoutIndex,
+    pub(crate) hitboxes_index: usize,
+    pub(crate) tooltips_index: usize,
+    pub(crate) deferred_draws_index: usize,
+    pub(crate) dispatch_tree_index: usize,
+    pub(crate) accessed_element_states_index: usize,
+    pub(crate) line_layout_index: LineLayoutIndex,
 }
 
 // mirin: a retained subtree's ranges move along with the subtree around it.
@@ -1149,15 +1149,15 @@ impl PaintIndex {
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    scene_index: usize,
+    pub(crate) scene_index: usize,
     #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_index: usize,
-    mouse_listeners_index: usize,
-    input_handlers_index: usize,
-    cursor_styles_index: usize,
-    accessed_element_states_index: usize,
-    tab_handle_index: usize,
-    line_layout_index: LineLayoutIndex,
+    pub(crate) debug_bounds_index: usize,
+    pub(crate) mouse_listeners_index: usize,
+    pub(crate) input_handlers_index: usize,
+    pub(crate) cursor_styles_index: usize,
+    pub(crate) accessed_element_states_index: usize,
+    pub(crate) tab_handle_index: usize,
+    pub(crate) line_layout_index: LineLayoutIndex,
 }
 
 impl Frame {
@@ -1388,7 +1388,7 @@ pub struct Window {
     // mirin: how deep inside a retained subtree being built again onto its
     // kept nodes the frame is.
     pub(crate) retained_binding: usize,
-    pub(crate) retained_pointer: Point<Pixels>,
+    pub(crate) retained_parking: crate::elements::Parking,
     pub(crate) retained_nested: Vec<Vec<Rc<RefCell<crate::elements::Drawn>>>>,
     // mirin: the retained subtrees being drawn anew, innermost last, and
     // what their painting rounds (`elements::retained`, step 2).
@@ -2453,7 +2453,7 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             retained_detached: 0,
             retained_binding: 0,
-            retained_pointer: Point::default(),
+            retained_parking: Default::default(),
             retained_nested: Vec::new(),
             retained_recordings: Vec::new(),
             retained_paint_steadiness: Cell::new(None),
@@ -4112,10 +4112,6 @@ impl Window {
         let paint_start = Instant::now();
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
-        // mirin: where the pointer was for this frame's hover styles and
-        // listeners (`elements::retained` copies a drawing only where they
-        // are what they were).
-        self.retained_pointer = self.mouse_position();
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
@@ -4620,7 +4616,7 @@ impl Window {
                 mask.clone()
             } else {
                 ContentMask {
-                    bounds: hitbox.content_mask.bounds + offset,
+                    bounds: (hitbox.content_mask.bounds + offset).intersect(&mask.bounds),
                 }
             };
         }
@@ -4712,17 +4708,12 @@ impl Window {
         };
         let (old_cover, new_cover) = (cover(&old_mask), cover(&self.content_mask()));
         let by = point(ScaledPixels(by.x), ScaledPixels(by.y));
-        self.next_frame
-            .scene
-            .replay_moved(scenes, &self.rendered_frame.scene, by, |mask| {
-                if *mask == old_cover {
-                    new_cover.clone()
-                } else {
-                    ContentMask {
-                        bounds: mask.bounds + by,
-                    }
-                }
-            });
+        self.next_frame.scene.replay_moved(
+            scenes,
+            &self.rendered_frame.scene,
+            by,
+            (&old_cover, &new_cover),
+        );
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -5166,14 +5157,15 @@ impl Window {
 
         let content_mask = self.content_mask();
         let clipped_bounds = bounds.intersect(&content_mask.bounds);
-        // mirin: a layer reaches as far as it is, clipped or not.
-        if !self.retained_recordings.is_empty() {
-            self.retained_strict(bounds);
-        }
         if !clipped_bounds.is_empty() {
+            // mirin: with its bounds unclipped and its mask, for a retained
+            // subtree's drawing copied elsewhere (`Scene::replay_moved`).
+            let (clipped, unclipped) =
+                (self.cover_bounds(clipped_bounds), self.cover_bounds(bounds));
+            let mask = self.snapped_content_mask();
             self.next_frame
                 .scene
-                .push_layer(self.cover_bounds(clipped_bounds));
+                .push_layer_within(clipped, unclipped, mask);
         }
 
         let result = f(self);
@@ -5268,7 +5260,8 @@ impl Window {
         }
     }
 
-    fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
+    // mirin: crate-visible for `Quad::border_strips`.
+    pub(crate) fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
         let radii = &quad.corner_radii;
         let widths = &quad.border_widths;
         let edge_radii = Edges {
@@ -5318,8 +5311,12 @@ impl Window {
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
-        // mirin: a border drawn in strips (below) takes masks of their own.
-        if !self.retained_recordings.is_empty() && quad.background.is_transparent() {
+        // mirin: a border drawn in strips (below) under a mask pushed inside
+        // a retained subtree takes masks of its own from it.
+        if quad.background.is_transparent()
+            && !self.retained_recordings.is_empty()
+            && !self.retained_under_outer()
+        {
             self.retained_strict(quad.bounds);
         }
 
@@ -5344,7 +5341,6 @@ impl Window {
 
         // Splitting a border-only quad around its empty interior avoids shading
         // every transparent pixel inside large outlines.
-        let outer_bounds = quad.bounds;
         let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
@@ -5352,33 +5348,25 @@ impl Window {
             return;
         }
 
-        let strips = [
-            // Top
-            Bounds::from_corners(
-                outer_bounds.origin,
-                point(outer_bounds.right(), inner_bounds.top()),
-            ),
-            // Bottom
-            Bounds::from_corners(
-                point(outer_bounds.left(), inner_bounds.bottom()),
-                outer_bounds.bottom_right(),
-            ),
-            // Left
-            Bounds::from_corners(
-                point(outer_bounds.left(), inner_bounds.top()),
-                inner_bounds.bottom_left(),
-            ),
-            // Right
-            Bounds::from_corners(
-                inner_bounds.top_right(),
-                point(outer_bounds.right(), inner_bounds.bottom()),
-            ),
-        ];
+        // mirin: the strips, shared with a retained subtree's drawing copied
+        // elsewhere (`Scene::replay_moved` works out each one's mask again).
+        let strips = quad.border_strips(inner_bounds);
+        // mirin: while a retained subtree is drawn anew, a strip the mask
+        // around it hides is kept unshown, so a copy moved where it shows is
+        // whole.
+        let keeps_hidden = self.retained_under_outer();
 
         for strip in strips {
             let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
             if !content_mask_bounds.is_empty() {
                 self.next_frame.scene.insert_primitive(Quad {
+                    content_mask: ContentMask {
+                        bounds: content_mask_bounds,
+                    },
+                    ..quad
+                });
+            } else if keeps_hidden {
+                self.next_frame.scene.keep_hidden(Quad {
                     content_mask: ContentMask {
                         bounds: content_mask_bounds,
                     },

@@ -163,6 +163,41 @@ impl DispatchTree {
         self.nodes.len()
     }
 
+    /// mirin: take the nodes in `range` out (their listeners; what else they
+    /// hold is copied), for a retained subtree's drawing put aside.
+    pub(crate) fn park_nodes(&mut self, range: Range<usize>) -> Vec<DispatchNode> {
+        self.nodes[range]
+            .iter_mut()
+            .map(|node| DispatchNode {
+                key_listeners: mem::take(&mut node.key_listeners),
+                action_listeners: mem::take(&mut node.action_listeners),
+                modifiers_changed_listeners: mem::take(&mut node.modifiers_changed_listeners),
+                context: node.context.clone(),
+                focus_id: node.focus_id,
+                view_id: node.view_id,
+                parent: node.parent,
+            })
+            .collect()
+    }
+
+    /// mirin: put nodes that `park_nodes` took from `was` on back at the end
+    /// of this tree (last frame's), for `reuse_subtree` to copy from; the
+    /// range they are now in.
+    pub(crate) fn unpark_nodes(&mut self, nodes: Vec<DispatchNode>, was: usize) -> Range<usize> {
+        let start = self.nodes.len();
+        let count = nodes.len();
+        self.nodes.extend(nodes.into_iter().map(|mut node| {
+            // A parent among them moves with them; one around them is not
+            // looked at.
+            node.parent = node
+                .parent
+                .filter(|parent| (was..was + count).contains(&parent.0))
+                .map(|parent| DispatchNodeId(parent.0 - was + start));
+            node
+        }));
+        start..self.nodes.len()
+    }
+
     /// mirin: whether the nodes in `range` take nothing: no focus, no key,
     /// action or modifier listeners, no key context. A retained subtree
     /// whose nodes are inert may be left out of the frame while nothing of
