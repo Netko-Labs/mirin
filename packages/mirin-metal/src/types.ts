@@ -456,6 +456,13 @@ export interface TextInputProps extends AccessibilityProps {
    */
   tabBehavior?: "focus" | "insert";
   /**
+   * How far apart the field's tab stops are, counted in the width of its font's "0" (CSS's
+   * `tab-size` in `ch`): 4 unless given, from 1 to 64. A tab moves what follows it to the next
+   * stop, so columns line up; the caret, the selection and a click follow. In a fixed-pitch font
+   * that is as many spaces.
+   */
+  tabSize?: number;
+  /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
    * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
    */

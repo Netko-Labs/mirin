@@ -166,6 +166,8 @@ impl LineLayout {
 
             // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
             // but there are some differences, so we have to duplicate the code here.
+            // mirin: a tab is white space too: a line breaks after it, not before.
+            let ch = if ch == '\t' { ' ' } else { ch };
             if LineWrapper::is_word_char(ch) {
                 if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
                     last_candidate_ix = Some(boundary);
@@ -216,6 +218,52 @@ impl LineLayout {
 
         boundaries
     }
+}
+
+// mirin: tab stops.
+/// How many `0`s wide a tab stop is unless the text says otherwise.
+pub const DEFAULT_TAB_SIZE: u32 = 4;
+
+// mirin: tab stops. Public (hidden) so mirin-metal's tests reach it.
+/// Move what follows each tab in `text` to the tab's stop: stops are every
+/// `stop(font)` px from the line's start, for the font the tab is set in.
+/// A tab always moves on: one that sits on a stop goes to the next. The
+/// glyphs keep their order and their own advances, so the caret, the
+/// selection, hit-testing and wrapping, which all read the glyphs' places,
+/// follow. A line with no tab, or one set right to left, is left as shaped.
+#[doc(hidden)]
+pub fn apply_tab_stops(layout: &mut LineLayout, text: &str, mut stop: impl FnMut(FontId) -> Pixels) {
+    if !text.contains('\t') {
+        return;
+    }
+    let places: Vec<Pixels> = layout
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.position.x))
+        .collect();
+    if places.windows(2).any(|pair| pair[1] < pair[0]) {
+        return;
+    }
+    let Some(&first) = places.first() else { return };
+    let mut x = first;
+    let mut at = 0;
+    for run in layout.runs.iter_mut() {
+        let interval = stop(run.font_id);
+        for glyph in run.glyphs.iter_mut() {
+            let shaped = places.get(at + 1).copied().unwrap_or(layout.width) - places[at];
+            at += 1;
+            glyph.position.x = x;
+            let is_tab = text.as_bytes().get(glyph.index) == Some(&b'\t');
+            x += if is_tab && interval > px(0.) {
+                // A hair past a stop is on it: a sum of advances is never exact.
+                let stops = ((x + px(0.01)) / interval).floor() + 1.;
+                interval * stops - x
+            } else {
+                shaped
+            };
+        }
+    }
+    layout.width = x;
 }
 
 /// A line of text that has been wrapped to fit a given width
@@ -483,17 +531,20 @@ impl LineLayoutCache {
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
         max_lines: Option<usize>,
+        tab_size: u32,
     ) -> Arc<WrappedLineLayout>
     where
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        let tab_size = keyed_tab_size(text.as_ref(), tab_size);
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
             runs,
             wrap_width,
             force_width: None,
+            tab_size,
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
@@ -512,7 +563,8 @@ impl LineLayoutCache {
         } else {
             drop(current_frame);
             let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
+            let unwrapped_layout =
+                self.layout_line::<&SharedString>(&text, font_size, runs, None, tab_size);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
@@ -529,6 +581,7 @@ impl LineLayoutCache {
                 runs: SmallVec::from(runs),
                 wrap_width,
                 force_width: None,
+                tab_size,
             });
 
             let mut current_frame = self.current_frame.write();
@@ -547,17 +600,20 @@ impl LineLayoutCache {
         font_size: Pixels,
         runs: &[FontRun],
         force_width: Option<Pixels>,
+        tab_size: u32,
     ) -> Arc<LineLayout>
     where
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        let tab_size = keyed_tab_size(text.as_ref(), tab_size);
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
             runs,
             wrap_width: None,
             force_width,
+            tab_size,
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
@@ -575,6 +631,13 @@ impl LineLayoutCache {
             let mut layout = self
                 .platform_text_system
                 .layout_line(&text, font_size, runs);
+            // mirin: tab stops, on every platform (the shaper's own, where it has any, are replaced).
+            if tab_size > 0 {
+                let platform = &self.platform_text_system;
+                apply_tab_stops(&mut layout, &text, |font_id| {
+                    tab_interval(platform.as_ref(), font_id, font_size, tab_size)
+                });
+            }
 
             if let Some(force_width) = force_width {
                 let mut glyph_pos = 0;
@@ -594,6 +657,7 @@ impl LineLayoutCache {
                 runs: SmallVec::from(runs),
                 wrap_width: None,
                 force_width,
+                tab_size,
             });
             let layout = Arc::new(layout);
             current_frame.lines.insert(key.clone(), layout.clone());
@@ -621,6 +685,8 @@ struct CacheKey {
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
+    // mirin: tab stops. 0 for a text with no tab, so it is one entry whatever the size.
+    tab_size: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -630,6 +696,35 @@ struct CacheKeyRef<'a> {
     runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
+    tab_size: u32,
+}
+
+// mirin: tab stops.
+/// The tab size a layout is kept under: none for a text with no tab.
+fn keyed_tab_size(text: &str, tab_size: u32) -> u32 {
+    if text.contains('\t') { tab_size } else { 0 }
+}
+
+// mirin: tab stops.
+/// How far apart `font`'s tab stops are at `font_size`: `tab_size` times the
+/// width of its `0` (CSS's `ch`), which in a fixed-pitch font is a space's
+/// and in a proportional one about twice it, so columns of words line up.
+/// A font without a `0` counts its space, and one without either half an em.
+fn tab_interval(
+    platform: &dyn PlatformTextSystem,
+    font: FontId,
+    font_size: Pixels,
+    tab_size: u32,
+) -> Pixels {
+    let units = platform.font_metrics(font).units_per_em as f32;
+    let advance = ['0', ' ']
+        .into_iter()
+        .filter_map(|ch| platform.glyph_for_char(font, ch))
+        .filter_map(|glyph| platform.advance(font, glyph).ok())
+        .map(|advance| advance.width / units)
+        .find(|width| width.is_finite() && *width > 0.)
+        .unwrap_or(0.5);
+    font_size * advance * tab_size as f32
 }
 
 impl PartialEq for dyn AsCacheKeyRef + '_ {
@@ -654,6 +749,7 @@ impl AsCacheKeyRef for CacheKey {
             runs: self.runs.as_slice(),
             wrap_width: self.wrap_width,
             force_width: self.force_width,
+            tab_size: self.tab_size,
         }
     }
 }

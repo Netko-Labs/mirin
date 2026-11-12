@@ -573,6 +573,10 @@ mod card_tests;
 #[cfg(test)]
 mod wrap_tests;
 
+// Tab stops, laid out by GPUI on its test platform.
+#[cfg(test)]
+mod tab_tests;
+
 // Scroll views laid out and driven by GPUI, on its test platform.
 #[cfg(test)]
 mod scroll_tests;

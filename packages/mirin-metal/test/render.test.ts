@@ -534,6 +534,25 @@ describe("TextInput", () => {
     root.unmount();
   });
 
+  test("an input's tab stops are sent whole, from 1 to 64, and not at all unless set", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(TextInput, { value: "a\tb", testID: "eight", multiline: true, tabSize: 8 }),
+        createElement(TextInput, { value: "a\tb", testID: "default", multiline: true }),
+        createElement(TextInput, { value: "a\tb", testID: "wild", tabSize: 2.6 }),
+        createElement(TextInput, { value: "a\tb", testID: "none", tabSize: 0 }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(tree.children.map((child: { props: { tabSize?: number } }) => child.props.tabSize)).toEqual([8, undefined, 3, 1]);
+    root.unmount();
+  });
+
   test("TextInputDefaults gives fields a selection color they don't set", async () => {
     const transport = fakeTransport();
     const root = render(
