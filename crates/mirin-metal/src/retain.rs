@@ -393,5 +393,7 @@ fn build(
     element
 }
 
+#[cfg(all(test, feature = "gpui-next"))]
+mod gpui_tests;
 #[cfg(test)]
 mod tests;

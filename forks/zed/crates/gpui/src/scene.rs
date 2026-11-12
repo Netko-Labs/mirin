@@ -50,6 +50,70 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    /// mirin: while a retained subtree is drawn anew, how far what it puts
+    /// in the scene reaches (`elements::retained`).
+    pub(crate) reach: Option<SceneReach>,
+}
+
+/// mirin: what a retained subtree being drawn anew put in the scene: every
+/// primitive's bounds, shown or not, and whether one knows where it is (a
+/// path, a transformed sprite) so the drawing can't be moved.
+/// Of a primitive under a mask pushed inside the subtree, only what that
+/// mask lets through counts (the mask moves with it); under the mask around
+/// the subtree (`outer`), all of it. A primitive the mask around it hides
+/// is kept in the drawing (not shown) within `keep` of it, so the drawing
+/// moved where it shows is whole; past that it is left out (`left_out`).
+#[derive(Clone)]
+pub(crate) struct SceneReach {
+    pub(crate) extent: Option<Bounds<ScaledPixels>>,
+    pub(crate) left_out: Option<Bounds<ScaledPixels>>,
+    pub(crate) pinned: bool,
+    outer: ContentMask<ScaledPixels>,
+    keep: Bounds<ScaledPixels>,
+}
+
+fn union(into: &mut Option<Bounds<ScaledPixels>>, bounds: Bounds<ScaledPixels>) {
+    *into = Some(match *into {
+        Some(extent) => extent.union(&bounds),
+        None => bounds,
+    });
+}
+
+impl SceneReach {
+    pub(crate) fn new(outer: ContentMask<ScaledPixels>, keep: Bounds<ScaledPixels>) -> Self {
+        Self {
+            extent: None,
+            left_out: None,
+            pinned: false,
+            outer,
+            keep,
+        }
+    }
+
+    /// A primitive hidden by the mask around the subtree, near it: kept.
+    fn keeps(&self, primitive: &Primitive) -> bool {
+        *primitive.content_mask() == self.outer && primitive.bounds().intersects(&self.keep)
+    }
+
+    fn take_in(&mut self, primitive: &Primitive) {
+        let mut bounds = *primitive.bounds();
+        if *primitive.content_mask() != self.outer {
+            bounds = bounds.intersect(&primitive.content_mask().bounds);
+        }
+        if !bounds.is_empty() {
+            union(&mut self.extent, bounds);
+        }
+        self.pinned |= match primitive {
+            Primitive::Path(_) | Primitive::Surface(_) => true,
+            Primitive::MonochromeSprite(sprite) => {
+                sprite.transformation != TransformationMatrix::unit()
+            }
+            Primitive::SubpixelSprite(sprite) => {
+                sprite.transformation != TransformationMatrix::unit()
+            }
+            _ => false,
+        };
+    }
 }
 
 #[expect(missing_docs)]
@@ -73,10 +137,25 @@ impl Scene {
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
+        self.push_layer_within(bounds, bounds, ContentMask { bounds });
+    }
+
+    /// mirin: `push_layer`, keeping the layer's bounds before its content
+    /// mask clipped them, and that mask, so a retained subtree's drawing
+    /// copied elsewhere clips it there (`replay_moved`).
+    pub(crate) fn push_layer_within(
+        &mut self,
+        bounds: Bounds<ScaledPixels>,
+        unclipped: Bounds<ScaledPixels>,
+        mask: ContentMask<ScaledPixels>,
+    ) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
-        self.paint_operations
-            .push(PaintOperation::StartLayer(bounds));
+        self.paint_operations.push(PaintOperation::StartLayer {
+            bounds,
+            unclipped,
+            mask,
+        });
     }
 
     pub fn pop_layer(&mut self) {
@@ -89,6 +168,21 @@ impl Scene {
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
+
+        // mirin: counted whether it shows or not; hidden near the mask
+        // around a retained subtree drawn anew, kept unshown (`SceneReach`).
+        if let Some(reach) = &mut self.reach {
+            reach.take_in(&primitive);
+            if clipped_bounds.is_empty() {
+                if reach.keeps(&primitive) {
+                    self.paint_operations
+                        .push(PaintOperation::Primitive(primitive));
+                } else if *primitive.content_mask() == reach.outer {
+                    union(&mut reach.left_out, *primitive.bounds());
+                }
+                return;
+            }
+        }
 
         if clipped_bounds.is_empty() {
             return;
@@ -141,11 +235,91 @@ impl Scene {
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
         for operation in &prev_scene.paint_operations[range] {
             match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
-                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
+                PaintOperation::Primitive(primitive) => self.insert_replayed(primitive.clone()),
+                PaintOperation::StartLayer {
+                    bounds,
+                    unclipped,
+                    mask,
+                } => self.push_layer_within(*bounds, *unclipped, mask.clone()),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
+    }
+
+    /// mirin: `replay`, `by` device pixels (whole ones) away, for a retained
+    /// subtree's drawing copied to where it moved (`elements::retained`),
+    /// from under the mask `masks.0` to under `masks.1`: a primitive that had
+    /// the one takes the other, and one that had a mask of its own (pushed
+    /// inside the drawing, or a border's strip), not clipped by the one
+    /// around it then, takes it moved and clipped by the one around it now.
+    /// A layer takes its bounds moved and clipped by its mask moved so; one
+    /// that ends up empty is not pushed (as `Window::paint_layer` would not).
+    /// Only draw orders depend on layers, so what shows is the same either
+    /// way.
+    pub(crate) fn replay_moved(
+        &mut self,
+        range: Range<usize>,
+        prev_scene: &Scene,
+        by: Point<ScaledPixels>,
+        masks: (&ContentMask<ScaledPixels>, &ContentMask<ScaledPixels>),
+    ) {
+        let (old, new) = masks;
+        let mask = |had: &ContentMask<ScaledPixels>| {
+            if had == old {
+                new.clone()
+            } else {
+                ContentMask {
+                    bounds: (had.bounds + by).intersect(&new.bounds),
+                }
+            }
+        };
+        let mut pushed = Vec::new();
+        for operation in &prev_scene.paint_operations[range] {
+            match operation {
+                PaintOperation::Primitive(primitive) => {
+                    let mut primitive = primitive.clone();
+                    let content_mask = mask(primitive.content_mask());
+                    primitive.move_by(by, content_mask);
+                    self.insert_replayed(primitive);
+                }
+                PaintOperation::StartLayer {
+                    unclipped,
+                    mask: had,
+                    ..
+                } => {
+                    let mask = mask(had);
+                    let unclipped = *unclipped + by;
+                    let bounds = unclipped.intersect(&mask.bounds);
+                    let shows = !bounds.is_empty();
+                    if shows {
+                        self.push_layer_within(bounds, unclipped, mask);
+                    }
+                    pushed.push(shows);
+                }
+                PaintOperation::EndLayer => {
+                    if pushed.pop().unwrap_or(true) {
+                        self.pop_layer();
+                    }
+                }
+            }
+        }
+    }
+
+    /// mirin: a primitive of a drawing copied: one hidden stays in it
+    /// (unshown), so the copy is as whole as the drawing it copies.
+    fn insert_replayed(&mut self, primitive: Primitive) {
+        let hidden = primitive
+            .bounds()
+            .intersect(&primitive.content_mask().bounds)
+            .is_empty();
+        if !hidden {
+            return self.insert_primitive(primitive);
+        }
+        if let Some(reach) = &mut self.reach {
+            reach.take_in(&primitive);
+        }
+        self.paint_operations
+            .push(PaintOperation::Primitive(primitive));
     }
 
     pub fn finish(&mut self) {
@@ -232,9 +406,17 @@ impl Scene {
     }
 }
 
+// mirin: `Clone`, for a retained subtree's drawing parked out of a frame.
+#[derive(Clone)]
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
-    StartLayer(Bounds<ScaledPixels>),
+    // mirin: with the bounds before the mask clipped them, and that mask
+    // (`Scene::push_layer_within`).
+    StartLayer {
+        bounds: Bounds<ScaledPixels>,
+        unclipped: Bounds<ScaledPixels>,
+        mask: ContentMask<ScaledPixels>,
+    },
     EndLayer,
 }
 
@@ -320,6 +502,46 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+        }
+    }
+
+    /// mirin: the same primitive `by` device pixels away, under `mask`
+    /// (`Scene::replay_moved`). Never a path or a surface (`SceneReach`).
+    pub(crate) fn move_by(&mut self, by: Point<ScaledPixels>, mask: ContentMask<ScaledPixels>) {
+        match self {
+            Primitive::Shadow(shadow) => {
+                shadow.bounds.origin += by;
+                shadow.element_bounds.origin += by;
+                shadow.content_mask = mask;
+            }
+            Primitive::Quad(quad) => {
+                quad.bounds.origin += by;
+                quad.content_mask = mask;
+            }
+            Primitive::Path(path) => {
+                path.bounds.origin += by;
+                path.content_mask = mask;
+            }
+            Primitive::Underline(underline) => {
+                underline.bounds.origin += by;
+                underline.content_mask = mask;
+            }
+            Primitive::MonochromeSprite(sprite) => {
+                sprite.bounds.origin += by;
+                sprite.content_mask = mask;
+            }
+            Primitive::SubpixelSprite(sprite) => {
+                sprite.bounds.origin += by;
+                sprite.content_mask = mask;
+            }
+            Primitive::PolychromeSprite(sprite) => {
+                sprite.bounds.origin += by;
+                sprite.content_mask = mask;
+            }
+            Primitive::Surface(surface) => {
+                surface.bounds.origin += by;
+                surface.content_mask = mask;
+            }
         }
     }
 

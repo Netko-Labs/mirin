@@ -1042,7 +1042,7 @@ pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
+    pub(crate) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -1055,7 +1055,7 @@ pub(crate) struct Frame {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    pub(crate) debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1065,12 +1065,12 @@ pub(crate) struct Frame {
 
 #[derive(Clone, Default)]
 pub(crate) struct PrepaintStateIndex {
-    hitboxes_index: usize,
-    tooltips_index: usize,
-    deferred_draws_index: usize,
-    dispatch_tree_index: usize,
-    accessed_element_states_index: usize,
-    line_layout_index: LineLayoutIndex,
+    pub(crate) hitboxes_index: usize,
+    pub(crate) tooltips_index: usize,
+    pub(crate) deferred_draws_index: usize,
+    pub(crate) dispatch_tree_index: usize,
+    pub(crate) accessed_element_states_index: usize,
+    pub(crate) line_layout_index: LineLayoutIndex,
 }
 
 // mirin: a retained subtree's ranges move along with the subtree around it.
@@ -1135,7 +1135,11 @@ impl PaintIndex {
                 from.accessed_element_states_index,
                 to.accessed_element_states_index,
             ),
-            tab_handle_index: at(self.tab_handle_index, from.tab_handle_index, to.tab_handle_index),
+            tab_handle_index: at(
+                self.tab_handle_index,
+                from.tab_handle_index,
+                to.tab_handle_index,
+            ),
             line_layout_index: self
                 .line_layout_index
                 .rebase(&from.line_layout_index, &to.line_layout_index),
@@ -1145,15 +1149,15 @@ impl PaintIndex {
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    scene_index: usize,
+    pub(crate) scene_index: usize,
     #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_index: usize,
-    mouse_listeners_index: usize,
-    input_handlers_index: usize,
-    cursor_styles_index: usize,
-    accessed_element_states_index: usize,
-    tab_handle_index: usize,
-    line_layout_index: LineLayoutIndex,
+    pub(crate) debug_bounds_index: usize,
+    pub(crate) mouse_listeners_index: usize,
+    pub(crate) input_handlers_index: usize,
+    pub(crate) cursor_styles_index: usize,
+    pub(crate) accessed_element_states_index: usize,
+    pub(crate) tab_handle_index: usize,
+    pub(crate) line_layout_index: LineLayoutIndex,
 }
 
 impl Frame {
@@ -1381,7 +1385,15 @@ pub struct Window {
     // laid out apart the frame is, and the records of those drawn inside
     // each one being drawn.
     pub(crate) retained_detached: usize,
+    // mirin: how deep inside a retained subtree being built again onto its
+    // kept nodes the frame is.
+    pub(crate) retained_binding: usize,
+    pub(crate) retained_parking: crate::elements::Parking,
     pub(crate) retained_nested: Vec<Vec<Rc<RefCell<crate::elements::Drawn>>>>,
+    // mirin: the retained subtrees being drawn anew, innermost last, and
+    // what their painting rounds (`elements::retained`, step 2).
+    pub(crate) retained_recordings: Vec<crate::elements::Recording>,
+    pub(crate) retained_paint_steadiness: Cell<Option<crate::elements::Steadiness>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2440,7 +2452,11 @@ impl Window {
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             retained_detached: 0,
+            retained_binding: 0,
+            retained_parking: Default::default(),
             retained_nested: Vec::new(),
+            retained_recordings: Vec::new(),
+            retained_paint_steadiness: Cell::new(None),
             root: None,
             element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
@@ -3537,6 +3553,9 @@ impl Window {
         } else {
             thickness
         };
+        // mirin: what a retained subtree being drawn anew rounds.
+        self.retained_round_half(0, origin.x.0 * scale_factor, 1.);
+        self.retained_round_half(1, origin.y.0 * scale_factor, 1.);
         Bounds {
             origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
             size: size(self.snap_stroke(width), height),
@@ -3552,6 +3571,12 @@ impl Window {
         exclusions: &[Range<ScaledPixels>],
     ) {
         self.invalidator.debug_assert_paint();
+        // mirin: its spans take masks of their own; the underline reaches as
+        // far as it is.
+        if !self.retained_recordings.is_empty() {
+            let height = style.thickness * 3. + px(1.);
+            self.retained_strict(Bounds::new(origin, size(width, height)));
+        }
         let underline = self.underline(origin, width, style);
         if exclusions.is_empty() {
             self.next_frame.scene.insert_primitive(underline);
@@ -3618,6 +3643,13 @@ impl Window {
     #[inline]
     fn snap_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
+        // mirin: what a retained subtree being drawn anew rounds.
+        if self.retained_paint_steadiness.get().is_some() {
+            self.retained_round_half(0, bounds.left().0 * scale_factor, 1.);
+            self.retained_round_half(1, bounds.top().0 * scale_factor, 1.);
+            self.retained_round_half(0, bounds.right().0 * scale_factor, 1.);
+            self.retained_round_half(1, bounds.bottom().0 * scale_factor, 1.);
+        }
         let left = round_to_device_pixel(bounds.left().0, scale_factor);
         let top = round_to_device_pixel(bounds.top().0, scale_factor);
         let right = round_to_device_pixel(bounds.right().0, scale_factor).max(left);
@@ -3643,6 +3675,13 @@ impl Window {
     #[inline]
     fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
+        // mirin: what a retained subtree being drawn anew rounds.
+        if self.retained_paint_steadiness.get().is_some() {
+            self.retained_floor(0, bounds.left().0 * scale_factor);
+            self.retained_floor(1, bounds.top().0 * scale_factor);
+            self.retained_floor(0, bounds.right().0 * scale_factor);
+            self.retained_floor(1, bounds.bottom().0 * scale_factor);
+        }
         let left = floor_to_device_pixel(bounds.left().0, scale_factor);
         let top = floor_to_device_pixel(bounds.top().0, scale_factor);
         let right = ceil_to_device_pixel(bounds.right().0, scale_factor).max(left);
@@ -4342,9 +4381,20 @@ impl Window {
     /// same; call it from a paint.
     #[doc(hidden)]
     pub fn scene_drawn(&self) -> Vec<String> {
-        let mut drawn = self.next_frame.scene.describe();
+        Self::frame_drawn(&self.next_frame)
+    }
+
+    /// mirin: `scene_drawn` of the last frame drawn (for tests, which call
+    /// it between frames).
+    #[doc(hidden)]
+    pub fn last_scene_drawn(&self) -> Vec<String> {
+        Self::frame_drawn(&self.rendered_frame)
+    }
+
+    fn frame_drawn(frame: &Frame) -> Vec<String> {
+        let mut drawn = frame.scene.describe();
         drawn.extend(
-            self.next_frame
+            frame
                 .hitboxes
                 .iter()
                 .filter(|hitbox| {
@@ -4376,6 +4426,63 @@ impl Window {
     /// mirin: the layout engine, for retained subtrees.
     pub(crate) fn layout_engine_mut(&mut self) -> &mut TaffyLayoutEngine {
         self.layout_engine.as_mut().unwrap()
+    }
+
+    /// mirin: take out of last frame the element states its drawing in
+    /// these ranges used: a retained subtree left undrawn keeps them, and
+    /// the retained subtrees inside with them, until it is drawn again
+    /// (`restore_element_states`).
+    pub(crate) fn take_element_states(
+        &mut self,
+        prepaint: &Range<PrepaintStateIndex>,
+        paint: &Range<PaintIndex>,
+    ) -> Vec<((GlobalElementId, TypeId), ElementStateBox)> {
+        let frame = &mut self.rendered_frame;
+        let keys = frame.accessed_element_states.get(
+            prepaint.start.accessed_element_states_index
+                ..prepaint.end.accessed_element_states_index,
+        );
+        let more = frame.accessed_element_states.get(
+            paint.start.accessed_element_states_index..paint.end.accessed_element_states_index,
+        );
+        let mut states = Vec::new();
+        for key in keys.into_iter().chain(more).flatten() {
+            if let Some(entry) = frame.element_states.remove_entry(key) {
+                states.push(entry);
+            }
+        }
+        states
+    }
+
+    /// mirin: put element states a retained subtree kept back in last
+    /// frame, where its elements, built again, find them.
+    pub(crate) fn restore_element_states(
+        &mut self,
+        states: Vec<((GlobalElementId, TypeId), ElementStateBox)>,
+    ) {
+        self.rendered_frame.element_states.extend(states);
+    }
+
+    /// mirin: whether nothing in last frame's drawing in these ranges takes
+    /// keys, actions, focus or tab stops.
+    pub(crate) fn drawing_is_inert(
+        &self,
+        prepaint: &Range<PrepaintStateIndex>,
+        paint: &Range<PaintIndex>,
+    ) -> bool {
+        paint.start.tab_handle_index == paint.end.tab_handle_index
+            && self.next_frame.dispatch_tree.range_is_inert(
+                prepaint.start.dispatch_tree_index..prepaint.end.dispatch_tree_index,
+            )
+    }
+
+    /// mirin: end building a retained subtree again onto its kept nodes
+    /// (`TaffyLayoutEngine::end_bind`): whether it took exactly them.
+    pub(crate) fn end_bind(&mut self, cx: &mut App) -> bool {
+        let mut layout_engine = self.layout_engine.take().unwrap();
+        let bound = layout_engine.end_bind(self, cx);
+        self.layout_engine = Some(layout_engine);
+        bound
     }
 
     /// mirin: whether `range` names a stretch of last frame's prepaint lists
@@ -4484,13 +4591,61 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        // mirin: through `reuse_paint_moved`, which can move it.
+        self.reuse_paint_moved(range, None);
+    }
+
+    /// mirin: `reuse_prepaint` for a retained subtree's drawing moved `by`
+    /// device pixels (whole ones; `elements::retained`): every hitbox moves
+    /// with it, and takes the content mask around it now where it had the
+    /// one around it then (`old_mask`), its own moved and clipped by the one
+    /// now otherwise.
+    pub(crate) fn reuse_prepaint_moved(
+        &mut self,
+        range: Range<PrepaintStateIndex>,
+        by: Point<f32>,
+        old_mask: &ContentMask<Pixels>,
+    ) {
+        let start = self.next_frame.hitboxes.len();
+        self.reuse_prepaint(range);
+        let scale_factor = self.scale_factor();
+        let offset = point(px(by.x / scale_factor), px(by.y / scale_factor));
+        let mask = self.content_mask();
+        for hitbox in &mut self.next_frame.hitboxes[start..] {
+            hitbox.bounds.origin += offset;
+            hitbox.content_mask = if hitbox.content_mask == *old_mask {
+                mask.clone()
+            } else {
+                ContentMask {
+                    bounds: (hitbox.content_mask.bounds + offset).intersect(&mask.bounds),
+                }
+            };
+        }
+    }
+
+    /// mirin: `reuse_paint`, with `moved` (how many device pixels, whole
+    /// ones, and the content mask around the drawing then) for a retained
+    /// subtree's drawing copied to where it moved: every primitive moves
+    /// with it and takes the mask around it now where it had the one around
+    /// it then, its own moved and clipped by the one now otherwise
+    /// (`Scene::replay_moved`).
+    pub(crate) fn reuse_paint_moved(
+        &mut self,
+        range: Range<PaintIndex>,
+        moved: Option<(Point<f32>, ContentMask<Pixels>)>,
+    ) {
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
             [range.start.debug_bounds_index..range.end.debug_bounds_index]
         {
+            let mut bounds = *bounds;
+            if let Some((by, _)) = &moved {
+                let scale_factor = self.scale_factor();
+                bounds.origin += point(px(by.x / scale_factor), px(by.y / scale_factor));
+            }
             self.next_frame
-                .record_debug_bounds(selector.clone(), *bounds);
+                .record_debug_bounds(selector.clone(), bounds);
         }
         self.next_frame.cursor_styles.extend(
             self.rendered_frame.cursor_styles
@@ -4523,9 +4678,43 @@ impl Window {
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        self.next_frame.scene.replay(
-            range.start.scene_index..range.end.scene_index,
+        let scenes = range.start.scene_index..range.end.scene_index;
+        let Some((by, old_mask)) = moved else {
+            self.next_frame
+                .scene
+                .replay(scenes, &self.rendered_frame.scene);
+            return;
+        };
+        // As `cover_bounds` gives a primitive's mask, unrecorded.
+        let scale_factor = self.scale_factor();
+        let cover = |mask: &ContentMask<Pixels>| {
+            let bounds = mask.bounds;
+            ContentMask {
+                bounds: Bounds::from_corners(
+                    point(
+                        ScaledPixels(floor_to_device_pixel(bounds.left().0, scale_factor)),
+                        ScaledPixels(floor_to_device_pixel(bounds.top().0, scale_factor)),
+                    ),
+                    point(
+                        ScaledPixels(
+                            ceil_to_device_pixel(bounds.right().0, scale_factor)
+                                .max(floor_to_device_pixel(bounds.left().0, scale_factor)),
+                        ),
+                        ScaledPixels(
+                            ceil_to_device_pixel(bounds.bottom().0, scale_factor)
+                                .max(floor_to_device_pixel(bounds.top().0, scale_factor)),
+                        ),
+                    ),
+                ),
+            }
+        };
+        let (old_cover, new_cover) = (cover(&old_mask), cover(&self.content_mask()));
+        let by = point(ScaledPixels(by.x), ScaledPixels(by.y));
+        self.next_frame.scene.replay_moved(
+            scenes,
             &self.rendered_frame.scene,
+            by,
+            (&old_cover, &new_cover),
         );
     }
 
@@ -4573,6 +4762,8 @@ impl Window {
     /// during the paint phase of element drawing.
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
         self.invalidator.debug_assert_prepaint();
+        // mirin: a tooltip knows where its element is.
+        self.pin_recordings();
         let id = TooltipId(post_inc(&mut self.next_tooltip_id.0));
         self.next_frame
             .tooltip_requests
@@ -4592,6 +4783,10 @@ impl Window {
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(mask) = mask {
+            // mirin: a mask pushed inside a retained subtree moves with it.
+            if !self.retained_recordings.is_empty() {
+                self.retained_place(mask.bounds, true);
+            }
             let mask = mask.intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
             let result = f(self);
@@ -4934,6 +5129,9 @@ impl Window {
         content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
+        // mirin: what is drawn later is not part of a retained subtree's
+        // drawing: one with a deferred draw is never moved.
+        self.pin_recordings();
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
@@ -4962,9 +5160,14 @@ impl Window {
         let content_mask = self.content_mask();
         let clipped_bounds = bounds.intersect(&content_mask.bounds);
         if !clipped_bounds.is_empty() {
+            // mirin: with its bounds unclipped and its mask, for a retained
+            // subtree's drawing copied elsewhere (`Scene::replay_moved`).
+            let (clipped, unclipped) =
+                (self.cover_bounds(clipped_bounds), self.cover_bounds(bounds));
+            let mask = self.snapped_content_mask();
             self.next_frame
                 .scene
-                .push_layer(self.cover_bounds(clipped_bounds));
+                .push_layer_within(clipped, unclipped, mask);
         }
 
         let result = f(self);
@@ -5109,6 +5312,12 @@ impl Window {
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
+        // mirin: a border drawn in strips (below) takes masks of its own:
+        // a retained subtree's drawing moves only where they were not
+        // clipped by the mask around it.
+        if quad.background.is_transparent() && !self.retained_recordings.is_empty() {
+            self.retained_strict(quad.bounds);
+        }
 
         let opacity = self.element_opacity();
         let snapped_bounds = self.snap_bounds(quad.bounds);
@@ -5219,6 +5428,9 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let height = style.thickness;
+        // mirin: what a retained subtree being drawn anew rounds.
+        self.retained_round_half(0, origin.x.0 * scale_factor, 1.);
+        self.retained_round_half(1, origin.y.0 * scale_factor, 1.);
         let bounds = Bounds {
             origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
             size: size(self.snap_stroke(width), self.snap_stroke(height)),
@@ -5257,6 +5469,17 @@ impl Window {
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
+        // mirin: what a retained subtree being drawn anew rounds.
+        self.retained_round_half(
+            0,
+            glyph_origin.x.0 * SUBPIXEL_VARIANTS_X as f32,
+            SUBPIXEL_VARIANTS_X as f32,
+        );
+        self.retained_round_half(
+            1,
+            glyph_origin.y.0 * SUBPIXEL_VARIANTS_Y as f32,
+            SUBPIXEL_VARIANTS_Y as f32,
+        );
 
         let quantized_origin = Point::new(
             round_half_toward_zero(glyph_origin.x.0 * SUBPIXEL_VARIANTS_X as f32)
@@ -5362,6 +5585,9 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
+        // mirin: what a retained subtree being drawn anew rounds.
+        self.retained_round_half(0, glyph_origin.x.0, 1.);
+        self.retained_round_half(1, glyph_origin.y.0, 1.);
         let integer_origin = glyph_origin.map(|c| ScaledPixels(round_half_toward_zero(c.0)));
         let params = RenderGlyphParams {
             font_id,
@@ -5453,6 +5679,9 @@ impl Window {
                 .size
                 .map(|value| ScaledPixels(value.0 as f32 / SMOOTH_SVG_SCALE_FACTOR)),
         };
+        // mirin: what a retained subtree being drawn anew rounds.
+        self.retained_round_half(0, svg_bounds.origin.x.0, 1.);
+        self.retained_round_half(1, svg_bounds.origin.y.0, 1.);
         let final_bounds = svg_bounds
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
@@ -5725,6 +5954,11 @@ impl Window {
             .map(Into::into);
         let snapped_offset = self.pixel_snap_point(self.element_offset());
         bounds.origin += snapped_offset;
+        // mirin: snapped on its own, a scroll view's offset inside a
+        // retained subtree keeps its drawing where it is.
+        if !self.retained_recordings.is_empty() {
+            self.retained_offset_check();
+        }
         bounds
     }
 
@@ -5737,6 +5971,10 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = self.content_mask();
+        // mirin: a hitbox moves with a retained subtree's drawing.
+        if !self.retained_recordings.is_empty() {
+            self.retained_place(bounds, false);
+        }
         let id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();
         let hitbox = Hitbox {
@@ -5754,6 +5992,8 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
         self.invalidator.debug_assert_paint();
+        // mirin: kept apart from a retained subtree's drawing.
+        self.pin_recordings();
         self.next_frame.window_control_hitboxes.push((area, hitbox));
     }
 
@@ -5836,6 +6076,8 @@ impl Window {
         cx: &App,
     ) {
         self.invalidator.debug_assert_paint();
+        // mirin: an input handler knows where its element is.
+        self.pin_recordings();
 
         if focus_handle.is_focused(self) {
             let cx = self.to_async(cx);

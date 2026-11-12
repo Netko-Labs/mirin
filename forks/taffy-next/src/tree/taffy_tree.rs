@@ -116,6 +116,10 @@ struct NodeData {
 
     /// The computation result from layout algorithm
     pub(crate) detailed_layout_info: DetailedLayoutInfo,
+
+    // mirin: the last layout (`TaffyTree::set_layout_epoch`) that changed
+    // the unrounded layout of a node below this one (`below_changed_since`).
+    pub(crate) below_changed_at: u64,
 }
 
 impl NodeData {
@@ -130,6 +134,7 @@ impl NodeData {
             has_context: false,
             hoisted_children: new_const_children_vec(),
             detailed_layout_info: DetailedLayoutInfo::None,
+            below_changed_at: 0,
         }
     }
 
@@ -166,6 +171,10 @@ pub struct TaffyTree<NodeContext = ()> {
 
     /// Layout mode configuration
     config: TaffyConfig,
+
+    // mirin: the layout being made, as its caller counts them
+    // (`set_layout_epoch`).
+    layout_epoch: u64,
 }
 
 impl Default for TaffyTree {
@@ -394,6 +403,10 @@ where
 
     #[inline(always)]
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
+        // mirin: what a layout changed below a node (`below_changed_since`).
+        if self.taffy.nodes[node_id.into()].unrounded_layout != *layout {
+            self.taffy.mark_below_changed(node_id);
+        }
         self.taffy.nodes[node_id.into()].unrounded_layout = *layout;
     }
 
@@ -603,6 +616,7 @@ impl<NodeContext> TaffyTree<NodeContext> {
             parents: SlotMap::with_capacity(capacity),
             node_context_data: SecondaryMap::with_capacity(capacity),
             config: TaffyConfig::default(),
+            layout_epoch: 0,
         }
     }
 
@@ -698,6 +712,38 @@ impl<NodeContext> TaffyTree<NodeContext> {
         let _ = self.node_context_data.remove(key);
 
         Ok(node)
+    }
+
+    // mirin: what a layout changed below a node. GPUI leaves a retained
+    // subtree undrawn while nothing of it shows; one whose root was only
+    // resized (a row stretched to a window's new width) reaches as far as its
+    // last drawing did, grown with its root, when nothing below it changed.
+
+    /// Number the layouts to come: `below_changed_since` answers in these.
+    pub fn set_layout_epoch(&mut self, epoch: u64) {
+        self.layout_epoch = epoch;
+    }
+
+    /// Whether a layout after `epoch` changed the unrounded layout (box,
+    /// place, padding, border) of any node below `node`.
+    pub fn below_changed_since(&self, node: NodeId, epoch: u64) -> bool {
+        self.nodes.get(node.into()).is_some_and(|data| data.below_changed_at > epoch)
+    }
+
+    /// `node`'s layout changed: so did what is below each of its ancestors.
+    fn mark_below_changed(&mut self, node: NodeId) {
+        let epoch = self.layout_epoch;
+        let mut at = self.parents.get(node.into()).copied().flatten();
+        while let Some(parent) = at {
+            let Some(data) = self.nodes.get_mut(parent.into()) else {
+                break;
+            };
+            if data.below_changed_at == epoch {
+                break;
+            }
+            data.below_changed_at = epoch;
+            at = self.parents.get(parent.into()).copied().flatten();
+        }
     }
 
     // mirin: a kept node id can outlive its node; GPUI checks before reusing one.
@@ -1553,5 +1599,34 @@ mod tests {
             8,
             "clear() drops all nodes, so it must drop their contexts too"
         );
+    }
+
+    // mirin: what a layout changed below a node.
+    #[test]
+    fn a_node_only_resized_changed_nothing_below_it() {
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let leaf_style = || Style { size: Size { width: length(40.0), height: length(10.0) }, ..Default::default() };
+        let leaf = taffy.new_leaf(leaf_style()).unwrap();
+        let row = taffy.new_with_children(Style { flex_direction: FlexDirection::Row, ..Default::default() }, &[leaf]).unwrap();
+        let root = taffy
+            .new_with_children(
+                Style { flex_direction: FlexDirection::Column, size: Size { width: length(200.0), height: auto() }, ..Default::default() },
+                &[row],
+            )
+            .unwrap();
+        taffy.set_layout_epoch(1);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        // The row is stretched to the root's new width; its leaf stays put.
+        taffy.set_style(root, Style { flex_direction: FlexDirection::Column, size: Size { width: length(300.0), height: auto() }, ..Default::default() }).unwrap();
+        taffy.set_layout_epoch(2);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert!(!taffy.below_changed_since(row, 1));
+        assert!(taffy.below_changed_since(root, 1));
+        // The leaf grows: below the row changed.
+        taffy.set_style(leaf, Style { size: Size { width: length(50.0), height: length(10.0) }, ..Default::default() }).unwrap();
+        taffy.set_layout_epoch(3);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert!(taffy.below_changed_since(row, 2));
+        assert!(!taffy.below_changed_since(row, 3));
     }
 }

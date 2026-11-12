@@ -27,6 +27,22 @@ type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
 
 struct NodeContext {
     measure: NodeMeasureFn,
+    // mirin: what it was last asked (logical pixels) and in which layout
+    // (`TaffyLayoutEngine::epoch`), so an element built again onto the node
+    // can be asked the same (`end_bind`).
+    last: Option<(Size<Option<Pixels>>, Size<AvailableSpace>)>,
+    asked: u64,
+}
+
+/// mirin: a retained subtree's elements built again onto the nodes it kept
+/// (`TaffyLayoutEngine::begin_bind`): each node its elements ask for is the
+/// one it made last time, in the same order, so nothing is laid out again.
+struct Bind {
+    nodes: Vec<LayoutId>,
+    next: usize,
+    failed: bool,
+    /// The measured leaves bound, whose new functions are asked at the end.
+    measured: Vec<LayoutId>,
 }
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
@@ -48,6 +64,16 @@ pub struct TaffyLayoutEngine {
     /// laid out at: a retained subtree's copy laid out apart, placed where its
     /// twin sits so its edges round as the twin's do (`place_detached`).
     detached_origins: FxHashMap<LayoutId, Point<f32>>,
+    /// mirin: while a retained subtree is drawn anew, what the edges it
+    /// lays out round to (`elements::retained`, step 2), and per node laid
+    /// out meanwhile whether its unrounded origin was summed exactly from
+    /// the subtree's root, across and down.
+    pub(crate) steadiness: Option<crate::elements::Steadiness>,
+    exact_origins: FxHashMap<LayoutId, [bool; 2]>,
+    /// mirin: the layout being made (one per frame, `clear`), and the
+    /// retained subtree being built again onto its kept nodes, if one is.
+    epoch: u64,
+    bind: Option<Bind>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -67,6 +93,10 @@ impl TaffyLayoutEngine {
             owned_count: 0,
             released: Default::default(),
             detached_origins: FxHashMap::default(),
+            steadiness: None,
+            exact_origins: FxHashMap::default(),
+            epoch: 0,
+            bind: None,
         }
     }
 
@@ -88,6 +118,8 @@ impl TaffyLayoutEngine {
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
         self.detached_origins.clear();
+        self.exact_origins.clear();
+        self.epoch += 1;
     }
 
     /// mirin: nodes made from now until `end_owned` belong to a retained
@@ -120,6 +152,163 @@ impl TaffyLayoutEngine {
             None => self.frame_nodes.push(id),
         }
         id
+    }
+
+    /// mirin: the layout being made: one per frame.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// mirin: whether a layout after `epoch` changed the layout of a node
+    /// below `id` (taffy's `below_changed_since`).
+    pub(crate) fn below_changed_since(&self, id: LayoutId, epoch: u64) -> bool {
+        self.taffy.below_changed_since(id.0, epoch)
+    }
+
+    /// mirin: whether a measured leaf among `nodes` was asked for its size
+    /// in a layout after `epoch`. A measured element holds what its last
+    /// measure left it with; for nodes asked only in the layout they were
+    /// made for, that is what a layout from nothing asks last, and an
+    /// element built again onto them can be asked the same (`end_bind`).
+    pub(crate) fn any_asked_since(&self, nodes: &[LayoutId], epoch: u64) -> bool {
+        nodes.iter().any(|id| {
+            self.taffy
+                .get_node_context(id.0)
+                .is_some_and(|context| context.asked > epoch)
+        })
+    }
+
+    /// mirin: build a retained subtree's elements again onto `nodes`, the
+    /// ones it made (in that order) and kept: until `end_bind`, each layout
+    /// requested is answered with the next of them instead of a new node.
+    pub(crate) fn begin_bind(&mut self, nodes: Vec<LayoutId>) {
+        self.bind = Some(Bind {
+            nodes,
+            next: 0,
+            failed: false,
+            measured: Vec::new(),
+        });
+    }
+
+    /// mirin: give up on the subtree being bound, if one is (something in
+    /// it asked for what its kept nodes can't answer).
+    pub(crate) fn fail_bind(&mut self) {
+        if let Some(bind) = &mut self.bind {
+            bind.failed = true;
+        }
+    }
+
+    /// mirin: whether the subtree bound since `begin_bind` asked for exactly
+    /// its kept nodes. Each measured leaf's new function is then asked what
+    /// the old one was last asked, so its element holds what the old one did.
+    pub(crate) fn end_bind(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        let Some(bind) = self.bind.take() else {
+            return false;
+        };
+        if bind.failed || bind.next != bind.nodes.len() {
+            return false;
+        }
+        for id in bind.measured {
+            let Some(context) = self.taffy.get_node_context_mut(id.0) else {
+                return false;
+            };
+            let Some((known, available)) = context.last else {
+                return false;
+            };
+            (context.measure)(known, available, window, cx);
+        }
+        true
+    }
+
+    /// mirin: the kept node that answers a layout request while a subtree is
+    /// bound (`begin_bind`): the next it made, if it has these `children`
+    /// (`None`: a measured leaf).
+    fn bound(&mut self, children: Option<&[LayoutId]>) -> Option<LayoutId> {
+        let bind = self.bind.as_mut().filter(|bind| !bind.failed)?;
+        let id = bind.nodes.get(bind.next).copied();
+        let matches = id.is_some_and(|id| {
+            self.taffy.contains(id.0)
+                && match children {
+                    Some(children) => {
+                        self.taffy.get_node_context(id.0).is_none()
+                            && self
+                                .taffy
+                                .child_ids(id.0)
+                                .eq(children.iter().map(|child| child.0))
+                    }
+                    None => {
+                        self.taffy.child_count(id.0) == 0
+                            && self.taffy.get_node_context(id.0).is_some()
+                    }
+                }
+        });
+        if !matches {
+            bind.failed = true;
+            return None;
+        }
+        bind.next += 1;
+        id
+    }
+
+    /// mirin: the unrounded absolute origin (device pixels) `layout_bounds`
+    /// found for `id` this frame.
+    pub(crate) fn unrounded_origin(&self, id: LayoutId) -> Option<Point<f32>> {
+        self.absolute_outer_origins.get(&id).copied()
+    }
+
+    /// mirin: a node's unrounded size, border and padding (device pixels):
+    /// what lays out what is inside it, for a retained subtree whose root it
+    /// is (`elements::retained`).
+    pub(crate) fn node_box(&self, id: LayoutId) -> Option<[f32; 10]> {
+        let layout = self.taffy.layout(id.0).ok()?;
+        let (border, padding) = (layout.border, layout.padding);
+        Some([
+            layout.size.width,
+            layout.size.height,
+            border.left,
+            border.top,
+            border.right,
+            border.bottom,
+            padding.left,
+            padding.top,
+            padding.right,
+            padding.bottom,
+        ])
+    }
+
+    /// mirin: `layout_bounds` rounds a node's edges while a retained subtree
+    /// is drawn anew: note whether they round the same way with the subtree
+    /// moved by whole device pixels (`elements::retained::Steadiness`). An
+    /// origin is summed exactly from the subtree's root when its parent's
+    /// was and it is exact itself; a node laid out before the recording
+    /// began (the root) is exact when its origin is.
+    fn note_rounded(
+        &mut self,
+        id: LayoutId,
+        parent: Option<taffy::NodeId>,
+        origin: Point<f32>,
+        far: Point<f32>,
+    ) {
+        use crate::elements::is_exact;
+        let parent = parent.map(LayoutId::from);
+        let parent_exact = match parent.and_then(|parent| self.exact_origins.get(&parent)) {
+            Some(exact) => *exact,
+            None => match parent.and_then(|parent| self.absolute_outer_origins.get(&parent)) {
+                Some(origin) => [is_exact(origin.x), is_exact(origin.y)],
+                None => [true, true],
+            },
+        };
+        let exact = [
+            parent_exact[0] && is_exact(origin.x),
+            parent_exact[1] && is_exact(origin.y),
+        ];
+        self.exact_origins.insert(id, exact);
+        if let Some(steady) = &mut self.steadiness {
+            steady.round_half(0, origin.x, 1., exact[0]);
+            steady.round_half(1, origin.y, 1., exact[1]);
+            steady.round_half(0, far.x, 1., exact[0] && is_exact(far.x));
+            steady.round_half(1, far.y, 1., exact[1] && is_exact(far.y));
+        }
     }
 
     /// mirin: lay `root` (a retained subtree's copy, made this frame) out
@@ -155,6 +344,10 @@ impl TaffyLayoutEngine {
         scale_factor: f32,
         children: &[LayoutId],
     ) -> LayoutId {
+        // mirin: a retained subtree built again onto its kept nodes.
+        if let Some(id) = self.bound(Some(children)) {
+            return id;
+        }
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
         let id = if children.is_empty() {
@@ -186,14 +379,32 @@ impl TaffyLayoutEngine {
         ) -> Size<Pixels>
         + 'static,
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
         let measure = Box::new(measure) as Box<MeasureFn>;
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
+        // mirin: a retained subtree built again onto its kept nodes: the
+        // node takes the new element's function (asked at `end_bind`).
+        if let Some(id) = self.bound(None) {
+            if let Some(context) = self.taffy.get_node_context_mut(id.0) {
+                context.measure = measure;
+            }
+            if let Some(bind) = &mut self.bind {
+                bind.measured.push(id);
+            }
+            return id;
+        }
+        let taffy_style = style.to_taffy(rem_size, scale_factor);
 
         let id = self
             .taffy
-            .new_leaf_with_context(taffy_style, NodeContext { measure })
+            .new_leaf_with_context(
+                taffy_style,
+                NodeContext {
+                    measure,
+                    last: None,
+                    asked: 0,
+                },
+            )
             .expect(EXPECT_MESSAGE)
             .into();
         // mirin: kept with a retained subtree, or freed with the frame.
@@ -326,6 +537,9 @@ impl TaffyLayoutEngine {
             transform(available_space.height),
         );
 
+        let epoch = self.epoch;
+        // mirin: what this layout changes below a node is counted in it.
+        self.taffy.set_layout_epoch(epoch);
         self.taffy
             .compute_layout_with_measure(
                 id.into(),
@@ -358,6 +572,9 @@ impl TaffyLayoutEngine {
                                 untransform(available_space.height),
                             );
 
+                            // mirin: kept for `end_bind`.
+                            node_context.last = Some((known_dimensions, available_space));
+                            node_context.asked = epoch;
                             let measured_size: Size<Pixels> = (node_context.measure)(
                                 known_dimensions,
                                 available_space,
@@ -491,6 +708,10 @@ impl TaffyLayoutEngine {
             .insert(id, absolute_outer_origin);
 
         let absolute_far = absolute_outer_origin + Point::from(Size::from(layout_size));
+        // mirin: what a retained subtree being drawn anew rounds.
+        if self.steadiness.is_some() {
+            self.note_rounded(id, parent, absolute_outer_origin, absolute_far);
+        }
         let snapped_bounds = Bounds::from_corners(
             absolute_outer_origin.map(round_half_toward_zero),
             absolute_far.map(round_half_toward_zero),
