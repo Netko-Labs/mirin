@@ -1600,4 +1600,33 @@ mod tests {
             "clear() drops all nodes, so it must drop their contexts too"
         );
     }
+
+    // mirin: what a layout changed below a node.
+    #[test]
+    fn a_node_only_resized_changed_nothing_below_it() {
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let leaf_style = || Style { size: Size { width: length(40.0), height: length(10.0) }, ..Default::default() };
+        let leaf = taffy.new_leaf(leaf_style()).unwrap();
+        let row = taffy.new_with_children(Style { flex_direction: FlexDirection::Row, ..Default::default() }, &[leaf]).unwrap();
+        let root = taffy
+            .new_with_children(
+                Style { flex_direction: FlexDirection::Column, size: Size { width: length(200.0), height: auto() }, ..Default::default() },
+                &[row],
+            )
+            .unwrap();
+        taffy.set_layout_epoch(1);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        // The row is stretched to the root's new width; its leaf stays put.
+        taffy.set_style(root, Style { flex_direction: FlexDirection::Column, size: Size { width: length(300.0), height: auto() }, ..Default::default() }).unwrap();
+        taffy.set_layout_epoch(2);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert!(!taffy.below_changed_since(row, 1));
+        assert!(taffy.below_changed_since(root, 1));
+        // The leaf grows: below the row changed.
+        taffy.set_style(leaf, Style { size: Size { width: length(50.0), height: length(10.0) }, ..Default::default() }).unwrap();
+        taffy.set_layout_epoch(3);
+        taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
+        assert!(taffy.below_changed_since(row, 2));
+        assert!(!taffy.below_changed_since(row, 3));
+    }
 }
