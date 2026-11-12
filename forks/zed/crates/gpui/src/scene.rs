@@ -58,19 +58,51 @@ pub struct Scene {
 /// mirin: what a retained subtree being drawn anew put in the scene: every
 /// primitive's bounds, shown or not, and whether one knows where it is (a
 /// path, a transformed sprite) so the drawing can't be moved.
-#[derive(Clone, Copy, Default)]
+/// Of a primitive under a mask pushed inside the subtree, only what that
+/// mask lets through counts (the mask moves with it); under the mask around
+/// the subtree (`outer`), all of it. A primitive the mask around it hides
+/// is kept in the drawing (not shown) within `keep` of it, so the drawing
+/// moved where it shows is whole; past that it is left out (`left_out`).
+#[derive(Clone)]
 pub(crate) struct SceneReach {
     pub(crate) extent: Option<Bounds<ScaledPixels>>,
+    pub(crate) left_out: Option<Bounds<ScaledPixels>>,
     pub(crate) pinned: bool,
+    outer: ContentMask<ScaledPixels>,
+    keep: Bounds<ScaledPixels>,
+}
+
+fn union(into: &mut Option<Bounds<ScaledPixels>>, bounds: Bounds<ScaledPixels>) {
+    *into = Some(match *into {
+        Some(extent) => extent.union(&bounds),
+        None => bounds,
+    });
 }
 
 impl SceneReach {
+    pub(crate) fn new(outer: ContentMask<ScaledPixels>, keep: Bounds<ScaledPixels>) -> Self {
+        Self {
+            extent: None,
+            left_out: None,
+            pinned: false,
+            outer,
+            keep,
+        }
+    }
+
+    /// A primitive hidden by the mask around the subtree, near it: kept.
+    fn keeps(&self, primitive: &Primitive) -> bool {
+        *primitive.content_mask() == self.outer && primitive.bounds().intersects(&self.keep)
+    }
+
     fn take_in(&mut self, primitive: &Primitive) {
-        let bounds = *primitive.bounds();
-        self.extent = Some(match self.extent {
-            Some(extent) => extent.union(&bounds),
-            None => bounds,
-        });
+        let mut bounds = *primitive.bounds();
+        if *primitive.content_mask() != self.outer {
+            bounds = bounds.intersect(&primitive.content_mask().bounds);
+        }
+        if !bounds.is_empty() {
+            union(&mut self.extent, bounds);
+        }
         self.pinned |= match primitive {
             Primitive::Path(_) | Primitive::Surface(_) => true,
             Primitive::MonochromeSprite(sprite) => {
@@ -118,13 +150,24 @@ impl Scene {
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
-        // mirin: counted whether it shows or not.
-        if let Some(reach) = &mut self.reach {
-            reach.take_in(&primitive);
-        }
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
+
+        // mirin: counted whether it shows or not; hidden near the mask
+        // around a retained subtree drawn anew, kept unshown (`SceneReach`).
+        if let Some(reach) = &mut self.reach {
+            reach.take_in(&primitive);
+            if clipped_bounds.is_empty() {
+                if reach.keeps(&primitive) {
+                    self.paint_operations
+                        .push(PaintOperation::Primitive(primitive));
+                } else if *primitive.content_mask() == reach.outer {
+                    union(&mut reach.left_out, *primitive.bounds());
+                }
+                return;
+            }
+        }
 
         if clipped_bounds.is_empty() {
             return;
@@ -177,7 +220,7 @@ impl Scene {
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
         for operation in &prev_scene.paint_operations[range] {
             match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                PaintOperation::Primitive(primitive) => self.insert_replayed(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
@@ -200,12 +243,29 @@ impl Scene {
                     let mut primitive = primitive.clone();
                     let content_mask = mask(primitive.content_mask());
                     primitive.move_by(by, content_mask);
-                    self.insert_primitive(primitive);
+                    self.insert_replayed(primitive);
                 }
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds + by),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
+    }
+
+    /// mirin: a primitive of a drawing copied: one hidden stays in it
+    /// (unshown), so the copy is as whole as the drawing it copies.
+    fn insert_replayed(&mut self, primitive: Primitive) {
+        let hidden = primitive
+            .bounds()
+            .intersect(&primitive.content_mask().bounds)
+            .is_empty();
+        if !hidden {
+            return self.insert_primitive(primitive);
+        }
+        if let Some(reach) = &mut self.reach {
+            reach.take_in(&primitive);
+        }
+        self.paint_operations
+            .push(PaintOperation::Primitive(primitive));
     }
 
     pub fn finish(&mut self) {

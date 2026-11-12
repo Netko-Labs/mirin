@@ -26,6 +26,8 @@ pub(crate) struct Drawn {
     pub(super) recorded: Option<Recorded>,
     /// Nothing in it takes keys, actions, focus or tab stops.
     pub(super) inert: bool,
+    /// The layout its drawing was made for (`TaffyLayoutEngine::epoch`).
+    pub(super) epoch: u64,
 }
 
 /// Where a retained subtree's root is laid out (its unrounded origin in
@@ -83,17 +85,33 @@ impl Drawn {
     /// drawing is no longer in the frame, nor those of the ones inside.
     pub(super) fn skip(&mut self, bounds: Bounds<Pixels>, place: Option<Place>) {
         let offset = bounds.origin - self.bounds.origin;
-        if let Some(extent) = self
+        let reach = self
             .recorded
-            .as_mut()
-            .and_then(|recorded| recorded.extent.as_mut())
-        {
-            extent.origin += offset;
+            .and_then(|recorded| self.reach(recorded.extent, bounds.size));
+        if let Some(recorded) = &mut self.recorded {
+            recorded.extent = reach.map(|extent| extent + offset);
         }
         self.bounds = bounds;
         self.place = place;
         self.prepaint = None;
         self.paint = None;
+    }
+
+    /// How far its drawing reaches (`extent`, where it was drawn) once its
+    /// root is `size`, everything below laid out as it was: what the root
+    /// draws of itself (its background, border, shadow) is as far from its
+    /// edges as before, so it reaches that much further right and down when
+    /// it grew, and no further when it shrank.
+    pub(super) fn reach(
+        &self,
+        extent: Option<Bounds<Pixels>>,
+        size: crate::Size<Pixels>,
+    ) -> Option<Bounds<Pixels>> {
+        let grown = size - self.bounds.size;
+        extent.map(|extent| Bounds {
+            origin: extent.origin,
+            size: extent.size + grown.max(&crate::Size::default()),
+        })
     }
 
     /// The drawing moved as one, `by` device pixels (`by_layout` of them in
@@ -122,8 +140,15 @@ impl Drawn {
             };
         }
         if let Some(recorded) = &mut self.recorded {
-            if let Some(extent) = &mut recorded.extent {
-                extent.origin += offset;
+            for bounds in [
+                &mut recorded.extent,
+                &mut recorded.strict,
+                &mut recorded.left_out,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                bounds.origin += offset;
             }
             recorded.layout.moved(by_layout);
             recorded.paint.moved(by);
@@ -137,6 +162,9 @@ pub(super) struct Allowed {
     pub(super) movable: bool,
     /// Left out while nothing of it shows, and nothing inside was notified.
     pub(super) skippable: bool,
+    /// Nothing below its root was laid out anew since its drawing was made
+    /// (its root may have been resized).
+    pub(super) below_same: bool,
 }
 
 /// How to draw a clean subtree at `bounds`, under `mask`, laid out at
@@ -150,14 +178,17 @@ pub(super) fn plan(
     window: &Window,
 ) -> Plan {
     let movable = allowed.movable;
-    // Laid out inside as it was drawn: what it reaches is known.
+    // Laid out inside as it was drawn, or only its root resized: what it
+    // reaches is known (`Drawn::reach`).
     let same_inside =
         matches!((drawn.place, place), (Some(before), Some(now)) if before.node == now.node);
-    if allowed.skippable && drawn.inert && same_inside {
-        let offset = bounds.origin - drawn.bounds.origin;
+    let offset = bounds.origin - drawn.bounds.origin;
+    // One whose layout is watched is left out only where it was.
+    let still = movable || offset == Point::default();
+    if allowed.skippable && drawn.inert && still && (same_inside || allowed.below_same) {
         let unseen = drawn.recorded.is_some_and(|recorded| {
-            recorded
-                .extent
+            drawn
+                .reach(recorded.extent, bounds.size)
                 .is_none_or(|extent| !(extent + offset).intersects(&mask.bounds))
         });
         if unseen {
@@ -190,7 +221,11 @@ pub(super) fn plan(
     let extent = drawn.recorded.and_then(|recorded| recorded.extent);
     let pointer_same = before == now || (!hovers(extent, before) && !hovers(extent, now));
     if drawn.bounds == bounds && drawn.mask.as_ref() == Some(mask) && laid_out_same {
-        return if pointer_same { Plan::Reuse } else { Plan::Redraw };
+        return if pointer_same {
+            Plan::Reuse
+        } else {
+            Plan::Redraw
+        };
     }
     match moved_by(drawn, bounds, mask, place, movable, window) {
         Some((by, by_layout)) => Plan::Move { by, by_layout },
@@ -236,17 +271,28 @@ fn moved_by(
     {
         return None;
     }
+    // What takes masks of its own stays under the mask around it there and
+    // here, and that mask tells apart from every mask inside
+    // (`Scene::replay_moved`).
+    let strict = recorded.strict.is_none_or(|strict| {
+        holds(&old_mask.bounds, &strict)
+            && holds(&mask.bounds, &(strict + offset))
+            && cover(&strict, scale) != cover(&old_mask.bounds, scale)
+    });
+    // What the drawing left out stays hidden.
+    let whole = recorded.left_out.is_none_or(|left_out| {
+        let [left, top, right, bottom] = cover(&(left_out + offset), scale);
+        let [mask_left, mask_top, mask_right, mask_bottom] = cover(&mask.bounds, scale);
+        right <= mask_left || mask_right <= left || bottom <= mask_top || mask_bottom <= top
+    });
+    if !strict || !whole {
+        return None;
+    }
     if let Some(extent) = recorded.extent {
-        // Whole under the mask around it there and here, and that mask
-        // tells apart from every mask inside (`Scene::replay_moved`).
-        let moved = extent + offset;
-        let whole = holds(&old_mask.bounds, &extent)
-            && holds(&mask.bounds, &moved)
-            && cover(&extent, scale) != cover(&old_mask.bounds, scale);
         // A hover style is painted from what is under the pointer: it was
         // over neither where it was, nor is where it is now.
         let (before, now) = (window.retained_pointer, window.mouse_position());
-        if !whole || extent.contains(&before) || moved.contains(&now) {
+        if extent.contains(&before) || (extent + offset).contains(&now) {
             return None;
         }
     }

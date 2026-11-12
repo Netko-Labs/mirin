@@ -159,6 +159,12 @@ impl TaffyLayoutEngine {
         self.epoch
     }
 
+    /// mirin: whether a layout after `epoch` changed the layout of a node
+    /// below `id` (taffy's `below_changed_since`).
+    pub(crate) fn below_changed_since(&self, id: LayoutId, epoch: u64) -> bool {
+        self.taffy.below_changed_since(id.0, epoch)
+    }
+
     /// mirin: whether a measured leaf among `nodes` was asked for its size
     /// in a layout after `epoch`. A measured element holds what its last
     /// measure left it with; for nodes asked only in the layout they were
@@ -532,6 +538,8 @@ impl TaffyLayoutEngine {
         );
 
         let epoch = self.epoch;
+        // mirin: what this layout changes below a node is counted in it.
+        self.taffy.set_layout_epoch(epoch);
         self.taffy
             .compute_layout_with_measure(
                 id.into(),

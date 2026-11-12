@@ -3571,6 +3571,12 @@ impl Window {
         exclusions: &[Range<ScaledPixels>],
     ) {
         self.invalidator.debug_assert_paint();
+        // mirin: its spans take masks of their own; the underline reaches as
+        // far as it is.
+        if !self.retained_recordings.is_empty() {
+            let height = style.thickness * 3. + px(1.);
+            self.retained_strict(Bounds::new(origin, size(width, height)));
+        }
         let underline = self.underline(origin, width, style);
         if exclusions.is_empty() {
             self.next_frame.scene.insert_primitive(underline);
@@ -4379,9 +4385,20 @@ impl Window {
     /// same; call it from a paint.
     #[doc(hidden)]
     pub fn scene_drawn(&self) -> Vec<String> {
-        let mut drawn = self.next_frame.scene.describe();
+        Self::frame_drawn(&self.next_frame)
+    }
+
+    /// mirin: `scene_drawn` of the last frame drawn (for tests, which call
+    /// it between frames).
+    #[doc(hidden)]
+    pub fn last_scene_drawn(&self) -> Vec<String> {
+        Self::frame_drawn(&self.rendered_frame)
+    }
+
+    fn frame_drawn(frame: &Frame) -> Vec<String> {
+        let mut drawn = frame.scene.describe();
         drawn.extend(
-            self.next_frame
+            frame
                 .hitboxes
                 .iter()
                 .filter(|hitbox| {
@@ -4775,7 +4792,7 @@ impl Window {
         if let Some(mask) = mask {
             // mirin: a mask pushed inside a retained subtree moves with it.
             if !self.retained_recordings.is_empty() {
-                self.retained_place(mask.bounds);
+                self.retained_place(mask.bounds, true);
             }
             let mask = mask.intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
@@ -5151,7 +5168,7 @@ impl Window {
         let clipped_bounds = bounds.intersect(&content_mask.bounds);
         // mirin: a layer reaches as far as it is, clipped or not.
         if !self.retained_recordings.is_empty() {
-            self.retained_reach(bounds);
+            self.retained_strict(bounds);
         }
         if !clipped_bounds.is_empty() {
             self.next_frame
@@ -5301,6 +5318,10 @@ impl Window {
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
+        // mirin: a border drawn in strips (below) takes masks of their own.
+        if !self.retained_recordings.is_empty() && quad.background.is_transparent() {
+            self.retained_strict(quad.bounds);
+        }
 
         let opacity = self.element_opacity();
         let snapped_bounds = self.snap_bounds(quad.bounds);
@@ -5956,7 +5977,7 @@ impl Window {
         let content_mask = self.content_mask();
         // mirin: a hitbox moves with a retained subtree's drawing.
         if !self.retained_recordings.is_empty() {
-            self.retained_place(bounds);
+            self.retained_place(bounds, false);
         }
         let id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();

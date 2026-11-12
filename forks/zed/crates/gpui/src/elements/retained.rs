@@ -383,9 +383,13 @@ impl Element for Retained {
                     .dirty_views
                     .iter()
                     .any(|view| state.accessed_entities.contains(view));
+                let below_same = !window
+                    .layout_engine_mut()
+                    .below_changed_since(root, state.drawn.borrow().epoch);
                 let allowed = Allowed {
                     movable,
                     skippable: skippable && !notified,
+                    below_same,
                 };
                 let plan = match &built {
                     Some(_) => Plan::Redraw,
@@ -446,6 +450,7 @@ impl Element for Retained {
                         drawn.bounds = bounds;
                         drawn.mask = Some(mask);
                         drawn.place = place;
+                        drawn.epoch = window.layout_engine_mut().epoch();
                         // Known once it is painted.
                         drawn.recorded = None;
                         drop(drawn);
@@ -498,6 +503,12 @@ impl Element for Retained {
                 }
                 let end = window.paint_index();
                 let mut drawn = state.drawn.borrow_mut();
+                // Left out, it is a hole in the drawing around it.
+                if let (RetainedPrepaint::Skipped, Some(recorded)) =
+                    (&prepaint, &mut drawn.recorded)
+                {
+                    recorded.left_out = recorded.extent;
+                }
                 if let RetainedPrepaint::Drawn(..) = prepaint
                     && let Some(prepaint) = &drawn.prepaint
                 {
