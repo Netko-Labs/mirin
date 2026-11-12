@@ -1949,10 +1949,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => 1.0,
                 };
                 state.scroll_event_received = true;
+                // mirin: a continuous source's pixels are taken as they are.
+                let modifier = pixel_scroll_factor(state.axis_source);
                 let scroll_delta = state
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
-                let modifier = 3.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
                         scroll_delta.y += px(value as f32 * modifier * axis_modifier);
@@ -2050,6 +2051,25 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
             }
             _ => {}
         }
+    }
+}
+
+/// mirin: what a pixel scroll (`wl_pointer.axis`) is multiplied by. A finger's keeps
+/// GPUI's 3, the speed a touchpad has here. A continuous source's value is the distance
+/// itself (a compositor scrolling for an agent or a test, button scrolling): 45 px asked
+/// for is 45 px moved.
+fn pixel_scroll_factor(source: AxisSource) -> f32 {
+    if source == AxisSource::Continuous { 1.0 } else { 3.0 }
+}
+
+#[cfg(test)]
+mod mirin_scroll_tests {
+    use super::*;
+
+    #[test]
+    fn a_continuous_scroll_moves_as_far_as_it_says() {
+        assert_eq!(pixel_scroll_factor(AxisSource::Continuous), 1.0);
+        assert_eq!(pixel_scroll_factor(AxisSource::Finger), 3.0);
     }
 }
 
