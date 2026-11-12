@@ -52,8 +52,11 @@ path = "src/lib.rs"
 [dependencies.accesskit]
 version = "0.25.2"
 
+# mirin: the fork of the AT-SPI layer, also when this crate is built alone
+# (`MIRIN.md`).
 [dependencies.accesskit_atspi_common]
 version = "0.21.1"
+path = "../accesskit_atspi_common"
 
 [dependencies.async-channel]
 version = "2.1.1"

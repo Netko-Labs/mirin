@@ -15,7 +15,11 @@
  * `access` is the accessibility tree after the frame (`access:` in the trace:
  * the nodes built and handed to the adapter, and the time on the window's
  * thread), and `cpu` the host's CPU (all threads, so the adapter's too) per
- * update over the scenario.
+ * update over the scenario; `adapter cpu` is the part of it on AccessKit's
+ * thread (named `accesskit` by mirin's fork of the adapter: 0 on a host from
+ * before), which takes the updates to the accessibility bus, and the
+ * `adapter` line what that thread took for the first tree and for the
+ * switch to the scroll view (every card's node made anew).
  * - select: click a card, which toggles its highlight (one node's style).
  * - type: keystrokes into a field above the grid (one text node).
  * - hover: move the pointer onto a card and off (`hoverBackgroundColor`, renderer-side only).
@@ -42,7 +46,7 @@
  * Runs in an off-screen compositor unless `--visible` (see `startHeadlessDisplay`).
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { render, spawnNativeHost, startHeadlessDisplay } from "../src/index.ts";
 import { Dashboard } from "./lib/dashboard.tsx";
 
@@ -214,14 +218,40 @@ const ticks = () => {
   const fields = readFileSync(`/proc/${hostPid}/stat`, "utf8").split(") ")[1]?.split(" ") ?? [];
   return Number(fields[11]) + Number(fields[12]);
 };
+// The same for the accessibility adapter's thread alone (named `accesskit`
+// by mirin's fork of the adapter; 0 for a host whose thread has no name).
+const adapterTicks = (): number => {
+  const tasks = `/proc/${hostPid}/task`;
+  let total = 0;
+  try {
+    for (const task of readdirSync(tasks)) {
+      try {
+        if (readFileSync(`${tasks}/${task}/comm`, "utf8").trim() !== "accesskit") continue;
+        const fields =
+          readFileSync(`${tasks}/${task}/stat`, "utf8").split(") ")[1]?.split(" ") ?? [];
+        total += Number(fields[11]) + Number(fields[12]);
+      } catch {
+        // The thread ended between the listing and the read.
+      }
+    }
+  } catch {
+    // The host is gone.
+  }
+  return total;
+};
 const cpu: Record<string, number> = {};
-/** Run a scenario and note the host CPU it took, in ms per update. */
+const adapterCpu: Record<string, number> = {};
+/** Run a scenario and note the host CPU it took, in ms per update (and the adapter's part). */
 async function scenario(name: string, updates: number, run: () => Promise<void>): Promise<void> {
   if (!runs(name)) return;
   const from = ticks();
+  const adapterFrom = adapterTicks();
   await run();
   cpu[name] = ((ticks() - from) * 10) / updates;
+  adapterCpu[name] = ((adapterTicks() - adapterFrom) * 10) / updates;
 }
+// What the adapter's thread took for the first tree (the start, 4 s).
+const adapterAtStart = adapterTicks() * 10;
 
 const select: Sample[] = [];
 const selects = option("selects", 20);
@@ -294,8 +324,18 @@ if (switches > 0) {
 }
 
 // The same grid in a scroll view: most rows are out of view.
+const adapterBeforeSwitch = adapterTicks();
+const switchedAt = Date.now();
 transport.simulate({ kind: "click", id: nodeId("layout") });
 await Bun.sleep(2500);
+const adapterAtSwitch = (adapterTicks() - adapterBeforeSwitch) * 10;
+// And on the window's thread: the tree, and AccessKit taking it there.
+const accessAtSwitch = accessAfter(switchedAt);
+const adapterTookAtSwitch = sum(
+  trace
+    .filter((line) => line.at >= switchedAt && line.message.startsWith("access:"))
+    .map((line) => Number(line.message.match(/the adapter took ([\d.]+)ms/)?.[1] ?? 0)),
+);
 const scroller = nodeId("scroller");
 const scroll: number[] = [];
 await scenario("scroll", scrollSteps * 2, async () => {
@@ -411,18 +451,31 @@ const summary = (samples: Sample[]) => ({
 const result = {
   host: binary,
   nodes: rows * cols * 6 + 8,
-  select: { ...summary(select), cpu: cpu.select ?? 0 },
-  type: { ...summary(typing), cpu: cpu.type ?? 0 },
-  hover: { ...summary(hover), cpu: cpu.hover ?? 0 },
-  grow: { ...summary(grow), cpu: cpu.grow ?? 0 },
+  select: { ...summary(select), cpu: cpu.select ?? 0, adapterCpu: adapterCpu.select ?? 0 },
+  type: { ...summary(typing), cpu: cpu.type ?? 0, adapterCpu: adapterCpu.type ?? 0 },
+  hover: { ...summary(hover), cpu: cpu.hover ?? 0, adapterCpu: adapterCpu.hover ?? 0 },
+  grow: { ...summary(grow), cpu: cpu.grow ?? 0, adapterCpu: adapterCpu.grow ?? 0 },
   scroll: {
     n: scroll.length,
     frame: median(scroll),
     frameP95: p95(scroll),
     cpu: cpu.scroll ?? 0,
+    adapterCpu: adapterCpu.scroll ?? 0,
   },
-  growScrolled: { ...summary(growScrolled), cpu: cpu["grow/sc"] ?? 0 },
-  selectScrolled: { ...summary(selectScrolled), cpu: cpu["select/sc"] ?? 0 },
+  growScrolled: {
+    ...summary(growScrolled),
+    cpu: cpu["grow/sc"] ?? 0,
+    adapterCpu: adapterCpu["grow/sc"] ?? 0,
+  },
+  selectScrolled: {
+    ...summary(selectScrolled),
+    cpu: cpu["select/sc"] ?? 0,
+    adapterCpu: adapterCpu["select/sc"] ?? 0,
+  },
+  adapterAtStartMs: adapterAtStart,
+  adapterAtSwitchMs: adapterAtSwitch,
+  accessAtSwitchMs: accessAtSwitch.ms,
+  adapterTookAtSwitchMs: adapterTookAtSwitch,
   idleCpuMsPer3s: idleCpuMs,
   idleFrames,
   rssMb: memory,
@@ -434,6 +487,7 @@ Object.assign(result, {
     frame: median(resize),
     frameP95: p95(resize),
     cpu: cpu.resize ?? 0,
+    adapterCpu: adapterCpu.resize ?? 0,
     access: median(resizeAccess),
     accessPublished: median(resizePublished),
     rssBeforeMb: rssBeforeResize,
@@ -444,6 +498,7 @@ Object.assign(result, {
     frame: median(hscroll),
     frameP95: p95(hscroll),
     cpu: cpu.hscroll ?? 0,
+    adapterCpu: adapterCpu.hscroll ?? 0,
   },
   rssAtEndMb: memoryAtEnd,
 });
@@ -452,7 +507,7 @@ if (args.includes("--json")) {
 } else {
   console.log(`host: ${binary}\nnodes: ~${result.nodes}`);
   console.log(
-    "scenario  n   driver  parse   apply   frame  frame95  total      KB  access     cpu  a11y built/published",
+    "scenario  n   driver  parse   apply   frame  frame95  total      KB  access     cpu  a11y built/published  adapter cpu",
   );
   const labels = {
     select: "select",
@@ -477,17 +532,19 @@ if (args.includes("--json")) {
         s.cpu,
       ]
         .map((v) => v.toFixed(1).padStart(7))
-        .join(" ")}  ${s.accessBuilt}/${s.accessPublished}`,
+        .join(
+          " ",
+        )}  ${`${s.accessBuilt}/${s.accessPublished}`.padEnd(15)}  ${s.adapterCpu.toFixed(1)}`,
     );
   }
   console.log(
-    `scroll   ${String(result.scroll.n).padStart(2)} frames of ${scrollSteps * 2} steps of ${step} px: frame ${result.scroll.frame.toFixed(1)} ms, p95 ${result.scroll.frameP95.toFixed(1)} ms, cpu ${result.scroll.cpu.toFixed(1)} ms`,
+    `scroll   ${String(result.scroll.n).padStart(2)} frames of ${scrollSteps * 2} steps of ${step} px: frame ${result.scroll.frame.toFixed(1)} ms, p95 ${result.scroll.frameP95.toFixed(1)} ms, cpu ${result.scroll.cpu.toFixed(1)} ms (adapter ${result.scroll.adapterCpu.toFixed(1)})`,
   );
   console.log(
     `idle: ${idleCpuMs.toFixed(0)} ms CPU / 3 s, ${idleFrames} frames; RSS ${memory.toFixed(0)} MB`,
   );
   console.log(
-    `resize   ${String(resize.length).padStart(2)} frames of ${resizes} widths ${resizeBy} px apart: frame ${median(resize).toFixed(1)} ms, p95 ${p95(resize).toFixed(1)} ms, cpu ${(cpu.resize ?? 0).toFixed(1)} ms; RSS at the end ${memoryAtEnd.toFixed(0)} MB`,
+    `resize   ${String(resize.length).padStart(2)} frames of ${resizes} widths ${resizeBy} px apart: frame ${median(resize).toFixed(1)} ms, p95 ${p95(resize).toFixed(1)} ms, cpu ${(cpu.resize ?? 0).toFixed(1)} ms (adapter ${(adapterCpu.resize ?? 0).toFixed(1)}); RSS at the end ${memoryAtEnd.toFixed(0)} MB`,
   );
   if (resize.length > 0) {
     console.log(
@@ -495,7 +552,10 @@ if (args.includes("--json")) {
     );
   }
   console.log(
-    `hscroll  ${String(hscroll.length).padStart(2)} frames of ${scrollSteps * 2} steps of ${step} px across: frame ${median(hscroll).toFixed(1)} ms, p95 ${p95(hscroll).toFixed(1)} ms, cpu ${(cpu.hscroll ?? 0).toFixed(1)} ms`,
+    `hscroll  ${String(hscroll.length).padStart(2)} frames of ${scrollSteps * 2} steps of ${step} px across: frame ${median(hscroll).toFixed(1)} ms, p95 ${p95(hscroll).toFixed(1)} ms, cpu ${(cpu.hscroll ?? 0).toFixed(1)} ms (adapter ${(adapterCpu.hscroll ?? 0).toFixed(1)})`,
+  );
+  console.log(
+    `adapter  ${adapterAtStart.toFixed(0)} ms CPU for the first tree, ${adapterAtSwitch.toFixed(0)} ms for the switch to the scroll view (on the window's thread: ${accessAtSwitch.ms.toFixed(1)} ms, AccessKit ${adapterTookAtSwitch.toFixed(1)} of it, ${accessAtSwitch.published} nodes handed over)`,
   );
 }
 process.exit(0);

@@ -67,7 +67,9 @@ pub(crate) fn get_or_init_messages() -> Sender<Message> {
             #[cfg(feature = "tokio")]
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
-            thread::spawn(|| {
+            // mirin: the thread is named, so a profile or `/proc/<pid>/task`
+            // tells its CPU from the program's.
+            let spawned = thread::Builder::new().name("accesskit".into()).spawn(|| {
                 let executor = Executor::new();
                 block_on(executor.run(async {
                     if let Ok(session_bus) = Builder::session() {
@@ -82,6 +84,8 @@ pub(crate) fn get_or_init_messages() -> Sender<Message> {
                     }
                 }))
             });
+            // As `thread::spawn`, which panics when no thread can be made.
+            spawned.expect("failed to spawn the accessibility thread");
 
             tx
         })
