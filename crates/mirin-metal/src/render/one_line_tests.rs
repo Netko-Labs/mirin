@@ -148,3 +148,29 @@ fn a_line_cut_twice_keeps_its_runs_whole(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+fn a_paragraph_sized_larger_takes_its_own_line_height(cx: &mut TestAppContext) {
+    // A heading in an editable field: its paragraph shaped at its size, each
+    // line at the height the style gives that size (`with_paragraph_sizes`).
+    let text = StyledText::new("Heading\nbody text").with_paragraph_sizes(vec![Some(px(32.0))]);
+    let layout = text.layout().clone();
+    let cx = cx.add_empty_window();
+    cx.draw(
+        point(px(0.0), px(0.0)),
+        size(
+            AvailableSpace::Definite(px(400.0)),
+            AvailableSpace::Definite(px(200.0)),
+        ),
+        move |_, _| div().w(px(400.0)).text_size(px(16.0)).child(text),
+    );
+    let (heading, body) = (
+        layout.line_height_for_index(0),
+        layout.line_height_for_index(9),
+    );
+    assert!(heading > body, "heading {heading:?}, body {body:?}");
+    assert_eq!(body, layout.line_height());
+    // The body starts under the heading's taller line.
+    let body_top = layout.position_for_index(8).map(|at| at.y);
+    assert_eq!(body_top, Some(layout.bounds().top() + heading));
+}

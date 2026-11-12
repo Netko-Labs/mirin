@@ -2162,6 +2162,68 @@ in the bounds tree (what a select or a keystroke still costs over the
 fork), and text boxes lay out a pixel taller than on the fork (upstream
 rounds a measured size up).
 
+On upstream GPUI after round 6's next-platform lane (`docs/metal/gpui-next.md`,
+"Round 6: the platform and text ports"): the session lock, Dashi's unified
+title bar, a layer surface's screen by name and its stretched axis, the
+file drag's icon and X11's least size are ported to `gpui_linux`, and
+per-paragraph text sizes, `fit_to`, ink-end alignment, glyph variants in
+scene traces, a list's content origin and glyphs placed from their line's
+position to `gpui`; mirin-metal calls the same API for each on both builds.
+The nested compositor showed the lock, the chrome and the layer surfaces as
+`host-r5` does; the drag and two screens were not exercised there.
+
+Round 6 on the upstream build (`docs/metal/gpui-next.md`, "Round 6: the
+retention gaps"): a copied drawing goes into the bounds tree as one
+(`insert_spanning`), element states live in their retained subtree, the
+frame keeps every content mask as given so a drawing the view's edge
+clipped moves (the mask map; upstream draws every border in strips under
+masks of their own, so every card at a view's edge was drawn again), and
+positions settle on the device grid at 1.25, 1.5 or 1.75. Also fixed: a
+moved copy dropped a layer that ended up empty and so misplaced the
+drawings inside it (what round 5's attempt to move clipped border strips
+hit). Stress bench, upstream host against host-r5 (two runs each, medians):
+select 2.4 / 2.6 ms, type 1.9 / 1.45, hover 2.35 / 2.25, grow 2.95 /
+4.45, scroll 2.9 / 2.95, scroll across 3.05 / 2.95 (host-next-r5: 3.65,
+3.5, 3.75, 4.25, 4.85, 4.65); at `MIRIN_METAL_SCALE=1.5` grow 3.2 and
+scroll 2.9 ms where round 5's code drew every moved row again (13.4,
+17.1). Open there: scrolling across at a fractional scale (12 ms at 1.5 before
+next-platform placed glyphs from their line's position; to be measured
+with both), a drawing with masks pushed inside moved at a
+fractional scale, a keystroke and a select in a scroll view (0.5–0.7 ms
+over host-r5), and resize.
+
+Round 6 on upstream (`docs/metal/gpui-next.md`, "Round 6: layout as the
+default build's, and resize"): the upstream build now lays out as this one
+does (text at its line height's fraction, edges rounded as taffy 0.9 rounds
+them, scroll offsets halves away from zero): `layout-check` against host-r5
+gives the same bounds for every node of `grid`, `scroll` and
+`scroll-fractional` at every step, and of `browser` but the card example
+(taffy 0.9 makes that card 22 px shorter than its content, which then
+overflows its bottom padding; 0.15 holds it). A resize there costs 4.4–4.6 ms
+a frame (CPU 7.5), was 10.8–10.9 (CPU 14–15): taffy 0.15 answers a row at
+another width from its cache, and rows that draw nothing of their size keep
+their drawings (`Retained::stretchable`). host-r5: 2.0–2.4 ms.
+
+Round 6's three upstream lanes together (`docs/metal/gpui-next.md`,
+"Round 6: the three lanes together"):
+
+- **How they combine.** Moves keep the device grid at 1.25, 1.5 and 1.75,
+  the slack for fractional layouts (now at every scale), and scroll
+  offsets snapped halves away from zero.
+- **Correctness.** Retained drawings are the same as drawing afresh, at 1
+  and at 1.5, for every layout-check app. Layouts match host-r5 but the
+  card taffy 0.9 makes too short.
+- **Speed at scale 1** (stress bench against host-r5, two runs each,
+  medians): select 2.2 / 2.5 ms, type 1.85 / 1.65, hover 2.2 / 2.25,
+  grow 1.8 / 3.8, scroll 3.0 / 2.75, scroll across 3.05 / 2.9, resize
+  1.8 / 2.25. Select in a scroll view is the one slower case: 3.4 /
+  2.55.
+- **Speed at 1.5.** Scrolling across is 3.0 ms (12.1 before glyphs were
+  placed from their line), grow 2.0 (host-r5: 6.5).
+
+Open there: select in a scroll view, and step 7's checks of Dashi's apps
+at other scale factors.
+
 The upstream build's footprint after round 5 (`docs/metal/gpui-next.md`,
 "Round 5: a small app's footprint"): the counter's host 68 MB RSS, 32 MB
 of GPU memory, 16 threads and 40 ms to its first content frame, where

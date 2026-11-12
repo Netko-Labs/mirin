@@ -28,7 +28,7 @@ use crate::{
     key_dispatch::DispatchNode,
     scene::PaintOperation,
     text_system::ParkedLayouts,
-    window::{AnyMouseListener, CursorStyleRequest},
+    window::{AnyMouseListener, CursorStyleRequest, MaskId, MaskNode},
 };
 
 use super::{
@@ -59,6 +59,11 @@ pub(crate) struct Parked {
     /// (in the order of the state's `nested`).
     nested: Vec<Option<Ranges>>,
     hitboxes: Vec<Hitbox>,
+    /// The masks pushed inside it per phase (prepaint, paint) and the ones
+    /// its hitboxes are under, numbered within their phase's from 1 (0: the
+    /// mask around it).
+    masks: [Vec<MaskNode>; 2],
+    hitbox_masks: Vec<MaskId>,
     dispatch: Vec<DispatchNode>,
     operations: Vec<PaintOperation>,
     mouse_listeners: Vec<Option<AnyMouseListener>>,
@@ -168,6 +173,24 @@ impl Window {
             .collect();
         let layouts = layouts.map(|range| self.text_system().park_layouts(range));
         let frame = &mut self.rendered_frame;
+        // Its masks, numbered within its own (`relative`).
+        let segments = [
+            prepaint.start.content_masks_index..prepaint.end.content_masks_index,
+            paint.start.content_masks_index..paint.end.content_masks_index,
+        ];
+        let masks = segments.clone().map(|segment| {
+            frame.content_masks[segment.clone()]
+                .iter()
+                .map(|node| MaskNode {
+                    given: node.given,
+                    parent: relative(node.parent, &segment),
+                })
+                .collect()
+        });
+        let hitbox_masks = frame.hitbox_masks[hitboxes.clone()]
+            .iter()
+            .map(|id| relative(*id, &segments[0]))
+            .collect();
         let states = states.map(|range| frame.accessed_element_states[range].to_vec());
         let parking = &mut self.retained_parking;
         parking.next += 1;
@@ -184,12 +207,20 @@ impl Window {
             pointer: drawn.pointer,
             nested,
             hitboxes: frame.hitboxes[hitboxes].to_vec(),
+            masks,
+            hitbox_masks,
             dispatch: frame
                 .dispatch_tree
                 .park_nodes(prepaint.start.dispatch_tree_index..prepaint.end.dispatch_tree_index),
             operations: frame.scene.paint_operations[operations]
                 .iter()
-                .map(PaintOperation::clone)
+                .map(|operation| {
+                    let mut operation = operation.clone();
+                    if let Some(id) = operation.mask_id_mut() {
+                        *id = relative(*id, &segments[1]);
+                    }
+                    operation
+                })
                 .collect(),
             mouse_listeners: frame.mouse_listeners[listeners]
                 .iter_mut()
@@ -226,9 +257,12 @@ impl Window {
         let paint_lines = self.text_system().unpark_layouts(paint_layouts);
         let frame = &mut self.rendered_frame;
 
+        let [prepaint_masks, paint_masks] = std::mem::take(&mut parked.masks);
+
         // What prepaint made.
         let prepaint = PrepaintStateIndex {
             hitboxes_index: frame.hitboxes.len(),
+            content_masks_index: frame.content_masks.len(),
             tooltips_index: frame.tooltip_requests.len(),
             deferred_draws_index: frame.deferred_draws.len(),
             dispatch_tree_index: frame.dispatch_tree.len(),
@@ -236,6 +270,16 @@ impl Window {
             line_layout_index: prepaint_lines.start,
         };
         frame.hitboxes.append(&mut parked.hitboxes);
+        let start = prepaint.content_masks_index;
+        frame
+            .hitbox_masks
+            .extend(parked.hitbox_masks.iter().map(|id| absolute(*id, start)));
+        frame
+            .content_masks
+            .extend(prepaint_masks.into_iter().map(|node| MaskNode {
+                given: node.given,
+                parent: absolute(node.parent, start),
+            }));
         frame.dispatch_tree.unpark_nodes(
             std::mem::take(&mut parked.dispatch),
             was_prepaint.start.dispatch_tree_index,
@@ -243,6 +287,7 @@ impl Window {
         frame.accessed_element_states.extend(prepaint_states);
         let prepaint_end = PrepaintStateIndex {
             hitboxes_index: frame.hitboxes.len(),
+            content_masks_index: frame.content_masks.len(),
             dispatch_tree_index: frame.dispatch_tree.len(),
             accessed_element_states_index: frame.accessed_element_states.len(),
             line_layout_index: prepaint_lines.end,
@@ -252,6 +297,7 @@ impl Window {
         // What paint made.
         let paint = PaintIndex {
             scene_index: frame.scene.len(),
+            content_masks_index: frame.content_masks.len(),
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: frame.debug_bounds_records.len(),
             mouse_listeners_index: frame.mouse_listeners.len(),
@@ -261,6 +307,18 @@ impl Window {
             tab_handle_index: frame.tab_stops.paint_index(),
             line_layout_index: paint_lines.start,
         };
+        let start = paint.content_masks_index;
+        frame
+            .content_masks
+            .extend(paint_masks.into_iter().map(|node| MaskNode {
+                given: node.given,
+                parent: absolute(node.parent, start),
+            }));
+        for operation in &mut parked.operations {
+            if let Some(id) = operation.mask_id_mut() {
+                *id = absolute(*id, start);
+            }
+        }
         frame.scene.paint_operations.append(&mut parked.operations);
         #[cfg(any(test, feature = "test-support"))]
         frame.debug_bounds_records.append(&mut parked.debug_bounds);
@@ -269,6 +327,7 @@ impl Window {
         frame.accessed_element_states.extend(paint_states);
         let paint_end = PaintIndex {
             scene_index: frame.scene.len(),
+            content_masks_index: frame.content_masks.len(),
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: frame.debug_bounds_records.len(),
             mouse_listeners_index: frame.mouse_listeners.len(),
@@ -300,5 +359,23 @@ impl Window {
             })
             .collect();
         ((prepaint..prepaint_end, paint..paint_end), nested)
+    }
+}
+
+/// A mask's place in a frame's list (`id`), within `segment` of it: from 1,
+/// or 0 for one outside it (the mask around a parked drawing).
+fn relative(id: MaskId, segment: &Range<usize>) -> MaskId {
+    match (id as usize).checked_sub(1) {
+        Some(index) if segment.contains(&index) => (index - segment.start + 1) as MaskId,
+        _ => 0,
+    }
+}
+
+/// A mask numbered by `relative`, in a frame's list where its segment
+/// starts at `start`.
+fn absolute(id: MaskId, start: usize) -> MaskId {
+    match id {
+        0 => 0,
+        id => (start + id as usize) as MaskId,
     }
 }

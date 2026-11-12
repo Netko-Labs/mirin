@@ -27,6 +27,9 @@ wayland = [
     "wayland-protocols",
     "wayland-protocols-plasma",
     "wayland-protocols-wlr",
+    "wayland-scanner",
+    "dep:image",
+    "dep:resvg",
     "filedescriptor",
     "xkbcommon/wayland",
     "open",
@@ -110,6 +113,13 @@ wayland-protocols-plasma = { version = "0.3.9", features = [
 wayland-protocols-wlr = { version = "0.3.9", features = [
     "client",
 ], optional = true }
+# mirin: generates the client side of Dashi's private dashi-chrome-v1 protocol
+# (protocols/dashi-chrome-v1.xml). Already in the tree through wayland-protocols.
+wayland-scanner = { version = "0.31", optional = true }
+# mirin: a file drag's icon (`start_file_drag`), drawn from a PNG, JPEG or SVG
+# file as gpui draws images and icons.
+image = { workspace = true, optional = true }
+resvg = { workspace = true, optional = true }
 
 # X11
 as-raw-xcb-connection = { version = "1", optional = true }

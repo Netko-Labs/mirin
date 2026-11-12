@@ -1,9 +1,10 @@
+use crate::Font; // mirin: a truncated line is cut where it is drawn
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
     TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+    WrappedLineLayout, px, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -273,10 +274,10 @@ impl Element for &'static str {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
-        text_layout.prepaint(bounds, self)
+        text_layout.prepaint(bounds, self, window, cx)
     }
 
     fn paint(
@@ -339,10 +340,10 @@ impl Element for SharedString {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
-        text_layout.prepaint(bounds, self.as_ref())
+        text_layout.prepaint(bounds, self.as_ref(), window, cx)
     }
 
     fn paint(
@@ -369,6 +370,8 @@ pub struct StyledText {
     runs: Option<Vec<TextRun>>,
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
     delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
+    // mirin: per-paragraph font sizes.
+    paragraph_sizes: Option<Vec<Option<Pixels>>>,
     layout: TextLayout,
 }
 
@@ -380,8 +383,20 @@ impl StyledText {
             runs: None,
             delayed_highlights: None,
             delayed_font_family_overrides: None,
+            paragraph_sizes: None,
             layout: TextLayout::default(),
         }
+    }
+
+    // mirin: per-paragraph font sizes.
+    /// Lay out paragraph `i` (the text between its `i`th and `i + 1`th
+    /// newline) at `sizes[i]` instead of the text style's size, each line at
+    /// the line height the style gives that size; `None`, or a paragraph past
+    /// the list, keeps the style's. A heading in an editable field is one
+    /// paragraph drawn larger. Truncated text ignores it. Port of `../gpui`'s.
+    pub fn with_paragraph_sizes(mut self, sizes: Vec<Option<Pixels>>) -> Self {
+        self.paragraph_sizes = sizes.iter().any(Option::is_some).then_some(sizes);
+        self
     }
 
     /// Get the layout for this element. This can be used to map indices to pixels and vice versa.
@@ -547,7 +562,13 @@ impl Element for StyledText {
             Self::apply_font_family_overrides(runs, overrides);
         }
 
-        let layout_id = self.layout.layout(self.text.clone(), runs, window, cx);
+        let layout_id = self.layout.layout_sized(
+            self.text.clone(),
+            runs,
+            self.paragraph_sizes.take(),
+            window,
+            cx,
+        );
         (layout_id, ())
     }
 
@@ -557,10 +578,10 @@ impl Element for StyledText {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
-        self.layout.prepaint(bounds, &self.text)
+        self.layout.prepaint(bounds, &self.text, window, cx)
     }
 
     fn paint(
@@ -592,10 +613,111 @@ struct TextLayoutInner {
     len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
+    // mirin: per-paragraph font sizes. Each line's own line height, beside
+    // `lines`; all `line_height` unless paragraphs were sized.
+    line_heights: SmallVec<[Pixels; 1]>,
     wrap_width: Option<Pixels>,
     truncate_width: Option<Pixels>,
+    // mirin: what cutting a truncated line again takes (`fit_to`); set only
+    // for truncated text.
+    fit: Option<Rc<Fit>>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
+}
+
+// mirin: a truncated line is cut where it is drawn.
+/// What a text with `text-overflow` needs to be cut again at another width:
+/// its whole text and runs, as they were before any cut.
+struct Fit {
+    text: SharedString,
+    runs: Vec<TextRun>,
+    font: Font,
+    font_size: Pixels,
+    line_height: Pixels,
+    affix: SharedString,
+    from: TruncateFrom,
+    line_clamp: Option<usize>,
+}
+
+// mirin: a truncated line is cut where it is drawn.
+/// Whether a truncatable text measured `measured` wide (cut at `cut_at`, or
+/// not at all) must be cut again for `drawn`: taffy may measure a leaf last
+/// at another width than the one it places it at.
+fn needs_refit(cut_at: Option<Pixels>, measured: Pixels, drawn: Pixels) -> bool {
+    const SLACK: f32 = 0.5;
+    match cut_at {
+        Some(at) => (at - drawn).abs() > px(SLACK),
+        None => measured > drawn + px(SLACK),
+    }
+}
+
+// mirin: the text a truncated text shows at `truncate_width` (and wrapped at
+// `wrap_width`), and its runs: what the measure does, shared with `fit_to`.
+fn cut_text<'a>(
+    fit: &Fit,
+    runs: &'a [TextRun],
+    wrap_width: Option<Pixels>,
+    truncate_width: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) -> (SharedString, Cow<'a, [TextRun]>) {
+    let text = &fit.text;
+    // Taking a wrapper from the pool locks it twice and moves its
+    // character width cache around, so only do it when truncating.
+    let mut line_wrapper = cx
+        .text_system()
+        .line_wrapper(fit.font.clone(), fit.font_size);
+    if let Some(max_lines) = fit.line_clamp
+        && let Some(wrap_width) = wrap_width
+    {
+        line_wrapper.truncate_wrapped_line(
+            text.clone(),
+            wrap_width,
+            max_lines,
+            &fit.affix,
+            runs,
+            fit.from,
+        )
+    } else if let Some(unclipped) = window
+        .text_system()
+        .shape_text(text.clone(), fit.font_size, runs, None, None)
+        .log_err()
+        && unclipped
+            .iter()
+            .all(|line| line.size(fit.line_height).width <= truncate_width)
+    {
+        // The truncation decision below sums per-character advances,
+        // which overestimates the shaped width (no kerning), truncating
+        // text that fits exactly in its measured width. Skip truncation
+        // whenever the honestly-shaped text fits; the shaping result
+        // comes from the line layout cache when the same text was
+        // already measured untruncated this frame.
+        (text.clone(), Cow::Borrowed(runs))
+    } else {
+        line_wrapper.truncate_line(text.clone(), truncate_width, &fit.affix, runs, fit.from)
+    }
+}
+
+// mirin: per-paragraph font sizes.
+/// The runs that cover bytes `range` of a text the whole of `runs` covers.
+fn runs_within(runs: &[TextRun], range: Range<usize>) -> Vec<TextRun> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for run in runs {
+        let end = start + run.len;
+        let (from, to) = (start.max(range.start), end.min(range.end));
+        if from < to {
+            out.push(TextRun {
+                len: to - from,
+                ..run.clone()
+            });
+        }
+        start = end;
+        if start >= range.end {
+            break;
+        }
+    }
+    out
 }
 
 // mirin: min-content width of text.
@@ -635,21 +757,53 @@ impl TextLayout {
         text: SharedString,
         runs: Option<Vec<TextRun>>,
         window: &mut Window,
+        cx: &mut App,
+    ) -> LayoutId {
+        self.layout_sized(text, runs, None, window, cx)
+    }
+
+    fn layout_sized(
+        &self,
+        text: SharedString,
+        runs: Option<Vec<TextRun>>,
+        paragraph_sizes: Option<Vec<Option<Pixels>>>,
+        window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let line_height = window.pixel_snap(
-            text_style
-                .line_height
-                .to_pixels(font_size.into(), window.rem_size()),
-        );
+        // mirin: the line height as styled, not snapped to the device pixel:
+        // mirin's default build lays text out at its fraction (11 px text is
+        // 17.8 px a line, 9 px 14.56) and rounds edges only, so a text box
+        // is 14 or 15 px tall by where it sits, and Dashi's layouts are made
+        // against that. Lines are painted from it as they are there.
+        let line_height = text_style
+            .line_height
+            .to_pixels(font_size.into(), window.rem_size());
 
         let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
         };
+        // mirin: what cutting the text again at its drawn width takes.
+        let fit = text_style.text_overflow.clone().map(|overflow| {
+            let (affix, from) = match overflow {
+                TextOverflow::Truncate(s) => (s, TruncateFrom::End),
+                TextOverflow::TruncateStart(s) => (s, TruncateFrom::Start),
+                TextOverflow::TruncateMiddle(s) => (s, TruncateFrom::Middle),
+            };
+            Rc::new(Fit {
+                text: text.clone(),
+                runs: runs.clone(),
+                font: text_style.font(),
+                font_size,
+                line_height,
+                affix,
+                from,
+                line_clamp: text_style.line_clamp,
+            })
+        });
         window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
@@ -669,24 +823,17 @@ impl TextLayout {
                     None
                 };
 
-                let (truncate_width, truncation_affix, truncate_from) =
-                    if let Some(text_overflow) = text_style.text_overflow.clone() {
-                        let width = known_dimensions.width.or(match available_space.width {
-                            crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
-                                Some(max_lines) => Some(x * max_lines),
-                                None => Some(x),
-                            },
-                            _ => None,
-                        });
-
-                        match text_overflow {
-                            TextOverflow::Truncate(s) => (width, s, TruncateFrom::End),
-                            TextOverflow::TruncateStart(s) => (width, s, TruncateFrom::Start),
-                            TextOverflow::TruncateMiddle(s) => (width, s, TruncateFrom::Middle),
-                        }
-                    } else {
-                        (None, "".into(), TruncateFrom::End)
-                    };
+                let truncate_width = if text_style.text_overflow.is_some() {
+                    known_dimensions.width.or(match available_space.width {
+                        crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
+                            Some(max_lines) => Some(x * max_lines),
+                            None => Some(x),
+                        },
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
 
                 // Only use cached layout if:
                 // 1. We have a cached size
@@ -708,50 +855,68 @@ impl TextLayout {
                     return size;
                 }
 
-                let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    // Taking a wrapper from the pool locks it twice and moves its
-                    // character width cache around, so only do it when truncating.
-                    let mut line_wrapper =
-                        cx.text_system().line_wrapper(text_style.font(), font_size);
-                    if let Some(max_lines) = text_style.line_clamp
-                        && let Some(wrap_width) = wrap_width
-                    {
-                        line_wrapper.truncate_wrapped_line(
-                            text.clone(),
-                            wrap_width,
-                            max_lines,
-                            &truncation_affix,
-                            &runs,
-                            truncate_from,
-                        )
-                    } else if let Some(unclipped) = window
-                        .text_system()
-                        .shape_text(text.clone(), font_size, &runs, None, None)
-                        .log_err()
-                        && unclipped
-                            .iter()
-                            .all(|line| line.size(line_height).width <= truncate_width)
-                    {
-                        // The truncation decision below sums per-character advances,
-                        // which overestimates the shaped width (no kerning), truncating
-                        // text that fits exactly in its measured width. Skip truncation
-                        // whenever the honestly-shaped text fits; the shaping result
-                        // comes from the line layout cache when the same text was
-                        // already measured untruncated this frame.
-                        (text.clone(), Cow::Borrowed(&*runs))
-                    } else {
-                        line_wrapper.truncate_line(
-                            text.clone(),
-                            truncate_width,
-                            &truncation_affix,
-                            &runs,
-                            truncate_from,
-                        )
+                // mirin: the cut is `cut_text`, which `fit_to` shares.
+                let (text, runs) = match (truncate_width, fit.as_deref()) {
+                    (Some(truncate_width), Some(fit)) => {
+                        cut_text(fit, &runs, wrap_width, truncate_width, window, cx)
                     }
-                } else {
-                    (text.clone(), Cow::Borrowed(&*runs))
+                    _ => (text.clone(), Cow::Borrowed(&*runs)),
                 };
                 let len = text.len();
+
+                // mirin: per-paragraph font sizes. Each paragraph is shaped
+                // on its own at its size, one wrapped line each, as
+                // `shape_text` would have split them.
+                if let Some(sizes) = paragraph_sizes
+                    .as_ref()
+                    .filter(|_| truncate_width.is_none())
+                {
+                    let mut lines = SmallVec::<[WrappedLine; 1]>::new();
+                    let mut line_heights = SmallVec::<[Pixels; 1]>::new();
+                    let mut start = 0;
+                    for (index, paragraph) in text.split('\n').enumerate() {
+                        let range = start..start + paragraph.len();
+                        start = range.end + 1;
+                        let size = sizes.get(index).copied().flatten().unwrap_or(font_size);
+                        // As styled, unsnapped, as the line height above.
+                        let height = text_style
+                            .line_height
+                            .to_pixels(size.into(), window.rem_size());
+                        let shaped = window
+                            .text_system()
+                            .shape_text(
+                                SharedString::from(paragraph.to_string()),
+                                size,
+                                &runs_within(&runs, range),
+                                wrap_width,
+                                None,
+                            )
+                            .log_err()
+                            .unwrap_or_default();
+                        for line in shaped {
+                            lines.push(line);
+                            line_heights.push(height);
+                        }
+                    }
+                    let mut size: Size<Pixels> = Size::default();
+                    for (line, height) in lines.iter().zip(&line_heights) {
+                        let line_size = line.size(*height);
+                        size.height += line_size.height;
+                        size.width = size.width.max(line_size.width).ceil();
+                    }
+                    element_state.0.borrow_mut().replace(TextLayoutInner {
+                        lines,
+                        len,
+                        line_height,
+                        line_heights,
+                        wrap_width,
+                        truncate_width,
+                        fit: fit.clone(),
+                        size: Some(size),
+                        bounds: None,
+                    });
+                    return size;
+                }
 
                 let Some(lines) = window
                     .text_system()
@@ -768,8 +933,10 @@ impl TextLayout {
                         lines: Default::default(),
                         len: 0,
                         line_height,
+                        line_heights: Default::default(),
                         wrap_width,
                         truncate_width,
+                        fit: fit.clone(),
                         size: Some(Size::default()),
                         bounds: None,
                     });
@@ -783,12 +950,15 @@ impl TextLayout {
                     size.width = size.width.max(line_size.width).ceil();
                 }
 
+                let line_heights = lines.iter().map(|_| line_height).collect();
                 element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
                     len,
                     line_height,
+                    line_heights,
                     wrap_width,
                     truncate_width,
+                    fit: fit.clone(),
                     size: Some(size),
                     bounds: None,
                 });
@@ -798,13 +968,48 @@ impl TextLayout {
         })
     }
 
-    fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
+    fn prepaint(&self, bounds: Bounds<Pixels>, text: &str, window: &mut Window, cx: &mut App) {
+        // mirin: a truncated line is cut where it is drawn.
+        self.fit_to(bounds, window, cx);
         let mut element_state = self.0.borrow_mut();
         let element_state = element_state
             .as_mut()
             .with_context(|| format!("measurement has not been performed on {text}"))
             .unwrap();
         element_state.bounds = Some(bounds);
+    }
+
+    // mirin: a truncated line is cut where it is drawn.
+    /// Cuts a truncated text again when it is placed at another width than
+    /// the one it was last measured at.
+    fn fit_to(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+        let mut state = self.0.borrow_mut();
+        let Some(inner) = state.as_mut() else { return };
+        let Some(fit) = inner.fit.clone() else { return };
+        let lines = fit.line_clamp.unwrap_or(1).max(1) as f32;
+        let drawn = bounds.size.width * lines;
+        let measured = inner.size.map_or(px(0.), |size| size.width);
+        if !needs_refit(inner.truncate_width, measured, drawn) {
+            return;
+        }
+        let (text, runs) = cut_text(&fit, &fit.runs, inner.wrap_width, drawn, window, cx);
+        let Some(shaped) = window
+            .text_system()
+            .shape_text(
+                text.clone(),
+                fit.font_size,
+                &runs,
+                inner.wrap_width,
+                fit.line_clamp,
+            )
+            .log_err()
+        else {
+            return;
+        };
+        inner.len = text.len();
+        inner.line_heights = shaped.iter().map(|_| inner.line_height).collect();
+        inner.lines = shaped;
+        inner.truncate_width = Some(drawn);
     }
 
     fn paint(&self, text: &str, window: &mut Window, cx: &mut App) {
@@ -839,10 +1044,10 @@ impl TextLayout {
             .bounds
             .context("prepaint has not been performed")?;
 
-        let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         let text_style = window.text_style();
-        for line in &element_state.lines {
+        // mirin: per-paragraph font sizes: each line at its own height.
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
             if matches!(pass, TextPaintPass::All | TextPaintPass::Background) {
                 line.paint_background(
                     line_origin,
@@ -884,10 +1089,10 @@ impl TextLayout {
             return Err(0);
         }
 
-        let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
-        for line in &element_state.lines {
+        // mirin: per-paragraph font sizes.
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
             let line_bottom = line_origin.y + line.size(line_height).height;
             if position.y > line_bottom {
                 line_origin.y = line_bottom;
@@ -913,12 +1118,11 @@ impl TextLayout {
         let bounds = element_state
             .bounds
             .expect("prepaint has not been performed");
-        let line_height = element_state.line_height;
-
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
 
-        for line in &element_state.lines {
+        // mirin: per-paragraph font sizes.
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
             let line_end_ix = line_start_ix + line.len();
             if index < line_start_ix {
                 break;
@@ -978,6 +1182,29 @@ impl TextLayout {
     /// The line height for this layout.
     pub fn line_height(&self) -> Pixels {
         self.0.borrow().as_ref().unwrap().line_height
+    }
+
+    // mirin: per-paragraph font sizes.
+    /// The line height of the paragraph that holds byte `index` (past the
+    /// end: the last one's); `line_height` when paragraphs aren't sized.
+    pub fn line_height_for_index(&self, index: usize) -> Pixels {
+        let element_state = self.0.borrow();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+        let mut line_start_ix = 0;
+        for (line, &line_height) in element_state.lines.iter().zip(&element_state.line_heights) {
+            let line_end_ix = line_start_ix + line.len();
+            if index <= line_end_ix {
+                return line_height;
+            }
+            line_start_ix = line_end_ix + 1;
+        }
+        element_state
+            .line_heights
+            .last()
+            .copied()
+            .unwrap_or(element_state.line_height)
     }
 
     /// The UTF-8 length of the underlying text.
@@ -1348,5 +1575,24 @@ mod tests {
             make_text_unstable_id(false).id,
             make_text_unstable_id(true).id
         );
+    }
+}
+
+// mirin: a truncated line is cut where it is drawn.
+#[cfg(test)]
+mod mirin_truncate_tests {
+    use super::needs_refit;
+    use crate::px;
+
+    #[test]
+    fn a_line_is_cut_again_only_when_it_is_drawn_at_another_width() {
+        // Measured whole at 180, drawn in 120: cut it.
+        assert!(needs_refit(None, px(180.), px(120.)));
+        // Measured whole and it fits: nothing to do.
+        assert!(!needs_refit(None, px(100.), px(120.)));
+        // Cut at 120, drawn at 120 (within half a pixel): keep it.
+        assert!(!needs_refit(Some(px(120.)), px(118.), px(120.3)));
+        // Cut at 90, drawn at 120: more of it shows.
+        assert!(needs_refit(Some(px(90.)), px(88.), px(120.)));
     }
 }

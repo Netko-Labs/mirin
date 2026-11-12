@@ -253,12 +253,11 @@ pub(crate) fn render_list(
     let events = view.events.clone();
     // The rows are a group of the layout map, as a scroll view's content
     // is (`layout/scroll.rs`): its top left is where the list's content is
-    // painted, so a scroll moves the group and no row. Without the hook
-    // that says where that is (`gpui_api::LIST_CONTENT_ORIGIN`), the rows
-    // stay in the group around the list and each moves on its own.
-    let group = crate::gpui_api::LIST_CONTENT_ORIGIN.then(|| crate::layout::scroll_group(id));
+    // painted (`List::on_content_origin`), so a scroll moves the group and
+    // no row.
+    let group = crate::layout::scroll_group(id);
     let around = view.group;
-    let rows_group = group.or(around);
+    let rows_group = Some(group);
     let render_row = cx.processor(move |view: &mut RootView, index: usize, window, cx| {
         let Some(node) = rows.get(index) else {
             return div().into_any_element();
@@ -292,14 +291,10 @@ pub(crate) fn render_list(
     container.style().padding = Default::default();
     let state = entry.state.clone();
     let layout = view.layout.clone();
-    let mut rows_element = list(state.clone(), render_row);
-    if let Some(group) = group {
-        rows_element =
-            crate::gpui_api::on_list_content_origin(rows_element, move |origin, _window, _cx| {
-                layout.touch_group(group, around, origin, true);
-            });
-    }
-    let rows_element = rows_element
+    let rows_element = list(state.clone(), render_row)
+        .on_content_origin(move |origin, _window, _cx| {
+            layout.touch_group(group, around, origin, true);
+        })
         .size_full()
         .pt(px(spacing.top))
         .pb(px(spacing.bottom));

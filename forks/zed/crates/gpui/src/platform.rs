@@ -673,6 +673,13 @@ pub trait PlatformDisplay: Debug {
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<Pixels>;
 
+    // mirin: a layer surface on a screen by its name.
+    /// The display's name where the platform gives one (Wayland: the
+    /// output's, such as "eDP-1" or "DP-2"); `None` elsewhere.
+    fn name(&self) -> Option<SharedString> {
+        None
+    }
+
     /// The time between the display's refreshes. Variable refresh rate
     /// displays report their maximum rate. `None` when the platform doesn't
     /// report it.
@@ -1354,6 +1361,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
+    // mirin: Dashi's unified title bar.
+    /// The area a compositor-drawn set of window controls covers over a
+    /// window that asked for a transparent title bar (Dashi's unified
+    /// chrome), in window coordinates. `None` when there is no such area.
+    fn chrome_controls(&self) -> Option<Bounds<Pixels>> {
+        None
+    }
+    // mirin: Dashi's unified title bar.
+    /// Called when `chrome_controls` changes.
+    fn on_chrome_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
@@ -1410,6 +1427,17 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn start_external_drag(&self, _payload: &ExternalDragPayload) -> bool {
         false
     }
+    // mirin: a file drag the app starts, with an icon.
+    /// Start dragging files out of the window (Wayland only): see
+    /// [`crate::Window::start_file_drag`]. False where it can't.
+    fn start_file_drag(
+        &self,
+        _paths: &[std::path::PathBuf],
+        _icon: Option<&std::path::Path>,
+        _icon_size: u32,
+    ) -> bool {
+        false
+    }
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn set_exclusive_zone(&self, _zone: Pixels) {}
     #[cfg(all(target_os = "linux", feature = "wayland"))]
@@ -1422,6 +1450,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     // mirin: the least size can change after the window opened.
     /// Change the window's least size; platforms that can't keep the first.
     fn set_min_size(&mut self, _size: Size<Pixels>) {}
+    // mirin: session-lock surfaces for a lock screen.
+    /// Unlock the session this window locked ([`WindowKind::SessionLock`]).
+    fn unlock_session(&self) {}
     fn map_window(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
@@ -2890,6 +2921,16 @@ pub enum WindowKind {
     /// docks, notifications or wallpapers.
     #[cfg(all(target_os = "linux", feature = "wayland"))]
     LayerShell(layer_shell::LayerShellOptions),
+
+    // mirin: session-lock surfaces for a lock screen.
+    /// A Wayland lock screen (ext-session-lock-v1): opening it locks the
+    /// session and shows the window as the lock surface of the display
+    /// [`WindowOptions::display_id`] names (the first one when none), at the
+    /// size the compositor gives. It unlocks only through
+    /// [`Window::unlock_session`]; closing the window or exiting leaves the
+    /// session locked. Opening fails without the protocol.
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    SessionLock,
 
     /// A window that appears on top of its parent window and blocks interaction with it
     /// until the modal window is closed

@@ -18,11 +18,12 @@
 //!   ([`Retained::movable`]): the same are copied, moved, where its last
 //!   drawing (`recording`) shows that is what drawing it there gives
 //!   (`plan`): what the mask around it hid and the drawing left out stays
-//!   hidden (what it hides within 256 px is kept unshown), the masks pushed
-//!   inside it were not clipped by that mask, what it rounds rounds the same
-//!   there (`steady`), nothing in it knows where it is, and the pointer was
-//!   over it neither when it was drawn nor is now; each primitive and hitbox
-//!   takes the mask around it there, or its own moved and clipped by it;
+//!   hidden (what it hides within 256 px is kept unshown), what it rounds
+//!   rounds the same there (`steady`, on the device grid: `grid`), nothing
+//!   in it knows where it is, and the pointer was over it neither when it
+//!   was drawn nor is now; each primitive, border strip and hitbox is
+//!   clipped by its mask (copied, moved, under the one around it there) as
+//!   that clips there (`masks`);
 //! - where nothing of it shows, when the caller says it may be
 //!   ([`Retained::skippable`]) and nothing in it takes keys or focus: not at
 //!   all; its drawing is put aside (`parked`, within a budget) and copied
@@ -49,13 +50,21 @@
 //! styles do through `window.current_view()`): a refresh of the whole window
 //! (`window.refresh()`) does not rebuild it.
 //!
-//! Not yet (the fork's `../gpui` has them): moving a drawing a mask pushed
-//! inside of which the mask around it clipped (the fork's mask map), or at a
-//! scale factor that is not a power of two (its device grid); glyphs placed
-//! from their line's grid point, so a glyph near where its subpixel variant
-//! turns does not keep its subtree from moving across; element states
-//! carried as one entry; replayed primitives placed in the bounds tree as
-//! one (`insert_spanning`).
+//! Its elements' states live in its own state (`ElementStateScope`), not
+//! the frame's, so a copied or left-out subtree carries them as one; a
+//! copied drawing goes into the bounds tree as one
+//! (`Scene::replay_as_one`).
+//!
+//! A copied drawing's masks are copied with it, moved, under the mask
+//! around it where it lands (`masks`, the fork's mask map), so a drawing
+//! the view's edge clipped moves; at a scale factor that is not a power of
+//! two, positions settle on the device grid (`grid`).
+//!
+//! Glyphs are placed from their line's grid point (`Window::paint_line_glyph`),
+//! so a whole-pixel move keeps every glyph's subpixel variant.
+//!
+//! Not yet (the fork's `../gpui` has it): where scaling is not exact,
+//! moving a drawing with masks pushed inside.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -64,13 +73,18 @@ use collections::FxHashSet;
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, EntityId,
     GlobalElementId, InspectorElementId, LayoutId, Pixels, Point, TextStyle, Window,
+    window::{ElementStateScope, ElementStates},
 };
 
+mod grid;
+mod masks;
 mod parked;
 mod plan;
 mod recording;
 mod steady;
 
+pub(crate) use grid::Grid;
+pub(crate) use masks::MaskMap;
 pub(crate) use parked::Parking;
 pub(crate) use plan::Drawn;
 use plan::{Allowed, Place, Plan, plan};
@@ -100,6 +114,7 @@ pub struct Retained {
     on_prepaint: Option<OnPrepaint>,
     movable: bool,
     skippable: bool,
+    stretchable: bool,
 }
 
 /// How a retained subtree was drawn this frame.
@@ -142,6 +157,7 @@ pub fn retained(
         on_prepaint: None,
         movable: false,
         skippable: false,
+        stretchable: false,
     }
 }
 
@@ -174,6 +190,17 @@ impl Retained {
     /// keys or focus is found and always drawn.
     pub fn skippable(mut self, skippable: bool) -> Self {
         self.skippable = skippable;
+        self
+    }
+
+    // mirin: port of the fork's `Retained::stretchable` (`docs/metal.md`, 5b,
+    // resize round 5).
+    /// Whether its root draws nothing from its own size (no fill, border,
+    /// shadow, clip or hitbox): resized with nothing below it changed (a row
+    /// stretched to a window's new width), its drawing is what it would
+    /// draw at the new size, and is kept.
+    pub fn stretchable(mut self, stretchable: bool) -> Self {
+        self.stretchable = stretchable;
         self
     }
 }
@@ -218,12 +245,13 @@ struct RetainedState {
     /// Its nodes can't be built onto again (`rebuild`): made anew the next
     /// time it is laid out.
     remake: bool,
-    /// While it is left undrawn, its elements' states (and with them the
-    /// retained subtrees inside), out of the frame until it is drawn again.
-    kept_states: Vec<(
-        (GlobalElementId, std::any::TypeId),
-        crate::window::ElementStateBox,
-    )>,
+    /// Its elements' states (and with them the retained subtrees' inside)
+    /// as last drawn: they stay here while it is copied or left out
+    /// (`ElementStateScope`).
+    states: ElementStates,
+    /// While it is drawn anew this frame: its elements' states between
+    /// phases.
+    drawing: Option<ElementStateScope>,
 }
 
 impl Drop for RetainedState {
@@ -278,6 +306,38 @@ fn build_layout(
     (element, root, nodes)
 }
 
+/// Run `f` with a retained subtree's element states (`prev`, from its last
+/// drawing) as the ones elements find and keep; what they hold after.
+fn with_states<R>(
+    prev: ElementStates,
+    window: &mut Window,
+    f: impl FnOnce(&mut Window) -> R,
+) -> (R, ElementStateScope) {
+    with_scope(
+        ElementStateScope {
+            prev,
+            next: ElementStates::default(),
+        },
+        window,
+        f,
+    )
+}
+
+/// Run `f` with `scope` as the element states elements find and keep.
+fn with_scope<R>(
+    scope: ElementStateScope,
+    window: &mut Window,
+    f: impl FnOnce(&mut Window) -> R,
+) -> (R, ElementStateScope) {
+    window.element_state_scopes.push(scope);
+    let result = f(window);
+    let scope = window
+        .element_state_scopes
+        .pop()
+        .expect("a scope pushed is popped");
+    (result, scope)
+}
+
 impl Element for Retained {
     type RequestLayoutState = RetainedLayout;
     type PrepaintState = RetainedPrepaint;
@@ -301,7 +361,10 @@ impl Element for Retained {
         let binding = window.retained_binding > 0 && window.retained_detached == 0;
         let (view, version) = (self.view, self.version);
         let build = self.build.clone();
-        window.with_element_state::<RetainedState, _>(global_id, |state, window| {
+        window.with_element_state::<RetainedState, _>(global_id, |mut state, window| {
+            if let Some(state) = &mut state {
+                state.settle_states();
+            }
             let statics = Statics::of(window);
             let unchanged = state.as_ref().is_some_and(|state| {
                 state.version == version
@@ -330,9 +393,13 @@ impl Element for Retained {
                 // Inside a subtree laid out apart: built with it, its kept
                 // nodes left as they are (they are the tree's).
                 Some(mut state) if detached => {
-                    state.restore_states(window);
-                    let (element, root, _) = window
-                        .with_rendered_view(view, |window| build_layout(&build, false, window, cx));
+                    let prev = std::mem::take(&mut state.states);
+                    let ((element, root, _), drawing) = with_states(prev, window, |window| {
+                        window.with_rendered_view(view, |window| {
+                            build_layout(&build, false, window, cx)
+                        })
+                    });
+                    state.drawing = Some(drawing);
                     state.statics = statics;
                     let layout = RetainedLayout {
                         element: Some(element),
@@ -341,11 +408,14 @@ impl Element for Retained {
                     ((root, layout), state)
                 }
                 mut state => {
-                    if let Some(state) = &mut state {
-                        state.restore_states(window);
-                    }
-                    let (element, root, owned) = window.with_rendered_view(view, |window| {
-                        build_layout(&build, !detached, window, cx)
+                    let prev = state
+                        .as_mut()
+                        .map(|state| std::mem::take(&mut state.states))
+                        .unwrap_or_default();
+                    let ((element, root, owned), drawing) = with_states(prev, window, |window| {
+                        window.with_rendered_view(view, |window| {
+                            build_layout(&build, !detached, window, cx)
+                        })
                     });
                     let released = window.layout_engine_mut().released();
                     let drawn = state
@@ -363,7 +433,8 @@ impl Element for Retained {
                         drawn,
                         nested: Vec::new(),
                         accessed_entities: FxHashSet::default(),
-                        kept_states: Vec::new(),
+                        states: ElementStates::default(),
+                        drawing: Some(drawing),
                         remake: false,
                     };
                     let layout = RetainedLayout {
@@ -393,6 +464,7 @@ impl Element for Retained {
         let build = self.build.clone();
         let movable = self.movable;
         let skippable = self.skippable;
+        let stretchable = self.stretchable;
         let on_prepaint = self.on_prepaint.take();
         window.with_rendered_view(view, |window| {
             window.with_element_state::<RetainedState, _>(global_id, |state, window| {
@@ -414,6 +486,11 @@ impl Element for Retained {
                     skippable: skippable && !notified,
                     below_same,
                 };
+                // mirin: only its root was resized, and its root draws
+                // nothing from its size: the drawing is of this layout.
+                if stretchable && below_same && built.is_none() {
+                    state.drawn.borrow_mut().stretch(bounds.size, place, window);
+                }
                 let mut plan = match &built {
                     Some(_) => Plan::Redraw,
                     None => plan(&state.drawn.borrow(), bounds, &mask, place, allowed, window),
@@ -457,18 +534,27 @@ impl Element for Retained {
                         RetainedPrepaint::Moved { by, old_mask }
                     }
                     Plan::Redraw => {
-                        let element = match built {
+                        let mut element = match built {
                             Some(element) => element,
-                            // Somewhere else, or at another size: built again
-                            // and laid out apart, as its kept nodes sit.
-                            None => state.rebuild(&build, view, window, cx),
+                            // Its layout kept (or, failing that, laid out
+                            // apart), its elements built again.
+                            None => {
+                                let prev = std::mem::take(&mut state.states);
+                                let (element, drawing) = with_states(prev, window, |window| {
+                                    state.rebuild(&build, view, window, cx)
+                                });
+                                state.drawing = Some(drawing);
+                                element
+                            }
                         };
-                        let mut element = element;
                         let start = window.prepaint_index();
                         window.retained_nested.push(Vec::new());
                         window.begin_recording(None);
-                        let (_, accessed) =
-                            cx.detect_accessed_entities(|cx| element.prepaint(window, cx));
+                        let drawing = state.drawing.take().unwrap_or_default();
+                        let ((_, accessed), drawing) = with_scope(drawing, window, |window| {
+                            cx.detect_accessed_entities(|cx| element.prepaint(window, cx))
+                        });
+                        state.drawing = Some(drawing);
                         let recorded = window.end_recording();
                         state.nested = window.retained_nested.pop().unwrap_or_default();
                         state.accessed_entities = accessed;
@@ -517,16 +603,18 @@ impl Element for Retained {
                 match prepaint {
                     RetainedPrepaint::Drawn(element, recorded) => {
                         window.begin_recording(Some(*recorded));
-                        let ((), accessed) =
-                            cx.detect_accessed_entities(|cx| element.paint(window, cx));
+                        let drawing = state.drawing.take().unwrap_or_default();
+                        let (((), accessed), drawing) = with_scope(drawing, window, |window| {
+                            cx.detect_accessed_entities(|cx| element.paint(window, cx))
+                        });
+                        // What it no longer uses goes (`drawing.prev`).
+                        state.states = drawing.next;
                         let recorded = window.end_recording();
                         state.accessed_entities.extend(accessed);
                         state.drawn.borrow_mut().recorded = Some(recorded);
                     }
                     RetainedPrepaint::Reused => state.copy_paint(None, window),
-                    RetainedPrepaint::Moved { by, old_mask } => {
-                        state.copy_paint(Some((*by, old_mask.clone())), window)
-                    }
+                    RetainedPrepaint::Moved { by, .. } => state.copy_paint(Some(*by), window),
                     RetainedPrepaint::Skipped => {}
                 }
                 let end = window.paint_index();
@@ -561,9 +649,17 @@ impl Element for Retained {
 }
 
 impl RetainedState {
-    /// Leave it undrawn at `bounds`: its element states go with it until it
-    /// is drawn again, and its drawing, with the ones inside, leaves the
-    /// frame.
+    /// Its element states back in one map, should a drawing begun last
+    /// frame not have been painted.
+    fn settle_states(&mut self) {
+        if let Some(drawing) = self.drawing.take() {
+            self.states.extend(drawing.prev);
+            self.states.extend(drawing.next);
+        }
+    }
+
+    /// Leave it undrawn at `bounds`: its drawing, with the ones inside,
+    /// leaves the frame (its element states are its own already).
     fn skip(&mut self, bounds: Bounds<Pixels>, place: Option<Place>, window: &mut Window) {
         let parked = {
             let drawn = self.drawn.borrow();
@@ -584,17 +680,6 @@ impl RetainedState {
                 .flatten()
         };
         let mut drawn = self.drawn.borrow_mut();
-        let copies = drawn.prepaint.as_ref().is_some_and(|range| {
-            window.prepaint_range_valid(range)
-                && drawn
-                    .paint
-                    .as_ref()
-                    .is_some_and(|range| window.paint_range_valid(range))
-        });
-        if copies && let (Some(prepaint), Some(paint)) = (&drawn.prepaint, &drawn.paint) {
-            let states = window.take_element_states(prepaint, paint);
-            self.kept_states.extend(states);
-        }
         if parked.is_some() {
             drawn.parked = parked;
         }
@@ -638,18 +723,7 @@ impl RetainedState {
                 None => (None, None),
             };
         }
-        // Its elements' states go back to last frame, where the copy finds
-        // them.
-        self.restore_states(window);
         true
-    }
-
-    /// Its element states, kept while it was left undrawn, go back where
-    /// its elements, built again, find them.
-    fn restore_states(&mut self, window: &mut Window) {
-        if !self.kept_states.is_empty() {
-            window.restore_element_states(std::mem::take(&mut self.kept_states));
-        }
     }
 
     /// Build its element again for the layout it kept: each element asks
@@ -665,7 +739,6 @@ impl RetainedState {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        self.restore_states(window);
         let engine = window.layout_engine_mut();
         if engine.any_asked_since(&self.owned, self.made) {
             // What its texts hold is not what a layout from nothing leaves
@@ -684,6 +757,11 @@ impl RetainedState {
             let bound = window.end_bind(cx);
             if bound && root == self.root {
                 return element;
+            }
+            // What it kept from its last drawing, whichever half the try took.
+            if let Some(scope) = window.element_state_scopes.last_mut() {
+                let used = std::mem::take(&mut scope.next);
+                scope.prev.extend(used);
             }
         }
         self.build_apart(build, window, cx)
@@ -717,7 +795,7 @@ impl RetainedState {
         let mask = window.content_mask();
         let scale = window.scale_factor();
         match moved {
-            Some((by, _, old_mask)) => window.reuse_prepaint_moved(old.clone(), by, old_mask),
+            Some((by, ..)) => window.reuse_prepaint_moved(old.clone(), by),
             None => window.reuse_prepaint(old.clone()),
         }
         let end = window.prepaint_index();
@@ -740,14 +818,10 @@ impl RetainedState {
     }
 
     /// Copy last frame's paint where it was, or `moved`.
-    fn copy_paint(
-        &mut self,
-        moved: Option<(Point<f32>, ContentMask<Pixels>)>,
-        window: &mut Window,
-    ) {
+    fn copy_paint(&mut self, moved: Option<Point<f32>>, window: &mut Window) {
         let start = window.paint_index();
         let old = self.drawn.borrow().paint.clone().unwrap_or_default();
-        window.reuse_paint_moved(old.clone(), moved);
+        window.reuse_paint_moved(old.clone(), moved, true);
         for nested in &self.nested {
             let mut nested = nested.borrow_mut();
             nested.paint = nested.paint.as_ref().map(|range| {
