@@ -4598,7 +4598,8 @@ impl Window {
     /// mirin: `reuse_prepaint` for a retained subtree's drawing moved `by`
     /// device pixels (whole ones; `elements::retained`): every hitbox moves
     /// with it, and takes the content mask around it now where it had the
-    /// one around it then (`old_mask`), its own moved otherwise.
+    /// one around it then (`old_mask`), its own moved and clipped by the one
+    /// now otherwise.
     pub(crate) fn reuse_prepaint_moved(
         &mut self,
         range: Range<PrepaintStateIndex>,
@@ -4626,7 +4627,8 @@ impl Window {
     /// ones, and the content mask around the drawing then) for a retained
     /// subtree's drawing copied to where it moved: every primitive moves
     /// with it and takes the mask around it now where it had the one around
-    /// it then, its own moved otherwise (`Scene::replay_moved`).
+    /// it then, its own moved and clipped by the one now otherwise
+    /// (`Scene::replay_moved`).
     pub(crate) fn reuse_paint_moved(
         &mut self,
         range: Range<PaintIndex>,

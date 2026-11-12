@@ -17,12 +17,25 @@
 //!   or what is above it grew), when the caller says it may be
 //!   ([`Retained::movable`]): the same are copied, moved, where its last
 //!   drawing (`recording`) shows that is what drawing it there gives
-//!   (`plan`): nothing in it was clipped by the mask around it, there or
-//!   here; what it rounds rounds the same there; nothing in it knows where
-//!   it is; the pointer is over it neither there nor here;
-//! - anywhere else: its elements are built again and laid out apart from the
-//!   tree, as the nodes it kept are laid out (`TaffyLayoutEngine::place_detached`),
-//!   and drawn; the retained subtrees inside are built with it.
+//!   (`plan`): what the mask around it hid and the drawing left out stays
+//!   hidden (what it hides within 256 px is kept unshown), the masks pushed
+//!   inside it were not clipped by that mask, what it rounds rounds the same
+//!   there (`steady`), nothing in it knows where it is, and the pointer was
+//!   over it neither when it was drawn nor is now; each primitive and hitbox
+//!   takes the mask around it there, or its own moved and clipped by it;
+//! - where nothing of it shows, when the caller says it may be
+//!   ([`Retained::skippable`]) and nothing in it takes keys or focus: not at
+//!   all; its drawing is put aside (`parked`, within a budget) and copied
+//!   back when it shows again, its element states with it;
+//! - otherwise its elements are built again onto the layout nodes it kept
+//!   (`TaffyLayoutEngine::begin_bind`: nothing is laid out, and each
+//!   measured leaf is asked what it was last asked), so the retained
+//!   subtrees inside are each drawn their own cheapest way. When its
+//!   elements ask for anything else, or a text was measured again since its
+//!   nodes were made, it is built apart from the tree, as the nodes it kept
+//!   are laid out (`TaffyLayoutEngine::place_detached`), with the retained
+//!   subtrees inside built with it, and made anew the next time it is laid
+//!   out.
 //!
 //! Unlike `AnyView::cached`, a retained subtree may size itself from its
 //! content (its nodes are the tree's), and retained subtrees nest: a subtree
@@ -36,10 +49,13 @@
 //! styles do through `window.current_view()`): a refresh of the whole window
 //! (`window.refresh()`) does not rebuild it.
 //!
-//! Not yet (the fork's `../gpui` has them): copying a drawing that moved
-//! with some of it clipped (the fork's mask map), or at a scale factor that
-//! is not a power of two (its device grid), leaving out one nothing of
-//! shows, and building one again onto the layout nodes it kept.
+//! Not yet (the fork's `../gpui` has them): moving a drawing a mask pushed
+//! inside of which the mask around it clipped (the fork's mask map), or at a
+//! scale factor that is not a power of two (its device grid); glyphs placed
+//! from their line's grid point, so a glyph near where its subpixel variant
+//! turns does not keep its subtree from moving across; element states
+//! carried as one entry; replayed primitives placed in the bounds tree as
+//! one (`insert_spanning`).
 
 use std::{cell::RefCell, rc::Rc};
 

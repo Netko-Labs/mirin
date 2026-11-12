@@ -1,16 +1,21 @@
 //! mirin: what a retained subtree drawn anew records about its drawing, so
 //! a later frame can tell whether that drawing, copied a whole number of
 //! device pixels away, is what drawing it there would give
-//! (`docs/metal/gpui-next.md`, "Retained subtrees on upstream GPUI", step 2).
+//! (`docs/metal/gpui-next.md`, "Retained subtrees on upstream GPUI").
 //!
 //! - How far it reaches ([`Recorded::extent`]): every content mask pushed
-//!   inside it as given, and of every primitive, hitbox, layer and glyph a
-//!   line decides to cull, what a mask pushed inside lets through (all of it
-//!   under the mask around the subtree), shown or not. Where the mask around
-//!   it held all of that, nothing of it was clipped or left out by that
-//!   mask, so a copy under the mask around it elsewhere (that holds it too)
-//!   is whole: what was under that mask takes the new one, every mask pushed
-//!   inside moves with it, and what those hide stays hidden.
+//!   inside it as given, and of every primitive, hitbox and glyph a line
+//!   decides to cull, what a mask pushed inside lets through (all of it
+//!   under the mask around the subtree), shown or not: for the pointer and
+//!   for leaving it out.
+//! - What the mask around it hid and the drawing left out
+//!   ([`Recorded::left_out`]: past [`KEEP_MARGIN`], where what it hides is
+//!   kept unshown): a copy is whole where that stays hidden.
+//! - What must not have been clipped by the mask around it
+//!   ([`Recorded::strict`]): the masks pushed inside it, and borders and
+//!   underlines drawn in parts under them. Each primitive and hitbox then
+//!   takes the mask around it where it is copied, or its own (a mask pushed
+//!   inside, a border's strip) moved and clipped by that one.
 //! - What it rounds ([`Steadiness`]): the edges `layout_bounds` rounds and
 //!   the positions `Window::paint_*` round, through the layout engine's and
 //!   the window's accumulators while it records.
@@ -35,10 +40,9 @@ use super::steady::Steadiness;
 pub struct Recorded {
     /// Everything it draws or pushes, shown or not; `None`: nothing.
     pub(crate) extent: Option<Bounds<Pixels>>,
-    /// What must stay inside the mask around it for a copy moved under
-    /// another to be whole: every mask pushed inside (as given), every
-    /// layer, and every quad or underline drawn in parts with masks of
-    /// their own.
+    /// What must have stayed inside the mask around it for a copy moved
+    /// under another to be whole: every mask pushed inside (as given), and
+    /// every border or underline drawn in parts under one of those.
     pub(crate) strict: Option<Bounds<Pixels>>,
     /// What the mask around it hid and the drawing left out (past
     /// [`KEEP_MARGIN`]): it must stay hidden where a copy is moved.
@@ -189,7 +193,7 @@ impl Window {
         }
     }
 
-    /// `bounds` (a layer, or a quad or underline drawn in parts with masks
+    /// `bounds` (a border or an underline drawn in parts with masks
     /// of their own) must stay inside the mask around the retained subtree
     /// being drawn anew (if one is) for a copy moved under another to be
     /// whole.
