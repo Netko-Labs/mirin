@@ -135,6 +135,23 @@ where
         ordering
     }
 
+    /// mirin: `insert`, for bounds that stand for several primitives drawn
+    /// one over another (a retained subtree's drawing replayed as one,
+    /// `Scene::replay_as_one`): the first of them gets the order returned,
+    /// the last one `span` more, and whatever is inserted later over these
+    /// bounds comes after them all.
+    pub fn insert_spanning(&mut self, new_bounds: Bounds<U>, span: u32) -> u32 {
+        let first = self.find_max_ordering(&new_bounds) + 1;
+        let ordering = first + span;
+        let new_leaf_idx = self.insert_leaf(new_bounds, ordering);
+        self.max_leaf = match self.max_leaf {
+            None => Some(new_leaf_idx),
+            Some(old_idx) if self.nodes[old_idx].max_order < ordering => Some(new_leaf_idx),
+            some => some,
+        };
+        first
+    }
+
     /// Finds the maximum ordering among all bounds that intersect with the query.
     fn find_max_ordering(&mut self, query: &Bounds<U>) -> u32 {
         let Some(root_idx) = self.root else {

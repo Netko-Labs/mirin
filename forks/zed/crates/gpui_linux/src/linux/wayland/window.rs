@@ -1004,6 +1004,22 @@ impl WaylandWindow {
     }
 }
 
+/// mirin: `MIRIN_METAL_SCALE=<factor>` draws every window at that scale
+/// factor, whatever the compositor asks, for tests and benchmarks at
+/// fractional scale factors on a display that has none. The surface is
+/// shown at its logical size (through its viewport), so on a display of
+/// another scale it is resampled, not sharp.
+fn scale_override() -> Option<f32> {
+    static SCALE: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let scale = std::env::var("MIRIN_METAL_SCALE")
+            .ok()?
+            .parse::<f32>()
+            .ok()?;
+        (scale.is_finite() && scale > 0.).then_some(scale)
+    })
+}
+
 impl WaylandWindowStatePtr {
     pub fn handle(&self) -> AnyWindowHandle {
         self.state.borrow().handle
@@ -1670,6 +1686,8 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {
+        // mirin: for tests and benchmarks; from the first configure on.
+        let scale = scale_override().or(scale);
         let (size, scale) = {
             let mut state = self.state.borrow_mut();
             if size.is_none_or(|size| size == state.bounds.size)

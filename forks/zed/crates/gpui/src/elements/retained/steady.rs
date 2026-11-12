@@ -89,6 +89,24 @@ impl Steadiness {
         }
     }
 
+    /// Where scaling is not exact (`grid`): `value` (device pixels) is
+    /// settled (`Grid::settle`), then floored or ceiled. It lands the same
+    /// moved unless it is near where settling turns.
+    pub(crate) fn settled_floor(&mut self, axis: usize, value: f32) {
+        let off = (value - value.round()).abs();
+        if (off - super::grid::SNAP).abs() < super::grid::ON_GRID {
+            self.fixed[axis] = true;
+        }
+    }
+
+    /// Where scaling is not exact: a position used unrounded moves through
+    /// its device position (`value`), which must be on the grid.
+    pub(crate) fn on_grid(&mut self, axis: usize, value: f32) {
+        if !super::grid::is_on_grid(value) {
+            self.fixed[axis] = true;
+        }
+    }
+
     /// What a subtree inside rounds is this one's too.
     pub(crate) fn merge(&mut self, other: &Steadiness) {
         for axis in 0..2 {
