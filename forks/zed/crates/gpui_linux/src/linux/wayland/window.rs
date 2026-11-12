@@ -587,7 +587,10 @@ impl WaylandWindowState {
                 // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
             };
-            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
+            let started = std::time::Instant::now(); // mirin: a startup milestone
+            let renderer = WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?;
+            log::info!(target: "mirin::startup", "renderer created in {:.1}ms", started.elapsed().as_secs_f64() * 1000.0); // mirin:
+            renderer
         };
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {

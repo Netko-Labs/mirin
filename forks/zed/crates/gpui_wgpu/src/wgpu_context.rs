@@ -19,6 +19,8 @@ pub struct WgpuContext {
     dual_source_blending: bool,
     color_texture_format: wgpu::TextureFormat,
     errors: Arc<DeviceErrorState>,
+    /// mirin: the pipelines of this context's windows, built on first use.
+    pipeline_cache: Arc<crate::wgpu_pipelines::PipelineCache>,
 }
 
 /// Errors reported by wgpu's device-wide callbacks.
@@ -121,6 +123,10 @@ impl raw_window_handle::HasDisplayHandle for WebDisplaySource {
         Ok(raw_window_handle::DisplayHandle::web())
     }
 }
+
+/// mirin: the size of a block of GPU memory that small resources share
+/// (wgpu's least; host blocks are half of it, raised to the same least).
+const SMALL_MEMORY_BLOCK: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 pub struct CompositorGpuHint {
@@ -293,7 +299,7 @@ impl WgpuContext {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    fn from_native_adapter_and_device(
+    pub(crate) fn from_native_adapter_and_device(
         instance: wgpu::Instance,
         adapter: wgpu::Adapter,
         device: wgpu::Device,
@@ -319,11 +325,12 @@ impl WgpuContext {
             dual_source_blending,
             color_texture_format,
             errors,
+            pipeline_cache: Default::default(),
         }
     }
 
     #[cfg(not(target_family = "wasm"))]
-    fn device_id_filter() -> Option<u32> {
+    pub(crate) fn device_id_filter() -> Option<u32> {
         match std::env::var("ZED_DEVICE_ID") {
             Ok(value) => parse_pci_id(&value)
                 .context("Failed to parse device ID from `ZED_DEVICE_ID` environment variable")
@@ -418,11 +425,12 @@ impl WgpuContext {
             dual_source_blending,
             color_texture_format,
             errors,
+            pipeline_cache: Default::default(),
         };
         Ok(PreparedWebGraphics { context, surface })
     }
 
-    async fn create_device(
+    pub(crate) async fn create_device(
         adapter: &wgpu::Adapter,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let dual_source_blending = adapter
@@ -460,7 +468,14 @@ impl WgpuContext {
                 label: Some("gpui_device"),
                 required_features,
                 required_limits,
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
+                // mirin: 4 MiB blocks, and anything larger in its own
+                // allocation (port of `../../blade-graphics`' allocator row).
+                // `MemoryUsage` starts at 8 MiB device and 4 MiB host blocks
+                // and doubles each new one up to 64 MiB, so an 800x600
+                // window's textures and buffers held ~35 MB of GPU memory.
+                memory_hints: wgpu::MemoryHints::Manual {
+                    suballocated_device_memory_block_size: SMALL_MEMORY_BLOCK..SMALL_MEMORY_BLOCK,
+                },
                 trace: wgpu::Trace::Off,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 default_queue: wgpu::QueueDescriptor::default(),
@@ -478,9 +493,35 @@ impl WgpuContext {
 
     #[cfg(not(target_family = "wasm"))]
     pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
+        Self::instance_with_backends(display, wgpu::Backends::VULKAN | wgpu::Backends::GL)
+    }
+
+    /// mirin: an instance of Vulkan alone, the first one a window tries.
+    /// Enumerating GL beside Vulkan loads the GL driver (Mesa's
+    /// `libgallium`, ~15 MB mapped) and its thread into every app, and costs
+    /// ~30 ms of each start, for an adapter Vulkan wins whenever it has one.
+    /// [`Self::instance`] (Vulkan and GL) is the fallback when Vulkan finds
+    /// no adapter that can draw to the window.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn vulkan_instance(
+        display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>,
+    ) -> wgpu::Instance {
+        Self::instance_with_backends(display, wgpu::Backends::VULKAN)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn instance_with_backends(
+        display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>,
+        backends: wgpu::Backends,
+    ) -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
-            flags: wgpu::InstanceFlags::default(),
+            backends,
+            // mirin: no validation of indirect calls, which GPUI never makes.
+            // wgpu sets it up in every release build when a device is made:
+            // two compute pipelines compiled and their buffers, a few ms of
+            // the start and GPU memory for nothing.
+            flags: wgpu::InstanceFlags::default()
+                .difference(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             display,
@@ -527,6 +568,9 @@ impl WgpuContext {
         if adapters.is_empty() {
             anyhow::bail!("No GPU adapters found");
         }
+
+        // mirin: a startup milestone (mirin-metal's `MIRIN_METAL_TRACE`).
+        log::info!(target: "mirin::startup", "{} GPU adapter(s) enumerated", adapters.len());
 
         if let Some(device_id) = device_id_filter {
             log::info!("ZED_DEVICE_ID filter: {:#06x}", device_id);
@@ -600,7 +644,7 @@ impl WgpuContext {
     ///    "Other" ranks above "Virtual" because OpenGL seems to count as "Other".
     /// 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
     #[cfg(not(target_family = "wasm"))]
-    fn sort_adapters(
+    pub(crate) fn sort_adapters(
         adapters: &mut [wgpu::Adapter],
         device_id_filter: Option<u32>,
         compositor_gpu: Option<&CompositorGpuHint>,
@@ -648,7 +692,7 @@ impl WgpuContext {
     /// Try to use an adapter with a surface by creating a device and testing configuration.
     /// Returns the device and queue if successful, allowing them to be reused.
     #[cfg(not(target_family = "wasm"))]
-    async fn try_adapter_with_surface(
+    pub(crate) async fn try_adapter_with_surface(
         adapter: &wgpu::Adapter,
         surface: &wgpu::Surface<'_>,
         config: &WgpuSurfaceConfig,
@@ -745,6 +789,11 @@ impl WgpuContext {
     }
 
     /// The device-wide error state, shared with renderers on this device.
+    /// mirin: the context's pipelines and bind group layouts.
+    pub(crate) fn pipeline_cache(&self) -> &Arc<crate::wgpu_pipelines::PipelineCache> {
+        &self.pipeline_cache
+    }
+
     pub fn errors(&self) -> &Arc<DeviceErrorState> {
         &self.errors
     }

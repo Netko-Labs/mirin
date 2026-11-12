@@ -26,12 +26,20 @@ pub(crate) struct LinuxDispatcher {
 }
 
 const MIN_THREADS: usize = 2;
+/// mirin: the most background threads an app starts.
+const MAX_THREADS: usize = 4;
 
 impl LinuxDispatcher {
     pub fn new(main_sender: PriorityQueueCalloopSender<RunnableVariant>) -> Self {
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
-        let thread_count =
-            std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
+        // mirin: at most four background threads (port of `../gpui`'s row).
+        // Upstream starts one per core (24 on a laptop) in every app; a
+        // desktop's small apps give them timers, image decodes and D-Bus
+        // calls, and each idle thread still costs its stack, its allocator
+        // arena and its kernel state.
+        let thread_count = std::thread::available_parallelism()
+            .map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS))
+            .min(MAX_THREADS);
 
         let mut background_threads = (0..thread_count)
             .map(|i| {

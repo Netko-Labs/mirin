@@ -1,6 +1,9 @@
 mod cosmic_text_system;
 mod wgpu_atlas;
 mod wgpu_context;
+mod wgpu_pipelines; // mirin:
+#[cfg(not(target_family = "wasm"))]
+mod wgpu_prepare; // mirin:
 mod wgpu_renderer;
 
 pub use cosmic_text_system::*;

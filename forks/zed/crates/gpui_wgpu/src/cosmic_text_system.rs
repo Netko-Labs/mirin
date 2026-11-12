@@ -12,16 +12,29 @@ use gpui::{
 };
 
 use itertools::Itertools;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock}; // mirin: Mutex
 use smallvec::SmallVec;
-use std::{borrow::Cow, ops::Range, sync::Arc};
+use std::{
+    borrow::Cow,
+    ops::Range,
+    sync::{Arc, OnceLock}, // mirin: OnceLock
+};
 use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
     zeno::{Format, Vector},
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-pub struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
+pub struct CosmicTextSystem {
+    state: RwLock<CosmicTextSystemState>,
+    // mirin: the system's fonts are read on a thread of their own, started
+    // with the text system (port of `../../gpui`'s row): the scan (7–9 ms)
+    // ran on the main thread before the Wayland connection, the GPU context
+    // and the window. `state()` waits for the thread, so whatever first asks
+    // the text system anything gets the fonts, as before.
+    loading: Mutex<Option<std::thread::JoinHandle<FontSystem>>>,
+    loaded: OnceLock<()>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -62,12 +75,32 @@ struct CosmicTextSystemState {
 }
 
 struct LoadedFont {
-    font: Arc<CosmicTextFont>,
+    // mirin: a family's faces are listed when the family is first asked for,
+    // and a face is loaded (its file mapped and parsed) when a text first
+    // picks it: `font` is `None` until then (port of `../../gpui`'s row).
+    // Upstream loaded every face of the family at once: the 74 of Noto Sans
+    // for a window that draws with one or two, 15 MB of mapped files, a few
+    // MB of heap and ~5 ms of the first frame.
+    id: cosmic_text::fontdb::ID,
+    postscript_name: String,
+    font: Option<Arc<CosmicTextFont>>,
+    /// mirin: loaded, and found to have no 'm' (see `load_primary`).
+    unusable_as_primary: bool,
     features: CosmicFontFeatures,
     is_known_emoji_font: bool,
     /// resolved at load time so `layout_line` shares one chain across faces.
     /// `Arc` keeps clone cheap on the per-run hot path.
     user_fallback_chain: Arc<[(FontId, SharedString)]>,
+}
+
+impl LoadedFont {
+    // mirin: a `FontId` leaves this module only once its face is loaded
+    // (`font_id`, `font_id_for_cosmic_id`, a fallback chain's entries).
+    fn font(&self) -> &Arc<CosmicTextFont> {
+        self.font
+            .as_ref()
+            .expect("a font id is handed out only after its face is loaded")
+    }
 }
 
 struct FontMatchProperties {
@@ -97,7 +130,7 @@ impl CosmicTextSystem {
         &self,
         font_id: FontId,
     ) -> Result<(gpui::FontWeight, gpui::FontStyle)> {
-        let state = self.0.read();
+        let state = self.state().read();
         let font = state
             .loaded_fonts
             .get(font_id.0)
@@ -105,7 +138,7 @@ impl CosmicTextSystem {
         let face = state
             .font_system
             .db()
-            .face(font.font.id())
+            .face(font.id) // mirin: id
             .context("font face not found")?;
         let style = match face.style {
             cosmic_text::Style::Normal => gpui::FontStyle::Normal,
@@ -123,25 +156,66 @@ impl CosmicTextSystem {
         font_runs: &[FontRun],
         missing_text_indices: impl IntoIterator<Item = usize>,
     ) -> Vec<MissingGlyph> {
-        self.0
+        self.state()
             .read()
             .missing_glyphs(text, font_runs, missing_text_indices)
     }
 
     pub fn new(system_font_fallback: &str) -> Self {
-        let font_system = FontSystem::new();
+        // mirin: on its own thread, with an empty font system until it is
+        // done; here and now if the thread can't start.
+        let loading = std::thread::Builder::new()
+            .name("Fonts".to_owned())
+            .spawn(|| {
+                let started = std::time::Instant::now();
+                let font_system = FontSystem::new();
+                log::info!(
+                    target: "mirin::startup",
+                    "system fonts read in {:.1}ms",
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+                font_system
+            })
+            .ok();
+        let font_system = if loading.is_some() {
+            FontSystem::new_with_locale_and_db(
+                "en-US".to_string(),
+                cosmic_text::fontdb::Database::new(),
+            )
+        } else {
+            FontSystem::new()
+        };
 
-        Self(RwLock::new(CosmicTextSystemState {
-            font_system,
-            scratch: ShapeBuffer::default(),
-            swash_scale_context: ScaleContext::new(),
-            pending_glyph_images: HashMap::default(),
-            loaded_fonts: Vec::new(),
-            loaded_font_ids_by_key: HashMap::default(),
-            font_ids_by_family_cache: HashMap::default(),
-            system_font_fallback: system_font_fallback.to_string(),
-            missing_glyph_sink: None,
-        }))
+        Self {
+            state: RwLock::new(CosmicTextSystemState {
+                font_system,
+                scratch: ShapeBuffer::default(),
+                swash_scale_context: ScaleContext::new(),
+                pending_glyph_images: HashMap::default(),
+                loaded_fonts: Vec::new(),
+                loaded_font_ids_by_key: HashMap::default(),
+                font_ids_by_family_cache: HashMap::default(),
+                system_font_fallback: system_font_fallback.to_string(),
+                missing_glyph_sink: None,
+            }),
+            loading: Mutex::new(loading),
+            loaded: OnceLock::new(),
+        }
+    }
+
+    // mirin: the state, once the system's fonts are in it.
+    fn state(&self) -> &RwLock<CosmicTextSystemState> {
+        self.loaded.get_or_init(|| {
+            if let Some(thread) = self.loading.lock().take() {
+                match thread.join() {
+                    std::result::Result::Ok(font_system) => {
+                        self.state.write().font_system = font_system
+                    }
+                    Err(panic) => std::panic::resume_unwind(panic),
+                }
+            }
+        });
+        &self.state
     }
 
     pub fn new_without_system_fonts(system_font_fallback: &str) -> Self {
@@ -150,32 +224,36 @@ impl CosmicTextSystem {
             cosmic_text::fontdb::Database::new(),
         );
 
-        Self(RwLock::new(CosmicTextSystemState {
-            font_system,
-            scratch: ShapeBuffer::default(),
-            swash_scale_context: ScaleContext::new(),
-            pending_glyph_images: HashMap::default(),
-            loaded_fonts: Vec::new(),
-            loaded_font_ids_by_key: HashMap::default(),
-            font_ids_by_family_cache: HashMap::default(),
-            system_font_fallback: system_font_fallback.to_string(),
-            missing_glyph_sink: None,
-        }))
+        Self {
+            state: RwLock::new(CosmicTextSystemState {
+                font_system,
+                scratch: ShapeBuffer::default(),
+                swash_scale_context: ScaleContext::new(),
+                pending_glyph_images: HashMap::default(),
+                loaded_fonts: Vec::new(),
+                loaded_font_ids_by_key: HashMap::default(),
+                font_ids_by_family_cache: HashMap::default(),
+                system_font_fallback: system_font_fallback.to_string(),
+                missing_glyph_sink: None,
+            }),
+            loading: Mutex::new(None),
+            loaded: OnceLock::new(),
+        }
     }
 }
 
 impl PlatformTextSystem for CosmicTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        self.0.write().add_fonts(fonts)
+        self.state().write().add_fonts(fonts)
     }
 
     fn set_missing_glyph_sink(&self, sink: Option<Arc<dyn MissingGlyphSink>>) {
-        self.0.write().missing_glyph_sink = sink;
+        self.state().write().missing_glyph_sink = sink;
     }
 
     fn all_font_names(&self) -> Vec<String> {
         let mut result = self
-            .0
+            .state()
             .read()
             .font_system
             .db()
@@ -188,36 +266,44 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
-        let mut state = self.0.write();
+        let mut state = self.state().write();
         let key = FontKey::new(
             font.family.clone(),
             font.features.clone(),
             font.fallbacks.clone(),
         );
-        let candidates = if let Some(font_ids) = state.font_ids_by_family_cache.get(&key) {
-            font_ids.as_slice()
-        } else {
+        if !state.font_ids_by_family_cache.contains_key(&key) {
             let font_ids =
                 state.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
             state.font_ids_by_family_cache.insert(key.clone(), font_ids);
-            state.font_ids_by_family_cache[&key].as_ref()
-        };
+        }
 
-        let ix = find_best_match(font, candidates, &state)?;
-
-        Ok(candidates[ix])
+        // mirin: the best match is loaded now, if it wasn't. A face that
+        // turns out unusable (see `load_primary`) leaves the family and the
+        // next best is tried, which comes to the face upstream chose when it
+        // loaded the whole family and left the unusable ones out first.
+        loop {
+            let candidates = state.font_ids_by_family_cache[&key].clone();
+            let ix = find_best_match(font, &candidates, &state)?;
+            if state.load_primary(candidates[ix])? {
+                return Ok(candidates[ix]);
+            }
+            if let Some(font_ids) = state.font_ids_by_family_cache.get_mut(&key) {
+                font_ids.remove(ix);
+            }
+        }
     }
 
     fn prewarm_fonts(&self, font_ids: &[FontId]) {
-        self.0.write().prewarm_fonts(font_ids);
+        self.state().write().prewarm_fonts(font_ids);
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
         let metrics = self
-            .0
+            .state()
             .read()
             .loaded_font(font_id)
-            .font
+            .font() // mirin: font()
             .as_swash()
             .metrics(&[]);
 
@@ -238,8 +324,12 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        let lock = self.0.read();
-        let glyph_metrics = lock.loaded_font(font_id).font.as_swash().glyph_metrics(&[]);
+        let lock = self.state().read();
+        let glyph_metrics = lock
+            .loaded_font(font_id)
+            .font()
+            .as_swash()
+            .glyph_metrics(&[]); // mirin: font()
         let glyph_id = glyph_id.0 as u16;
         Ok(Bounds {
             origin: point(0.0, 0.0),
@@ -251,15 +341,15 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        self.0.read().advance(font_id, glyph_id)
+        self.state().read().advance(font_id, glyph_id)
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.0.read().glyph_for_char(font_id, ch)
+        self.state().read().glyph_for_char(font_id, ch)
     }
 
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        self.0.write().raster_bounds(params)
+        self.state().write().raster_bounds(params)
     }
 
     fn rasterize_glyph(
@@ -267,11 +357,11 @@ impl PlatformTextSystem for CosmicTextSystem {
         params: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        self.0.write().rasterize_glyph(params, raster_bounds)
+        self.state().write().rasterize_glyph(params, raster_bounds)
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        self.0.write().layout_line(text, font_size, runs)
+        self.state().write().layout_line(text, font_size, runs)
     }
 
     fn recommended_rendering_mode(
@@ -290,7 +380,8 @@ impl CosmicTextSystemState {
 
     fn font_match_properties(&self, font_id: FontId) -> Option<FontMatchProperties> {
         let loaded_font = self.loaded_font(font_id);
-        let Some(face) = self.font_system.db().face(loaded_font.font.id()) else {
+        let Some(face) = self.font_system.db().face(loaded_font.id) else {
+            // mirin: id
             log::warn!("font face not found in database for font_id {:?}", font_id);
             return None;
         };
@@ -368,10 +459,19 @@ impl CosmicTextSystemState {
                             .insert(fb_key.clone(), loaded.clone());
                         loaded
                     };
-                    let Some(&fb_id) = fb_ids.first() else {
+                    // mirin: the first face that loads and has an 'm', as
+                    // upstream listed only those.
+                    let mut usable = None;
+                    for fb_id in fb_ids {
+                        if self.load_primary(fb_id)? {
+                            usable = Some(fb_id);
+                            break;
+                        }
+                    }
+                    let Some(fb_id) = usable else {
                         continue;
                     };
-                    let db_id = self.loaded_fonts[fb_id.0].font.id();
+                    let db_id = self.loaded_fonts[fb_id.0].id; // mirin: id
                     if let Some(face) = self.font_system.db().face(db_id)
                         && let Some(family) = face.families.first()
                     {
@@ -402,40 +502,25 @@ impl CosmicTextSystemState {
                 font: loaded_font_key.clone(),
             };
             if let Some(&font_id) = self.loaded_font_ids_by_key.get(&key) {
+                // mirin: a face found unusable stays out, as upstream never
+                // listed it.
+                if self.loaded_fonts[font_id.0].unusable_as_primary {
+                    continue;
+                }
                 self.loaded_fonts[font_id.0].user_fallback_chain = Arc::clone(&user_fallback_chain);
                 loaded_font_ids.push(font_id);
                 continue;
             }
 
-            let font = self
-                .font_system
-                .get_font(database_id, cosmic_text::Weight::NORMAL)
-                .context("Could not load font")?;
-
-            // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
-            let allowed_bad_font_names = [
-                "SegoeFluentIcons", // NOTE: Segoe fluent icons postscript name is inconsistent
-                "Segoe Fluent Icons",
-            ];
-
-            // This only decides whether a face can be a primary font. The
-            // editor measures layout with the width of 'm' and would panic
-            // without it.
-            //
-            // Don't remove the face from the font database. Arabic, Devanagari
-            // and emoji fonts often have no Latin glyphs, and they are exactly
-            // what cosmic-text falls back to when the primary font lacks a
-            // glyph.
-            if font.as_swash().charmap().map('m') == 0
-                && !allowed_bad_font_names.contains(&postscript_name.as_str())
-            {
-                continue;
-            };
-
+            // mirin: listed, not loaded (see `LoadedFont`); `load_primary`
+            // loads it and checks it when a text picks it.
             let font_id = FontId(self.loaded_fonts.len());
             loaded_font_ids.push(font_id);
             self.loaded_fonts.push(LoadedFont {
-                font,
+                id: database_id,
+                postscript_name: postscript_name.to_string(),
+                font: None,
+                unusable_as_primary: false,
                 features: cosmic_features.clone(),
                 is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
                 user_fallback_chain: Arc::clone(&user_fallback_chain),
@@ -446,8 +531,62 @@ impl CosmicTextSystemState {
         Ok(loaded_font_ids)
     }
 
+    // mirin: load a face a text picked, once.
+    fn load_face(&mut self, font_id: FontId) -> Result<()> {
+        if self.loaded_fonts[font_id.0].font.is_some() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let id = self.loaded_fonts[font_id.0].id;
+        let font = self
+            .font_system
+            .get_font(id, cosmic_text::Weight::NORMAL)
+            .context("Could not load font")?;
+        log::info!(
+            target: "mirin::startup",
+            "font face {} loaded in {:.1}ms",
+            self.loaded_fonts[font_id.0].postscript_name,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        self.loaded_fonts[font_id.0].font = Some(font);
+        Ok(())
+    }
+
+    // mirin: load a face a text picked as its primary font, and say whether
+    // it can be one (upstream's check, made when the family was loaded).
+    fn load_primary(&mut self, font_id: FontId) -> Result<bool> {
+        self.load_face(font_id)?;
+
+        // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
+        let allowed_bad_font_names = [
+            "SegoeFluentIcons", // NOTE: Segoe fluent icons postscript name is inconsistent
+            "Segoe Fluent Icons",
+        ];
+
+        // This only decides whether a face can be a primary font. The
+        // editor measures layout with the width of 'm' and would panic
+        // without it.
+        //
+        // Don't remove the face from the font database. Arabic, Devanagari
+        // and emoji fonts often have no Latin glyphs, and they are exactly
+        // what cosmic-text falls back to when the primary font lacks a
+        // glyph.
+        let loaded_font = &mut self.loaded_fonts[font_id.0];
+        if loaded_font.font().as_swash().charmap().map('m') == 0
+            && !allowed_bad_font_names.contains(&loaded_font.postscript_name.as_str())
+        {
+            loaded_font.unusable_as_primary = true;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        let glyph_metrics = self.loaded_font(font_id).font.as_swash().glyph_metrics(&[]);
+        let glyph_metrics = self
+            .loaded_font(font_id)
+            .font()
+            .as_swash()
+            .glyph_metrics(&[]); // mirin: font()
         Ok(Size {
             width: glyph_metrics.advance_width(glyph_id.0 as u16),
             height: glyph_metrics.advance_height(glyph_id.0 as u16),
@@ -455,7 +594,12 @@ impl CosmicTextSystemState {
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        let glyph_id = self.loaded_font(font_id).font.as_swash().charmap().map(ch);
+        let glyph_id = self
+            .loaded_font(font_id)
+            .font()
+            .as_swash()
+            .charmap()
+            .map(ch); // mirin: font()
         if glyph_id == 0 {
             None
         } else {
@@ -515,7 +659,7 @@ impl CosmicTextSystemState {
         params: &RenderGlyphParams,
     ) -> Result<swash::scale::image::Image> {
         let loaded_font = &self.loaded_fonts[params.font_id.0];
-        let font_ref = loaded_font.font.as_swash();
+        let font_ref = loaded_font.font().as_swash(); // mirin: font()
         let pixel_size = f32::from(params.font_size);
 
         let subpixel_offset = Vector::new(
@@ -568,8 +712,11 @@ impl CosmicTextSystemState {
         if let Some(ix) = self
             .loaded_fonts
             .iter()
-            .position(|loaded_font| loaded_font.font.id() == id)
+            .position(|loaded_font| loaded_font.id == id)
+        // mirin: id
         {
+            // mirin: a face listed with its family that no text had picked.
+            self.load_face(FontId(ix))?;
             Ok(FontId(ix))
         } else {
             let font = self
@@ -584,7 +731,10 @@ impl CosmicTextSystemState {
 
             let font_id = FontId(self.loaded_fonts.len());
             self.loaded_fonts.push(LoadedFont {
-                font,
+                id,                                             // mirin:
+                postscript_name: face.post_script_name.clone(), // mirin:
+                font: Some(font),                               // mirin:
+                unusable_as_primary: false,                     // mirin:
                 features: CosmicFontFeatures::new(),
                 is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
                 user_fallback_chain: Arc::from(Vec::new()),
@@ -792,7 +942,8 @@ impl CosmicTextSystemState {
         for glyph in &layout.glyphs {
             let mut font_id = FontId(glyph.metadata);
             let mut loaded_font = self.loaded_font(font_id);
-            if loaded_font.font.id() != glyph.font_id {
+            if loaded_font.id != glyph.font_id {
+                // mirin: id
                 match self.font_id_for_cosmic_id(glyph.font_id) {
                     std::result::Result::Ok(resolved_id) => {
                         font_id = resolved_id;
@@ -913,7 +1064,7 @@ impl CosmicTextSystemState {
         let is_monospace = self
             .font_system
             .db()
-            .face(loaded_font.font.id())
+            .face(loaded_font.id) // mirin: id
             .is_some_and(|face| face.monospaced);
         if is_monospace {
             FallbackFontClass::Monospace
@@ -972,7 +1123,7 @@ fn find_best_match(
     let candidate_properties = candidates
         .iter()
         .map(|font_id| {
-            let database_id = state.loaded_font(*font_id).font.id();
+            let database_id = state.loaded_font(*font_id).id; // mirin: id
             let face_info = state
                 .font_system
                 .db()
@@ -1012,7 +1163,7 @@ fn find_best_match(
     let mut best_score = u32::MAX;
 
     for (index, font_id) in candidates.iter().enumerate() {
-        let database_id = state.loaded_font(*font_id).font.id();
+        let database_id = state.loaded_font(*font_id).id; // mirin: id
         let face_info = state
             .font_system
             .db()
@@ -1142,7 +1293,9 @@ fn pick_covering_slot(
 fn charmap_covers(loaded_fonts: &[LoadedFont], id: FontId, ch: char) -> bool {
     loaded_fonts
         .get(id.0)
-        .is_some_and(|loaded| loaded.font.as_swash().charmap().map(ch) != 0)
+        // mirin: a face not loaded yet covers nothing (a chain's faces are loaded).
+        .and_then(|loaded| loaded.font.as_ref())
+        .is_some_and(|font| font.as_swash().charmap().map(ch) != 0)
 }
 
 fn cosmic_font_features(features: &FontFeatures) -> Result<CosmicFontFeatures> {
@@ -1282,13 +1435,15 @@ mod tests {
             let (sender, receiver) = mpsc::channel();
 
             thread::scope(|scope| {
-                let backend = platform_text_system.0.read();
+                let backend = platform_text_system.state().read();
                 let deadline = Instant::now() + Duration::from_secs(5);
                 let cold = scope.spawn(|| text_system.resolve_font(&cached.clone().bold()));
-                while !platform_text_system.0.is_locked_exclusive() && Instant::now() < deadline {
+                while !platform_text_system.state().is_locked_exclusive()
+                    && Instant::now() < deadline
+                {
                     thread::yield_now();
                 }
-                let cold_waiting = platform_text_system.0.is_locked_exclusive();
+                let cold_waiting = platform_text_system.state().is_locked_exclusive();
                 let warm = scope.spawn(|| sender.send(text_system.resolve_font(&cached)));
                 let result =
                     receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()));
@@ -1468,7 +1623,7 @@ mod tests {
             &**first_layout,
             &**cached_layout
         ));
-        let loaded_font_count = platform_text_system.0.read().loaded_fonts.len();
+        let loaded_font_count = platform_text_system.state().read().loaded_fonts.len();
 
         text_system.add_fonts(vec![Cow::Borrowed(LILEX)])?;
 
@@ -1478,7 +1633,7 @@ mod tests {
             &**refreshed_layout
         ));
         assert_eq!(
-            platform_text_system.0.read().loaded_fonts.len(),
+            platform_text_system.state().read().loaded_fonts.len(),
             loaded_font_count
         );
         Ok(())
