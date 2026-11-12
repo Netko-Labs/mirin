@@ -549,7 +549,10 @@ describe("TextInput", () => {
     );
     await nextCommit();
     const tree = JSON.parse(transport.sent.at(-1) ?? "");
-    expect(tree.children.map((child: { props: { tabSize?: number } }) => child.props.tabSize)).toEqual([8, undefined, 3, 1]);
+    const sizes = tree.children.map(
+      (child: { props: { tabSize?: number } }) => child.props.tabSize,
+    );
+    expect(sizes).toEqual([8, undefined, 3, 1]);
     root.unmount();
   });
 

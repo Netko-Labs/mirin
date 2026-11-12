@@ -655,7 +655,8 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
   if (input.multiline && input.submitBehavior === "submit") props.submitOnEnter = true;
   if (input.multiline && input.tabBehavior === "insert") props.insertTab = true;
-  if (typeof input.tabSize === "number" && Number.isFinite(input.tabSize)) props.tabSize = Math.min(Math.max(Math.round(input.tabSize), 1), 64);
+  if (typeof input.tabSize === "number" && Number.isFinite(input.tabSize))
+    props.tabSize = Math.min(Math.max(Math.round(input.tabSize), 1), 64);
   if (input.onKeyPress) {
     props.onKey = true;
     handlers.key.set(id, input.onKeyPress);
