@@ -100,6 +100,7 @@ pub struct Retained {
     on_prepaint: Option<OnPrepaint>,
     movable: bool,
     skippable: bool,
+    stretchable: bool,
 }
 
 /// How a retained subtree was drawn this frame.
@@ -142,6 +143,7 @@ pub fn retained(
         on_prepaint: None,
         movable: false,
         skippable: false,
+        stretchable: false,
     }
 }
 
@@ -174,6 +176,17 @@ impl Retained {
     /// keys or focus is found and always drawn.
     pub fn skippable(mut self, skippable: bool) -> Self {
         self.skippable = skippable;
+        self
+    }
+
+    // mirin: port of the fork's `Retained::stretchable` (`docs/metal.md`, 5b,
+    // resize round 5).
+    /// Whether its root draws nothing from its own size (no fill, border,
+    /// shadow, clip or hitbox): resized with nothing below it changed (a row
+    /// stretched to a window's new width), its drawing is what it would
+    /// draw at the new size, and is kept.
+    pub fn stretchable(mut self, stretchable: bool) -> Self {
+        self.stretchable = stretchable;
         self
     }
 }
@@ -393,6 +406,7 @@ impl Element for Retained {
         let build = self.build.clone();
         let movable = self.movable;
         let skippable = self.skippable;
+        let stretchable = self.stretchable;
         let on_prepaint = self.on_prepaint.take();
         window.with_rendered_view(view, |window| {
             window.with_element_state::<RetainedState, _>(global_id, |state, window| {
@@ -414,6 +428,11 @@ impl Element for Retained {
                     skippable: skippable && !notified,
                     below_same,
                 };
+                // mirin: only its root was resized, and its root draws
+                // nothing from its size: the drawing is of this layout.
+                if stretchable && below_same && built.is_none() {
+                    state.drawn.borrow_mut().stretch(bounds.size, place, window);
+                }
                 let mut plan = match &built {
                     Some(_) => Plan::Redraw,
                     None => plan(&state.drawn.borrow(), bounds, &mask, place, allowed, window),

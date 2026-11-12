@@ -5952,7 +5952,12 @@ impl Window {
             .unwrap()
             .layout_bounds(layout_id, scale_factor)
             .map(Into::into);
-        let snapped_offset = self.pixel_snap_point(self.element_offset());
+        // mirin: halves away from zero, as the default build snaps a scroll
+        // view's offset (its `Window::painted_scroll`), so content scrolled by
+        // half a device pixel lands where it does there.
+        let snapped_offset = self
+            .element_offset()
+            .map(|offset| px((offset.0 * scale_factor).round() / scale_factor));
         bounds.origin += snapped_offset;
         // mirin: snapped on its own, a scroll view's offset inside a
         // retained subtree keeps its drawing where it is.

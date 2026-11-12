@@ -2083,6 +2083,18 @@ in the bounds tree (what a select or a keystroke still costs over the
 fork), and text boxes lay out a pixel taller than on the fork (upstream
 rounds a measured size up).
 
+Round 6 on upstream (`docs/metal/gpui-next.md`, "Round 6: layout as the
+default build's, and resize"): the upstream build now lays out as this one
+does (text at its line height's fraction, edges rounded as taffy 0.9 rounds
+them, scroll offsets halves away from zero): `layout-check` against host-r5
+gives the same bounds for every node of `grid`, `scroll` and
+`scroll-fractional` at every step, and of `browser` but the card example
+(taffy 0.9 makes that card 22 px shorter than its content, which then
+overflows its bottom padding; 0.15 holds it). A resize there costs 4.4–4.6 ms
+a frame (CPU 7.5), was 10.8–10.9 (CPU 14–15): taffy 0.15 answers a row at
+another width from its cache, and rows that draw nothing of their size keep
+their drawings (`Retained::stretchable`). host-r5: 2.0–2.4 ms.
+
 The upstream build's footprint after round 5 (`docs/metal/gpui-next.md`,
 "Round 5: a small app's footprint"): the counter's host 68 MB RSS, 32 MB
 of GPU memory, 16 threads and 40 ms to its first content frame, where

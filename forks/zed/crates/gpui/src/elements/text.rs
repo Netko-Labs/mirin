@@ -639,11 +639,14 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let line_height = window.pixel_snap(
-            text_style
-                .line_height
-                .to_pixels(font_size.into(), window.rem_size()),
-        );
+        // mirin: the line height as styled, not snapped to the device pixel:
+        // mirin's default build lays text out at its fraction (11 px text is
+        // 17.8 px a line, 9 px 14.56) and rounds edges only, so a text box
+        // is 14 or 15 px tall by where it sits, and Dashi's layouts are made
+        // against that. Lines are painted from it as they are there.
+        let line_height = text_style
+            .line_height
+            .to_pixels(font_size.into(), window.rem_size());
 
         let runs = if let Some(runs) = runs {
             runs

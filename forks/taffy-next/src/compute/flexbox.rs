@@ -430,6 +430,10 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
         constants.gap.set_main(constants.dir, new_gap);
     }
 
+    // mirin: whether what follows depends on the container's width (`compute_stretch_bound`).
+    let stretch_bound = compute_stretch_bound(tree, node, &flex_lines, &constants);
+    tree.set_stretch_bound(node, stretch_bound);
+
     // If only the container's main size has been requested then we are done, as nothing below changes it. This
     // avoids measuring the cross size of every item.
     if run_mode == RunMode::ComputeSize {
@@ -593,6 +597,112 @@ fn resolve_normal_alignment(alignment: AlignItems) -> AlignItems {
         AlignItemsKeyword::Normal => AlignItems::STRETCH,
         _ => alignment,
     }
+}
+
+/// mirin: the width above which this layout of `node` holds at any width,
+/// but for the width itself (`Cache::get_stretched`), or `None` when it may
+/// depend on it. That is a row on one line, left to right, whose items keep
+/// their place from its start, none of which grows, and nothing of which is
+/// sized from its width: no percentage, calc or sizing keyword (`stretch`,
+/// `fit-content`, ...) in its own box or its items', no auto margin, no
+/// absolutely positioned child, and no item that would hand the row an
+/// out-of-flow box to place (one that is not a containing block and has
+/// children).
+///
+/// - At a known width the items are laid out as they would be at any other
+///   while their hypothetical outer sizes and gaps fit with room to spare:
+///   the flex grow factor is used (none of them grows, so each keeps its
+///   hypothetical size, which its width does not enter: a content-based
+///   basis is measured under max-content), and they are placed one after
+///   the other from the start. Their cross sizes and the line's follow from
+///   their main sizes. The bound is that sum, with the row's padding and
+///   border.
+/// - Under a definite available width (none known), the row's own width is
+///   its content's (`determine_container_main_size`, one line), and the
+///   rest as above.
+///
+/// Port of `../taffy`'s (0.9), with what 0.15 added: direction, sizing
+/// keywords, out-of-flow boxes bubbled to a containing block.
+fn compute_stretch_bound(
+    tree: &impl LayoutFlexboxContainer,
+    node: NodeId,
+    flex_lines: &[FlexLine],
+    constants: &AlgoConstants,
+) -> Option<f32> {
+    let [line] = flex_lines else {
+        return None;
+    };
+    if constants.dir != FlexDirection::Row || constants.is_wrap || constants.layout_direction.is_rtl() {
+        return None;
+    }
+    if !matches!(constants.justify_content.keyword, AlignContentKeyword::Start | AlignContentKeyword::FlexStart) {
+        return None;
+    }
+    let style = tree.get_flexbox_container_style(node);
+    let visible = style.overflow() == Point { x: Overflow::Visible, y: Overflow::Visible };
+    let gap = style.gap();
+    let container_fixed = !sized_from_width_size(style.size().map(Dimension::into_raw))
+        && !sized_from_width_size(style.min_size().map(LengthPercentageAuto::into_raw))
+        && !sized_from_width_size(style.max_size().map(LengthPercentageAuto::into_raw))
+        && !sized_from_width_rect(style.margin().map(LengthPercentageAuto::into_raw))
+        && !sized_from_width_rect(style.padding().map(|value| value.into_raw()))
+        && !sized_from_width_rect(style.border().map(|value| value.into_raw()))
+        && !sized_from_width(gap.width.into_raw())
+        && !sized_from_width(gap.height.into_raw());
+    if !visible || style.aspect_ratio().is_some() || !container_fixed {
+        return None;
+    }
+    drop(style);
+    for index in 0..tree.child_count(node) {
+        let child_id = tree.get_child_id(node, index);
+        let child = tree.get_flexbox_child_style(child_id);
+        if child.box_generation_mode() == BoxGenerationMode::None {
+            continue;
+        }
+        match child.position() {
+            Position::Absolute | Position::Fixed => return None,
+            Position::Static if tree.child_count(child_id) > 0 => return None,
+            _ => {}
+        }
+    }
+    for item in line.items.iter() {
+        let auto_margin =
+            item.margin_is_auto.left || item.margin_is_auto.right || item.margin_is_auto.top || item.margin_is_auto.bottom;
+        if item.flex_grow != 0.0 || auto_margin {
+            return None;
+        }
+        let style = tree.get_flexbox_child_style(item.node);
+        let fixed = !sized_from_width(style.flex_basis().into_raw())
+            && !sized_from_width_size(style.size().map(Dimension::into_raw))
+            && !sized_from_width_size(style.min_size().map(LengthPercentageAuto::into_raw))
+            && !sized_from_width_size(style.max_size().map(LengthPercentageAuto::into_raw))
+            && !sized_from_width_rect(style.margin().map(LengthPercentageAuto::into_raw))
+            && !sized_from_width_rect(style.padding().map(|value| value.into_raw()))
+            && !sized_from_width_rect(style.border().map(|value| value.into_raw()))
+            && !sized_from_width_rect(style.inset().map(LengthPercentageAuto::into_raw));
+        if !fixed {
+            return None;
+        }
+    }
+    let gaps = sum_axis_gaps(constants.gap.main(constants.dir), line.items.len());
+    let items: f32 = line.items.iter().map(|item| item.hypothetical_outer_size.main(constants.dir)).sum();
+    Some(gaps + items + constants.content_box_inset.main_axis_sum(constants.dir))
+}
+
+/// mirin: whether a length depends on a size around it: a percentage, calc
+/// or sizing keyword (`stretch` and `fit-content` take the space there is).
+fn sized_from_width(length: crate::style::CompactLength) -> bool {
+    length.uses_percentage() || length.is_sizing_keyword()
+}
+
+/// mirin: whether either of a size's dimensions does (`sized_from_width`).
+fn sized_from_width_size(size: Size<crate::style::CompactLength>) -> bool {
+    sized_from_width(size.width) || sized_from_width(size.height)
+}
+
+/// mirin: whether any of four edges does (`sized_from_width`).
+fn sized_from_width_rect(rect: Rect<crate::style::CompactLength>) -> bool {
+    sized_from_width(rect.left) || sized_from_width(rect.right) || sized_from_width(rect.top) || sized_from_width(rect.bottom)
 }
 
 /// Compute constants that can be reused during the flexbox algorithm.
