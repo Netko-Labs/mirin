@@ -2001,6 +2001,17 @@ nothing of shows is drawn again (moves, skips, parked drawings and building
 onto kept nodes are the next steps), and text boxes lay out a pixel taller
 than on the fork (upstream rounds a measured size up).
 
+The upstream build's footprint after round 5 (`docs/metal/gpui-next.md`,
+"Round 5: a small app's footprint"): the counter's host 68 MB RSS, 32 MB
+of GPU memory, 16 threads and 40 ms to its first content frame, where
+host-r4 takes 58 MB, 14 MB, 15 and 34 ms (upstream as imported: 104 MB, 52
+MB, 45 and ~95 ms); the example browser 74 MB and 47 MB of GPU memory
+(host-r4: 65 and 29); the stress bench 230 MB idle (was 266). Open there:
+the larger binary (+6 MB mapped), 2.5 MB more live heap, wgpu's 4 MiB
+memory blocks and upstream's BGRA glyph atlas (+18 MB of GPU memory), and
+GPUI's own accessibility adapter running beside mirin's (+2 MB and a
+thread; keeping mirin's tree is recommended there).
+
 Open: React work per update (the demo re-renders its whole list on select);
 at a scale factor that is not a multiple of 1/8 (1.1, 1.2) what sits a
 logical distance from its box other than a border's bands and a shadow

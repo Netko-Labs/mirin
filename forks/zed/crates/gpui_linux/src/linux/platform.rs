@@ -108,6 +108,10 @@ pub(crate) struct LinuxCommon {
     power_mode: PowerMode,
     #[cfg(any(feature = "wayland", feature = "x11"))]
     power_mode_listener: Option<Task<()>>,
+    /// mirin: the one connection to the system bus that the sleep and the
+    /// power-mode listeners share (`system_bus`).
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    system_bus: Option<SystemBus>,
     /// Runs after each foreground runnable registered by [`LinuxCommon::register_sources`].
     ///
     /// X11 uses this to handle events that a runnable's requests read into xcb's queue, where
@@ -126,8 +130,10 @@ impl LinuxCommon {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
         let (power_sender, power_receiver) = calloop::channel::channel();
 
+        let started = std::time::Instant::now(); // mirin: a startup milestone
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
+        log::info!(target: "mirin::startup", "text system created in {:.1}ms", started.elapsed().as_secs_f64() * 1000.0); // mirin:
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
         let text_system = Arc::new(gpui::NoopTextSystem::new());
 
@@ -155,6 +161,8 @@ impl LinuxCommon {
             power_mode: PowerMode::Unknown,
             #[cfg(any(feature = "wayland", feature = "x11"))]
             power_mode_listener: None,
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            system_bus: None, // mirin:
             after_runnable: None,
         };
 
@@ -163,19 +171,52 @@ impl LinuxCommon {
 
     pub(crate) fn start_power_listener(&mut self) {
         if !self.power_listener_started {
+            // mirin: on the background executor and the shared system bus
+            // connection (`system_bus`); upstream's `smol::spawn` started
+            // smol's global executor thread for it, and its own connection
+            // (with its own zbus thread) beside the power-mode listener's.
             #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
-            smol::spawn({
+            {
+                let system_bus = self.system_bus();
                 let power_sender = self.power_sender.clone();
-                async move {
-                    if let Err(error) = listen_for_system_power_events(power_sender).await {
-                        log::debug!("failed to listen for system sleep/wake events: {error:?}");
-                    }
-                }
-            })
-            .detach();
+                self.background_executor
+                    .spawn(async move {
+                        let Some(connection) = system_bus.await else {
+                            return;
+                        };
+                        if let Err(error) =
+                            listen_for_system_power_events(&connection, power_sender).await
+                        {
+                            log::debug!("failed to listen for system sleep/wake events: {error:?}");
+                        }
+                    })
+                    .detach();
+            }
 
             self.power_listener_started = true;
         }
+    }
+
+    /// mirin: a connection to the system bus, made once and shared by the
+    /// listeners that need one: each connection has a zbus thread, its
+    /// socket and buffers (~0.6 MB of a small app's memory).
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn system_bus(&mut self) -> SystemBus {
+        use futures::FutureExt as _;
+        self.system_bus
+            .get_or_insert_with(|| {
+                async {
+                    ashpd::zbus::Connection::system()
+                        .await
+                        .map_err(|error| {
+                            log::debug!("failed to connect to the system bus: {error:?}")
+                        })
+                        .ok()
+                }
+                .boxed()
+                .shared()
+            })
+            .clone()
     }
 
     /// Registers the foreground executor and power listener on a loop shared with display clients.
@@ -258,13 +299,13 @@ impl LinuxCommon {
 
 #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
 async fn listen_for_system_power_events(
+    connection: &ashpd::zbus::Connection, // mirin: shared (`LinuxCommon::system_bus`)
     power_sender: Sender<SystemPowerEvent>,
 ) -> anyhow::Result<()> {
     use futures::StreamExt as _;
 
-    let connection = ashpd::zbus::Connection::system().await?;
     let proxy = ashpd::zbus::Proxy::new(
-        &connection,
+        connection,
         "org.freedesktop.login1",
         "/org/freedesktop/login1",
         "org.freedesktop.login1.Manager",
@@ -283,6 +324,12 @@ async fn listen_for_system_power_events(
 
     Ok(())
 }
+
+/// mirin: the shared connection to the system bus, once made (None if it
+/// could not be).
+#[cfg(any(feature = "wayland", feature = "x11"))]
+type SystemBus =
+    futures::future::Shared<futures::future::BoxFuture<'static, Option<ashpd::zbus::Connection>>>;
 
 /// GPUI's platform for Linux and FreeBSD.
 ///
@@ -614,9 +661,12 @@ impl Platform for LinuxPlatform {
             #[cfg(any(feature = "wayland", feature = "x11"))]
             if common.power_mode_listener.is_none() {
                 let sender = common.power_sender.clone();
+                let system_bus = common.system_bus(); // mirin: shared
                 common.power_mode_listener = Some(common.background_executor.spawn(async move {
                     let result = async {
-                        let connection = ashpd::zbus::Connection::system().await?;
+                        let connection = system_bus
+                            .await
+                            .ok_or_else(|| anyhow!("no connection to the system bus"))?;
                         crate::linux::power::monitor_power_mode(&connection, |mode| {
                             sender.send(SystemPowerEvent::ModeChanged(mode))?;
                             Ok(())
