@@ -146,3 +146,86 @@ fn a_line_cut_twice_keeps_its_runs_whole(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// Two texts side by side in a 200 px row, each one line; `kept` wraps each
+/// in a box that keeps its content's width (`flexShrink: 0`). What is drawn.
+fn side_by_side(
+    cx: &mut gpui::VisualTestContext,
+    first: &'static str,
+    second: &'static str,
+    kept: bool,
+) -> (String, String) {
+    let (first, second) = (StyledText::new(first), StyledText::new(second));
+    let layouts = (first.layout().clone(), second.layout().clone());
+    cx.draw(
+        point(px(0.0), px(0.0)),
+        size(
+            AvailableSpace::Definite(px(200.0)),
+            AvailableSpace::Definite(px(40.0)),
+        ),
+        move |_, _| {
+            let line = |text: StyledText| {
+                let line = one_line(div()).child(text);
+                if kept {
+                    div().flex_shrink_0().child(line).into_any_element()
+                } else {
+                    line.into_any_element()
+                }
+            };
+            div()
+                .flex()
+                .flex_row()
+                .w(px(200.0))
+                .child(line(first))
+                .child(line(second))
+        },
+    );
+    (layouts.0.text().to_string(), layouts.1.text().to_string())
+}
+
+#[gpui::test]
+fn two_one_line_texts_in_a_row_each_take_half_of_it_whatever_their_words(cx: &mut TestAppContext) {
+    // Why Dashi's voice chip drew "can r…" beside a short line with room to
+    // spare: a one-line text is as wide as its box (`one_line`), so two in a
+    // row each ask for the whole row and are squeezed to half of it. Nothing
+    // is remembered from the words before.
+    let cx = cx.add_empty_window();
+    let (first, second) = side_by_side(cx, "Dashi can read your", "mail", false);
+    assert!(first.ends_with('…'), "drawn {first:?}");
+    assert_eq!(second, "mail");
+    // Each in a box that keeps its own width: both whole, in the same row.
+    let (first, second) = side_by_side(cx, "Dashi can read your", "mail", true);
+    assert_eq!(
+        (first.as_str(), second.as_str()),
+        ("Dashi can read your", "mail")
+    );
+}
+
+#[gpui::test]
+fn a_text_whose_words_change_is_measured_again_at_their_width(cx: &mut TestAppContext) {
+    // The same place in the same window, frame after frame, with other words:
+    // each frame's text is as wide as its own words, never the last frame's.
+    let cx = cx.add_empty_window();
+    let mut widths = Vec::new();
+    for words in ["can", "can read your mail", "can read"] {
+        let text = StyledText::new(words);
+        let layout = text.layout().clone();
+        cx.draw(
+            point(px(0.0), px(0.0)),
+            size(
+                AvailableSpace::Definite(px(400.0)),
+                AvailableSpace::Definite(px(40.0)),
+            ),
+            move |_, _| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .w(px(400.0))
+                    .child(div().flex_shrink_0().child(one_line(div()).child(text)))
+            },
+        );
+        assert_eq!(layout.text(), words);
+        widths.push(layout.bounds().size.width);
+    }
+    assert!(widths[1] > widths[2] && widths[2] > widths[0], "{widths:?}");
+}

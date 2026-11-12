@@ -334,7 +334,11 @@ Native-style props: `<View style>` (`flex`, `alignItems` (with `"baseline"`: a r
 up by their first line of text, so small text beside larger text shares its baseline; GPUI's
 text names its first baseline to mirin's taffy fork, `set_first_baseline`), `justifyContent`,
 `overflow: "scroll" | "hidden"`, `hoverBackgroundColor`, …), `<Text
-numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
+numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>` (a one-line text is as wide
+as its box and cut with an ellipsis, so two of them side by side in a row each ask for the whole
+row and get half of it, whatever their words: put each in a `<View style={{ flexShrink: 0 }}>` to
+keep its own width, or give one `flex: 1`; nothing is kept from a text's earlier words, each
+frame measures the words it has: `render::one_line_tests`),
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
 (`onKeyPress` reports Escape, and ArrowUp and ArrowDown in a single-line field,
 for list navigation), React Native's `selection` (`{ start, end }`, controlled),
