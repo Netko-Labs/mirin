@@ -251,7 +251,9 @@ fn drawn_in_box_of(cx: &mut TestAppContext, text: &'static str, width: f32) -> (
         },
     );
     let drawn = layout.text().to_string();
-    let wide = layout.line_layout_for_index(0).map_or(0.0, |line| f32::from(line.width()));
+    let wide = layout
+        .line_layout_for_index(0)
+        .map_or(0.0, |line| f32::from(line.width()));
     (drawn, wide)
 }
 
