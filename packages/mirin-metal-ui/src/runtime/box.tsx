@@ -19,7 +19,6 @@ import {
 import {
   Children,
   cloneElement,
-  createElement,
   Fragment,
   isValidElement,
   type ReactElement,
@@ -28,6 +27,7 @@ import {
   useContext,
   useMemo,
 } from "react";
+import { jsx as reactJsx } from "react/jsx-runtime";
 import { cn } from "../lib/cn.ts";
 import { useStyleTheme } from "../theme.ts";
 import { styleFor, type TwStyle } from "../tw/index.ts";
@@ -223,11 +223,18 @@ function pickInherited(text: TextStyle): TextStyle {
  * The host elements `<View>` and `<Text>` render (`@mirinjs/metal`'s own
  * components are one function each that makes them). A box makes them
  * itself: each HTML element is then the box and its view, not a third
- * fiber between them. Made with React's `createElement`: this package's
- * JSX runtime would take a string type for an HTML tag.
+ * fiber between them. Made with React's own `jsx`, which keeps the props
+ * object it is given (`createElement` copies it), not this package's JSX
+ * runtime, which would take a string type for an HTML tag.
  */
 const VIEW = (View({}) as ReactElement).type;
 const TEXT = (Text({}) as ReactElement).type;
+/** Type-only cast: React's `jsx` types its element type as a DOM tag or a component. */
+const hostElement = reactJsx as unknown as (
+  type: unknown,
+  props: object,
+  key?: string,
+) => ReactElement;
 
 /** A run of text in the style `inherited` hands down, as the host text it is. */
 function textRun(
@@ -237,14 +244,14 @@ function textRun(
   key: string | undefined,
   style?: TextStyle,
 ): ReactElement {
-  return createElement(
+  return hostElement(
     TEXT,
     {
-      key,
       numberOfLines: truncate ? 1 : undefined,
       style: { ...inherited.text, ...style },
+      children: transformText(text, inherited.transform),
     },
-    transformText(text, inherited.transform),
+    key,
   );
 }
 
@@ -308,15 +315,23 @@ function renderChildren(
     const position = POSITIONS[(index === 0 ? 0 : 2) + (index === last ? 0 : 1)] as SiblingPosition;
     if (list && tagOf(item) === "li") {
       const marker = list === "disc" ? "•" : `${index + 1}.`;
-      return createElement(
+      return hostElement(
         VIEW,
-        { key: `li${index}`, style: { flexDirection: "row", gap: 8, alignItems: "flex-start" } },
-        textRun(marker, inherited, undefined, undefined),
-        createElement(
-          VIEW,
-          { style: { flex: 1, flexDirection: "column" } },
-          placed(item, position, inherited),
-        ),
+        {
+          style: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
+          children: [
+            textRun(marker, inherited, undefined, "marker"),
+            hostElement(
+              VIEW,
+              {
+                style: { flex: 1, flexDirection: "column" },
+                children: placed(item, position, inherited),
+              },
+              "item",
+            ),
+          ],
+        },
+        `li${index}`,
       );
     }
     return placed(item, position, inherited);
@@ -526,60 +541,57 @@ export function Box(props: BoxProps): ReactNode {
     ? [textRun(items.map(String).join(""), handed, tw.truncate, "text")]
     : renderChildren(items, tw, listStyle, handed);
 
-  const element: ReactElement = createElement(
-    VIEW,
-    {
-      ref: tag === "form" ? undefined : ref,
-      textStyle: nextInherited.text,
-      testID:
-        testID ??
-        (typeof props["data-testid"] === "string" ? props["data-testid"] : undefined) ??
-        (typeof props["data-slot"] === "string" ? props["data-slot"] : undefined),
-      occlude,
-      dragRegion: dragRegion ?? (props["data-drag-region"] === true || undefined),
-      onLayout,
-      style: { ...view, ...viewStyle },
-      onPress: pressable
-        ? ({ bounds }: PressInfo) => {
-            const event = syntheticEvent("click", { bounds });
-            onMouseDown?.(event);
-            onClick?.(event);
-            if (!event.defaultPrevented && formAction) {
-              const target = resolveForm(form, props.form);
-              if (formAction === "reset") target?.reset();
-              else target?.submit();
-            }
-            if (!event.defaultPrevented && tag === "a" && href && !onClick) openExternal(href);
+  const element: ReactElement = hostElement(VIEW, {
+    ref: tag === "form" ? undefined : ref,
+    textStyle: nextInherited.text,
+    testID:
+      testID ??
+      (typeof props["data-testid"] === "string" ? props["data-testid"] : undefined) ??
+      (typeof props["data-slot"] === "string" ? props["data-slot"] : undefined),
+    occlude,
+    dragRegion: dragRegion ?? (props["data-drag-region"] === true || undefined),
+    onLayout,
+    style: { ...view, ...viewStyle },
+    onPress: pressable
+      ? ({ bounds }: PressInfo) => {
+          const event = syntheticEvent("click", { bounds });
+          onMouseDown?.(event);
+          onClick?.(event);
+          if (!event.defaultPrevented && formAction) {
+            const target = resolveForm(form, props.form);
+            if (formAction === "reset") target?.reset();
+            else target?.submit();
+          }
+          if (!event.defaultPrevented && tag === "a" && href && !onClick) openExternal(href);
+        }
+      : undefined,
+    onHoverChange:
+      interactive && (onMouseEnter || onMouseLeave)
+        ? (hovered: boolean, bounds?: Bounds) => {
+            const event = syntheticEvent(hovered ? "mouseenter" : "mouseleave", { bounds });
+            (hovered ? onMouseEnter : onMouseLeave)?.(event);
           }
         : undefined,
-      onHoverChange:
-        interactive && (onMouseEnter || onMouseLeave)
-          ? (hovered: boolean, bounds?: Bounds) => {
-              const event = syntheticEvent(hovered ? "mouseenter" : "mouseleave", { bounds });
-              (hovered ? onMouseEnter : onMouseLeave)?.(event);
-            }
-          : undefined,
-      onContextMenu:
-        interactive && onContextMenu
-          ? ({ x, y }: { x: number; y: number }) =>
-              onContextMenu(syntheticEvent("contextmenu", { x, y }))
-          : undefined,
-      onPointer:
-        interactive && (onPointerDown || onPointerMove || onPointerUp)
-          ? (info: PointerInfo) => {
-              const event = syntheticEvent(`pointer${info.phase}`, {
-                x: info.x,
-                y: info.y,
-                bounds: info.bounds,
-              });
-              if (info.phase === "down") onPointerDown?.(event);
-              else if (info.phase === "move") onPointerMove?.(event);
-              else onPointerUp?.(event);
-            }
-          : undefined,
-    } satisfies ViewProps,
-    body,
-  );
+    onContextMenu:
+      interactive && onContextMenu
+        ? ({ x, y }: { x: number; y: number }) =>
+            onContextMenu(syntheticEvent("contextmenu", { x, y }))
+        : undefined,
+    onPointer:
+      interactive && (onPointerDown || onPointerMove || onPointerUp)
+        ? (info: PointerInfo) => {
+            const event = syntheticEvent(`pointer${info.phase}`, {
+              x: info.x,
+              y: info.y,
+              bounds: info.bounds,
+            });
+            if (info.phase === "down") onPointerDown?.(event);
+            else if (info.phase === "move") onPointerMove?.(event);
+            else onPointerUp?.(event);
+          }
+        : undefined,
+    children: body,
+  } satisfies ViewProps);
 
   let wrapped: ReactNode = element;
   if (tag === "form") {

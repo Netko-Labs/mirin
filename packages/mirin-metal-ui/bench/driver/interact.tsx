@@ -6,6 +6,7 @@
  */
 
 import type { NativeEvent } from "@mirinjs/metal";
+import { openInstructionCounter } from "../../../mirin-metal/bench/lib/instructions.ts";
 import { attribute, attributionTable, profiled } from "../../../mirin-metal/bench/lib/profile.ts";
 import { openBrowser, type Session } from "./session.tsx";
 
@@ -17,6 +18,8 @@ interface Sample {
   /** Event in → last line sent (effects, the example's import, later commits). */
   lastMs: number;
   cpuMs: number;
+  /** Millions of main-thread instructions, event in → next free turn (steady where times are not). */
+  minstr: number;
   sends: number;
   bytes: number;
 }
@@ -60,6 +63,8 @@ const INTERACTIONS: Interaction[] = [
   },
 ];
 
+const counter = openInstructionCounter();
+
 const cpuNow = (): number => {
   const usage = process.cpuUsage();
   return (usage.user + usage.system) / 1000;
@@ -71,18 +76,21 @@ async function measure(session: Session, interaction: Interaction, index: number
   const sends = host.sends;
   const bytes = host.bytes;
   const cpu = cpuNow();
+  const instructions = counter?.read() ?? 0;
   const from = Bun.nanoseconds();
   host.emit(event);
   const syncMs = (Bun.nanoseconds() - from) / 1e6;
   // React's own task was queued by the event, so it runs before this one.
   await new Promise((done) => setImmediate(done));
   const turnMs = (Bun.nanoseconds() - from) / 1e6;
+  const minstr = ((counter?.read() ?? 0) - instructions) / 1e6;
   await session.settle();
   return {
     syncMs,
     turnMs,
     lastMs: host.sends > sends ? (host.lastSendAt - from) / 1e6 : 0,
     cpuMs: cpuNow() - cpu,
+    minstr,
     sends: host.sends - sends,
     bytes: host.bytes - bytes,
   };
@@ -108,13 +116,14 @@ export async function interact(rounds: number, withProfile: boolean, json: boole
       turnMs: median(samples.map((sample) => sample.turnMs)),
       lastMs: median(samples.map((sample) => sample.lastMs)),
       cpuMs: median(samples.map((sample) => sample.cpuMs)),
+      minstr: median(samples.map((sample) => sample.minstr)),
       sends: median(samples.map((sample) => sample.sends)),
       kb: median(samples.map((sample) => sample.bytes)) / 1024,
     };
     report[interaction.name] = row;
     if (!json) {
       console.log(
-        `${interaction.name}\n  event → own commit sent ${row.syncMs.toFixed(2)} ms, → next free turn ${row.turnMs.toFixed(2)} ms, → last line sent ${row.lastMs.toFixed(2)} ms, process CPU ${row.cpuMs.toFixed(2)} ms, ${row.sends} lines, ${row.kb.toFixed(1)} KB`,
+        `${interaction.name}\n  event → own commit sent ${row.syncMs.toFixed(2)} ms, → next free turn ${row.turnMs.toFixed(2)} ms, → last line sent ${row.lastMs.toFixed(2)} ms, process CPU ${row.cpuMs.toFixed(2)} ms, ${row.minstr.toFixed(1)} M instructions, ${row.sends} lines, ${row.kb.toFixed(1)} KB`,
       );
     }
     await interaction.after?.(session);

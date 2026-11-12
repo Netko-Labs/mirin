@@ -475,7 +475,16 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   but equal `style` objects sends nothing), and `lib/tree-sync.ts` turns the
   log into ops after the commit: a new subtree goes whole in its insert, a
   node already sent is moved, and a set goes only when the node's head (its
-  JSON without children) differs from what was sent. Events find their
+  JSON without children) differs from what was sent. A view whose children
+  React moved more than twice in one commit is sent its new order instead
+  of React's moves (React places every row between two it swaps): the log
+  keeps each view's children as they were before the commit first changed
+  them, the children on a longest run of that order stay (of the longest,
+  the one that ends first), the ones after the last that stays go to the
+  end in order (`move`/`insert` without `before`), and each other one goes
+  before the child that follows it now, last to first (`lib/order.ts`). A
+  swap of two rows is two moves, a row moved to the front one, a reversed
+  list what React sends. Events find their
   handler on the node's current props by id, so a handler that changed
   needs nothing sent. `root.lastTree()` is the whole tree as the host now
   has it, and `root.nodeId(testID)` the last node in document order with
@@ -1535,6 +1544,139 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
     patch. What the app re-renders is the app's: memoized cards make it a
     card's worth.
 
+- **The driver per update (2026-11-11, round 5).** What a commit costs the
+  driver now that the host is cheap, on the same Ryzen laptop, against
+  `metal-forks` at `9d618af`, interleaved. The machine was shared with
+  three other lanes' builds and benches, which stretched wall times two-
+  to threefold from one run to the next, so the stand-in benches now also
+  count the main thread's instructions (`bench/lib/instructions.ts`: the
+  CPU's own counter through `perf_event_open`, user space only; the same
+  work counts within 1–2% across runs, where its time does not). The
+  stress bench's app is in `bench/lib/dashboard.tsx`, and
+  `bench/driver.tsx --stress` times it on the stand-in: typing, growing
+  the banner and selecting a card, as written (an app that memoizes
+  nothing: a character re-renders all 2,500 cards) and with its cards
+  memoized (`--memo` on the real host's `bench/stress.tsx`), the floor
+  for the same app.
+
+  | stress dashboard on the stand-in, production React | before | after |
+  | --- | --- | --- |
+  | type a character, as written: M instructions / ms | 61.8 / 9.6 | 52.0 / 8.3 |
+  | grow the banner, as written: M instructions / ms | 60.6 / 9.3 | 51.9 / 8.2 |
+  | type, cards memoized (the floor): M instructions / ms | 6.1 / 0.3–0.5 | 5.7 / 0.3–0.6 |
+  | the same, React as the bench starts it (no `NODE_ENV`): type / grow ms | 10.2 / 10.2 | 9.2 / 8.9 |
+
+  | real host (`ref/host-r4`), `bench/stress.tsx`, runs whose frames show a quiet machine | before | after |
+  | --- | --- | --- |
+  | `driver`, type / grow (ms, whole ms) | 12–13 / 13–14 | 12–13 / 12–13 |
+  | `driver`, cards memoized (`--memo`), type / grow | 2 / 3 | 2 / 3 |
+
+  The real host's `driver` column (whole milliseconds, from the simulated
+  action through the host and back) doesn't resolve the 1 ms the stand-in
+  shows, and runs on a loaded machine read 17–35 ms on either side;
+  three of eight were. What it does show: of the 12–13 ms, about 10 is
+  this app re-rendering 2,500 cards it doesn't memoize, and memoized the
+  same update is 2–3 ms, most of it the trip through the host.
+
+  | list bench (2,500 memoized rows), stand-in: M instructions | before | after |
+  | --- | --- | --- |
+  | swap two rows | 114.6 | 112.1 |
+  | reverse the rows | 104–107 | 108.7 |
+  | shuffle the rows | 54.1 | 56.7 |
+  | change every row's text | 41.3 | 33.1 |
+  | append, insert or remove one row | 6.8–9.3 | 6.9–9.3 |
+
+  | the same list on the real host: KB sent / host's `patch applied` | before | after |
+  | --- | --- | --- |
+  | swap two rows | 140 KB / 26.6 ms | 0.1 KB / 2.1 ms |
+  | last row first | 102 KB / 11.6 ms | 0.1 KB / 2.1 ms |
+  | reverse the rows (the same lines; that run's frames were 30% slower too) | 102 KB / 14.5–15.0 ms | 102 KB / 16.8 ms |
+
+  | example browser, stand-in (`metal-ui` `bench/driver.tsx`): M instructions | before | after |
+  | --- | --- | --- |
+  | switch example (badge ↔ button) | 17.9 | 16.2 |
+  | switch example (card ↔ table) | 23.9 | 21.8 |
+  | type a character in the search field | 5.36 | 4.85 |
+  | toggle the theme | 26.3 | 24.0 |
+  | heap objects after the start / after 200 interactions | 73,450 / 83,260 | 71,640 / 81,025 |
+  | start: the first tree's render and send, wall / CPU (one quiet run each) | 27 / 70 ms | 22 / 61 ms |
+
+  What changed:
+
+  - *Host components hand their props on.* `View`, `Text`, `TextInput`,
+    `ScrollView`, `Svg` and `Image` made their host element with
+    `createElement`, which copies the props into a new object; they now
+    use React's `jsx`, which keeps the object the app wrote (React
+    compares and the host instance holds that one). Metal-ui's box makes
+    its host view, its text runs and its list items the same way. The
+    components are still the same functions, called the same way.
+  - *A `<Text>`'s one string is its own.* `shouldSetTextContent` is true
+    for a `<Text>` whose children are one string or number: React makes no
+    fiber and no instance for it, and the text node reads it from its
+    props (`ownText`, `lib/instances.ts`); several strings (`#{index}`)
+    are nodes as before. The string still takes the id its node took, so
+    every id, and the wire, stay what they were.
+  - *`sameProps` walks the new props alone.* A host instance keeps how
+    many keys its props and its `style` had when last compared, so the
+    next compare of a re-rendered node (new props, new style, the same
+    keys) walks only the new objects. A style object kept across renders
+    compares by identity and is counted again when it is not.
+  - *A reorder is sent in the fewest moves* (section 2, "Driver side"): a
+    swap of two rows 2,480 apart was 2,480 moves (React places every row
+    between them), 145 KB the host parsed and applied one move at a time;
+    it is two. A row moved from last to first: one move where React sends
+    2,499. A reversed list sends what React sent.
+
+  The wire: the example browser's recorded session (826 lines) is
+  identical to the byte before and after; the list bench's record differs
+  in two of 33 lines (the swap, 16 KB → 125 B; the shuffle, 15.4 → 15.1
+  KB), and the host's tree after every line is identical (applied by a
+  model of `patch/`). `bench/layout-check.tsx --scene` on `ref/host-r4`,
+  recorded with the driver before and after: every node's bounds and every
+  frame's scene digest are identical for `grid`, `browser`, `scroll` and
+  `scroll-fractional` (a first `scroll` recording heard four hovers
+  before its first step, a pointer crossing the nested compositor's
+  window; again, it was identical), and the stress bench with
+  `MIRIN_METAL_ACCESS_CHECK=1` reports nothing. With the real host
+  (`bench/native.tsx`), a press to the last patch sent is 6 ms before and
+  after (whole milliseconds), 4.3 KB a click.
+
+  Evaluated, not landed:
+
+  - *`View` and `Text` as host types.* Exporting the host type names
+    themselves (`View` the string `"mirin-view"`, typed for JSX) takes
+    the wrapper fiber off every host element: the stress dashboard's
+    re-render 61.8 → 45.3 M instructions (−27%, against −16% landed).
+    `View` would no longer be a function (`View(props)` throws; metal-ui's
+    box reads the host type that way), so it changes the package's
+    public surface: the owner's call.
+  - *A leaf element kept across renders.* `View`/`Text` returning their
+    last element when their props say the same (handlers identical, style
+    shallowly equal, text children equal), so React skips the host node:
+    a further 6% on the stress re-render, but a ref hook in every `View`
+    (3% more on a list whose rows change), and a `View` called as a plain
+    function outside a render throws.
+  - *The `has-*` registry without `useId`*, its context read once per box:
+    nothing measurable on the example browser.
+  - *Children flattened once in a box.* `Children.toArray` clones every
+    child element and `placed` clones a box child again; computing
+    `toArray`'s keys without the first clone is about 5% of an
+    interaction (the profile's `mapIntoArray` and clone), and has to match
+    React's key scheme exactly to keep every instance.
+
+  What is the app's and what is React's: the stress dashboard as written
+  re-renders 2,500 cards (about 32,000 fibers) per character; of the main
+  thread's sampled time React's render and commit walks are 60–65%, the
+  cards' own render 12%, and the host config's look at each of the 12,500
+  re-rendered host nodes (`commitUpdate`, `sameProps`) the rest. With its
+  cards memoized the same update is
+  5.7 M instructions and 0.3–0.5 ms. A swap is now two moves on the
+  wire, but React's commit still places the 2,481 fibers between
+  (`getHostSibling` walks the placed siblings after each: quadratic,
+  ~110 M instructions and 7–9 ms on the stand-in); the host's apply of a
+  single move is ~2 ms on the stress-sized list (a cost per patch in
+  `patch/apply.rs`, not per op).
+
 - Scrolling between pixels, other scale factors, rows that come back
   (2026-11-11; release host, `bench/stress.tsx`, medians of two runs each
   of the host before (`moved and unseen` above, built with only
@@ -1880,11 +2022,14 @@ accessibility on but nothing reading it still pays for once. For the
 driver ("The driver at rest, its start, its fibers" above has what round 4
 closed): an app that imports a path it makes at run time (the example
 browser) is not bundled; `mirin-metal run` is a second Bun start (~5 ms);
-React's own commit is now the larger half of an update (a stress-sized
-re-render is 65% React, 22% `sameProps` on each host node it re-rendered);
-a keyed swap is still React's 2,480 moves; and Bun's thread pool (seven
-threads after a start from sources) and JavaScriptCore's warm-up thread
-remain, idle.
+React's own render and commit are most of an update (a stress-sized
+re-render is 60–65% React; round 5, "The driver per update", took 16% of
+its instructions off and has what is left: the wrapper fiber under every `View` and
+`Text`, which only exporting them as host types removes, an owner's call);
+a keyed swap is two moves on the wire, but React's commit still places
+every row between (quadratic `getHostSibling`); and Bun's thread pool
+(seven threads after a start from sources) and JavaScriptCore's warm-up
+thread remain, idle.
 
 ### Footprint: what one small app costs
 

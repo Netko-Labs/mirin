@@ -1,9 +1,10 @@
 /** Internal host-instance tree the reconciler mutates between commits. */
 
 import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
+import type { PropCounts } from "./commit-log.ts";
 
 /** What every host instance has: its identity, where it is, and its last head sent. */
-interface InstanceBase {
+interface InstanceBase extends PropCounts {
   /** Stable per-mount identity; keys events across the boundary. */
   id: number;
   /** The id as the tree and its events spell it (`String(id)`), made once. */
@@ -13,6 +14,8 @@ interface InstanceBase {
   parent: HostParent | null;
   /** Its head (`lib/serialize.ts`) as a patching host last got it. */
   wire?: string;
+  /** Where it was in its parent's children before a reorder (`lib/tree-sync.ts`); -1 until one. */
+  slot: number;
   /**
    * A view's or an input's head as a whole tree last wrote it, and the props
    * it was written from: their head says nothing but their props, so the
@@ -45,6 +48,7 @@ export interface RawTextInstance {
   key: string;
   parent: HostParent | null;
   wire?: string;
+  slot: number;
 }
 
 export interface SvgInstance extends InstanceBase {
@@ -129,4 +133,18 @@ export function insertNodeBefore(
   } else {
     list.push(child);
   }
+}
+
+/**
+ * A `<Text>`'s children when they are one string or number: React then makes
+ * no node of its own for them (`shouldSetTextContent`), and the text node
+ * reads them from its props (`lib/serialize.ts`). Several (`#{index}`) are
+ * nodes, as in any other parent. Null when they are not one.
+ */
+export function ownText(props: { children?: unknown }): string | null {
+  const children = props.children;
+  const kind = typeof children;
+  if (kind === "string") return children === "" ? null : (children as string);
+  if (kind === "number" || kind === "bigint") return String(children);
+  return null;
 }
