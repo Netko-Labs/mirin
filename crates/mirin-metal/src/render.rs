@@ -260,20 +260,7 @@ fn render_view_content(
     // Interaction and scrolling need a stable element id. A view without
     // them gets none: GPUI keeps element state per id'd element, carried
     // from frame to frame, which large trees pay for on every frame.
-    let interactive = props.on_press
-        || props.on_hover
-        || props.on_pointer
-        || props.on_context_menu
-        || props.on_key_down
-        || props.on_wheel
-        || props.on_drop
-        || props.drag_files.is_some()
-        || props.drag_region
-        || props.focusable
-        || props.on_window_key
-        || props.scroll
-        || props.scroll_x
-        || props.hover_background.is_some();
+    let interactive = interactive(props);
     let Some(id) = props.id.as_deref().filter(|_| interactive) else {
         if interactive {
             eprintln!(
@@ -457,6 +444,48 @@ fn render_view_content(
         );
     }
     element.into_any_element()
+}
+
+/// Whether a view interacts or scrolls (it then needs an id, and has a hitbox).
+fn interactive(props: &ViewProps) -> bool {
+    props.on_press
+        || props.on_hover
+        || props.on_pointer
+        || props.on_context_menu
+        || props.on_key_down
+        || props.on_wheel
+        || props.on_drop
+        || props.drag_files.is_some()
+        || props.drag_region
+        || props.focusable
+        || props.on_window_key
+        || props.scroll
+        || props.scroll_x
+        || props.hover_background.is_some()
+}
+
+/// Whether a view draws nothing from its own size: no fill, border, shadow
+/// or clip of its bounds, and no hitbox (it neither interacts, scrolls nor
+/// occludes). Resized with its children where they were (a row stretched to
+/// a window's new width), it draws what it drew (`gpui::Retained::stretchable`).
+/// Its children's bounds, and its own (which its parent records), are what
+/// the layout says either way.
+pub(crate) fn draws_nothing_of_its_size(props: &ViewProps) -> bool {
+    let bordered = props.border_width > 0.0
+        || [
+            props.border_top,
+            props.border_bottom,
+            props.border_left,
+            props.border_right,
+        ]
+        .iter()
+        .any(|width| width.is_some_and(|width| width > 0.0));
+    props.background.is_none()
+        && !bordered
+        && props.shadow.is_none()
+        && !props.clip
+        && !props.occlude
+        && !interactive(props)
 }
 
 /// Whether a view scrolls along the way it lays its children out (a column

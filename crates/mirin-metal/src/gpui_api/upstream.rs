@@ -242,3 +242,9 @@ pub(crate) fn on_list_content_origin(
 
 /// GAP: upstream's scene traces have no glyph variants; this does nothing.
 pub(crate) fn describe_glyph_variants(_on: bool) {}
+
+/// GAP: upstream's retained subtrees are copied in place only; one that was
+/// resized is drawn again, so this changes nothing.
+pub(crate) fn stretchable(retained: gpui::Retained, _stretchable: bool) -> gpui::Retained {
+    retained
+}

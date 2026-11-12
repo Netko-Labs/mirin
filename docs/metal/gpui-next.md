@@ -536,7 +536,12 @@ the spike; this one is what is real now, and replaces the spike's
   (Dashi chrome, session lock, file drag-out, per-paragraph sizes; the
   screen a layer surface names; and from round 4's lists lane, a list's
   content origin, without which its rows each move on their own as before
-  that lane, and glyph variants in scene traces). Tests that need a fork-only feature are
+  that lane, and glyph variants in scene traces), and one more from round
+  5's resize lane: `stretchable` (a retained row only resized keeps its
+  drawing on the fork; upstream copies retained subtrees in place only, so
+  it is drawn again as before). The taffy fork's answer for a row at another
+  width (`Cache::get_stretched`) is not in `forks/taffy-next` yet: upstream
+  runs each row's flex algorithm at every width. Tests that need a fork-only feature are
   `cfg`'d with a comment: the fork's three helper tests (`reuses_layout`,
   `cut_line`, `ink_end_x`), the scroll-snap switch, and the moved-count
   assertion. mirin-metal's source grew by 564 lines and lost 117, most of

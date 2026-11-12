@@ -1,6 +1,7 @@
 //! mirin: a window resized, so each row is too, everything in it laid out
 //! as it was: the rows nothing of which shows are left out
-//! (`Plan::SkipResized`), and drawn when they show.
+//! (`Plan::SkipResized`), and drawn when they show; rows that draw nothing
+//! from their own size (`Retained::stretchable`) keep their drawings.
 
 use std::collections::HashMap;
 
@@ -25,19 +26,36 @@ const STEPS: &[Step] = &[
     Step::Scroll(0.0),
 ];
 
+/// As `STEPS`, wide enough that the cells' text (which runs past them) stays
+/// in the scroll view: a row it clips is drawn again, its cells moved each
+/// on its own (`RetainedState::plan`).
+const WIDE_STEPS: &[Step] = &[
+    Step::Width(420.0),
+    Step::Width(460.0),
+    Step::Scroll(150.0),
+    Step::Width(400.0),
+    Step::Scroll(0.0),
+    Step::Width(480.0),
+    Step::Scroll(300.0),
+    Step::Width(460.0),
+    Step::Scroll(0.0),
+];
+
 /// Every frame drawn, and how each step drew the rows and cells.
 type Run = (
     Vec<(Vec<String>, String)>,
     Vec<HashMap<RetainedDraw, usize>>,
 );
 
-fn run(cx: &mut TestAppContext, retain: bool) -> Run {
-    let opened = open(cx, scrolled(30, 3), retain);
+fn run(cx: &mut TestAppContext, retain: bool, bare: bool, steps_run: &[Step]) -> Run {
+    let mut scene = scrolled(30, 3);
+    scene.bare = bare;
+    let opened = open(cx, scene, retain);
     // Once more, so the rows out of view are left out.
     draw(opened.cx);
     let mut frames = Vec::new();
     let mut steps = Vec::new();
-    for step in STEPS {
+    for step in steps_run {
         let before = opened.draws.borrow().clone();
         match step {
             Step::Width(width) => {
@@ -61,8 +79,8 @@ fn run(cx: &mut TestAppContext, retain: bool) -> Run {
 
 #[gpui::test]
 fn rows_resized_out_of_view_are_left_out_and_drawn_when_they_show(cx: &mut TestAppContext) {
-    let (kept, steps) = run(cx, true);
-    let (whole, _) = run(cx, false);
+    let (kept, steps) = run(cx, true, false, STEPS);
+    let (whole, _) = run(cx, false, false, STEPS);
     for (index, (kept, whole)) in kept.iter().zip(&whole).enumerate() {
         assert_same(kept, whole, &format!("step {index}"));
     }
@@ -84,6 +102,27 @@ fn rows_resized_out_of_view_are_left_out_and_drawn_when_they_show(cx: &mut TestA
                 "step {index}: {:?}",
                 steps[index]
             );
+        }
+    }
+}
+
+#[gpui::test]
+fn rows_that_draw_nothing_of_their_size_keep_their_drawings_when_resized(cx: &mut TestAppContext) {
+    let (kept, steps) = run(cx, true, true, WIDE_STEPS);
+    let (whole, _) = run(cx, false, true, WIDE_STEPS);
+    for (index, (kept, whole)) in kept.iter().zip(&whole).enumerate() {
+        assert_same(kept, whole, &format!("step {index}"));
+    }
+    // The rows in view are copied under the scroll view's new mask
+    // (`Moved`, by nothing), the rest left out; only a row the view clips
+    // (at most one at each end) is drawn again.
+    for (index, step) in WIDE_STEPS.iter().enumerate() {
+        let count = |draw| steps[index].get(&draw).copied().unwrap_or(0);
+        if let Step::Width(_) = step {
+            let what = format!("step {index}: {:?}", steps[index]);
+            assert!(count(RetainedDraw::Redrawn) <= 2, "{what}");
+            assert!(count(RetainedDraw::Moved) >= 3, "{what}");
+            assert!(count(RetainedDraw::Skipped) >= 20, "{what}");
         }
     }
 }

@@ -172,3 +172,10 @@ pub(crate) fn on_list_content_origin(
 pub(crate) fn describe_glyph_variants(on: bool) {
     gpui::describe_glyph_variants(on);
 }
+
+/// A retained subtree whose root draws nothing from its own size: resized
+/// with everything inside where it was, its drawing is kept
+/// (`Retained::stretchable`).
+pub(crate) fn stretchable(retained: gpui::Retained, stretchable: bool) -> gpui::Retained {
+    retained.stretchable(stretchable)
+}

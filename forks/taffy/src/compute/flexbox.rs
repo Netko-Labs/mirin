@@ -308,6 +308,10 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
         constants.gap.set_main(constants.dir, new_gap);
     }
 
+    // mirin: whether what follows depends on the container's width (`compute_stretch_bound`).
+    let stretch_bound = compute_stretch_bound(tree, node, &flex_lines, &constants);
+    tree.set_stretch_bound(node, stretch_bound);
+
     // 6. Resolve the flexible lengths of all the flex items to find their used main size.
     debug_log!("resolve_flexible_lengths");
     for line in &mut flex_lines {
@@ -426,6 +430,93 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
         inflow_content_size.f32_max(absolute_content_size),
         Point { x: None, y: first_vertical_baseline },
     )
+}
+
+/// mirin: the width above which this layout of `node` holds at any width,
+/// but for the width itself (`Cache::get_stretched`), or `None` when it may
+/// depend on it. That is a row on one line whose items keep their place from
+/// its start, none of which grows, and nothing of which is sized from its
+/// width: no percentage (or calc) in its own box or its items', no auto
+/// margin, no absolutely positioned child.
+///
+/// - At a known width the items are laid out as they would be at any other
+///   while their hypothetical outer sizes and gaps fit with room to spare:
+///   the flex grow factor is used (none of them grows, so each keeps its
+///   hypothetical size, which its width does not enter: a content-based
+///   basis is measured under max-content), and they are placed one after
+///   the other from the start. Their cross sizes and the line's follow from
+///   their main sizes. The bound is that sum, with the row's padding and
+///   border.
+/// - Under a definite available width (none known), the row's own width is
+///   its content's (`determine_container_main_size`, one line), and the
+///   rest as above.
+fn compute_stretch_bound(
+    tree: &impl LayoutFlexboxContainer,
+    node: NodeId,
+    flex_lines: &[FlexLine],
+    constants: &AlgoConstants,
+) -> Option<f32> {
+    let [line] = flex_lines else {
+        return None;
+    };
+    if constants.dir != FlexDirection::Row || constants.is_wrap {
+        return None;
+    }
+    let style = tree.get_flexbox_container_style(node);
+    let starts = matches!(style.justify_content(), None | Some(JustifyContent::Start | JustifyContent::FlexStart));
+    let visible = style.overflow() == Point { x: Overflow::Visible, y: Overflow::Visible };
+    let gap = style.gap();
+    let (size, min_size, max_size) = (style.size(), style.min_size(), style.max_size());
+    let container_fixed = !uses_percentage_size(size)
+        && !uses_percentage_size(min_size)
+        && !uses_percentage_size(max_size)
+        && !uses_percentage_rect(style.margin().map(LengthPercentageAuto::into_raw))
+        && !uses_percentage_rect(style.padding().map(|value| value.into_raw()))
+        && !uses_percentage_rect(style.border().map(|value| value.into_raw()))
+        && !gap.width.into_raw().uses_percentage()
+        && !gap.height.into_raw().uses_percentage();
+    if !starts || !visible || style.aspect_ratio().is_some() || !container_fixed {
+        return None;
+    }
+    drop(style);
+    for index in 0..tree.child_count(node) {
+        let child = tree.get_flexbox_child_style(tree.get_child_id(node, index));
+        if child.position() == Position::Absolute && child.box_generation_mode() != BoxGenerationMode::None {
+            return None;
+        }
+    }
+    for item in line.items.iter() {
+        let auto_margin =
+            item.margin_is_auto.left || item.margin_is_auto.right || item.margin_is_auto.top || item.margin_is_auto.bottom;
+        if item.flex_grow != 0.0 || auto_margin {
+            return None;
+        }
+        let style = tree.get_flexbox_child_style(item.node);
+        let fixed = !style.flex_basis().into_raw().uses_percentage()
+            && !uses_percentage_size(style.size())
+            && !uses_percentage_size(style.min_size())
+            && !uses_percentage_size(style.max_size())
+            && !uses_percentage_rect(style.margin().map(LengthPercentageAuto::into_raw))
+            && !uses_percentage_rect(style.padding().map(|value| value.into_raw()))
+            && !uses_percentage_rect(style.border().map(|value| value.into_raw()))
+            && !uses_percentage_rect(style.inset().map(LengthPercentageAuto::into_raw));
+        if !fixed {
+            return None;
+        }
+    }
+    let gaps = sum_axis_gaps(constants.gap.main(constants.dir), line.items.len());
+    let items: f32 = line.items.iter().map(|item| item.hypothetical_outer_size.main(constants.dir)).sum();
+    Some(gaps + items + constants.content_box_inset.main_axis_sum(constants.dir))
+}
+
+/// mirin: whether any of a size's dimensions is a percentage or calc.
+fn uses_percentage_size(size: Size<crate::style::Dimension>) -> bool {
+    size.width.into_raw().uses_percentage() || size.height.into_raw().uses_percentage()
+}
+
+/// mirin: whether any of four edges is a percentage or calc.
+fn uses_percentage_rect(rect: Rect<crate::style::CompactLength>) -> bool {
+    rect.left.uses_percentage() || rect.right.uses_percentage() || rect.top.uses_percentage() || rect.bottom.uses_percentage()
 }
 
 /// Compute constants that can be reused during the flexbox algorithm.

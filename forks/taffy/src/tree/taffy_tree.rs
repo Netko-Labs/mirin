@@ -133,6 +133,9 @@ struct NodeData {
     /// One of its edges, or of a node below it, sat close to half a pixel
     /// when it was last rounded (`TaffyTree::round_changed`).
     pub(crate) near_half: bool,
+    // mirin: what the flexbox algorithm laying it out found
+    // (`LayoutPartialTree::set_stretch_bound`), until its result is cached.
+    pub(crate) stretch_bound: Option<f32>,
 }
 
 impl NodeData {
@@ -152,6 +155,7 @@ impl NodeData {
             below_changed_at: 0,
             asked_at: 0,
             near_half: true,
+            stretch_bound: None,
             #[cfg(feature = "detailed_layout_info")]
             detailed_layout_info: DetailedLayoutInfo::None,
         }
@@ -442,6 +446,12 @@ where
     }
 
     #[inline(always)]
+    fn set_stretch_bound(&mut self, node_id: NodeId, bound: Option<f32>) {
+        // mirin: kept with the result (`cache_store`).
+        self.taffy.nodes[node_id.into()].stretch_bound = bound;
+    }
+
+    #[inline(always)]
     fn compute_child_layout(&mut self, node: NodeId, inputs: LayoutInput) -> LayoutOutput {
         // If RunMode is PerformHiddenLayout then this indicates that an ancestor node is `Display::None`
         // and thus that we should lay out this node using hidden layout regardless of it's own display style.
@@ -458,8 +468,11 @@ where
         //
         // If there was no cache match and a new result needs to be computed then that result will be added to the cache
         compute_cached_layout(self, node, inputs, |tree, node, inputs| {
-            // mirin: its children may be laid out again (`TaffyTree::round_changed`).
+            // mirin: its children may be laid out again (`TaffyTree::round_changed`),
+            // and only the algorithm that runs now says whether its result
+            // holds at another width (`set_stretch_bound`).
             tree.taffy.nodes[node.into()].ran = true;
+            tree.taffy.nodes[node.into()].stretch_bound = None;
             let display_mode = tree.taffy.nodes[node.into()].style.display;
             let has_children = tree.child_count(node) > 0;
 
@@ -526,7 +539,12 @@ where
         available_space: Size<AvailableSpace>,
         run_mode: RunMode,
     ) -> Option<LayoutOutput> {
-        self.taffy.nodes[node_id.into()].cache.get(known_dimensions, available_space, run_mode)
+        let cache = &self.taffy.nodes[node_id.into()].cache;
+        // mirin: or what it computed at another width, where that changes
+        // nothing but the width (`Cache::get_stretched`).
+        cache
+            .get(known_dimensions, available_space, run_mode)
+            .or_else(|| cache.get_stretched(known_dimensions, available_space, run_mode))
     }
 
     fn cache_store(
@@ -537,7 +555,10 @@ where
         run_mode: RunMode,
         layout_output: LayoutOutput,
     ) {
-        self.taffy.nodes[node_id.into()].cache.store(known_dimensions, available_space, run_mode, layout_output)
+        // mirin: with what the flexbox algorithm found (`set_stretch_bound`).
+        let data = &mut self.taffy.nodes[node_id.into()];
+        let stretch = data.stretch_bound.take();
+        data.cache.store_stretchable(known_dimensions, available_space, run_mode, layout_output, stretch)
     }
 
     fn cache_clear(&mut self, node_id: NodeId) {
@@ -2016,3 +2037,7 @@ mod mirin_tests {
         assert_eq!(taffy.last_measure_inputs(text), None);
     }
 }
+
+// mirin: a result kept across widths (`Cache::get_stretched`).
+#[cfg(test)]
+mod stretch_tests;

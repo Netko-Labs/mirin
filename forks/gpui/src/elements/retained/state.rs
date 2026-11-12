@@ -238,11 +238,13 @@ impl RetainedState {
     }
 
     /// How to draw it at `bounds`, its content and layout nodes unchanged.
+    /// `stretchable`: `Retained::stretchable`.
     pub(super) fn plan(
-        &self,
+        &mut self,
         bounds: Bounds<Pixels>,
         movable: bool,
         skippable: bool,
+        stretchable: bool,
         window: &mut Window,
     ) -> Plan {
         let mut drawn = self.record.drawn.borrow_mut();
@@ -254,7 +256,13 @@ impl RetainedState {
         let same = below
             && drawn.bounds.size == bounds.size
             && !engine.inner_changed_since(self.root, self.epoch);
-        if !same {
+        if !same && below && stretchable {
+            // Only its root was resized, and its root draws nothing from
+            // its size: the drawing is what it would draw at the new size,
+            // reaches as far, and is now of this layout.
+            drawn.bounds.size = bounds.size;
+            self.epoch = engine.epoch();
+        } else if !same {
             // Only its root was resized (a window that changed size, a row
             // stretched to it): how far it reaches is known without drawing
             // it, so one nothing of which shows is still left out. What is

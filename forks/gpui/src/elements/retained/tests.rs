@@ -35,6 +35,9 @@ struct Scene {
     cells: usize,
     /// Rows may be moved and left out (`Retained::movable`, `skippable`).
     loose: bool,
+    /// Rows draw nothing from their own size (no background, border or
+    /// hover style), and say so (`Retained::stretchable`).
+    bare: bool,
     /// The rows stand side by side, in a view that scrolls across: each
     /// row's `height` is its width.
     across: bool,
@@ -57,7 +60,14 @@ struct Rows {
     draws: Rc<RefCell<HashMap<RetainedDraw, usize>>>,
 }
 
-fn cell(row: usize, index: usize, tint: u32) -> AnyElement {
+/// `bare`: in a row that draws nothing from its own size, its text short
+/// enough to stay in its box (so the row's drawing does too).
+fn cell(row: usize, index: usize, tint: u32, bare: bool) -> AnyElement {
+    let text = if bare {
+        format!("{index}")
+    } else {
+        format!("cell {row}.{index} overflowing")
+    };
     div()
         .id(("cell", row * 100 + index))
         .w(px(30.0))
@@ -66,7 +76,7 @@ fn cell(row: usize, index: usize, tint: u32) -> AnyElement {
         .overflow_hidden()
         .bg(rgb(0x0000ff + index as u32 + tint))
         .hover(|style| style.bg(rgb(0x00ffff)))
-        .child(format!("cell {row}.{index} overflowing"))
+        .child(text)
         .into_any_element()
 }
 
@@ -76,6 +86,7 @@ fn row(
     cells: Vec<AnyElement>,
     unsteady: Option<&RefCell<HashMap<usize, usize>>>,
     across: bool,
+    bare: bool,
 ) -> AnyElement {
     let built_before = unsteady.is_some_and(|builds| {
         let mut builds = builds.borrow_mut();
@@ -95,13 +106,16 @@ fn row(
                 row_div.h(px(row.height))
             }
         })
-        .bg(rgb(row.color))
-        // A rounded border is drawn in bands as deep as its corners: off
-        // the device grid at 1.1 unless snapped (`Style::paint`).
-        .when(row.bordered, |row| {
-            row.border_1().border_color(rgb(0xffffff)).rounded(px(3.0))
+        .when(!bare, |row_div| {
+            row_div
+                .bg(rgb(row.color))
+                // A rounded border is drawn in bands as deep as its corners:
+                // off the device grid at 1.1 unless snapped (`Style::paint`).
+                .when(row.bordered, |row| {
+                    row.border_1().border_color(rgb(0xffffff)).rounded(px(3.0))
+                })
+                .hover(|style| style.bg(rgb(0xff0000)))
         })
-        .hover(|style| style.bg(rgb(0xff0000)))
         .child(format!("row {index}"))
         // A shadow is painted before a quad of the same draw order: this
         // one must come after the row's background all the same.
@@ -122,19 +136,22 @@ impl Render for Rows {
             .map(|(index, spec)| {
                 if !self.retain {
                     let tint = scene.tint.get();
-                    let cells = (0..scene.cells).map(|cell_index| cell(index, cell_index, tint));
+                    let cells = (0..scene.cells)
+                        .map(|cell_index| cell(index, cell_index, tint, scene.bare));
                     return row(
                         index,
                         spec,
                         cells.collect(),
                         scene.unsteady.as_deref(),
                         scene.across,
+                        scene.bare,
                     );
                 }
                 let version = spec.version;
                 let draws = self.draws.clone();
                 // Built by the subtree, as often as it is asked.
-                let (scene_cells, loose, across) = (scene.cells, scene.loose, scene.across);
+                let (scene_cells, loose, across, bare) =
+                    (scene.cells, scene.loose, scene.across, scene.bare);
                 let (tint, unsteady) = (scene.tint.clone(), scene.unsteady.clone());
                 let cell_markers = self.cell_markers.clone();
                 let cell_draws = self.draws.clone();
@@ -156,7 +173,7 @@ impl Render for Rows {
                                     move |_, _| {
                                         let (rows, cells) = builds.get();
                                         builds.set((rows, cells + 1));
-                                        cell(index, cell_index, tint.get())
+                                        cell(index, cell_index, tint.get(), bare)
                                     }
                                 })
                                 .movable(loose)
@@ -167,11 +184,19 @@ impl Render for Rows {
                                 .into_any_element()
                             })
                             .collect();
-                        row(index, spec.clone(), cells, unsteady.as_deref(), across)
+                        row(
+                            index,
+                            spec.clone(),
+                            cells,
+                            unsteady.as_deref(),
+                            across,
+                            bare,
+                        )
                     },
                 )
                 .movable(scene.loose)
                 .skippable(scene.loose)
+                .stretchable(scene.bare)
                 .on_prepaint(move |draw, _, _, _| *draws.borrow_mut().entry(draw).or_default() += 1)
                 .into_any_element()
             })
@@ -236,6 +261,7 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         viewport: 120.0,
         cells,
         loose: true,
+        bare: false,
         across: false,
         tint: Rc::default(),
         unsteady: None,
@@ -306,6 +332,7 @@ fn plain(rows: Vec<Row>) -> Scene {
         viewport: 0.0,
         cells: 0,
         loose: false,
+        bare: false,
         across: false,
         tint: Rc::default(),
         unsteady: None,
