@@ -1731,6 +1731,81 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   nodes no longer drawn until its next prune, every 64 frames: a burst of
   removals stays that long.
 
+- Resize, round 5 (2026-11-11; release host, `bench/stress.tsx --only=resize
+  --resizes=60` in `packages/mirin-metal`, `host-r4` and this one back to
+  back on a nested dashi-comp, three runs each, medians and ranges of the
+  runs the machine was quiet for). What round 4 left of a resize frame:
+  taffy a third (each row ran its flex algorithm four times), the 17 rows
+  in view and the list around them built again onto their kept layout,
+  their 425 cards copied under the scroll view's new mask, and the state
+  lookups those draws make. Three changes, in the forks
+  (`forks/gpui/MIRIN.md`, `forks/taffy/MIRIN.md`):
+
+  - *A row's result holds at another width* (`compute_stretch_bound`,
+    `Cache::get_stretched` in the taffy fork). A row on one line whose
+    items are placed from its start, none of which grows, with no
+    percentage, auto margin or absolutely positioned child in it, lays its
+    items out the same at any known width above the sum of their
+    hypothetical sizes, gaps, padding and border: the flex grow factor is
+    used and nothing grows, so each item keeps its hypothetical size, which
+    the width does not enter (a content-based basis is measured under
+    max-content). Under a definite available width with none known it takes
+    its content's width, whatever that space. The flex algorithm says so
+    with its result and the cache keeps it; a query at another width answers
+    from the entry for the same query, its width replaced, and the items are
+    not laid out again (they are where that entry left them, so nothing in
+    them is rounded again either). A row whose items must shrink, grow, or
+    sit from its end or center runs as before. Randomized trees (rows of
+    every kind: wrapping, reversed, centered, growing and shrinking items,
+    percentages, auto margins, absolute children, text that wraps) laid out
+    across 19 widths, kept and from nothing, compare exactly, rounded and
+    not (`tree::taffy_tree::stretch_tests`); dropping any one of the
+    conditions fails it.
+  - *A retained subtree whose root draws nothing from its size keeps its
+    drawing when only its root is resized* (`Retained::stretchable`).
+    mirin-metal says so for a view with no background, border, shadow,
+    clip or hitbox (`render::draws_nothing_of_its_size`): what it draws is
+    its children's, which taffy says did not change (`below_changed_since`).
+    Its drawing is then taken as of the new layout and copied (under the
+    scroll view's new mask) or left out and parked as if its size had not
+    changed, so the rows in view are copied, not built again with their
+    cards, and the ones out of view keep their parked drawings. A row the
+    view clips is still drawn again (its cards are each moved on their own);
+    one that draws a background or border is too.
+  - *A window records the entities it drew only where that changed*
+    (`App::record_entities_accessed`): every frame took each entity it drew
+    out of the map of windows to invalidate and put it back (0.6 ms of a
+    frame with the bench's 2,600 retained subtrees, each its own entity, in
+    every scenario that draws them).
+
+  | stress bench (15k nodes) | `host-r4` | now |
+  | --- | --- | --- |
+  | resize: frame (p95) | 8.2–8.4 ms (8.9–11.3) | 2.3–2.4 ms (3.0–3.6) |
+  | resize: host CPU a resize | 10.5–10.8 ms | 4.0–4.2 ms |
+  | resize: accessibility a resize | 0.1 ms, 1 handed over | the same |
+  | resize: rows in view built again / copied, and left out, a frame (the trace's retained counts) | 17 (their 425 cards copied) / 0, 83 | 1 (the one the view clips; its 25 cards copied) / 16, 83 |
+  | select / type / hover | 2.0 / 1.2 / 2.2 ms | 2.0 / 1.2 / 2.2–2.3 ms |
+  | grow / in the scroll view / select there | 3.4–3.5 / 3.7–4.2 / 2.3 ms | 2.8–3.3 / 3.6–3.8 / 2.4 ms |
+  | scroll, 40 px steps (p95); across | 2.5–2.7 ms (3.9–4.3); 2.6–3.3 ms | 2.5–2.6 ms (3.8–4.1); 2.5–2.6 ms |
+  | RSS idle / after the resizes | 203–204 / 307–313 MB | 203–205 / 310–315 MB |
+  | example browser (`native.tsx`): full frame / scroll frame / click to frame / setSize to first frame | 0.6–0.7 / 0.9–1.0 / 9.1–9.2 / 0.8 ms | 0.5–0.6 / 0.8–0.9 / 9.1–9.5 / 0.9 ms |
+
+  Every taffy cache entry keeps its bound: about 100 bytes a node more,
+  3 MB of the bench's 30,000 nodes (two trees: the grid's and the scroll
+  view's).
+
+  Step by step (each back to back with `host-r4`): the stretchable rows
+  and the entities took a resize frame from 8.2–8.4 to 5.4–6.0 ms; the
+  rows taffy answers from another width to 2.3–2.4 (working out a copied
+  drawing's masks once a run of primitives, not three times a primitive,
+  did not measure: 2.3–2.4 ms either way; left out). What is left of a
+  resize frame (a profile): copying the rows in view primitive by primitive under the
+  scroll view's new mask (15%), building again the list that holds the
+  rows (its rows changed size, so it is drawn anew: the 100 rows' state
+  looked up, 83 left out, 16 copied) and the row the view clips (a
+  quarter), the accessibility tree's refresh (11%), and taffy's flex
+  algorithm for the columns above the rows (10%).
+
 - Text across, lists as one, other scale factors (2026-11-11, round 4;
   release host, `bench/stress.tsx` and metal-ui's `bench/native.tsx`,
   medians of two runs each of `host-r3` built with only the simulation's
@@ -1864,13 +1939,14 @@ at a scale factor that is not a multiple of 1/8 (1.1, 1.2) what sits a
 logical distance from its box other than a border's bands and a shadow
 (an underline, a text's second line) keeps its subtree from moving; a
 row drawn for the first time out of view is drawn again when it first
-shows (evaluated above); a resize runs the flex algorithm of every row
-whose width changed, four times (taffy's three sizings and the layout; a
-row whose children neither grow, shrink nor move with its width could
-answer from its last layout), draws the rows in view again, and masks
-every primitive of the cards in them again (the scroll view's mask
-changed); a retained subtree's state is still looked up by its whole id
-path, three times a frame. For the accessibility tree: nodes that each
+shows (evaluated above); a resize still copies the rows in view primitive
+by primitive under the scroll view's new mask, and builds again what holds
+the rows (the list, whose rows changed size) and any row that draws from
+its own size (a background, a border) or that the view clips; a row whose
+items grow, shrink or are placed from its end or center still runs its
+flex algorithm at each width; a retained subtree's state is still looked
+up by its whole id path, three times a frame it is drawn (a resize now
+draws the list and its rows, not their cards). For the accessibility tree: nodes that each
 move on their own (a reflow, a window resized) are handed over one by one,
 about 5 µs a node on the window's thread (holding them until the content
 settles needs the adapter to fetch what is held before it answers a
