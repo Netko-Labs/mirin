@@ -141,6 +141,8 @@ impl LineLayout {
         };
         let mut last_boundary_x = px(0.);
         let mut prev_ch = '\0';
+        // mirin: the char before `prev_ch`, for a break inside a word.
+        let mut before_prev_ch = '\0';
         let mut glyphs = self
             .runs
             .iter()
@@ -176,6 +178,14 @@ impl LineLayout {
                 }
             }
 
+            // mirin: a long URL breaks after a slash or a hyphen, as a browser breaks it.
+            if first_non_whitespace_ix.is_some()
+                && LineWrapper::breaks_inside_word(before_prev_ch, prev_ch, ch)
+            {
+                last_candidate_ix = Some(boundary);
+                last_candidate_x = x;
+            }
+
             if ch != ' ' && first_non_whitespace_ix.is_none() {
                 first_non_whitespace_ix = Some(boundary);
             }
@@ -200,6 +210,7 @@ impl LineLayout {
                 }
                 boundaries.push(last_boundary);
             }
+            before_prev_ch = prev_ch;
             prev_ch = ch;
         }
 

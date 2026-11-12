@@ -90,6 +90,7 @@ pub(super) fn press_in(
     let mut env = KeyEnv {
         multiline,
         submit_on_enter: false,
+        insert_tab: false,
         secure: false,
         clipboard: board,
         lines,
@@ -165,6 +166,7 @@ fn enter_submits_a_multiline_field_that_submits_on_enter() {
     let mut env = KeyEnv {
         multiline: true,
         submit_on_enter: true,
+        insert_tab: false,
         secure: false,
         clipboard: &mut board,
         lines: None,
@@ -172,6 +174,34 @@ fn enter_submits_a_multiline_field_that_submits_on_enter() {
     assert_eq!(field.key(&key("enter", None), &mut env), Edit::Submitted);
     assert_eq!(field.key(&ctrl("enter"), &mut env), Edit::Submitted);
     assert_eq!(field.buffer, "A long title");
+}
+
+#[test]
+fn tab_types_a_tab_in_a_multiline_field_that_asks_for_it() {
+    let mut field = Field::new("ab");
+    field.cursor = 1;
+    let mut board = Board::default();
+    let mut env = KeyEnv {
+        multiline: true,
+        submit_on_enter: false,
+        insert_tab: true,
+        secure: false,
+        clipboard: &mut board,
+        lines: None,
+    };
+    assert_eq!(field.key(&key("tab", None), &mut env), Edit::Changed);
+    assert_eq!(field.buffer, "a\tb");
+    assert_eq!(field.cursor, 2);
+    // The keyboard still leaves: back with Shift+Tab, on with Ctrl+Tab.
+    assert_eq!(field.key(&shift("tab"), &mut env), Edit::FocusPrevious);
+    assert_eq!(field.key(&ctrl("tab"), &mut env), Edit::FocusNext);
+    assert_eq!(field.buffer, "a\tb");
+    // A field that didn't ask, or one line, moves the keyboard on as before.
+    env.insert_tab = false;
+    assert_eq!(field.key(&key("tab", None), &mut env), Edit::FocusNext);
+    env.insert_tab = true;
+    env.multiline = false;
+    assert_eq!(field.key(&key("tab", None), &mut env), Edit::FocusNext);
 }
 
 #[test]

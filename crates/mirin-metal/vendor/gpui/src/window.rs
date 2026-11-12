@@ -3418,6 +3418,18 @@ impl Window {
             .request_measured_layout(style, rem_size, scale_factor, measure)
     }
 
+    /// mirin: says how far under its top a measured element's first baseline
+    /// is (see `TaffyLayoutEngine::set_first_baseline`). Call it right after
+    /// `request_measured_layout`.
+    pub fn set_layout_first_baseline(&mut self, layout_id: LayoutId, baseline: Pixels) {
+        self.invalidator.debug_assert_prepaint();
+        let scale_factor = self.scale_factor();
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .set_first_baseline(layout_id, baseline, scale_factor);
+    }
+
     /// Compute the layout for the given id within the given available space.
     /// This method is called for its side effect, typically by the framework prior to painting.
     /// After calling it, you can request the bounds of the given layout node id or any descendant.

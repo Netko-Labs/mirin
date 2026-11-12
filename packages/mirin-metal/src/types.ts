@@ -71,8 +71,13 @@ export interface ViewStyle {
   flexGrow?: number;
   /** `flexShrink: 0` keeps the view from shrinking below its content. */
   flexShrink?: 0 | 1;
-  alignItems?: "flex-start" | "center" | "flex-end" | "stretch";
-  alignSelf?: "flex-start" | "center" | "flex-end" | "stretch";
+  /**
+   * `"baseline"` lines a row's items up by their first line of text, whatever its size: small
+   * text beside larger text shares its baseline (centered, the two boxes line up and the small
+   * text sits high). An item with no text is aligned by its bottom edge.
+   */
+  alignItems?: "flex-start" | "center" | "flex-end" | "stretch" | "baseline";
+  alignSelf?: "flex-start" | "center" | "flex-end" | "stretch" | "baseline";
   justifyContent?: "flex-start" | "center" | "flex-end" | "space-between";
   /**
    * `"grid"` lays children out as a CSS grid. `alignItems`/`alignSelf` then
@@ -444,6 +449,12 @@ export interface TextInputProps extends AccessibilityProps {
    * note's title). Ctrl/Cmd+Enter always submits. A single-line field always submits.
    */
   submitBehavior?: "submit" | "newline";
+  /**
+   * What Tab does in a multiline field: "focus" (the default) moves the keyboard to the next
+   * control; "insert" types a tab, for a document's text (a text editor). Shift+Tab still moves
+   * the keyboard back, and Ctrl/Cmd+Tab on. A single-line field always moves it.
+   */
+  tabBehavior?: "focus" | "insert";
   /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
    * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).

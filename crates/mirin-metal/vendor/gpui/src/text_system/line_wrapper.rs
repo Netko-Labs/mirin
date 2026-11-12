@@ -42,6 +42,8 @@ impl LineWrapper {
         let mut last_candidate_width = px(0.);
         let mut last_wrap_ix = 0;
         let mut prev_c = '\0';
+        // mirin: the two chars before this one, for a break inside a word.
+        let (mut inside_before, mut inside_prev) = ('\0', '\0');
         let mut index = 0;
         let mut candidates = fragments
             .iter()
@@ -70,6 +72,16 @@ impl LineWrapper {
                                 last_candidate_width = width;
                             }
                         }
+
+                        // mirin: a long URL breaks after a slash or a hyphen.
+                        if first_non_whitespace_ix.is_some()
+                            && Self::breaks_inside_word(inside_before, inside_prev, c)
+                        {
+                            last_candidate_ix = ix;
+                            last_candidate_width = width;
+                        }
+                        inside_before = inside_prev;
+                        inside_prev = c;
 
                         if c != ' ' && first_non_whitespace_ix.is_none() {
                             first_non_whitespace_ix = Some(ix);
@@ -194,6 +206,9 @@ impl LineWrapper {
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
+        // mirin: a slash stays with what is before it (`breaks_inside_word`): a line
+        // never starts with the slash of a URL or a path.
+        c == '/' ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯') ||
         // mirin: a no-break space (U+00A0, the narrow U+202F) and the word joiner
@@ -201,6 +216,30 @@ impl LineWrapper {
         // typographic quotes and apostrophes belong to their word: "you’re" and
         // "“Notes.txt”" never break inside.
         matches!(c, '\u{00A0}' | '\u{202F}' | '\u{2060}' | '’' | '‘' | '“' | '”')
+    }
+
+    // mirin: a long URL breaks as a browser breaks it.
+    /// Whether a line may break before `c` inside a word, for the two chars
+    /// before it: after a slash (`https://dashi.dev/docs/` then `guide`) and
+    /// after a hyphen between letters (`session-` then `startup`), so a URL
+    /// or a path longer than its line fills each line and breaks only where
+    /// it is full. Not between two slashes, after a word's first slash
+    /// (`/usr`), inside a fraction or a date (`11/11/2026`), or before a
+    /// digit after a hyphen (`x-1`, `2026-11-11`), and never before a hyphen
+    /// that starts a word (`--flag`).
+    #[doc(hidden)]
+    pub fn breaks_inside_word(before: char, prev: char, c: char) -> bool {
+        match prev {
+            '/' => {
+                c != '/'
+                    && !c.is_whitespace()
+                    && before != '\0'
+                    && !before.is_whitespace()
+                    && !(before.is_ascii_digit() && c.is_ascii_digit())
+            }
+            '-' => before.is_alphanumeric() && c.is_alphabetic(),
+            _ => false,
+        }
     }
 
     #[inline(always)]
@@ -371,6 +410,18 @@ mod tests {
                 .wrap_line(&[LineFragment::text("aa bbb\u{a0}cc dd")], px(72.))
                 .next(),
             Some(Boundary::new(3, 0)),
+        );
+    }
+
+    // mirin: a URL longer than its line breaks after a slash or a hyphen, each line full.
+    #[test]
+    fn test_wrap_line_breaks_a_url_after_its_slashes() {
+        let mut wrapper = build_wrapper();
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("see dashi.dev/docs/guide-book")], px(72.))
+                .collect::<Vec<_>>(),
+            &[Boundary::new(4, 0), Boundary::new(14, 0), Boundary::new(19, 0)],
         );
     }
 
@@ -686,7 +737,8 @@ mod tests {
 
         // URL case
         assert_word("github.com");
-        assert_not_word("zed-industries/zed");
+        // mirin: a slash is part of the word before it; the line breaks after it (`breaks_inside_word`).
+        assert_word("zed-industries/zed");
         assert_not_word("zed-industries\\zed");
         assert_not_word("a=1&b=2");
         assert_not_word("foo?b=2");

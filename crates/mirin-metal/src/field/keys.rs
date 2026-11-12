@@ -48,6 +48,10 @@ pub(crate) struct KeyEnv<'a> {
     /// Enter submits a multiline field too (it wraps, but is one paragraph:
     /// a note's title); Ctrl/Cmd+Enter always does.
     pub(crate) submit_on_enter: bool,
+    /// Tab types a tab in a multiline field (a document's text) instead of
+    /// moving the keyboard on; Shift+Tab still moves it back, and
+    /// Ctrl/Cmd+Tab on.
+    pub(crate) insert_tab: bool,
     /// A secure field never gives its text to the clipboard.
     pub(crate) secure: bool,
     pub(crate) clipboard: &'a mut dyn Clipboard,
@@ -169,6 +173,10 @@ impl Field {
                 } else {
                     Edit::Submitted
                 }
+            }
+            "tab" if env.multiline && env.insert_tab && !command && !modifiers.shift => {
+                self.insert_str("\t");
+                Edit::Changed
             }
             "tab" => {
                 if modifiers.shift {

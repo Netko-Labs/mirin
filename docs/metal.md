@@ -330,7 +330,9 @@ state and describes UI; the renderer is a pure function of the latest tree.
   is the worked example.
 
 The TypeScript side (`packages/mirin-metal/src/lib/serialize.ts`) maps React
-Native-style props: `<View style>` (`flex`, `alignItems`, `justifyContent`,
+Native-style props: `<View style>` (`flex`, `alignItems` (with `"baseline"`: a row's items line
+up by their first line of text, so small text beside larger text shares its baseline; GPUI's
+text names its first baseline to mirin's taffy fork, `set_first_baseline`), `justifyContent`,
 `overflow: "scroll" | "hidden"`, `hoverBackgroundColor`, …), `<Text
 numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
@@ -351,7 +353,9 @@ nothing), `lineNumbers` (`{ width, color }`) and `focusNextOnSubmit` (Enter
 also moves the keyboard on, as Tab does, in the host, so keys typed right
 after land in the next field: a title, then its body), `submitBehavior`
 (`"submit"` makes Enter submit a multiline field instead of breaking its line:
-a title that wraps but is one paragraph; Ctrl/Cmd+Enter always submits); a run's `color` may be
+a title that wraps but is one paragraph; Ctrl/Cmd+Enter always submits) and `tabBehavior`
+(`"insert"` makes Tab type a tab in a multiline field instead of moving the keyboard on: a text
+editor's document; Shift+Tab still moves it back and Ctrl/Cmd+Tab on); a run's `color` may be
 translucent (GPUI blends a highlight's color over the text's, so the host
 sends it opaque with its alpha as a fade),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every

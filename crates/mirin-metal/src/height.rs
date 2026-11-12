@@ -175,6 +175,7 @@ pub(crate) fn clip(
             Align::Center => gpui::AlignItems::Center,
             Align::End => gpui::AlignItems::FlexEnd,
             Align::Stretch => gpui::AlignItems::Stretch,
+            Align::Baseline => gpui::AlignItems::Baseline,
         });
     }
     let heights = heights.clone();

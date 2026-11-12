@@ -101,6 +101,16 @@ impl TaffyLayoutEngine {
             .into()
     }
 
+    /// mirin: how far under its top a measured node's first baseline is (a
+    /// text's first line). A row that aligns its items by baseline
+    /// (`items_baseline`) lines them up by it; without one taffy takes the
+    /// node's bottom edge, which is not where a text's letters sit.
+    pub fn set_first_baseline(&mut self, id: LayoutId, baseline: Pixels, scale_factor: f32) {
+        self.taffy
+            .set_first_baseline(id.into(), Some(baseline.0 * scale_factor))
+            .expect(EXPECT_MESSAGE);
+    }
+
     // Used to understand performance
     #[allow(dead_code)]
     fn count_all_children(&self, parent: LayoutId) -> anyhow::Result<u32> {

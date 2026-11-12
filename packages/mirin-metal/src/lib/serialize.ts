@@ -83,7 +83,7 @@ interface ViewNodeProps {
   shrink?: boolean;
   fill?: boolean;
   center?: boolean;
-  align?: "start" | "center" | "end" | "stretch";
+  align?: "start" | "center" | "end" | "stretch" | "baseline";
   justify?: "start" | "center" | "end" | "between";
   background?: Color;
   hoverBackground?: Color;
@@ -105,12 +105,12 @@ interface ViewNodeProps {
   occlude?: boolean;
   dragRegion?: boolean;
   onLayout?: boolean;
-  alignSelf?: "start" | "center" | "end" | "stretch";
+  alignSelf?: "start" | "center" | "end" | "stretch" | "baseline";
   grid?: boolean;
   gridColumns?: GridTrack[];
   gridRows?: GridTrack[];
-  justifyItems?: "start" | "center" | "end" | "stretch";
-  justifySelf?: "start" | "center" | "end" | "stretch";
+  justifyItems?: ViewNodeProps["align"];
+  justifySelf?: ViewNodeProps["align"];
   colStart?: number;
   colEnd?: number;
   colSpan?: number;
@@ -197,6 +197,7 @@ interface InputNodeProps {
   onSubmit?: boolean;
   focusNextOnSubmit?: boolean;
   submitOnEnter?: boolean;
+  insertTab?: boolean;
   onKey?: boolean;
   selection?: TextSelection;
   onSelection?: boolean;
@@ -282,6 +283,7 @@ const ALIGN: Record<NonNullable<ViewStyle["alignItems"]>, ViewNodeProps["align"]
   center: "center",
   "flex-end": "end",
   stretch: "stretch",
+  baseline: "baseline",
 };
 
 const JUSTIFY: Record<NonNullable<ViewStyle["justifyContent"]>, ViewNodeProps["justify"]> = {
@@ -651,6 +653,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   }
   if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
   if (input.multiline && input.submitBehavior === "submit") props.submitOnEnter = true;
+  if (input.multiline && input.tabBehavior === "insert") props.insertTab = true;
   if (input.onKeyPress) {
     props.onKey = true;
     handlers.key.set(id, input.onKeyPress);

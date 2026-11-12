@@ -137,6 +137,7 @@ fn styled_view(props: &ViewProps) -> Div {
             Align::Center => AlignItems::Center,
             Align::End => AlignItems::FlexEnd,
             Align::Stretch => AlignItems::Stretch,
+            Align::Baseline => AlignItems::Baseline,
         });
     }
     if hitbox_behavior(props) == HitboxBehavior::BlockMouse {
@@ -152,6 +153,7 @@ fn styled_view(props: &ViewProps) -> Div {
         Some(Align::Start) => element.items_start(),
         Some(Align::Center) => element.items_center(),
         Some(Align::End) => element.items_end(),
+        Some(Align::Baseline) => element.items_baseline(),
         Some(Align::Stretch) | None => element,
     };
     element = match props.justify {
@@ -558,6 +560,18 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
 // A one-line text (and a centered box) laid out by GPUI itself, on its test platform.
 #[cfg(test)]
 mod one_line_tests;
+
+// Texts of two sizes on one baseline, laid out by GPUI on its test platform.
+#[cfg(test)]
+mod baseline_tests;
+
+// A Settings card and its rows, laid out by GPUI on its test platform.
+#[cfg(test)]
+mod card_tests;
+
+// Where a wrapped text breaks, laid out by GPUI on its test platform.
+#[cfg(test)]
+mod wrap_tests;
 
 // Scroll views laid out and driven by GPUI, on its test platform.
 #[cfg(test)]

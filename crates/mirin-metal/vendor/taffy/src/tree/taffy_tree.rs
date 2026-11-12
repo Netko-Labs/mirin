@@ -104,6 +104,11 @@ struct NodeData {
     /// Whether the node has context data associated with it or not
     pub(crate) has_context: bool,
 
+    // mirin: a measured leaf's first baseline.
+    /// How far under its top a measured leaf's first baseline is (a text's
+    /// first line). `None`: the leaf's bottom edge, as taffy takes it.
+    pub(crate) first_baseline: Option<f32>,
+
     /// The cached results of the layout computation
     pub(crate) cache: Cache,
 
@@ -122,6 +127,7 @@ impl NodeData {
             unrounded_layout: Layout::new(),
             final_layout: Layout::new(),
             has_context: false,
+            first_baseline: None,
             #[cfg(feature = "detailed_layout_info")]
             detailed_layout_info: DetailedLayoutInfo::None,
         }
@@ -385,12 +391,20 @@ where
                     let node_key = node.into();
                     let style = &tree.taffy.nodes[node_key].style;
                     let has_context = tree.taffy.nodes[node_key].has_context;
+                    // mirin: a measured leaf's first baseline.
+                    let first_baseline = tree.taffy.nodes[node_key].first_baseline;
                     let node_context = has_context.then(|| tree.taffy.node_context_data.get_mut(node_key)).flatten();
                     let measure_function = |known_dimensions, available_space| {
                         (tree.measure_function)(known_dimensions, available_space, node, node_context, style)
                     };
                     // TODO: implement calc() in high-level API
-                    compute_leaf_layout(inputs, style, |_, _| 0.0, measure_function)
+                    let mut output = compute_leaf_layout(inputs, style, |_, _| 0.0, measure_function);
+                    // mirin: the leaf says where its first baseline is (a text's first line);
+                    // without it a row that aligns baselines aligns the leaves' bottom edges.
+                    if first_baseline.is_some() {
+                        output.first_baselines.y = first_baseline;
+                    }
+                    output
                 }
             }
         })
@@ -632,6 +646,16 @@ impl<NodeContext> TaffyTree<NodeContext> {
         let _ = self.nodes.remove(key);
 
         Ok(node)
+    }
+
+    // mirin: a measured leaf's first baseline.
+    /// Sets how far under its top a measured leaf's first baseline is. A row
+    /// with `align-items: baseline` lines its items up by it; a leaf without
+    /// one is aligned by its bottom edge.
+    #[inline]
+    pub fn set_first_baseline(&mut self, node: NodeId, baseline: Option<f32>) -> TaffyResult<()> {
+        self.nodes[node.into()].first_baseline = baseline;
+        self.mark_dirty(node)
     }
 
     /// Sets the context data associated with the node

@@ -2473,6 +2473,30 @@ mod mirin_tests {
         tree.layout(column).unwrap().size.height
     }
 
+    /// Two leaves in a row that aligns baselines, 20 and 30 tall: where each one's top is.
+    fn tops_on_a_baseline(first: Option<f32>, second: Option<f32>) -> (f32, f32) {
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let leaf = |tree: &mut TaffyTree<()>, height: f32| {
+            tree.new_leaf(Style { size: Size { width: length(40.0_f32), height: length(height) }, ..Default::default() }).unwrap()
+        };
+        let small = leaf(&mut tree, 20.0);
+        let large = leaf(&mut tree, 30.0);
+        tree.set_first_baseline(small, first).unwrap();
+        tree.set_first_baseline(large, second).unwrap();
+        let row = tree.new_with_children(Style { align_items: Some(AlignItems::Baseline), ..Default::default() }, &[small, large]).unwrap();
+        tree.compute_layout(row, Size::MAX_CONTENT).unwrap();
+        (tree.layout(small).unwrap().location.y, tree.layout(large).unwrap().location.y)
+    }
+
+    #[test]
+    fn a_measured_leaf_is_aligned_by_the_baseline_it_names() {
+        // Small text beside larger text: 15 under the small one's top, 22 under the large one's.
+        assert_eq!(tops_on_a_baseline(Some(15.0), Some(22.0)), (7.0, 0.0));
+        // A leaf that names none is aligned by its bottom edge, as before.
+        assert_eq!(tops_on_a_baseline(None, None), (10.0, 0.0));
+        assert_eq!(tops_on_a_baseline(Some(15.0), None), (15.0, 0.0));
+    }
+
     /// Text as a measure function sees it: eight 30-wide words, 6 apart, 14 a line, wrapped greedily at
     /// the known or definite width, at the widest word for min-content, on one line for max-content.
     fn text(known: Size<Option<f32>>, available: Size<AvailableSpace>) -> Size<f32> {
