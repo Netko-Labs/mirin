@@ -1853,11 +1853,18 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   drawings would fill the window's parking budget (24,000 primitives,
   about the 2,500 cards' whole drawing).
 
-Open, on upstream GPUI (`docs/metal/gpui-next.md` section 6): retained
-subtrees there are copied in place only; a subtree that moves or that
-nothing of shows is drawn again (moves, skips, parked drawings and building
-onto kept nodes are the next steps), and text boxes lay out a pixel taller
-than on the fork (upstream rounds a measured size up).
+Open, on upstream GPUI (`docs/metal/gpui-next.md` section 6, "Round 5"):
+retained subtrees there now move, are left out, park their drawings and
+are built again onto their kept nodes, so grow, scroll and resize cost
+4.4, 5.4 and 14.4 ms (host-r4: 3.5, 2.4 and 8.5) where round 4's upstream host drew everything that moved
+(108–150 ms). Still not on upstream: moving a drawing whose own masks or
+border strips the view's edge clipped (the fork's mask map; such rows are
+built again onto their nodes as they come into view clipped), moves at
+scale factors that are not powers of two (the fork's device grid),
+element states carried as one entry and replayed primitives placed once
+in the bounds tree (what a select or a keystroke still costs over the
+fork), and text boxes lay out a pixel taller than on the fork (upstream
+rounds a measured size up).
 
 Open: React work per update (the demo re-renders its whole list on select);
 at a scale factor that is not a multiple of 1/8 (1.1, 1.2) what sits a
