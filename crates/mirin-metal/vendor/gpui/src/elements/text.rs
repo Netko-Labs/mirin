@@ -398,7 +398,8 @@ fn needs_refit(cut_at: Option<Pixels>, measured: Pixels, drawn: Pixels) -> bool 
     const SLACK: f32 = 0.5;
     match cut_at {
         Some(at) => (at - drawn).abs() > px(SLACK),
-        None => measured > drawn + px(SLACK),
+        // mirin: a line that fits its own box is not cut (`CUT_SLACK`).
+        None => measured > drawn + px(CUT_SLACK),
     }
 }
 
@@ -415,11 +416,23 @@ pub fn cut_line(
 ) -> (SharedString, Vec<TextRun>) {
     let mut runs = runs.to_vec();
     let text = match width {
-        Some(width) => line_wrapper.truncate_line(text.clone(), width, suffix, &mut runs),
+        Some(width) => {
+            line_wrapper.truncate_line(text.clone(), width + px(CUT_SLACK), suffix, &mut runs)
+        }
         None => text.clone(),
     };
     (text, runs)
 }
+
+// mirin: a line that fits its own box is not cut.
+/// How far past its box a line may reach before it is cut, in px. A box sized
+/// by its text is the text's width rounded to whole device pixels, so at a
+/// fractional scale (1.75) it can be a part of a pixel narrower than the line
+/// it was made for, and the line lost its last letter to an ellipsis
+/// ("Battery & Powe…" on a button exactly as wide as "Battery & Power…").
+/// One px covers the rounding at any scale of 1 or more; what reaches past
+/// the box by less is side bearing, not ink.
+pub const CUT_SLACK: f32 = 1.0;
 
 // mirin: min-content width of text.
 /// The widest word of single-style text, plus a pixel of slack so wrapping at
@@ -727,7 +740,7 @@ impl TextLayout {
         let text = cx
             .text_system()
             .line_wrapper(fit.font.clone(), fit.font_size)
-            .truncate_line(fit.text.clone(), drawn, &fit.suffix, &mut runs);
+            .truncate_line(fit.text.clone(), drawn + px(CUT_SLACK), &fit.suffix, &mut runs);
         let Some(shaped) = window
             .text_system()
             .shape_text_tabbed(
