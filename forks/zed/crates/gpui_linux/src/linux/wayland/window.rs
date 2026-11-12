@@ -31,8 +31,14 @@ use wayland_protocols::{
 };
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
+// mirin: session-lock surfaces for a lock screen.
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_surface_v1, ext_session_lock_v1,
+};
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
+// mirin: Dashi's unified title bar.
+use crate::linux::wayland::dashi_chrome::dashi_chrome_v1;
 use crate::linux::{Globals, Output, PendingActivation, WaylandClientStatePtr, get_window};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, Corners, Decorations, DevicePixels, ExternalDragPayload,
@@ -61,6 +67,8 @@ pub(crate) struct Callbacks {
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
     button_layout_changed: Option<Box<dyn FnMut()>>,
+    // mirin: the compositor's traffic-light area changed.
+    chrome_changed: Option<Box<dyn FnMut()>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -143,12 +151,16 @@ pub struct WaylandWindowState {
     client_inset: Option<Pixels>,
     client_corner_radii: Corners<Pixels>,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
+    // mirin: where Dashi draws its traffic lights over a unified title bar.
+    chrome_controls: Option<Bounds<Pixels>>,
 }
 
 pub enum WaylandSurfaceState {
     Xdg(WaylandXdgSurfaceState),
     LayerShell(WaylandLayerSurfaceState),
     Popup(WaylandPopupSurfaceState),
+    // mirin: session-lock surfaces for a lock screen.
+    Lock(WaylandLockSurfaceState),
 }
 
 impl WaylandSurfaceState {
@@ -160,6 +172,24 @@ impl WaylandSurfaceState {
         popup_grab: Option<(u32, wl_seat::WlSeat)>,
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<Self> {
+        // mirin: a lock screen locks the session and is its lock surface on
+        // `target_output`; the compositor's configure sizes it.
+        if params.kind == WindowKind::SessionLock {
+            let Some(manager) = globals.session_lock_manager.as_ref() else {
+                anyhow::bail!("the compositor has no ext-session-lock-v1");
+            };
+            let Some(output) = target_output.as_ref() else {
+                anyhow::bail!("no screen to lock");
+            };
+            let lock = manager.lock(&globals.qh, surface.id());
+            let lock_surface = lock.get_lock_surface(surface, output, &globals.qh, surface.id());
+            return Ok(WaylandSurfaceState::Lock(WaylandLockSurfaceState {
+                lock,
+                lock_surface,
+                unlocked: false,
+            }));
+        }
+
         // For layer_shell windows, create a layer surface instead of an xdg surface
         if let WindowKind::LayerShell(options) = &params.kind {
             let Some(layer_shell) = globals.layer_shell.as_ref() else {
@@ -175,9 +205,13 @@ impl WaylandSurfaceState {
                 surface.id(),
             );
 
-            let width = f32::from(params.bounds.size.width);
-            let height = f32::from(params.bounds.size.height);
-            layer_surface.set_size(width as u32, height as u32);
+            // mirin: 0 along an axis anchored at both ends, which stretches it.
+            let (width, height) = super::layer_shell::request_size(
+                options.anchor,
+                f32::from(params.bounds.size.width) as i32,
+                f32::from(params.bounds.size.height) as i32,
+            );
+            layer_surface.set_size(width, height);
 
             layer_surface.set_anchor(super::layer_shell::wayland_anchor(options.anchor));
             layer_surface.set_keyboard_interactivity(
@@ -295,11 +329,29 @@ impl WaylandSurfaceState {
                 decoration_manager.get_toplevel_decoration(&toplevel, &globals.qh, surface.id())
             });
 
+        // mirin: a window with a transparent title bar asks Dashi for the
+        // unified chrome: no title bar, the compositor's traffic lights over
+        // our surface. Before the first commit, so the window opens placed
+        // for it. Without the protocol the window keeps the standard
+        // server-side title bar and `chrome_controls` stays None.
+        let chrome = params
+            .titlebar
+            .as_ref()
+            .is_some_and(|titlebar| titlebar.appears_transparent)
+            .then_some(globals.dashi_chrome.as_ref())
+            .flatten()
+            .map(|manager| {
+                let chrome = manager.get_chrome(&toplevel, &globals.qh, surface.id());
+                chrome.set_style(dashi_chrome_v1::Style::Unified);
+                chrome
+            });
+
         Ok(WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
             xdg_surface,
             toplevel,
             decoration,
             dialog,
+            chrome,
         }))
     }
 }
@@ -309,11 +361,20 @@ pub struct WaylandXdgSurfaceState {
     toplevel: xdg_toplevel::XdgToplevel,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     dialog: Option<XdgDialogV1>,
+    // mirin: set when the window asked Dashi for the unified title bar.
+    chrome: Option<dashi_chrome_v1::DashiChromeV1>,
 }
 
 pub struct WaylandLayerSurfaceState {
     layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
     anchor: Anchor,
+}
+
+// mirin: session-lock surfaces for a lock screen.
+pub struct WaylandLockSurfaceState {
+    lock: ext_session_lock_v1::ExtSessionLockV1,
+    lock_surface: ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+    unlocked: bool,
 }
 
 pub struct WaylandPopupSurfaceState {
@@ -387,6 +448,9 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.ack_configure(serial);
             }
+            WaylandSurfaceState::Lock(WaylandLockSurfaceState { lock_surface, .. }) => {
+                lock_surface.ack_configure(serial);
+            }
         }
     }
 
@@ -414,7 +478,7 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 Some(xdg_surface)
             }
-            WaylandSurfaceState::LayerShell(_) => None,
+            WaylandSurfaceState::LayerShell(_) | WaylandSurfaceState::Lock(_) => None,
         }
     }
 
@@ -433,13 +497,32 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Xdg(WaylandXdgSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.set_window_geometry(x, y, width, height);
             }
-            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) => {
+            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
+                layer_surface,
+                anchor,
+            }) => {
                 // cannot set window position of a layer surface
-                layer_surface.set_size(width as u32, height as u32);
+                // mirin: and a stretched axis keeps asking for 0, so it goes
+                // on following the screen's size.
+                let (width, height) = super::layer_shell::request_size(*anchor, width, height);
+                layer_surface.set_size(width, height);
             }
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.set_window_geometry(x, y, width, height);
             }
+            // mirin: a lock surface is the screen's size, which the compositor gives.
+            WaylandSurfaceState::Lock(_) => {}
+        }
+    }
+
+    // mirin: session-lock surfaces for a lock screen.
+    fn unlock(&mut self) {
+        if let WaylandSurfaceState::Lock(state) = self
+            && !state.unlocked
+        {
+            state.unlocked = true;
+            state.lock_surface.destroy();
+            state.lock.unlock_and_destroy();
         }
     }
 
@@ -518,7 +601,12 @@ impl WaylandSurfaceState {
                 toplevel,
                 decoration: _decoration,
                 dialog,
+                chrome,
             }) => {
+                // mirin: the chrome object before its toplevel.
+                if let Some(chrome) = chrome {
+                    chrome.destroy();
+                }
                 // drop the dialog before toplevel so compositor can explicitly unapply it's effects
                 if let Some(dialog) = dialog {
                     dialog.destroy();
@@ -540,6 +628,17 @@ impl WaylandSurfaceState {
                 // Role object before its xdg_surface, as with the toplevel above.
                 xdg_popup.destroy();
                 xdg_surface.destroy();
+            }
+            // mirin: the lock itself stays: the session unlocks only on
+            // request (`unlock`), never because the window went away.
+            WaylandSurfaceState::Lock(WaylandLockSurfaceState {
+                lock_surface,
+                unlocked,
+                ..
+            }) => {
+                if !*unlocked {
+                    lock_surface.destroy();
+                }
             }
         }
     }
@@ -648,6 +747,7 @@ impl WaylandWindowState {
             client_inset: None,
             client_corner_radii: Corners::default(),
             accesskit_adapter: None,
+            chrome_controls: None, // mirin:
         })
     }
 
@@ -873,6 +973,7 @@ impl WaylandWindow {
             .map(|viewporter| viewporter.get_viewport(&surface, &globals.qh, ()));
 
         let frame_ping = globals.frame_ping.clone();
+        let session_lock = params.kind == WindowKind::SessionLock; // mirin:
         let this = Self(WaylandWindowStatePtr {
             state: Rc::new(RefCell::new(WaylandWindowState::new(
                 handle,
@@ -893,8 +994,11 @@ impl WaylandWindow {
             scheduled_frame_at: Rc::new(Cell::new(None)),
         });
 
-        // Kick things off
-        surface.commit();
+        // Kick things off. A lock surface is configured without one (mirin:
+        // committing before its first ack_configure is a protocol error).
+        if !session_lock {
+            surface.commit();
+        }
 
         Ok((this, surface.id()))
     }
@@ -1338,6 +1442,54 @@ impl WaylandWindowStatePtr {
             }
             _ => false,
         }
+    }
+
+    // mirin: the compositor's traffic-light area (`controls`); an empty
+    // rectangle means none (standard style, or unified was not honored).
+    pub fn handle_chrome_event(&self, event: dashi_chrome_v1::Event) {
+        let dashi_chrome_v1::Event::Controls {
+            x,
+            y,
+            width,
+            height,
+        } = event;
+        let controls = (width > 0 && height > 0).then(|| Bounds {
+            origin: gpui::point(px(x as f32), px(y as f32)),
+            size: size(px(width as f32), px(height as f32)),
+        });
+        {
+            let mut state = self.state.borrow_mut();
+            if state.chrome_controls == controls {
+                return;
+            }
+            state.chrome_controls = controls;
+        }
+        if let Some(changed) = self.callbacks.borrow_mut().chrome_changed.as_mut() {
+            changed();
+        }
+    }
+
+    // mirin: session-lock surfaces for a lock screen. The compositor sizes
+    // the surface to its screen; handled as a layer surface's configure is.
+    pub fn handle_lock_surface_event(&self, event: ext_session_lock_surface_v1::Event) {
+        let ext_session_lock_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        else {
+            return;
+        };
+        let size = (width > 0 && height > 0).then(|| size(px(width as f32), px(height as f32)));
+        self.state.borrow_mut().in_progress_configure = Some(InProgressConfigure {
+            size,
+            fullscreen: false,
+            maximized: false,
+            resizing: false,
+            visibility: WindowVisibility::Visible,
+            tiling: Tiling::default(),
+        });
+        self.handle_xdg_surface_event(xdg_surface::Event::Configure { serial });
     }
 
     pub fn handle_layersurface_event(&self, event: zwlr_layer_surface_v1::Event) -> bool {
@@ -1921,6 +2073,11 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    // mirin: session-lock surfaces for a lock screen.
+    fn unlock_session(&self) {
+        self.borrow_mut().surface_state.unlock();
+    }
+
     // mirin: xdg_toplevel's least size is double-buffered; the next frame's commit applies it.
     fn set_min_size(&mut self, size: Size<Pixels>) {
         if let Some(toplevel) = self.borrow().surface_state.toplevel() {
@@ -2043,6 +2200,15 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
+    // mirin: Dashi's unified title bar.
+    fn chrome_controls(&self) -> Option<Bounds<Pixels>> {
+        self.borrow().chrome_controls
+    }
+
+    fn on_chrome_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().chrome_changed = Some(callback);
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
         let state = &mut *state;
@@ -2132,6 +2298,20 @@ impl PlatformWindow for WaylandWindow {
     fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {
         let state = self.borrow();
         state.client.start_external_drag(&state.surface, payload)
+    }
+
+    // mirin: a file drag the app starts, with an icon.
+    fn start_file_drag(
+        &self,
+        paths: &[std::path::PathBuf],
+        icon: Option<&std::path::Path>,
+        icon_size: u32,
+    ) -> bool {
+        let state = self.borrow();
+        let scale = state.scale.ceil() as i32;
+        state
+            .client
+            .start_file_drag(&state.surface, paths, icon, icon_size, scale)
     }
 
     fn start_window_resize(&self, edge: gpui::ResizeEdge) {

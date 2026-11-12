@@ -51,9 +51,7 @@
 //!
 //! Not yet (the fork's `../gpui` has them): moving a drawing a mask pushed
 //! inside of which the mask around it clipped (the fork's mask map), or at a
-//! scale factor that is not a power of two (its device grid); glyphs placed
-//! from their line's grid point, so a glyph near where its subpixel variant
-//! turns does not keep its subtree from moving across; element states
+//! scale factor that is not a power of two (its device grid); element states
 //! carried as one entry; replayed primitives placed in the bounds tree as
 //! one (`insert_spanning`).
 

@@ -155,7 +155,7 @@ pub(crate) fn render_input(
     let mut text = StyledText::new(SharedString::from(display.text.clone()))
         .with_highlights(styled.highlights);
     if props.multiline && !styled.sizes.is_empty() {
-        text = crate::gpui_api::with_paragraph_sizes(text, styled.sizes);
+        text = text.with_paragraph_sizes(styled.sizes);
     }
     let layout = text.layout().clone();
     // The driver's highlights, behind the text and under the selection.

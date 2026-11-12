@@ -1,11 +1,8 @@
 //! The default build: mirin's fork of gpui 0.2.2 (`forks/gpui`).
 
-use std::path::{Path, PathBuf};
-
 use gpui::{
-    App, Application, AsyncApp, Bounds, BoxShadow, FocusHandle, Hsla, Keystroke, ListState, Pixels,
-    Point, ScrollHandle, ShapedLine, Size, StyledText, Subscription, TextLayout, Window,
-    WindowOptions,
+    App, Application, AsyncApp, BoxShadow, FocusHandle, Hsla, Keystroke, ListState, Pixels, Point,
+    ScrollHandle, ShapedLine, Size, Subscription, Window, WindowOptions,
 };
 
 pub(crate) use gpui::{
@@ -94,6 +91,7 @@ pub(crate) fn with_surface(
     options: WindowOptions,
     layer: Option<&LayerShellOptions>,
     lock: bool,
+    _cx: &App,
 ) -> WindowOptions {
     WindowOptions {
         layer_shell: layer.cloned(),
@@ -109,68 +107,15 @@ pub(crate) fn observe_visibility(window: &mut Window, mut callback: impl FnMut(b
         .detach();
 }
 
-/// Where the compositor draws its window controls over a unified title bar
-/// (Dashi), now and on every change.
-pub(crate) fn observe_chrome(
-    window: &mut Window,
-    mut callback: impl FnMut(Option<Bounds<Pixels>>) + 'static,
-) {
-    window
-        .observe_window_chrome(move |window, _cx| callback(window.chrome_controls()))
-        .detach();
-}
-
-/// Unlock the session a lock surface holds.
-pub(crate) fn unlock_session(window: &mut Window) {
-    window.unlock_session();
-}
-
 /// Paint scroll views at whole device pixels.
 pub(crate) fn set_scroll_snap(window: &mut Window, snap: bool) {
     window.set_scroll_snap(snap);
-}
-
-/// Start dragging files out of the window; false when the platform can't.
-pub(crate) fn start_file_drag(
-    window: &Window,
-    paths: &[PathBuf],
-    icon: Option<&Path>,
-    icon_size: u32,
-) -> bool {
-    window.start_file_drag(paths, icon, icon_size)
-}
-
-/// Shape each paragraph of a text at its own size (`None`: the text's).
-pub(crate) fn with_paragraph_sizes(text: StyledText, sizes: Vec<Option<Pixels>>) -> StyledText {
-    text.with_paragraph_sizes(sizes)
-}
-
-/// The height of the line that holds `index`.
-pub(crate) fn line_height_at(layout: &TextLayout, index: usize) -> Pixels {
-    layout.line_height_for_index(index)
 }
 
 /// Draw the window's next frame and drop it (tests).
 #[cfg(test)]
 pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear();
-}
-
-/// A list tells where it paints its rows' content, so they can move as one
-/// group of the layout map (`list.rs`).
-pub(crate) const LIST_CONTENT_ORIGIN: bool = true;
-
-/// Call `listener` with where `list` paints its content, every frame.
-pub(crate) fn on_list_content_origin(
-    list: gpui::List,
-    listener: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
-) -> gpui::List {
-    list.on_content_origin(listener)
-}
-
-/// Scene traces name each glyph's atlas tile (pixel and subpixel variant).
-pub(crate) fn describe_glyph_variants(on: bool) {
-    gpui::describe_glyph_variants(on);
 }
 
 /// A retained subtree whose root draws nothing from its own size: resized

@@ -54,7 +54,7 @@ impl Laid for TextLayout {
     }
 
     fn line_height_at(&self, index: usize) -> Pixels {
-        crate::gpui_api::line_height_at(self, index)
+        self.line_height_for_index(index)
     }
 
     fn bounds(&self) -> Bounds<Pixels> {

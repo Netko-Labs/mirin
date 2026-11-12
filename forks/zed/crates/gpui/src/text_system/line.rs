@@ -555,6 +555,7 @@ fn paint_line(
     let line_bounds = line_paint_bounds(
         origin,
         layout,
+        text,
         line_height,
         align,
         align_width,
@@ -583,6 +584,18 @@ fn paint_line(
             ),
             origin.y,
         );
+        // mirin: how far across the glyph is from the line's origin, worked
+        // out as `glyph_origin.x` is but from zero: a glyph is painted from
+        // the line's position and this apart (`Window::paint_line_glyph`).
+        let mut glyph_offset_x = aligned_origin_x(
+            point(px(0.), origin.y),
+            align_width.unwrap_or(layout.width),
+            px(0.0),
+            &align,
+            layout,
+            text,
+            wraps.peek(),
+        );
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
         let mut first_glyph_x = origin.x;
@@ -591,6 +604,7 @@ fn paint_line(
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+                glyph_offset_x += glyph.position.x - prev_glyph_position.x; // mirin:
                 if glyph_ix == 0 && run_ix == 0 {
                     first_glyph_x = glyph_origin.x;
                 }
@@ -638,6 +652,16 @@ fn paint_line(
 
                     glyph_origin.x = aligned_origin_x(
                         origin,
+                        align_width.unwrap_or(layout.width),
+                        glyph.position.x,
+                        &align,
+                        layout,
+                        text,
+                        wraps.peek(),
+                    );
+                    // mirin: and from zero, for `paint_line_glyph`.
+                    glyph_offset_x = aligned_origin_x(
+                        point(px(0.), origin.y),
                         align_width.unwrap_or(layout.width),
                         glyph.position.x,
                         &align,
@@ -758,8 +782,13 @@ fn paint_line(
                             layout.font_size,
                         )?;
                     } else {
-                        window.paint_glyph(
-                            glyph_origin + baseline_offset + vertical_offset,
+                        // mirin: placed from the line's position
+                        // (`Window::paint_line_glyph`).
+                        let glyph_at = glyph_origin + baseline_offset + vertical_offset;
+                        window.paint_line_glyph(
+                            origin.x,
+                            glyph_offset_x + baseline_offset.x + vertical_offset.x,
+                            glyph_at.y,
                             run.font_id,
                             glyph.id,
                             layout.font_size,
@@ -830,6 +859,7 @@ fn paint_line_background(
     let line_bounds = line_paint_bounds(
         origin,
         layout,
+        text,
         line_height,
         align,
         align_width,
@@ -971,6 +1001,7 @@ fn paint_line_background(
 fn line_paint_bounds(
     origin: Point<Pixels>,
     layout: &LineLayout,
+    text: &str, // mirin: where a wrapped row's ink ends
     line_height: Pixels,
     align: TextAlign,
     align_width: Option<Pixels>,
@@ -989,15 +1020,18 @@ fn line_paint_bounds(
 
     let align_width = align_width.unwrap_or(layout.width);
     let mut row_start = Pixels::ZERO;
+    // mirin: a row is aligned by where its ink ends (`wrapped_line_end_x`),
+    // as `aligned_origin_x` places its glyphs; the next starts at the break.
     let row_ends = wrap_boundaries
         .iter()
         .map(|boundary| {
-            layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+            let next_start = layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
                 .position
-                .x
+                .x;
+            (wrapped_line_end_x(layout, text, boundary), next_start)
         })
-        .chain([layout.width]);
-    for (row, row_end) in row_ends.enumerate() {
+        .chain([(layout.width, layout.width)]);
+    for (row, (row_end, next_start)) in row_ends.enumerate() {
         let width = row_end - row_start;
         let offset = match align {
             TextAlign::Left => Pixels::ZERO,
@@ -1008,7 +1042,7 @@ fn line_paint_bounds(
             point(origin.x + offset, origin.y + line_height * row as f32),
             size(width, line_height),
         ));
-        row_start = row_end;
+        row_start = next_start;
     }
     bounds
 }
@@ -1129,6 +1163,47 @@ mod tests {
         }
     }
 
+    // mirin: a wrapped row's bounds end where its ink does.
+    #[test]
+    fn a_wrapped_rows_paint_bounds_end_before_the_space_it_broke_at() {
+        // "ab cd" 10 px a glyph, wrapped before "c": the first row is "ab".
+        let line = make_shaped_line(
+            "ab cd",
+            &[(0, 0.), (1, 10.), (2, 20.), (3, 30.), (4, 40.)],
+            50.,
+            &[],
+        );
+        let boundaries = [WrapBoundary {
+            run_ix: 0,
+            glyph_ix: 3,
+        }];
+        let origin = point(px(0.), px(0.));
+        let bounds = line_paint_bounds(
+            origin,
+            &line.layout,
+            "ab cd",
+            px(10.),
+            TextAlign::Right,
+            Some(px(100.)),
+            &boundaries,
+        );
+        // Both rows end at 100: "ab" from 80, "cd" from 80.
+        assert_eq!(
+            bounds,
+            Bounds::new(point(px(0.), px(0.)), size(px(100.), px(20.)))
+        );
+        let bounds = line_paint_bounds(
+            origin,
+            &line.layout,
+            "ab cd",
+            px(10.),
+            TextAlign::Right,
+            Some(px(20.)),
+            &boundaries,
+        );
+        assert_eq!(bounds.left(), px(0.));
+    }
+
     #[test]
     fn test_aligned_line_paint_bounds() {
         let line = make_shaped_line("abcd", &[(0, 0.), (1, 10.), (2, 20.), (3, 30.)], 40., &[]);
@@ -1162,6 +1237,7 @@ mod tests {
                     line_paint_bounds(
                         origin,
                         &line.layout,
+                        "abcd",
                         line_height,
                         align,
                         align_width.map(px),
@@ -1181,6 +1257,7 @@ mod tests {
                 line_paint_bounds(
                     origin,
                     &empty.layout,
+                    "",
                     line_height,
                     align,
                     Some(px(100.)),

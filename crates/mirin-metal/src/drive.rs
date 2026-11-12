@@ -305,6 +305,7 @@ fn open_window(
             _ => None,
         },
         matches!(options.surface, Some(Surface::Lock)),
+        cx,
     );
     let layout = LayoutMap::default();
     let event_sender = EventSender::new(events, layout.clone());
@@ -359,23 +360,26 @@ fn open_window(
         view.access = tree_access;
         view.apply_pending_focus(window, cx);
     });
-    // Report the chrome now and whenever the compositor moves or
-    // drops its window controls (it runs once on registering).
+    // Report the chrome whenever the compositor shows, moves or drops
+    // its window controls (on Dashi, as the window opens; elsewhere never,
+    // and the driver keeps the standard style).
     let requested = if unified {
         TitleBar::Unified
     } else {
         TitleBar::Standard
     };
     let _ = window.update(cx, |_view, window, _cx| {
-        crate::gpui_api::observe_chrome(window, move |controls| {
-            let controls = controls.map(|bounds| Controls {
-                x: f32::from(bounds.origin.x),
-                y: f32::from(bounds.origin.y),
-                width: f32::from(bounds.size.width),
-                height: f32::from(bounds.size.height),
-            });
-            chrome_events.chrome(Chrome::effective(requested, controls));
-        });
+        window
+            .observe_window_chrome(move |window, _cx| {
+                let controls = window.chrome_controls().map(|bounds| Controls {
+                    x: f32::from(bounds.origin.x),
+                    y: f32::from(bounds.origin.y),
+                    width: f32::from(bounds.size.width),
+                    height: f32::from(bounds.size.height),
+                });
+                chrome_events.chrome(Chrome::effective(requested, controls));
+            })
+            .detach();
     });
     // A driver that answers closes itself: the window stays, and the
     // driver hears of it (it ends the host to close, or asks first).
@@ -628,9 +632,7 @@ impl Drive {
                 eprintln!("[mirin-metal-host] rejected line: unlock needs a shown lock surface");
                 return true;
             };
-            let _ = window.update(cx, |_view, window, _cx| {
-                crate::gpui_api::unlock_session(window)
-            });
+            let _ = window.update(cx, |_view, window, _cx| window.unlock_session());
             // Give the event loop a moment to send the unlock
             // before the process goes.
             cx.background_executor().timer(UNLOCK_FLUSH).await;

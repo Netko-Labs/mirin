@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use uuid::Uuid;
 use wayland_backend::client::ObjectId;
 
-use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, refresh_interval_from_hz};
+use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, SharedString, refresh_interval_from_hz};
 
 #[derive(Debug, Clone)]
 pub(crate) struct WaylandDisplay {
@@ -40,6 +40,11 @@ impl PlatformDisplay for WaylandDisplay {
 
     fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
+    }
+
+    // mirin: a layer surface on a screen by its name.
+    fn name(&self) -> Option<SharedString> {
+        self.name.clone().map(SharedString::from)
     }
 
     fn refresh_interval(&self) -> Option<Duration> {

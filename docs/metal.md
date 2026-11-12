@@ -2083,6 +2083,16 @@ in the bounds tree (what a select or a keystroke still costs over the
 fork), and text boxes lay out a pixel taller than on the fork (upstream
 rounds a measured size up).
 
+On upstream GPUI after round 6's next-platform lane (`docs/metal/gpui-next.md`,
+"Round 6: the platform and text ports"): the session lock, Dashi's unified
+title bar, a layer surface's screen by name and its stretched axis, the
+file drag's icon and X11's least size are ported to `gpui_linux`, and
+per-paragraph text sizes, `fit_to`, ink-end alignment, glyph variants in
+scene traces, a list's content origin and glyphs placed from their line's
+position to `gpui`; mirin-metal calls the same API for each on both builds.
+The nested compositor showed the lock, the chrome and the layer surfaces as
+`host-r5` does; the drag and two screens were not exercised there.
+
 The upstream build's footprint after round 5 (`docs/metal/gpui-next.md`,
 "Round 5: a small app's footprint"): the counter's host 68 MB RSS, 32 MB
 of GPU memory, 16 threads and 40 ms to its first content frame, where
