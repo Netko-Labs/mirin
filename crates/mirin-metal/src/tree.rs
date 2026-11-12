@@ -368,6 +368,10 @@ pub struct InputProps {
     /// wraps, but holds one paragraph); Ctrl/Cmd+Enter always submits.
     #[serde(default)]
     pub submit_on_enter: bool,
+    /// Tab types a tab in a multiline field instead of moving the keyboard
+    /// on (a document's text); Shift+Tab and Ctrl/Cmd+Tab still move it.
+    #[serde(default)]
+    pub insert_tab: bool,
     /// Report Escape, ArrowUp, and ArrowDown (a launcher's list navigation).
     #[serde(default)]
     pub on_key: bool,
@@ -481,6 +485,7 @@ impl Default for InputProps {
             on_submit: false,
             focus_next_on_submit: false,
             submit_on_enter: false,
+            insert_tab: false,
             on_key: false,
             selection: None,
             on_selection: false,
@@ -683,6 +688,18 @@ mod tests {
         let mut inputs = Vec::new();
         collect_inputs(&tree, &mut inputs);
         assert!(inputs[0].multiline && inputs[0].submit_on_enter);
+        assert!(!inputs[0].insert_tab);
+    }
+
+    #[test]
+    fn a_multiline_input_can_type_tabs() {
+        let tree = parse_tree(
+            r#"{"type":"input","props":{"id":"text","value":"","multiline":true,"insertTab":true}}"#,
+        )
+        .expect("valid tree must parse");
+        let mut inputs = Vec::new();
+        collect_inputs(&tree, &mut inputs);
+        assert!(inputs[0].insert_tab);
     }
 
     #[test]

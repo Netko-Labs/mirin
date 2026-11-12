@@ -445,6 +445,12 @@ export interface TextInputProps extends AccessibilityProps {
    */
   submitBehavior?: "submit" | "newline";
   /**
+   * What Tab does in a multiline field: "focus" (the default) moves the keyboard to the next
+   * control; "insert" types a tab, for a document's text (a text editor). Shift+Tab still moves
+   * the keyboard back, and Ctrl/Cmd+Tab on. A single-line field always moves it.
+   */
+  tabBehavior?: "focus" | "insert";
+  /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
    * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
    */

@@ -373,6 +373,7 @@ pub(crate) fn render_input(
     let key_id = props.id.clone();
     let multiline = props.multiline;
     let submit_on_enter = props.submit_on_enter;
+    let insert_tab = props.insert_tab;
     let secure = props.secure;
     let on_change = props.on_change;
     let on_submit = props.on_submit;
@@ -393,6 +394,7 @@ pub(crate) fn render_input(
             let mut env = KeyEnv {
                 multiline,
                 submit_on_enter,
+                insert_tab,
                 secure,
                 clipboard: &mut clipboard,
                 lines,

@@ -197,6 +197,7 @@ interface InputNodeProps {
   onSubmit?: boolean;
   focusNextOnSubmit?: boolean;
   submitOnEnter?: boolean;
+  insertTab?: boolean;
   onKey?: boolean;
   selection?: TextSelection;
   onSelection?: boolean;
@@ -651,6 +652,7 @@ function serializeInput(instance: InputInstance, handlers: Handlers): InputNode 
   }
   if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
   if (input.multiline && input.submitBehavior === "submit") props.submitOnEnter = true;
+  if (input.multiline && input.tabBehavior === "insert") props.insertTab = true;
   if (input.onKeyPress) {
     props.onKey = true;
     handlers.key.set(id, input.onKeyPress);
