@@ -1,10 +1,7 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
     Style, Window, size,
-    util::{
-        ceil_to_device_pixel, round_half_toward_zero, round_stroke_to_device_pixel,
-        round_to_device_pixel,
-    },
+    util::{round_stroke_to_device_pixel, round_to_device_pixel},
 };
 use collections::{FxHashMap, FxHashSet};
 use std::{fmt::Debug, ops::Range};
@@ -63,7 +60,11 @@ pub struct TaffyLayoutEngine {
     /// The unrounded absolute origin (device pixels) a parentless node is
     /// laid out at: a retained subtree's copy laid out apart, placed where its
     /// twin sits so its edges round as the twin's do (`place_detached`).
-    detached_origins: FxHashMap<LayoutId, Point<f32>>,
+    /// With it, the rounded origin it is laid out at: the twin's.
+    detached_origins: FxHashMap<LayoutId, (Point<f32>, Point<f32>)>,
+    /// mirin: each node's rounded absolute origin (device pixels), as
+    /// `layout_bounds` rounds it.
+    rounded_origins: FxHashMap<LayoutId, Point<f32>>,
     /// mirin: while a retained subtree is drawn anew, what the edges it
     /// lays out round to (`elements::retained`, step 2), and per node laid
     /// out meanwhile whether its unrounded origin was summed exactly from
@@ -93,6 +94,7 @@ impl TaffyLayoutEngine {
             owned_count: 0,
             released: Default::default(),
             detached_origins: FxHashMap::default(),
+            rounded_origins: FxHashMap::default(),
             steadiness: None,
             exact_origins: FxHashMap::default(),
             epoch: 0,
@@ -118,6 +120,7 @@ impl TaffyLayoutEngine {
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
         self.detached_origins.clear();
+        self.rounded_origins.clear();
         self.exact_origins.clear();
         self.epoch += 1;
     }
@@ -328,8 +331,11 @@ impl TaffyLayoutEngine {
         style.inset = taffy::geometry::Rect::auto();
         style.position = taffy::style::Position::Relative;
         self.taffy.set_style(root.0, style).expect(EXPECT_MESSAGE);
-        if let Some(origin) = self.absolute_outer_origins.get(&twin).copied() {
-            self.detached_origins.insert(root, origin);
+        if let (Some(origin), Some(rounded)) = (
+            self.absolute_outer_origins.get(&twin).copied(),
+            self.rounded_origins.get(&twin).copied(),
+        ) {
+            self.detached_origins.insert(root, (origin, rounded));
         }
         Size {
             width: Pixels(twin_layout.size.width),
@@ -513,6 +519,7 @@ impl TaffyLayoutEngine {
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
                 self.absolute_outer_origins.remove(&id);
+                self.rounded_origins.remove(&id);
                 stack.extend(
                     self.taffy
                         .children(id.into())
@@ -581,7 +588,14 @@ impl TaffyLayoutEngine {
                                 window,
                                 cx,
                             );
-                            snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
+                            // mirin: as measured, unrounded: mirin's default
+                            // build lays text out at its line height's
+                            // fraction and rounds only edges (`layout_bounds`).
+                            size(
+                                measured_size.width.0.max(0.0) * scale_factor,
+                                measured_size.height.0.max(0.0) * scale_factor,
+                            )
+                            .into()
                         },
                     )
                 },
@@ -688,7 +702,14 @@ impl TaffyLayoutEngine {
         let layout_size = layout.size;
         let parent = self.taffy.parent(id.0);
 
-        let absolute_outer_origin = match parent {
+        // mirin: rounded as mirin's default build rounds (taffy 0.9's
+        // `round_layout`, which Dashi's layouts are made against), not by
+        // absolute edges: a node's place in its parent rounded on its own
+        // (halves away from zero), its size the difference of its rounded
+        // absolute edges. So the rounded origin is the parent's plus the
+        // rounded place (`rounded_origins`), not the absolute one rounded.
+        let location = Point::from(layout_location);
+        let (absolute_outer_origin, parent_rounded) = match parent {
             Some(parent_id) => {
                 let parent_id = LayoutId::from(parent_id);
                 self.layout_bounds(parent_id, scale_factor);
@@ -696,12 +717,16 @@ impl TaffyLayoutEngine {
                     .absolute_outer_origins
                     .get(&parent_id)
                     .expect("parent absolute outer origin should be cached");
-                parent_origin + Point::from(layout_location)
+                let parent_rounded = *self
+                    .rounded_origins
+                    .get(&parent_id)
+                    .expect("parent rounded origin should be cached");
+                (parent_origin + location, parent_rounded)
             }
             // mirin: a retained subtree's copy laid out apart sits where its twin does.
             None => {
-                self.detached_origins.get(&id).copied().unwrap_or_default()
-                    + Point::from(layout_location)
+                let (origin, rounded) = self.detached_origins.get(&id).copied().unwrap_or_default();
+                (origin + location, rounded)
             }
         };
         self.absolute_outer_origins
@@ -712,10 +737,10 @@ impl TaffyLayoutEngine {
         if self.steadiness.is_some() {
             self.note_rounded(id, parent, absolute_outer_origin, absolute_far);
         }
-        let snapped_bounds = Bounds::from_corners(
-            absolute_outer_origin.map(round_half_toward_zero),
-            absolute_far.map(round_half_toward_zero),
-        );
+        let rounded_origin = parent_rounded + location.map(f32::round);
+        self.rounded_origins.insert(id, rounded_origin);
+        let rounded_size = absolute_far.map(f32::round) - absolute_outer_origin.map(f32::round);
+        let snapped_bounds = Bounds::new(rounded_origin, size(rounded_size.x, rounded_size.y));
 
         let bounds = (snapped_bounds / scale_factor).map(Pixels);
         self.absolute_layout_bounds.insert(id, bounds);
@@ -751,10 +776,6 @@ impl From<LayoutId> for NodeId {
     fn from(layout_id: LayoutId) -> NodeId {
         layout_id.0
     }
-}
-
-fn snap_measured_size_to_device_pixels(size: Size<Pixels>, scale_factor: f32) -> Size<f32> {
-    size.map(|d| ceil_to_device_pixel(d.0.max(0.0), scale_factor))
 }
 
 fn border_widths_to_taffy(

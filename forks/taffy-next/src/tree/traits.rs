@@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
 
     /// Compute the specified node's size or full layout given the specified constraints
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput;
+
+    /// mirin: the flexbox algorithm, laying `node_id` out, found that what it
+    /// computes does not depend on the node's width while that is above
+    /// `bound` (`Cache::get_stretched`); `None`: it may. A tree that caches
+    /// keeps it with the result; the default ignores it.
+    #[inline(always)]
+    fn set_stretch_bound(&mut self, node_id: NodeId, bound: Option<f32>) {
+        let _ = (node_id, bound);
+    }
 }
 
 /// Extends [`LayoutPartialTree`] with the operations needed by the out-of-flow positioning pass

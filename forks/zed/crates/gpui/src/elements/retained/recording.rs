@@ -265,8 +265,11 @@ impl Window {
     pub(crate) fn retained_round_half(&self, axis: usize, device: f32, units: f32) {
         if let Some(mut steady) = self.retained_paint_steadiness.get() {
             // Exactly on a half by exact arithmetic only where scaling is.
-            let exact = super::grid::is_exact_scale(self.scale_factor());
-            steady.round_half(axis, device, units, exact);
+            if super::grid::is_exact_scale(self.scale_factor()) {
+                steady.round_half(axis, device, units, true);
+            } else {
+                steady.round_half_scaled(axis, device);
+            }
             self.retained_paint_steadiness.set(Some(steady));
         }
     }

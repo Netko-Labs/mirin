@@ -10,6 +10,12 @@ use crate::RequestedAxis;
 /// The number of cache entries for each node in the tree
 const CACHE_SIZE: usize = 9;
 
+#[cfg(test)]
+std::thread_local! {
+    /// mirin: how often `get_stretched` answered, for tests.
+    pub(crate) static STRETCHED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
 // Manually written-out results of float to u32 bit casts because
 // `f32::to_bits` is not yet const at our MSRV.
 
@@ -206,6 +212,9 @@ pub(crate) struct CacheEntry<T> {
     key: CacheKey,
     /// The cached size and baselines of the item
     content: T,
+    /// mirin: the width above which the result holds at any other width
+    /// (`Cache::get_stretched`).
+    stretch: Option<f32>,
 }
 
 /// A cache for caching the results of a sizing a Grid Item or Flexbox Item
@@ -281,6 +290,12 @@ impl Cache {
 
     /// Store a computed size in the cache
     pub fn store(&mut self, input: &LayoutInput, layout_output: LayoutOutput) {
+        self.store_stretchable(input, layout_output, None);
+    }
+
+    /// mirin: `store`, with the width above which the result holds at any
+    /// other width (`get_stretched`), when the flexbox algorithm found one.
+    pub fn store_stretchable(&mut self, input: &LayoutInput, layout_output: LayoutOutput, stretch: Option<f32>) {
         if input.run_mode == RunMode::PerformHiddenLayout {
             return;
         }
@@ -297,7 +312,7 @@ impl Cache {
         match input.run_mode {
             RunMode::PerformLayout => {
                 self.is_empty = false;
-                self.final_layout_entry = Some(CacheEntry { key, content: layout_output })
+                self.final_layout_entry = Some(CacheEntry { key, content: layout_output, stretch })
             }
             RunMode::ComputeSize => {
                 // Measure entries only store the size, and cache hits are reconstructed with
@@ -314,7 +329,9 @@ impl Cache {
                 if let Some(index) =
                     self.measure_entries.iter().position(|entry| entry.as_ref().is_some_and(|entry| entry.key == key))
                 {
-                    self.measure_entries[index].as_mut().unwrap().content = layout_output.size;
+                    let entry = self.measure_entries[index].as_mut().unwrap();
+                    entry.content = layout_output.size;
+                    entry.stretch = stretch;
                     self.recently_used_entries |= 1 << index;
                     return;
                 }
@@ -326,7 +343,7 @@ impl Cache {
                     }
                 }
                 let entry_index = self.next_measure_entry as usize;
-                self.measure_entries[entry_index] = Some(CacheEntry { key, content: layout_output.size });
+                self.measure_entries[entry_index] = Some(CacheEntry { key, content: layout_output.size, stretch });
                 self.recently_used_entries |= 1 << entry_index;
                 self.next_measure_entry += 1;
                 if self.next_measure_entry == CACHE_SIZE as u8 {
@@ -335,6 +352,83 @@ impl Cache {
             }
             RunMode::PerformHiddenLayout => {}
         }
+    }
+
+    /// mirin: a result for a query `get` found nothing for, from an entry
+    /// for the same query at another width, where the flexbox algorithm
+    /// found that the width changes nothing but itself (a row whose items
+    /// neither grow, shrink nor move with it: `compute_stretch_bound`):
+    ///
+    /// - a known width, before and now, both above the entry's bound: the
+    ///   entry's result at the new width (the items' layouts as they are);
+    /// - no known width, under a definite available width before and now:
+    ///   the entry's result (a row then takes its content's width).
+    ///
+    /// Everything else must be asked as it was: the mode, the other
+    /// dimension, which axes are known to be definite and the axis asked
+    /// for. The parent's size is not compared: a row that can stretch has no
+    /// percentage in its own box or its items'.
+    pub fn get_stretched(&mut self, input: &LayoutInput) -> Option<LayoutOutput> {
+        /// How far above its bound a width must be: far more than `f32`
+        /// loses in the sums that make the bound.
+        const MARGIN: f32 = 1.0 / 64.0;
+        if self.mode != CacheMode::from(input) {
+            return None;
+        }
+        let key = CacheKey::from(input);
+        let now = width_key(key.kd_available_space);
+        // The width to answer with (`None`: the entry's), when the entry holds.
+        let width = |entry: &CacheKey, size: Size<f32>, stretch: Option<f32>| -> Option<Option<f32>> {
+            let bound = stretch?;
+            let same = entry.kd_available_space as u32 == key.kd_available_space as u32
+                && entry.known_dimensions_are_definite == key.known_dimensions_are_definite
+                && entry.requested_axis_bits() == key.requested_axis_bits();
+            if !same {
+                return None;
+            }
+            match (width_key(entry.kd_available_space), now) {
+                (WidthKey::Known(before), WidthKey::Known(now))
+                    if before > bound + MARGIN && now > bound + MARGIN && size.width == before =>
+                {
+                    Some(Some(now))
+                }
+                (WidthKey::Definite, WidthKey::Definite) => Some(None),
+                _ => None,
+            }
+        };
+        let output = match input.run_mode {
+            RunMode::PerformLayout => {
+                let entry = self.final_layout_entry.as_ref()?;
+                // An out-of-flow box placed from this one's size would move with it.
+                if !entry.content.oof_candidates.is_empty() {
+                    return None;
+                }
+                let width = width(&entry.key, entry.content.size, entry.stretch)?;
+                let mut output = entry.content.clone();
+                if let Some(width) = width {
+                    if let Some(area) = output.oof_positioning_area.as_mut() {
+                        area.size.width += width - output.size.width;
+                    }
+                    output.size.width = width;
+                }
+                Some(output)
+            }
+            RunMode::ComputeSize => {
+                let (index, size) = self.measure_entries.iter().enumerate().find_map(|(index, entry)| {
+                    let entry = entry.as_ref()?;
+                    let width = width(&entry.key, entry.content, entry.stretch)?;
+                    Some((index, Size { width: width.unwrap_or(entry.content.width), height: entry.content.height }))
+                })?;
+                self.recently_used_entries |= 1 << index;
+                Some(LayoutOutput::from_outer_size(size))
+            }
+            RunMode::PerformHiddenLayout => None,
+        };
+        #[cfg(test)]
+        if output.is_some() {
+            STRETCHED.with(|count| count.set(count.get() + 1));
+        }
+        output
     }
 
     /// Clear all cache entries and reports clear operation outcome ([`ClearState`])
@@ -355,6 +449,32 @@ impl Cache {
     /// Returns true if all cache entries are None, else false
     pub fn is_empty(&self) -> bool {
         self.final_layout_entry.is_none() && !self.measure_entries.iter().any(|entry| entry.is_some())
+    }
+}
+
+/// mirin: what a cache key says of the width asked for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum WidthKey {
+    /// A known width.
+    Known(f32),
+    /// None known, under a definite available width.
+    Definite,
+    /// None known, under a min- or max-content constraint.
+    Content,
+}
+
+/// mirin: the width part of a `CacheKey::kd_available_space`
+/// (`mixed_cache_key`): a known width is its bits (never negative), a
+/// definite available one its negated bits, min- and max-content the
+/// infinities.
+fn width_key(kd_available_space: u64) -> WidthKey {
+    let bits = (kd_available_space >> 32) as u32;
+    if bits == INFINITY_BITS || bits == NEG_INFINITY_BITS {
+        WidthKey::Content
+    } else if bits >> 31 == 1 {
+        WidthKey::Definite
+    } else {
+        WidthKey::Known(f32::from_bits(bits))
     }
 }
 

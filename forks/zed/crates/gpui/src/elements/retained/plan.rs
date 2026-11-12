@@ -5,11 +5,11 @@
 use std::ops::Range;
 
 use crate::{
-    Bounds, ContentMask, LayoutId, PaintIndex, Pixels, Point, PrepaintStateIndex, Window, point,
-    px, util::round_to_device_pixel,
+    Bounds, ContentMask, LayoutId, PaintIndex, Pixels, Point, PrepaintStateIndex, Size, Window,
+    point, px,
 };
 
-use super::recording::Recorded;
+use super::{grid::Grid, recording::Recorded};
 
 /// A retained subtree's last drawing: where it is in last frame's lists,
 /// where it was drawn, and what its recording found. Shared with the
@@ -50,6 +50,28 @@ pub(crate) struct Place {
     pub(super) node: [f32; 10],
 }
 
+impl Drawn {
+    /// mirin: its root, which draws nothing from its size, was only resized
+    /// (`Retained::stretchable`): what it drew is what it would draw now,
+    /// at `size`, laid out by this layout. It is then planned as a drawing
+    /// of that size that may have moved. Where its border or padding
+    /// changed, nothing is taken.
+    pub(super) fn stretch(&mut self, size: Size<Pixels>, now: Option<Place>, window: &mut Window) {
+        let (Some(before), Some(now)) = (self.place, now) else {
+            return;
+        };
+        if before.node[2..] != now.node[2..] {
+            return;
+        }
+        self.bounds.size = size;
+        self.place = Some(Place {
+            node: now.node,
+            ..before
+        });
+        self.epoch = window.layout_engine_mut().epoch();
+    }
+}
+
 impl Place {
     /// Where `root` is this frame (`None` before `layout_bounds` found it).
     pub(super) fn of(root: LayoutId, window: &mut Window) -> Option<Self> {
@@ -62,8 +84,9 @@ impl Place {
             layout,
             node,
             offset: point(
-                round_to_device_pixel(offset.x.0, scale),
-                round_to_device_pixel(offset.y.0, scale),
+                // mirin: as `Window::layout_bounds` snaps it (halves away from zero).
+                (offset.x.0 * scale).round(),
+                (offset.y.0 * scale).round(),
             ),
         })
     }
@@ -132,11 +155,15 @@ impl Drawn {
     ) {
         let offset = point(px(by.x / scale), px(by.y / scale));
         // On the device grid, as laying it out there does (`Grid`).
-        let grid = super::grid::Grid::new(scale);
+        let grid = Grid::new(scale);
         self.bounds.origin = grid.moved_point(self.bounds.origin, by);
+        // mirin: `by_layout` may be a whole number of pixels give or take
+        // what `f32` loses (`whole_move`): the place takes it as it is, the
+        // offset and what rounds the whole move.
+        let whole = point(by_layout.x.round(), by_layout.y.round());
         if let Some(place) = &mut self.place {
             place.layout = place.layout + by_layout;
-            place.offset = place.offset + (by - by_layout);
+            place.offset = place.offset + (by - whole);
         }
         if let Some(mask) = &mut self.mask {
             *mask = if mask == masks.0 {
@@ -154,7 +181,7 @@ impl Drawn {
             {
                 bounds.origin += offset;
             }
-            recorded.layout.moved(by_layout);
+            recorded.layout.moved(whole);
             recorded.paint.moved(by);
         }
     }
@@ -189,7 +216,22 @@ pub(super) fn plan(
     let offset = bounds.origin - drawn.bounds.origin;
     // One whose layout is watched is left out only where it was.
     let still = movable || offset == Point::default();
-    if allowed.skippable && drawn.inert && still && (same_inside || allowed.below_same) {
+    // mirin: and only where it moved by whole device pixels: a size inside
+    // is rounded from where its edges are (`TaffyLayoutEngine::layout_bounds`),
+    // so moved by a fraction what is inside may round to other sizes, which
+    // the bounds kept for what is left out (mirin's layout map) would miss.
+    let whole = match (drawn.place, place) {
+        (Some(before), Some(now)) => {
+            whole_move(now.layout - before.layout).is_some_and(|(by, slack)| {
+                (slack.x == 0. && slack.y == 0.)
+                    || drawn
+                        .recorded
+                        .is_some_and(|recorded| recorded.layout.holds_within(by, slack))
+            })
+        }
+        _ => true,
+    };
+    if allowed.skippable && drawn.inert && still && whole && (same_inside || allowed.below_same) {
         let unseen = drawn.recorded.is_some_and(|recorded| {
             drawn
                 .reach(recorded.extent, bounds.size)
@@ -248,7 +290,7 @@ fn moved_by(
     window: &Window,
 ) -> Option<(Point<f32>, Point<f32>)> {
     let scale = window.scale_factor();
-    let grid = super::grid::Grid::new(scale);
+    let grid = Grid::new(scale);
     let (Some(recorded), Some(before), Some(now), Some(_)) =
         (&drawn.recorded, drawn.place, place, &drawn.mask)
     else {
@@ -258,10 +300,8 @@ fn moved_by(
         return None;
     }
     let by_layout = now.layout - before.layout;
-    if by_layout.x.fract() != 0. || by_layout.y.fract() != 0. {
-        return None;
-    }
-    let by = by_layout + (now.offset - before.offset);
+    let (whole, slack) = whole_move(by_layout)?;
+    let by = whole + (now.offset - before.offset);
     let offset = point(px(by.x / scale), px(by.y / scale));
     // Where scaling is not exact, its root moves on the device grid
     // (`Grid`), as everything in it that moves does.
@@ -271,7 +311,7 @@ fn moved_by(
     if !on_grid
         || (!grid.is_exact() && recorded.masks)
         || grid.moved_point(drawn.bounds.origin, by) != bounds.origin
-        || !recorded.layout.holds(by_layout)
+        || !recorded.layout.holds_within(whole, slack)
         || !recorded.paint.holds(by)
     {
         return None;
@@ -294,6 +334,21 @@ fn moved_by(
         }
     }
     Some((by, by_layout))
+}
+
+/// mirin: a move of the unrounded layout as whole device pixels, and how far
+/// it is from them: `f32` sums of positions with fractions (text a fraction
+/// of a pixel tall) that crossed a power of two land a few units in the
+/// last place off (28.000008 for 28). `None` further off than that. At any
+/// scale factor: the layout is summed in device pixels, and what is drawn
+/// is placed from edges rounded there, so the device grid (`Grid`) holds
+/// whatever the unrounded move's last bits.
+fn whole_move(by: Point<f32>) -> Option<(Point<f32>, Point<f32>)> {
+    /// The most `f32` loses on the way, below 2^15 (`steady::EDGE`).
+    const SLACK: f32 = 1. / 64.;
+    let whole = point(by.x.round(), by.y.round());
+    let slack = point((by.x - whole.x).abs(), (by.y - whole.y).abs());
+    (slack.x <= SLACK && slack.y <= SLACK).then_some((whole, slack))
 }
 
 /// The device pixels `bounds` covers (as `Window::cover_bounds`).

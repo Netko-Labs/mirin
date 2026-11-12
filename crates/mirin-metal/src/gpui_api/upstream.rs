@@ -196,7 +196,8 @@ pub(crate) fn observe_visibility(window: &mut Window, mut callback: impl FnMut(b
 }
 
 /// Upstream always paints scroll views at whole device pixels
-/// (`Window::layout_bounds` snaps the element offset, halves toward zero);
+/// (`Window::layout_bounds` snaps the element offset, halves away from zero,
+/// as the fork does);
 /// the switch to paint them at their offset (`MIRIN_METAL_SCROLL_SNAP=0`) is
 /// the fork's alone.
 pub(crate) fn set_scroll_snap(_window: &mut Window, _snap: bool) {}
@@ -207,8 +208,9 @@ pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear(cx);
 }
 
-/// GAP: upstream's retained subtrees are copied in place only; one that was
-/// resized is drawn again, so this changes nothing.
-pub(crate) fn stretchable(retained: gpui::Retained, _stretchable: bool) -> gpui::Retained {
-    retained
+/// A retained subtree whose root draws nothing from its own size: resized
+/// with everything inside where it was, its drawing is kept
+/// (`Retained::stretchable`).
+pub(crate) fn stretchable(retained: gpui::Retained, stretchable: bool) -> gpui::Retained {
+    retained.stretchable(stretchable)
 }

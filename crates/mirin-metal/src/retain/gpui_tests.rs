@@ -44,6 +44,11 @@ struct Scene {
     /// Added to every cell's color when it is built. Not part of any
     /// version: a cell hears of a change by being notified.
     tint: Rc<Cell<u32>>,
+    /// Rows draw nothing of their own size (no fill, no hover), and say so
+    /// (`Retained::stretchable`).
+    bare: bool,
+    /// The window's width.
+    width: f32,
     /// Counts each row's builds; with it, every build of a row but its
     /// first has one more (empty) element in it.
     unsteady: Option<Rc<RefCell<HashMap<usize, usize>>>>,
@@ -85,6 +90,7 @@ fn row(
     index: usize,
     row: Row,
     cells: Vec<AnyElement>,
+    bare: bool,
     unsteady: Option<&RefCell<HashMap<usize, usize>>>,
 ) -> AnyElement {
     let built_before = unsteady.is_some_and(|builds| {
@@ -93,20 +99,26 @@ fn row(
         *count += 1;
         *count > 1
     });
-    div()
+    let element = div()
         .id(("row", index))
         .flex()
         .flex_shrink_0()
         .gap_1()
-        .h(px(row.height))
-        // A border, which upstream draws in strips, each under a mask of
-        // its own: clipped at the view's edge, a row's strips are clipped
-        // again where it is copied (`Scene::insert_strip`).
-        .border_1()
-        .border_color(rgb(0xffff00 ^ row.color))
-        .rounded_sm()
-        .bg(rgb(row.color))
-        .hover(|style| style.bg(rgb(0xff0000)))
+        .h(px(row.height));
+    let element = if bare {
+        element
+    } else {
+        element
+            // A border, which upstream draws in strips, each under a mask
+            // of its own: clipped at the view's edge, a row's strips are
+            // clipped again where it is copied (`Scene::insert_strip`).
+            .border_1()
+            .border_color(rgb(0xffff00 ^ row.color))
+            .rounded_sm()
+            .bg(rgb(row.color))
+            .hover(|style| style.bg(rgb(0xff0000)))
+    };
+    element
         .child(format!("row {index}"))
         .child(div().size(px(6.0)).bg(rgb(0x00ff00)).shadow_sm())
         .children(cells)
@@ -126,11 +138,18 @@ impl Render for Rows {
                 if !self.retain {
                     let tint = scene.tint.get();
                     let cells = (0..scene.cells).map(|cell_index| cell(index, cell_index, tint));
-                    return row(index, spec, cells.collect(), scene.unsteady.as_deref());
+                    return row(
+                        index,
+                        spec,
+                        cells.collect(),
+                        scene.bare,
+                        scene.unsteady.as_deref(),
+                    );
                 }
                 let version = spec.version;
                 let draws = self.draws.clone();
-                let (cells, loose, hears) = (scene.cells, scene.loose, scene.hears);
+                let (cells, loose, hears, bare) =
+                    (scene.cells, scene.loose, scene.hears, scene.bare);
                 let (tint, unsteady) = (scene.tint.clone(), scene.unsteady.clone());
                 let cell_markers = self.cell_markers.clone();
                 let cell_draws = self.draws.clone();
@@ -162,9 +181,10 @@ impl Render for Rows {
                                 .into_any_element()
                             })
                             .collect();
-                        row(index, spec.clone(), kept_cells, unsteady.as_deref())
+                        row(index, spec.clone(), kept_cells, bare, unsteady.as_deref())
                     },
                 )
+                .stretchable(scene.bare)
                 .movable(scene.loose)
                 .skippable(scene.loose && !scene.hears)
                 .on_prepaint(move |draw, _, _, _| *draws.borrow_mut().entry(draw).or_default() += 1)
@@ -213,6 +233,8 @@ fn plain(rows: Vec<Row>) -> Scene {
         loose: false,
         hears: false,
         tint: Rc::default(),
+        bare: false,
+        width: 300.0,
         unsteady: None,
         builds: Rc::default(),
     }
@@ -234,6 +256,8 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         loose: true,
         hears: false,
         tint: Rc::default(),
+        bare: false,
+        width: 300.0,
         unsteady: None,
         builds: Rc::default(),
     }
@@ -257,9 +281,13 @@ fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
 /// `open`, at a scale factor of `scale`.
 fn open_at(cx: &mut TestAppContext, scene: Scene, retain: bool, scale: f32) -> Opened<'_> {
     let shared = Rc::new(RefCell::new(scene));
-    let (count, cells) = {
+    let (count, cells, width) = {
         let scene = shared.borrow();
-        (scene.rows.len(), scene.rows.len() * scene.cells)
+        (
+            scene.rows.len(),
+            scene.rows.len() * scene.cells,
+            scene.width,
+        )
     };
     let scroll = ScrollHandle::new();
     let draws = Rc::new(RefCell::new(HashMap::new()));
@@ -278,7 +306,7 @@ fn open_at(cx: &mut TestAppContext, scene: Scene, retain: bool, scale: f32) -> O
     if scale != 2.0 {
         cx.simulate_scale_factor_change(scale);
     }
-    cx.simulate_resize(size(px(300.0), px(400.0)));
+    cx.simulate_resize(size(px(width), px(400.0)));
     cx.run_until_parked();
     draw(cx);
     Opened {
@@ -353,8 +381,14 @@ fn compare_at(
         let opened = open_at(cx, scene.clone(), retain, scale);
         let mut frames = vec![drawn(opened.cx)];
         for step in steps {
+            let width = opened.scene.borrow().width;
             if let Some(to) = step(&mut opened.scene.borrow_mut()) {
                 opened.scroll.set_offset(point(px(0.0), px(-to)));
+            }
+            let now = opened.scene.borrow().width;
+            if now != width {
+                opened.cx.simulate_resize(size(px(now), px(400.0)));
+                opened.cx.run_until_parked();
             }
             draw(opened.cx);
             frames.push(drawn(opened.cx));
@@ -441,6 +475,40 @@ fn scrolled_rows_are_moved_not_drawn_again(cx: &mut TestAppContext) {
     assert!(count(&draws, RetainedDraw::Moved) > 10, "{draws:?}");
     assert!(count(&draws, RetainedDraw::Skipped) > 100, "{draws:?}");
     assert!(count(&draws, RetainedDraw::Redrawn) > 5, "{draws:?}");
+}
+
+#[gpui::test]
+fn rows_only_resized_keep_their_drawings(cx: &mut TestAppContext) {
+    let width = |width: f32| {
+        move |scene: &mut Scene| {
+            scene.width = width;
+            None
+        }
+    };
+    // Rows of cells stretched to the window's width: wider or narrower,
+    // what is inside each sits where it was, so rows that draw nothing of
+    // their own size keep their drawings (`Retained::stretchable`); in the
+    // scroll view too, under its new mask.
+    for viewport in [0.0, 120.0] {
+        let scene = Scene {
+            bare: true,
+            viewport,
+            ..scrolled(12, 2)
+        };
+        let draws = compare(
+            cx,
+            scene,
+            &[&width(260.0), &width(340.5), &|_| Some(30.0), &width(300.0)],
+        );
+        // In the scroll view, rows its edges clip as it scrolls are drawn
+        // again (not stretched: 25 without, and every row built apart).
+        let most = if viewport == 0.0 { 0 } else { 10 };
+        assert!(count(&draws, RetainedDraw::Redrawn) <= most, "{draws:?}");
+        assert!(
+            count(&draws, RetainedDraw::Reused) + count(&draws, RetainedDraw::Moved) > 20,
+            "{draws:?}"
+        );
+    }
 }
 
 #[gpui::test]

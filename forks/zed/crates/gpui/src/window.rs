@@ -6113,17 +6113,21 @@ impl Window {
             .unwrap()
             .layout_bounds(layout_id, scale_factor)
             .map(Into::into);
-        let offset = self.element_offset();
+        // mirin: the element offset snapped halves away from zero, as the
+        // default build snaps a scroll view's offset (its
+        // `Window::painted_scroll`), so content scrolled by half a device
+        // pixel lands where it does there (`retained::Place` takes it so).
+        let offset = self
+            .element_offset()
+            .map(|offset| (offset.0 * scale_factor).round());
         if crate::elements::Grid::new(scale_factor).is_exact() {
-            bounds.origin += self.pixel_snap_point(offset);
+            bounds.origin += offset.map(|offset| px(offset / scale_factor));
         } else {
             // mirin: where scaling is not exact, the device position and
             // the offset in one division, as a retained subtree's drawing
             // moved there computes it (`elements::retained`'s `grid`).
-            let device = |logical: Pixels, offset: Pixels| {
-                px(((logical.0 * scale_factor).round()
-                    + round_to_device_pixel(offset.0, scale_factor))
-                    / scale_factor)
+            let device = |logical: Pixels, offset: f32| {
+                px(((logical.0 * scale_factor).round() + offset) / scale_factor)
             };
             bounds.origin = point(
                 device(bounds.origin.x, offset.x),
