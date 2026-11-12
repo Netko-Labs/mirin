@@ -559,6 +559,10 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
 #[cfg(test)]
 mod one_line_tests;
 
+// Where a wrapped text breaks, laid out by GPUI on its test platform.
+#[cfg(test)]
+mod wrap_tests;
+
 // Scroll views laid out and driven by GPUI, on its test platform.
 #[cfg(test)]
 mod scroll_tests;
