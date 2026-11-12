@@ -83,7 +83,7 @@ interface ViewNodeProps {
   shrink?: boolean;
   fill?: boolean;
   center?: boolean;
-  align?: "start" | "center" | "end" | "stretch";
+  align?: "start" | "center" | "end" | "stretch" | "baseline";
   justify?: "start" | "center" | "end" | "between";
   background?: Color;
   hoverBackground?: Color;
@@ -105,7 +105,7 @@ interface ViewNodeProps {
   occlude?: boolean;
   dragRegion?: boolean;
   onLayout?: boolean;
-  alignSelf?: "start" | "center" | "end" | "stretch";
+  alignSelf?: "start" | "center" | "end" | "stretch" | "baseline";
   grid?: boolean;
   gridColumns?: GridTrack[];
   gridRows?: GridTrack[];
@@ -283,6 +283,7 @@ const ALIGN: Record<NonNullable<ViewStyle["alignItems"]>, ViewNodeProps["align"]
   center: "center",
   "flex-end": "end",
   stretch: "stretch",
+  baseline: "baseline",
 };
 
 const JUSTIFY: Record<NonNullable<ViewStyle["justifyContent"]>, ViewNodeProps["justify"]> = {

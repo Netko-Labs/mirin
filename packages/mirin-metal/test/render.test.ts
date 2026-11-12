@@ -497,6 +497,23 @@ describe("TextInput", () => {
     root.unmount();
   });
 
+  test("a row can line its items up by their baselines", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        { style: { flexDirection: "row", alignItems: "baseline" } },
+        createElement(Text, { style: { fontSize: 13 } }, "Notes"),
+        createElement(Text, { style: { fontSize: 11 } }, "Edited today"),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(tree.props.align).toBe("baseline");
+    root.unmount();
+  });
+
   test("a multiline input that types tabs says so; a single-line one never does", async () => {
     const transport = fakeTransport();
     const root = render(

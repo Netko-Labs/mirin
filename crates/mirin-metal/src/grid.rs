@@ -92,6 +92,7 @@ fn to_gpui(align: Align) -> gpui::AlignItems {
         Align::Center => gpui::AlignItems::Center,
         Align::End => gpui::AlignItems::End,
         Align::Stretch => gpui::AlignItems::Stretch,
+        Align::Baseline => gpui::AlignItems::Baseline,
     }
 }
 

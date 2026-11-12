@@ -330,7 +330,9 @@ state and describes UI; the renderer is a pure function of the latest tree.
   is the worked example.
 
 The TypeScript side (`packages/mirin-metal/src/lib/serialize.ts`) maps React
-Native-style props: `<View style>` (`flex`, `alignItems`, `justifyContent`,
+Native-style props: `<View style>` (`flex`, `alignItems` (with `"baseline"`: a row's items line
+up by their first line of text, so small text beside larger text shares its baseline; GPUI's
+text names its first baseline to mirin's taffy fork, `set_first_baseline`), `justifyContent`,
 `overflow: "scroll" | "hidden"`, `hoverBackgroundColor`, …), `<Text
 numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`

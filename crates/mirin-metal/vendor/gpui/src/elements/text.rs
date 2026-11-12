@@ -506,7 +506,25 @@ impl TextLayout {
                 })
             });
 
-        window.request_measured_layout(Default::default(), {
+        // mirin: where the first line's baseline is under the text's top, as
+        // `paint` puts it: a row that aligns its items by baseline lines
+        // texts of different sizes up by it, not by their boxes.
+        let first_baseline = {
+            let size = paragraph_sizes
+                .as_ref()
+                .and_then(|sizes| sizes.first().copied().flatten())
+                .unwrap_or(font_size);
+            let height = text_style
+                .line_height
+                .to_pixels(size.into(), window.rem_size());
+            let font = runs
+                .first()
+                .map_or_else(|| text_style.font(), |run| run.font.clone());
+            let font_id = window.text_system().resolve_font(&font);
+            window.text_system().baseline_offset(font_id, size, height)
+        };
+
+        let layout_id = window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
@@ -670,7 +688,9 @@ impl TextLayout {
 
                 size
             }
-        })
+        });
+        window.set_layout_first_baseline(layout_id, first_baseline);
+        layout_id
     }
 
     // mirin: a truncated line is cut where it is drawn.

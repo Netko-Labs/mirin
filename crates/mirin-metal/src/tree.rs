@@ -514,6 +514,8 @@ pub enum Align {
     Center,
     End,
     Stretch,
+    /// A row's items line up by their first line of text, whatever its size.
+    Baseline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
