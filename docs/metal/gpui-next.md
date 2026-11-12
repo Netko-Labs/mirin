@@ -554,8 +554,8 @@ from rounds 2 and 3):
 | Ported (`forks/zed`) | grid track lists; `justify_items`/`justify_self`; text min-content is the widest word; scroll by taffy's content size; wheel scrolls the innermost view; list scroll bar counts padding; narrow ellipsis draws nothing; `set_window_min_size` (Wayland); resize while maximized; `scene_drawn`/`scene_digest`; retained subtrees in place, with the layout tree kept across frames (below) |
 | Ported (`forks/taffy-next`) | relayout at a min/max width; fit-content base size; fit-content hypothetical cross size; end margins in the scrollable overflow; `remove` keeps a re-parented child; `contains` |
 | Upstream has it | layer shell; a layer surface's screen (by `DisplayId`); typed float literals; idle windows stop committing; loop outlives its last window; text input only while a field takes it; suspended state (as visibility); layout reused only for the same truncation width; a line cut from a copy of its runs; no-break spaces and quotes (UAX #14); `DispatchEventResult` public; **scroll views paint at whole device pixels** (round 3: upstream snaps every element offset to device pixels in `Window::layout_bounds`, always, so `MIRIN_METAL_SCROLL_SNAP=0` has no effect there); taffy's negative-margin fix |
-| Moot | blade's shared pipelines and the blade-graphics fork's allocator (no blade; the wgpu renderer needs its own look); taffy's incremental rounding and detached layout (GPUI rounds itself; a copy laid out apart is a root with its twin's size) |
-| Still applies, not ported | **retained: moves, the device grid at any scale, parked drawings, skips, rebuilding onto kept nodes, whole/region recordings, `insert_spanning`** (below); per-paragraph font sizes; `fit_to`; ink-end alignment; session lock; Dashi's unified title bar; a layer surface's screen by connector name and the stretched axis; file drag-out with an icon; `MIRIN_METAL_SCALE` test scale; startup milestones log; the footprint rows that live outside blade: path textures only while paths show, a font face loaded when first picked, system fonts read on a thread, the compose table read at the first key, four background threads, a renderer that starts with the window's transparency |
+| Moot | blade's shared pipelines and the blade-graphics fork's allocator (no blade; round 5 did the same for wgpu: pipelines built on first use and shared, 4 MiB memory blocks); a renderer that starts with the window's transparency (with pipelines built on first use, turning opaque only configures the surface again); taffy's incremental rounding and detached layout (GPUI rounds itself; a copy laid out apart is a root with its twin's size) |
+| Still applies, not ported | **retained: moves, the device grid at any scale, parked drawings, skips, rebuilding onto kept nodes, whole/region recordings, `insert_spanning`** (below); per-paragraph font sizes; `fit_to`; ink-end alignment; session lock; Dashi's unified title bar; a layer surface's screen by connector name and the stretched axis; file drag-out with an icon; `MIRIN_METAL_SCALE` test scale (round 5 ported the footprint rows and the startup milestones log: "Round 5: a small app's footprint" below) |
 | Its own question | accessibility: upstream GPUI brings AccessKit 0.24 and accesskit_unix 0.22 and publishes a tree of elements with a role (none in mirin-metal); mirin-metal's `access/` and the accesskit_unix fork (0.24) still publish its tree, so both are in the build (step 6) |
 
 ### Retained subtrees on upstream GPUI
@@ -736,6 +736,151 @@ upstream picks (halves toward zero, where the fork rounded them to nearest);
 a box laid out with a fractional width now has its right edge where the
 next one starts (absolute edge rounding, upstream's "closure").
 
+### Round 5: a small app's footprint
+
+Branch `next-footprint` (lane of round 5). Round 2 made the default build
+lean in blade and the platform code (`docs/metal.md`, "Footprint: what one
+small app costs"); upstream replaced blade with wgpu, so the same work is
+redone there, in `forks/zed` (rows in `forks/zed/MIRIN.md`). Nothing in
+`crates/mirin-metal/src` changed, so the default build is the same.
+
+Measured with `bench/footprint.tsx --visible`, `ref/host-r4` (the default
+build), `ref/host-next-r4` (upstream at round 4's end) and this branch's
+upstream host back to back, three starts a run, two runs each (memory),
+on the shared laptop while other lanes built and benched; start times are
+from ten starts each, interleaved with host-r4, in the quietest stretch:
+
+| counter demo, 800×600 | host-r4 | host-next-r4 | upstream now |
+| --- | --- | --- | --- |
+| host RSS | 57.9–58.5 MB | 102.8–103.9 MB | **68.1–68.6 MB** |
+| host PSS / private dirty | 24.4–25.0 / 7.5 MB | 52–60 / 17.3 MB | 34.5–35.3 / 11.7 MB |
+| GPU memory (gtt + vram) | 13.8 MB | 52.5 MB | **31.8 MB** |
+| threads | 15 | 45 | **16** |
+| host start → first content frame (median, range) | 34.5 ms (28–37) | 95–103 ms | **40 ms** (33–50) |
+| idle, per 5 s | 0.1 ms, 10 wakeups | 0 ms, 0 wakeups | 0 ms, 0 wakeups |
+| of RSS: binary / GPU driver / font files / heap | 15.6 / 30.7 / 0.3 / 1.7 MB | 21 / 45.5 / 16.5 / 7.4 MB | 21–22 / 30.7 / 0.3 / 5.2 MB |
+
+| example browser, 1440×900 | host-r4 | host-next-r4 | upstream now |
+| --- | --- | --- | --- |
+| host RSS | 64.3–65.3 MB | 113.0–114.2 MB | **73.8–75.0 MB** |
+| GPU memory | 29.2 MB | 99.9 MB | **47.2 MB** |
+| threads | 15 | 45 | 16 |
+| host start → first content frame (per-run medians) | 54–62 ms | 116–133 ms | 72–77 ms |
+
+| stress bench, 15k nodes | host-next-r4 | upstream now |
+| --- | --- | --- |
+| RSS idle | 265–267 MB | **230–231 MB** |
+| RSS at the end | 333–334 MB | **297–298 MB** |
+| frame: select / type / hover | 3.6–4.6 / 2.6–4.1 / 4.5–9.0 ms | 4.4 / 3.4–3.5 / 4.4–4.5 ms |
+| frame: grow / scroll / resize (nothing moves yet) | 140–221 / 132–146 / 156–160 ms | 138–140 / 134–142 / 158–184 ms |
+
+The stress bench draws the same within noise (one resize run of 184 ms had
+209 ms of CPU, its pair 158), and holds 35 MB less: the GL driver and the
+font faces it no longer maps, and the path textures (38 MB of GPU memory at
+its size) it no longer keeps without paths.
+
+What changed, largest first, each measured on the counter as it went in
+(`forks/zed/MIRIN.md` has the files and the reasons):
+
+- **Vulkan alone** (GL only when Vulkan has no hardware adapter for the
+  window), with the next item: RSS 103 → 84 MB, threads 45 → 18, GPU
+  memory 52 → 47.5 MB, start ~100 → ~70 ms. Vulkan's part is the GL
+  driver's mappings (`libgallium` and Mesa's GL side, 15 MB), its six
+  threads and most of those 30 ms. A machine without Vulkan still gets a
+  window from GL.
+- **Four background threads** (upstream: one per core, 24 here): −20 threads.
+- **Font faces loaded when picked, system fonts read on a thread**: −15.4 MB
+  (74 Noto Sans files mapped, and their heap), ~5 ms of the first frame and
+  the 7–9 ms scan off the main thread.
+- **Pipelines built on first use and shared by a context's windows**: the
+  renderer was created in 9–13 ms and built again (~13 ms) when the window
+  turned opaque; now 0.8 ms, and the first frame builds the two it draws
+  with (quads, subpixel sprites; 1.3 ms).
+- **Path textures only while paths show, 4 MiB memory blocks**: GPU memory
+  47.5 → 31.5 MB. What wgpu's allocator holds now is three 4 MiB blocks:
+  the instance buffer (2 MiB) beside wgpu's zero-init buffer, the glyph
+  atlas (4 MiB: upstream draws text with subpixel antialiasing, so its atlas
+  is BGRA where the fork's is 1 MiB of alpha), and the staging block. The
+  rest is the swapchain (four images, 7.7 MB, as on the fork) and the
+  driver's own buffers. A FIFO swapchain changed nothing (tried).
+- **No indirect-call validation**: wgpu compiled two compute pipelines with
+  every device for indirect calls GPUI never makes.
+- **The GPU context and the shaders prepared while the client connects**:
+  the instance (12–15 ms, loading radv and its LLVM), the adapters (~5 ms)
+  and a device (~4 ms) start on a background thread when the Wayland
+  client starts connecting, and the shaders are parsed on another while the
+  window opens; the first window takes them. Start median 42.5 → 40 ms over
+  ten interleaved starts each; the first frame now reaches the screen 3–4
+  ms after it is painted, where it took 7–13 ms (it parsed the shaders).
+- **One system bus connection for the sleep and power-mode listeners**, and
+  the sleep listener on the background executor: −2 threads (a zbus thread
+  and smol's), ~0.5 MB.
+- **The compose table at the first key**, and the **startup milestones**
+  (`MIRIN_METAL_TRACE=1`: text system, system fonts read, GPU prepared and
+  taken, GPU context, renderer, each shader module and pipeline, each font
+  face).
+
+A counter's start now (one trace): the text system 0.1–1.5 ms (the font
+scan is on its thread, 8–11 ms), the Wayland client ready at 2–8 ms and the
+window opened at once (the driver's first tree is there already); the GPU,
+prepared since the client started connecting, ready at 16–22 ms; the
+renderer 1 ms later; the first frame 9–11 ms (mirin's first render and
+layout: the same 7.5 ms before the first font is asked for as on the fork);
+first content frame at 31–45 ms.
+
+What is left between upstream and host-r4 on the counter, and what it
+would take:
+
+| | MB | to cut it |
+| --- | --- | --- |
+| the binary mapped (shared between hosts) | +6 RSS | wgpu and naga (WGSL → SPIR-V), two AccessKit adapters, ashpd and zbus: 44 MB of binary where the fork has 33. `opt-level = "s"` or LTO for this build only (not tried) |
+| the heap | +3.5 | 4.2 MB live in the main arena after the idle trim (glibc `malloc_stats`: in use, not fragmentation), where the fork has 1.7. Likely wgpu keeping both shader modules' naga IR for the pipelines still to build (Vulkan's hal translates per pipeline); not measured alone, no heap profiler on this machine |
+| GPU: the BGRA glyph atlas and three 4 MiB blocks | +18 GPU | the atlas is upstream's subpixel text (a choice, not a cost to cut here); wgpu's least block is 4 MiB, so a small window holds a device, an atlas and a staging block of it |
+| GPUI's accessibility adapter beside mirin's | +1.7–2.1, 1 thread | see below |
+| D-Bus: the desktop portal and the system bus | ~1.3, 2 threads | both upstream features (appearance, cursor theme; sleep and power saving) |
+
+**Accessibility: mirin's tree or GPUI's** (section 5's step 6). Both are in
+the upstream build: mirin's `access/` publishes its tree through the
+`accesskit_unix` fork, and every GPUI window makes its own
+`accesskit_unix` 0.22 adapter, which publishes a window with no children
+(mirin-metal gives no element a role). Measured on the counter with GPUI's
+turned off (`Application::new_inaccessible`), mirin's turned off
+(`MIRIN_METAL_ACCESSIBLE=0`) and both, three starts each:
+
+| counter | host RSS | threads | start |
+| --- | --- | --- | --- |
+| both (as now) | 68.9 MB | 18 | no difference measurable |
+| mirin's only | 66.8 MB | 17 | |
+| GPUI's only | 66.8 MB | 17 | |
+| neither | 65.2 MB | 16 | |
+
+So each adapter costs the same to have, 1.7–2.1 MB and a thread (their bus
+connections are made on that thread, after the first frame). What differs is
+what each costs to keep up to date. Mirin's tree is incremental: on the
+stress bench (15k nodes) an update builds the nodes that changed (2–6) and
+hands over the ones that differ, 0.1 ms; it works with retained subtrees
+because it is built from mirin's own tree, not from painting. GPUI's is
+built while an assistive technology is connected, from every element with an
+id and a role as it prepaints, and the whole tree is handed over every frame
+(`A11yNodeBuilder::finalize`): 15k nodes a frame on the stress bench, and a
+subtree copied in place (`reuse_prepaint`) does not prepaint, so its nodes
+would be missing unless the retained port recorded and replayed them. It
+would also lose the fork's adapter rows (the app's name, a window focused
+at creation announced, bounds changes sent only while someone listens).
+**Recommendation: keep mirin's tree, and turn GPUI's adapter off in the
+upstream build (`Application::new_inaccessible` in `gpui_api/upstream.rs`)**:
+−2.1 MB and a thread now, and no second, empty application for a screen
+reader to find. Not switched in this round, as the brief asks.
+
+Checks: `layout-check` of host-next-r4 against this host, `--scene`, for
+`grid`, `browser`, `scroll` and `scroll-fractional`: identical, layouts and
+drawings, at every step; the host against itself with
+`MIRIN_METAL_RETAIN=0`, the same four: identical;
+the stress bench with `MIRIN_METAL_ACCESS_CHECK=1`: no complaints. mirin's
+tests on this build: 190 pass, 1 ignored. GPUI's own tests still can't run
+from `forks/zed` (round 4), so `cosmic_text_system.rs`' tests (lazy faces)
+did not run; mirin's text tests go through it.
+
 ### State, what is left, and the default
 
 The branch builds both hosts, the default exactly as before; the upstream
@@ -749,7 +894,7 @@ of section 5's steps, updated:
 | 3 | done | — |
 | 4 | session lock, Dashi chrome, screen by name and stretched layer surfaces, file drag icon, X11 min size (~400 lines in `gpui_linux`) | 3–4 days |
 | 5 | retained: moves, skips and parked drawings, building onto kept nodes, element state scopes, `insert_spanning` (above) | 7–10 days |
-| 6 | accessibility (keep `access/`, or move onto GPUI's tree), wgpu limited to Vulkan, the footprint rows that still apply (fonts, threads, compose, path textures) | 4–6 days |
+| 6 | footprint: done in round 5 (below), but for the binary's size and the heap; accessibility: measured, keeping `access/` recommended (below), GPUI's adapter still on beside it | 1 day (turn GPUI's adapter off) |
 | 7 | decide the measured-size rounding (keep upstream's `ceil`, or round as the fork did and keep Dashi's layouts), check every Dashi app, benches, footprint; switch the default; delete `forks/gpui`, `forks/taffy`, `forks/blade-graphics` | 3–5 days |
 
 About 19–28 working days remain of the 23–34 the spike estimated; the
