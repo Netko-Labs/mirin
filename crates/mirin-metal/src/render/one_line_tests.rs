@@ -229,3 +229,42 @@ fn a_text_whose_words_change_is_measured_again_at_their_width(cx: &mut TestAppCo
     }
     assert!(widths[1] > widths[2] && widths[2] > widths[0], "{widths:?}");
 }
+
+/// What is drawn of `text`, one line, in a box exactly `width` px wide, and how wide it is.
+fn drawn_in_box_of(cx: &mut TestAppContext, text: &'static str, width: f32) -> (String, f32) {
+    let text = StyledText::new(text);
+    let layout = text.layout().clone();
+    let cx = cx.add_empty_window();
+    cx.draw(
+        point(px(0.0), px(0.0)),
+        size(
+            AvailableSpace::Definite(px(400.0)),
+            AvailableSpace::Definite(px(40.0)),
+        ),
+        move |_, _| {
+            div().flex().flex_row().w(px(400.0)).child(
+                div()
+                    .flex_shrink_0()
+                    .w(px(width))
+                    .child(one_line(div()).child(text)),
+            )
+        },
+    );
+    let drawn = layout.text().to_string();
+    let wide = layout.line_layout_for_index(0).map_or(0.0, |line| f32::from(line.width()));
+    (drawn, wide)
+}
+
+#[gpui::test]
+fn a_line_whose_box_lost_part_of_a_pixel_to_rounding_is_drawn_whole(cx: &mut TestAppContext) {
+    // A button as wide as its label, at scale 1.75: the box is the label's
+    // width rounded to device pixels, a fraction of a px less than the line
+    // ("Battery & Powe…" in Dashi's Settings). The line is whole.
+    let (whole, width) = drawn_in_box_of(cx, "notes.txt", 400.0);
+    assert_eq!(whole, "notes.txt");
+    assert!(width > 20.0, "{width}");
+    assert_eq!(drawn_in_box_of(cx, "notes.txt", width - 0.4).0, "notes.txt");
+    // A box really too narrow still cuts it.
+    let (cut, _) = drawn_in_box_of(cx, "notes.txt", width - 3.0);
+    assert!(cut.ends_with('…') && cut != "notes.txt", "drawn {cut:?}");
+}
