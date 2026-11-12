@@ -1633,7 +1633,13 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   KB), and the host's tree after every line is identical (applied by a
   model of `patch/`). `bench/layout-check.tsx --scene` on `ref/host-r4`,
   recorded with the driver before and after: every node's bounds and every
-  frame's scene digest are identical for `grid` and `browser`.
+  frame's scene digest are identical for `grid`, `browser`, `scroll` and
+  `scroll-fractional` (a first `scroll` recording heard four hovers
+  before its first step, a pointer crossing the nested compositor's
+  window; again, it was identical), and the stress bench with
+  `MIRIN_METAL_ACCESS_CHECK=1` reports nothing. With the real host
+  (`bench/native.tsx`), a press to the last patch sent is 6 ms before and
+  after (whole milliseconds), 4.3 KB a click.
 
   Evaluated, not landed:
 
