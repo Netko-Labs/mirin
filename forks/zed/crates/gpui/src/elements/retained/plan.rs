@@ -131,7 +131,9 @@ impl Drawn {
         masks: (&ContentMask<Pixels>, &ContentMask<Pixels>),
     ) {
         let offset = point(px(by.x / scale), px(by.y / scale));
-        self.bounds.origin += offset;
+        // On the device grid, as laying it out there does (`Grid`).
+        let grid = super::grid::Grid::new(scale);
+        self.bounds.origin = grid.moved_point(self.bounds.origin, by);
         if let Some(place) = &mut self.place {
             place.layout = place.layout + by_layout;
             place.offset = place.offset + (by - by_layout);
@@ -141,18 +143,14 @@ impl Drawn {
                 masks.1.clone()
             } else {
                 ContentMask {
-                    bounds: mask.bounds + offset,
+                    bounds: grid.moved_bounds(mask.bounds, by),
                 }
             };
         }
         if let Some(recorded) = &mut self.recorded {
-            for bounds in [
-                &mut recorded.extent,
-                &mut recorded.strict,
-                &mut recorded.left_out,
-            ]
-            .into_iter()
-            .flatten()
+            for bounds in [&mut recorded.extent, &mut recorded.left_out]
+                .into_iter()
+                .flatten()
             {
                 bounds.origin += offset;
             }
@@ -250,19 +248,13 @@ fn moved_by(
     window: &Window,
 ) -> Option<(Point<f32>, Point<f32>)> {
     let scale = window.scale_factor();
-    // Moves are exact in `f32` where scaling is (a power of two).
-    let exact_scale = scale > 0. && scale.log2().fract() == 0.;
-    let (Some(recorded), Some(before), Some(now), Some(old_mask)) =
+    let grid = super::grid::Grid::new(scale);
+    let (Some(recorded), Some(before), Some(now), Some(_)) =
         (&drawn.recorded, drawn.place, place, &drawn.mask)
     else {
         return None;
     };
-    if !movable
-        || !exact_scale
-        || recorded.pinned
-        || drawn.bounds.size != bounds.size
-        || before.node != now.node
-    {
+    if !movable || recorded.pinned || drawn.bounds.size != bounds.size || before.node != now.node {
         return None;
     }
     let by_layout = now.layout - before.layout;
@@ -271,26 +263,26 @@ fn moved_by(
     }
     let by = by_layout + (now.offset - before.offset);
     let offset = point(px(by.x / scale), px(by.y / scale));
-    if drawn.bounds.origin + offset != bounds.origin
+    // Where scaling is not exact, its root moves on the device grid
+    // (`Grid`), as everything in it that moves does.
+    let on_grid = grid.is_exact()
+        || ((by.x == 0. || grid.is_on(drawn.bounds.origin.x))
+            && (by.y == 0. || grid.is_on(drawn.bounds.origin.y)));
+    if !on_grid
+        || (!grid.is_exact() && recorded.masks)
+        || grid.moved_point(drawn.bounds.origin, by) != bounds.origin
         || !recorded.layout.holds(by_layout)
         || !recorded.paint.holds(by)
     {
         return None;
     }
-    // What takes masks of its own was not clipped by the mask around it
-    // (so each of those masks, moved and clipped by the mask around it now,
-    // is what drawing it there gives), and that mask tells apart from every
-    // mask inside (`Scene::replay_moved`).
-    let strict = recorded.strict.is_none_or(|strict| {
-        holds(&old_mask.bounds, &strict) && cover(&strict, scale) != cover(&old_mask.bounds, scale)
-    });
     // What the drawing left out stays hidden.
     let whole = recorded.left_out.is_none_or(|left_out| {
         let [left, top, right, bottom] = cover(&(left_out + offset), scale);
         let [mask_left, mask_top, mask_right, mask_bottom] = cover(&mask.bounds, scale);
         right <= mask_left || mask_right <= left || bottom <= mask_top || mask_bottom <= top
     });
-    if !strict || !whole {
+    if !whole {
         return None;
     }
     if let Some(extent) = recorded.extent {
@@ -304,20 +296,13 @@ fn moved_by(
     Some((by, by_layout))
 }
 
-/// Whether `outer` holds all of `inner`.
-fn holds(outer: &Bounds<Pixels>, inner: &Bounds<Pixels>) -> bool {
-    outer.left() <= inner.left()
-        && outer.top() <= inner.top()
-        && inner.right() <= outer.right()
-        && inner.bottom() <= outer.bottom()
-}
-
 /// The device pixels `bounds` covers (as `Window::cover_bounds`).
 fn cover(bounds: &Bounds<Pixels>, scale: f32) -> [f32; 4] {
+    let cover = crate::window::cover_device(*bounds, scale);
     [
-        (bounds.left().0 * scale).floor(),
-        (bounds.top().0 * scale).floor(),
-        (bounds.right().0 * scale).ceil(),
-        (bounds.bottom().0 * scale).ceil(),
+        cover.left().0,
+        cover.top().0,
+        cover.right().0,
+        cover.bottom().0,
     ]
 }

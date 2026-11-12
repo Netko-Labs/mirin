@@ -3,7 +3,8 @@
 //! layout. Ports of the fork's GPUI-level tests
 //! (`forks/gpui/src/elements/retained/tests.rs`); upstream GPUI's own tests
 //! need zed's workspace, so they run here, on its public API, comparing
-//! `Window::scene_drawn` (every primitive and hittable hitbox, sorted).
+//! `Window::scene_drawn` (every primitive and hittable hitbox, sorted) and
+//! what each frame paints over what (`Window::last_scene_stacking`).
 
 use std::{
     cell::{Cell, RefCell},
@@ -98,6 +99,12 @@ fn row(
         .flex_shrink_0()
         .gap_1()
         .h(px(row.height))
+        // A border, which upstream draws in strips, each under a mask of
+        // its own: clipped at the view's edge, a row's strips are clipped
+        // again where it is copied (`Scene::insert_strip`).
+        .border_1()
+        .border_color(rgb(0xffff00 ^ row.color))
+        .rounded_sm()
         .bg(rgb(row.color))
         .hover(|style| style.bg(rgb(0xff0000)))
         .child(format!("row {index}"))
@@ -244,6 +251,11 @@ struct Opened<'a> {
 
 /// A window of the test platform (scale factor 2) showing `scene`.
 fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
+    open_at(cx, scene, retain, 2.0)
+}
+
+/// `open`, at a scale factor of `scale`.
+fn open_at(cx: &mut TestAppContext, scene: Scene, retain: bool, scale: f32) -> Opened<'_> {
     let shared = Rc::new(RefCell::new(scene));
     let (count, cells) = {
         let scene = shared.borrow();
@@ -263,6 +275,9 @@ fn open(cx: &mut TestAppContext, scene: Scene, retain: bool) -> Opened<'_> {
         }
     });
     let cell_markers = cx.update(|_, cx| view.read(cx).cell_markers.clone());
+    if scale != 2.0 {
+        cx.simulate_scale_factor_change(scale);
+    }
     cx.simulate_resize(size(px(300.0), px(400.0)));
     cx.run_until_parked();
     draw(cx);
@@ -282,9 +297,21 @@ fn draw(cx: &mut VisualTestContext) {
     });
 }
 
-/// What the last frame drew.
+/// What the last frame drew, and what it painted over what
+/// (`Window::last_scene_stacking`: a copied drawing is placed in the bounds
+/// tree as one, so its draw orders' numbers differ from drawing everything,
+/// but not what overlaps what).
 fn drawn(cx: &mut VisualTestContext) -> Vec<String> {
-    cx.update(|window, _| window.last_scene_drawn())
+    cx.update(|window, _| {
+        let mut drawn = window.last_scene_drawn();
+        drawn.extend(
+            window
+                .last_scene_stacking()
+                .into_iter()
+                .map(|stacked| format!("stacked: {stacked}")),
+        );
+        drawn
+    })
 }
 
 /// Two frames drew the same; the failure names what only one has.
@@ -312,8 +339,18 @@ type Step<'a> = &'a dyn Fn(&mut Scene) -> Option<f32>;
 /// Drive the same steps with retained rows and without, and compare every
 /// frame. A step changes the scene and may scroll (the offset down).
 fn compare(cx: &mut TestAppContext, scene: Scene, steps: &[Step]) -> HashMap<RetainedDraw, usize> {
+    compare_at(cx, scene, 2.0, steps)
+}
+
+/// `compare`, at a scale factor of `scale`.
+fn compare_at(
+    cx: &mut TestAppContext,
+    scene: Scene,
+    scale: f32,
+    steps: &[Step],
+) -> HashMap<RetainedDraw, usize> {
     let run = |cx: &mut TestAppContext, retain: bool| {
-        let opened = open(cx, scene.clone(), retain);
+        let opened = open_at(cx, scene.clone(), retain, scale);
         let mut frames = vec![drawn(opened.cx)];
         for step in steps {
             if let Some(to) = step(&mut opened.scene.borrow_mut()) {
@@ -684,5 +721,109 @@ fn cells_that_hear_hovers_hear_what_drawing_everything_tells_them(cx: &mut TestA
     for (index, ((kept, kept_heard), (whole, whole_heard))) in kept.iter().zip(&whole).enumerate() {
         assert_eq!(kept_heard, whole_heard, "heard at frame {index}");
         assert_same(kept, whole, &format!("frame {index}"));
+    }
+}
+
+/// Scrolls that land between pixels, a row growing, and a way back.
+const UNEVEN_STEPS: &[Step<'static>] = &[
+    &|_| None,
+    &|_| Some(8.0),
+    &|_| Some(17.3),
+    &|_| Some(21.9),
+    &|_| Some(260.4),
+    &|_| Some(231.0),
+    &|scene| {
+        scene.rows[3].height = 41.0;
+        scene.rows[3].version += 1;
+        None
+    },
+    &|_| Some(0.0),
+    &|_| Some(40.5),
+    &|_| Some(41.5),
+    &|_| Some(42.0),
+    &|_| Some(60.9),
+    &|_| Some(13.3),
+];
+
+#[gpui::test]
+fn rows_move_by_whole_device_pixels_at_any_scale_factor(cx: &mut TestAppContext) {
+    // Port of the fork's `scaled` test. Upstream's scroll view paints its
+    // content at whole device pixels, so rows move by whole device pixels
+    // whatever a logical pixel is: 1 and 2 are exact, the rest lose a
+    // little at every position, which the device grid settles (`Grid`).
+    for scale in [1.0, 2.0, 1.25, 1.5, 1.75, 3.0] {
+        let draws = compare_at(cx, scrolled(30, 0), scale, UNEVEN_STEPS);
+        assert!(
+            count(&draws, RetainedDraw::Moved) >= 40,
+            "{scale}: {draws:?}"
+        );
+        assert!(
+            count(&draws, RetainedDraw::Skipped) > 100,
+            "{scale}: {draws:?}"
+        );
+        // Cells clip their text with masks of their own, which the view's
+        // edge clips: the mask map moves them anyway (`MaskMap`), where
+        // scaling is exact. Elsewhere such a mask moved is not what pushing
+        // it there gives in its last bits, so those rows are drawn again;
+        // what is drawn is the same.
+        let draws = compare_at(cx, scrolled(30, 3), scale, UNEVEN_STEPS);
+        if scale == 1.0 || scale == 2.0 {
+            assert!(
+                count(&draws, RetainedDraw::Moved) > 60,
+                "{scale}: {draws:?}"
+            );
+            assert!(
+                count(&draws, RetainedDraw::Redrawn) < 30,
+                "{scale}: {draws:?}"
+            );
+        }
+    }
+    // 1.1 is not even a fraction a float holds: what is drawn is still what
+    // drawing everything draws.
+    compare_at(cx, scrolled(30, 3), 1.1, UNEVEN_STEPS);
+    compare_at(cx, scrolled(30, 0), 1.1, UNEVEN_STEPS);
+}
+
+#[gpui::test]
+fn small_wheel_steps_draw_what_drawing_everything_does(cx: &mut TestAppContext) {
+    // Port of the fork's `scaled` wheel test: a touchpad's steps of a
+    // fraction of a pixel, the view painted at the device pixel upstream
+    // snaps its offset to, rows moved, cells with masks of their own.
+    use gpui::{ScrollDelta, ScrollEvent, TouchPhase};
+    const STEP: f32 = 0.3;
+    const STEPS: usize = 40;
+    // Cells clip their text with masks of their own, which keep a row from
+    // moving where scaling is not exact (`Recorded::masks`).
+    for (scale, cells) in [(1.0, 3), (2.0, 3), (1.5, 3), (1.5, 0)] {
+        let wheeled = |cx: &mut TestAppContext, retain: bool| {
+            let opened = open_at(cx, scrolled(30, cells), retain, scale);
+            // The pointer rests where the wheel turns, over a row.
+            let at = point(px(100.0), px(60.0));
+            opened
+                .cx
+                .simulate_mouse_move(at, None, Modifiers::default());
+            let mut frames = Vec::new();
+            for _ in 0..STEPS {
+                opened.cx.simulate_event(ScrollEvent {
+                    position: at,
+                    delta: ScrollDelta::Pixels(point(px(0.0), px(-STEP))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Moved,
+                    ..Default::default()
+                });
+                draw(opened.cx);
+                frames.push(drawn(opened.cx));
+            }
+            let draws = opened.draws.borrow().clone();
+            (frames, draws)
+        };
+        let (kept, draws) = wheeled(cx, true);
+        let (whole, _) = wheeled(cx, false);
+        for (index, (kept, whole)) in kept.iter().zip(&whole).enumerate() {
+            assert_same(kept, whole, &format!("step {index} at {scale}"));
+        }
+        if scale != 1.5 || cells == 0 {
+            assert!(count(&draws, RetainedDraw::Moved) > 0, "{scale}: {draws:?}");
+        }
     }
 }

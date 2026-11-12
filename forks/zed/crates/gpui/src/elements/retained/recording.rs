@@ -5,17 +5,15 @@
 //!
 //! - How far it reaches ([`Recorded::extent`]): every content mask pushed
 //!   inside it as given, and of every primitive, hitbox and glyph a line
-//!   decides to cull, what a mask pushed inside lets through (all of it
-//!   under the mask around the subtree), shown or not: for the pointer and
+//!   decides to cull, what the masks pushed inside let through without the
+//!   one around it (`Window::own_mask`), shown or not: for the pointer and
 //!   for leaving it out.
 //! - What the mask around it hid and the drawing left out
 //!   ([`Recorded::left_out`]: past [`KEEP_MARGIN`], where what it hides is
-//!   kept unshown): a copy is whole where that stays hidden.
-//! - What must not have been clipped by the mask around it
-//!   ([`Recorded::strict`]): the masks pushed inside it, and borders and
-//!   underlines drawn in parts with masks of their own. Each primitive and hitbox then
-//!   takes the mask around it where it is copied, or its own (a mask pushed
-//!   inside, a border's strip) moved and clipped by that one.
+//!   kept unshown): a copy is whole where that stays hidden. Each primitive,
+//!   border strip, layer and hitbox of a copy is clipped by the mask it was
+//!   drawn under as that clips where it is copied (the mask map, `masks`),
+//!   whether the one around it clipped it before or not.
 //! - What it rounds ([`Steadiness`]): the edges `layout_bounds` rounds and
 //!   the positions `Window::paint_*` round, through the layout engine's and
 //!   the window's accumulators while it records.
@@ -40,15 +38,16 @@ use super::steady::Steadiness;
 pub struct Recorded {
     /// Everything it draws or pushes, shown or not; `None`: nothing.
     pub(crate) extent: Option<Bounds<Pixels>>,
-    /// What must have stayed inside the mask around it for a copy moved
-    /// under another to be whole: every mask pushed inside (as given), and
-    /// every border or underline drawn in parts with masks of their own.
-    pub(crate) strict: Option<Bounds<Pixels>>,
     /// What the mask around it hid and the drawing left out (past
     /// [`KEEP_MARGIN`]): it must stay hidden where a copy is moved.
     pub(crate) left_out: Option<Bounds<Pixels>>,
     /// Something in it knows where it is: never moved.
     pub(crate) pinned: bool,
+    /// A content mask was pushed inside it: where scaling is not exact,
+    /// such a mask copied elsewhere is not what pushing it there gives in
+    /// its last bits (its size is summed and taken apart in logical pixels
+    /// by whoever pushes it), so it is not moved there.
+    pub(crate) masks: bool,
     /// The edges its layout rounds (taffy's space: moved as its root is
     /// laid out elsewhere).
     pub(crate) layout: Steadiness,
@@ -78,15 +77,11 @@ impl Recorded {
         if let Some(extent) = inner.extent {
             self.reach(extent);
         }
-        for (into, from) in [
-            (&mut self.strict, inner.strict),
-            (&mut self.left_out, inner.left_out),
-        ] {
-            if let Some(from) = from {
-                union(into, from);
-            }
+        if let Some(left_out) = inner.left_out {
+            union(&mut self.left_out, left_out);
         }
         self.pinned |= inner.pinned;
+        self.masks |= inner.masks;
         self.layout.merge(&inner.layout);
         self.paint.merge(&inner.paint);
     }
@@ -100,6 +95,9 @@ pub(crate) struct Recording {
     /// The element offset at its root: one that differs inside it (a
     /// scroll view in it) is snapped on its own.
     offset: crate::Point<Pixels>,
+    /// How many content masks were pushed when it began: the ones pushed
+    /// after are its own (`Window::own_mask`).
+    pub(crate) mask_depth: usize,
     /// The accumulators of the recording around it, put back when it ends.
     saved_layout: Option<Steadiness>,
     saved_paint: Option<Steadiness>,
@@ -139,6 +137,7 @@ impl Window {
                 .last()
                 .copied()
                 .unwrap_or_default(),
+            mask_depth: self.mask_ids.len(),
             saved_layout,
             saved_paint,
             saved_scene,
@@ -193,25 +192,6 @@ impl Window {
         }
     }
 
-    /// `bounds` (a border or an underline drawn in parts with masks
-    /// of their own) must stay inside the mask around the retained subtree
-    /// being drawn anew (if one is) for a copy moved under another to be
-    /// whole.
-    pub(crate) fn retained_strict(&mut self, bounds: Bounds<Pixels>) {
-        let mask = self.content_mask();
-        if let Some(recording) = self.retained_recordings.last_mut() {
-            recording.reach_under(bounds, &mask);
-            let strict = if mask == recording.outer {
-                bounds
-            } else {
-                bounds.intersect(&mask.bounds)
-            };
-            if !strict.is_empty() {
-                union(&mut recording.recorded.strict, strict);
-            }
-        }
-    }
-
     /// Whether a glyph whose largest box is `bounds` is painted: where it
     /// shows, or, while a retained subtree is drawn anew, where the mask
     /// around it hides it within [`KEEP_MARGIN`] (the scene keeps it
@@ -219,17 +199,21 @@ impl Window {
     pub(crate) fn retained_glyph_shows(&mut self, bounds: Bounds<Pixels>) -> bool {
         let mask = self.content_mask();
         let shows = bounds.intersects(&mask.bounds);
+        let own = self.own_mask();
         let Some(recording) = self.retained_recordings.last_mut() else {
             return shows;
         };
-        recording.reach_under(bounds, &mask);
-        if shows || mask != recording.outer {
+        // What the masks pushed inside let through: hidden by those, it
+        // stays hidden wherever the subtree is copied.
+        let reach = own.map_or(bounds, |own| bounds.intersect(&own));
+        recording.reach_under(bounds, own);
+        if shows || reach.is_empty() {
             return shows;
         }
-        if bounds.intersects(&mask.bounds.dilate(KEEP_MARGIN)) {
+        if reach.intersects(&recording.outer.bounds.dilate(KEEP_MARGIN)) {
             return true;
         }
-        union(&mut recording.recorded.left_out, bounds);
+        union(&mut recording.recorded.left_out, reach);
         false
     }
 
@@ -238,21 +222,30 @@ impl Window {
     /// only where it is exact.
     pub(crate) fn retained_place(&mut self, bounds: Bounds<Pixels>, is_mask: bool) {
         let scale = self.scale_factor();
-        let mask = self.content_mask();
+        let own = self.own_mask();
         let Some(recording) = self.retained_recordings.last_mut() else {
             return;
         };
         if is_mask {
             recording.recorded.reach(bounds);
-            union(&mut recording.recorded.strict, bounds);
+            recording.recorded.masks = true;
         } else {
-            recording.reach_under(bounds, &mask);
+            recording.reach_under(bounds, own);
         }
         let paint = &mut recording.recorded.paint;
-        paint.exact(0, bounds.origin.x.0 * scale);
-        paint.exact(1, bounds.origin.y.0 * scale);
-        paint.exact(0, bounds.size.width.0 * scale);
-        paint.exact(1, bounds.size.height.0 * scale);
+        let values = [
+            (0, bounds.origin.x.0 * scale),
+            (1, bounds.origin.y.0 * scale),
+            (0, bounds.size.width.0 * scale),
+            (1, bounds.size.height.0 * scale),
+        ];
+        for (axis, value) in values {
+            if super::grid::is_exact_scale(scale) {
+                paint.exact(axis, value);
+            } else {
+                paint.on_grid(axis, value);
+            }
+        }
     }
 
     /// An element inside the retained subtree being drawn anew is laid out
@@ -271,32 +264,35 @@ impl Window {
     /// zero) while painting; `axis` 0 is across. For `&self` painting.
     pub(crate) fn retained_round_half(&self, axis: usize, device: f32, units: f32) {
         if let Some(mut steady) = self.retained_paint_steadiness.get() {
-            steady.round_half(axis, device, units, true);
+            // Exactly on a half by exact arithmetic only where scaling is.
+            let exact = super::grid::is_exact_scale(self.scale_factor());
+            steady.round_half(axis, device, units, exact);
             self.retained_paint_steadiness.set(Some(steady));
         }
     }
 
-    /// A position is floored or ceiled to a device pixel while painting.
+    /// A position is floored or ceiled to a device pixel while painting
+    /// (settled first where scaling is not exact: `Window::cover_bounds`).
     pub(crate) fn retained_floor(&self, axis: usize, device: f32) {
         if let Some(mut steady) = self.retained_paint_steadiness.get() {
-            steady.floor(axis, device, true);
+            if super::grid::is_exact_scale(self.scale_factor()) {
+                steady.floor(axis, device, true);
+            } else {
+                steady.settled_floor(axis, device);
+            }
             self.retained_paint_steadiness.set(Some(steady));
         }
     }
 }
 
 impl Recording {
-    /// `bounds` is drawn under `mask`: what of it a mask pushed inside the
-    /// subtree lets through reaches (that mask moves with it); under the
-    /// mask around the subtree, all of it.
-    fn reach_under(&mut self, bounds: Bounds<Pixels>, mask: &ContentMask<Pixels>) {
-        if *mask == self.outer {
-            self.recorded.reach(bounds);
-        } else {
-            let shown = bounds.intersect(&mask.bounds);
-            if !shown.is_empty() {
-                self.recorded.reach(shown);
-            }
+    /// `bounds` is drawn under the masks pushed inside the subtree that let
+    /// through `own` (`Window::own_mask`; `None` under the one around it):
+    /// that much of it reaches (those masks move with it).
+    fn reach_under(&mut self, bounds: Bounds<Pixels>, own: Option<Bounds<Pixels>>) {
+        let reach = own.map_or(bounds, |own| bounds.intersect(&own));
+        if !reach.is_empty() {
+            self.recorded.reach(reach);
         }
     }
 }
@@ -304,16 +300,8 @@ impl Recording {
 /// The device pixels a logical mask covers, as `Window::cover_bounds` gives
 /// a primitive's.
 pub(crate) fn cover(mask: &ContentMask<Pixels>, scale: f32) -> ContentMask<ScaledPixels> {
-    let bounds = mask.bounds;
-    let left = (bounds.left().0 * scale).floor();
-    let top = (bounds.top().0 * scale).floor();
-    let right = (bounds.right().0 * scale).ceil().max(left);
-    let bottom = (bounds.bottom().0 * scale).ceil().max(top);
     ContentMask {
-        bounds: Bounds::from_corners(
-            point(ScaledPixels(left), ScaledPixels(top)),
-            point(ScaledPixels(right), ScaledPixels(bottom)),
-        ),
+        bounds: crate::window::cover_device(mask.bounds, scale),
     }
 }
 

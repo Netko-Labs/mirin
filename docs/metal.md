@@ -2083,6 +2083,26 @@ in the bounds tree (what a select or a keystroke still costs over the
 fork), and text boxes lay out a pixel taller than on the fork (upstream
 rounds a measured size up).
 
+Round 6 on the upstream build (`docs/metal/gpui-next.md`, "Round 6: the
+retention gaps"): a copied drawing goes into the bounds tree as one
+(`insert_spanning`), element states live in their retained subtree, the
+frame keeps every content mask as given so a drawing the view's edge
+clipped moves (the mask map; upstream draws every border in strips under
+masks of their own, so every card at a view's edge was drawn again), and
+positions settle on the device grid at 1.25, 1.5 or 1.75. Also fixed: a
+moved copy dropped a layer that ended up empty and so misplaced the
+drawings inside it (what round 5's attempt to move clipped border strips
+hit). Stress bench, upstream host against host-r5 (two runs each, medians):
+select 2.4 / 2.6 ms, type 1.9 / 1.45, hover 2.35 / 2.25, grow 2.95 /
+4.45, scroll 2.9 / 2.95, scroll across 3.05 / 2.95 (host-next-r5: 3.65,
+3.5, 3.75, 4.25, 4.85, 4.65); at `MIRIN_METAL_SCALE=1.5` grow 3.2 and
+scroll 2.9 ms where round 5's code drew every moved row again (13.4,
+17.1). Open there: scrolling across at a fractional scale (a glyph's
+subpixel variant is rounded from its own position, so cards are drawn
+again: 12 ms at 1.5), a drawing with masks pushed inside moved at a
+fractional scale, a keystroke and a select in a scroll view (0.5–0.7 ms
+over host-r5), and resize.
+
 The upstream build's footprint after round 5 (`docs/metal/gpui-next.md`,
 "Round 5: a small app's footprint"): the counter's host 68 MB RSS, 32 MB
 of GPU memory, 16 threads and 40 ms to its first content frame, where
