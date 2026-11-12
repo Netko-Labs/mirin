@@ -109,8 +109,8 @@ interface ViewNodeProps {
   grid?: boolean;
   gridColumns?: GridTrack[];
   gridRows?: GridTrack[];
-  justifyItems?: "start" | "center" | "end" | "stretch";
-  justifySelf?: "start" | "center" | "end" | "stretch";
+  justifyItems?: ViewNodeProps["align"];
+  justifySelf?: ViewNodeProps["align"];
   colStart?: number;
   colEnd?: number;
   colSpan?: number;
