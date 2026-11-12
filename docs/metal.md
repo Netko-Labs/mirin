@@ -443,8 +443,9 @@ in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
 
 A tab in any text moves what follows it to the next tab stop of its line, so
 columns line up. Stops are counted from the line's start, every `tabSize`
-times the width of the font's `0` (CSS's `ch`): 4 by default, and an `input`
-may set its own (`tabSize`, 1 to 64). In a fixed-pitch font that is as many
+times the width of the font's `0` (CSS's `ch`): 4 by default; an `input` may
+set its own (`tabSize`, 1 to 64), and so may a `<Text>` (`style.tabSize`), so
+a text that mirrors a field wraps as the field does. In a fixed-pitch font that is as many
 spaces; in a proportional one a `0` is about twice a space, so four are wide
 enough to line words up (four spaces there are about one em, which lines
 nothing up). A tab always moves on: one that sits on a stop goes to the next.

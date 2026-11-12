@@ -291,6 +291,9 @@ pub struct TextProps {
     pub line_through: bool,
     /// Line height in pixels.
     pub line_height: Option<f32>,
+    /// How far apart the text's tab stops are, in `0`s of its font; GPUI's
+    /// default (4) without it.
+    pub tab_size: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -718,6 +721,22 @@ mod tests {
         let mut inputs = Vec::new();
         collect_inputs(&tree, &mut inputs);
         assert_eq!(inputs[0].tab_size, Some(8));
+    }
+
+    #[test]
+    fn a_text_can_set_its_tab_stops() {
+        let tree = parse_tree(r#"{"type":"text","props":{"tabSize":8},"children":["a\tb"]}"#)
+            .expect("valid tree must parse");
+        let NodeSpec::Text { props, .. } = tree else {
+            panic!("a text node");
+        };
+        assert_eq!(props.tab_size, Some(8));
+        let plain =
+            parse_tree(r#"{"type":"text","props":{},"children":["a"]}"#).expect("valid tree");
+        let NodeSpec::Text { props, .. } = plain else {
+            panic!("a text node");
+        };
+        assert_eq!(props.tab_size, None);
     }
 
     #[test]

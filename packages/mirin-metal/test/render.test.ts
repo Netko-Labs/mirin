@@ -556,6 +556,24 @@ describe("TextInput", () => {
     root.unmount();
   });
 
+  test("a text can set its tab stops too, as the field it mirrors does", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(Text, { style: { tabSize: 8 } }, "a\tb"),
+        createElement(Text, null, "a\tb"),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "");
+    expect(tree.children[0].props.tabSize).toBe(8);
+    expect(tree.children[1].props.tabSize).toBeUndefined();
+    root.unmount();
+  });
+
   test("TextInputDefaults gives fields a selection color they don't set", async () => {
     const transport = fakeTransport();
     const root = render(

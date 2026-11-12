@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use gpui::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
     ElementId, FontWeight, HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
-    ScrollWheelEvent, SharedString, Stateful, Window,
+    ScrollWheelEvent, SharedString, Stateful, StyledText, Window,
 };
 
 use crate::edges::{apply_box_edges, shadow_preset};
@@ -515,7 +515,12 @@ pub(crate) fn node_id(node: &NodeSpec) -> Option<String> {
 }
 
 fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
-    let mut element = div().child(SharedString::from(children.concat()));
+    let text = SharedString::from(children.concat());
+    let mut element = match props.tab_size {
+        // Its own tab stops (a text that mirrors a field's: docs/metal.md, "Tab stops").
+        Some(tab_size) => div().child(StyledText::new(text).with_tab_size(tab_size)),
+        None => div().child(text),
+    };
     if let Some(color) = props.color.as_deref().and_then(parse_color) {
         element = element.text_color(rgba(color));
     }

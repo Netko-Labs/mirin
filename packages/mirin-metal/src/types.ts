@@ -134,6 +134,8 @@ export interface TextStyle {
   fontStyle?: "normal" | "italic";
   textDecorationLine?: "none" | "underline" | "line-through";
   lineHeight?: number;
+  /** How far apart the text's tab stops are, in widths of its font's "0": 4 unless given (see `TextInputProps.tabSize`). */
+  tabSize?: number;
 }
 
 /** Appearance for a `<TextInput>`. */
