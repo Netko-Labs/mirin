@@ -12,6 +12,8 @@ mod events;
 mod filters;
 mod node;
 mod rect;
+// mirin: filtered children's places (`MIRIN.md`).
+mod sibling_index;
 #[cfg(feature = "simplified-api")]
 pub mod simplified;
 mod text_attributes;

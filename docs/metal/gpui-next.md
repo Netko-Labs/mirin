@@ -1034,6 +1034,14 @@ upstream build (`Application::new_inaccessible` in `gpui_api/upstream.rs`)**:
 −2.1 MB and a thread now, and no second, empty application for a screen
 reader to find. Not switched in this round, as the brief asks.
 
+Round 6 (the adapter's thread, `docs/metal.md` section 5b): mirin's tree
+now goes through forks of AccessKit's AT-SPI layer and consumer as well
+(`forks/accesskit_atspi_common`, `forks/accesskit_consumer`), which
+`next/Cargo.toml` patches in as the default build's manifest does, so the
+upstream build gets the same: nodes added under a parent with many
+children no longer cost the adapter's thread the square of their number.
+Its `cargo test --lib` and clippy pass with them.
+
 Checks: `layout-check` of host-next-r4 against this host, `--scene`, for
 `grid`, `browser`, `scroll` and `scroll-fractional`: identical, layouts and
 drawings, at every step; the host against itself with

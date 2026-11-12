@@ -274,9 +274,11 @@ fn next_filtered_sibling<'a>(
                     if result == FilterResult::Include {
                         return next;
                     }
-                    if result == FilterResult::ExcludeNode {
-                        consider_children = true;
-                    }
+                    // mirin: a sibling hidden whole is stepped over, also
+                    // after an empty container (`MIRIN.md`); upstream kept
+                    // `consider_children` from that container and walked
+                    // into the hidden subtree, which ended the walk there.
+                    consider_children = result == FilterResult::ExcludeNode;
                 }
                 _ => {
                     let parent = current.parent();
@@ -315,9 +317,11 @@ fn previous_filtered_sibling<'a>(
                     if result == FilterResult::Include {
                         return previous;
                     }
-                    if result == FilterResult::ExcludeNode {
-                        consider_children = true;
-                    }
+                    // mirin: a sibling hidden whole is stepped over, also
+                    // after an empty container (`MIRIN.md`); upstream kept
+                    // `consider_children` from that container and walked
+                    // into the hidden subtree, which ended the walk there.
+                    consider_children = result == FilterResult::ExcludeNode;
                 }
                 _ => {
                     let parent = current.parent();
@@ -1056,5 +1060,74 @@ mod tests {
         assert_eq!(1, doc_children.len());
         let button_id = FullNodeId::new(NodeId(1), TreeIndex(1));
         assert_eq!(button_id, doc_children[0].id());
+    }
+}
+
+// mirin: a hidden sibling after an empty container is stepped over
+// (`MIRIN.md`).
+#[cfg(test)]
+mod hidden_after_empty {
+    use crate::{filters::common_filter, tree::Tree};
+    use accesskit::{Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate};
+    use alloc::{vec, vec::Vec};
+
+    const ROOT: NodeId = NodeId(0);
+    const FIRST: NodeId = NodeId(1);
+    const EMPTY: NodeId = NodeId(2);
+    const HIDDEN: NodeId = NodeId(3);
+    const UNDER_HIDDEN: NodeId = NodeId(4);
+    const LAST: NodeId = NodeId(5);
+
+    /// A button, an empty container, a hidden container with a button in
+    /// it, and a button: a screen reader sees the first and the last.
+    fn tree() -> Tree {
+        let mut root = Node::new(Role::Window);
+        root.set_children(vec![FIRST, EMPTY, HIDDEN, LAST]);
+        let mut hidden = Node::new(Role::GenericContainer);
+        hidden.set_hidden();
+        hidden.set_children(vec![UNDER_HIDDEN]);
+        Tree::new(
+            TreeUpdate {
+                nodes: vec![
+                    (ROOT, root),
+                    (FIRST, Node::new(Role::Button)),
+                    (EMPTY, Node::new(Role::GenericContainer)),
+                    (HIDDEN, hidden),
+                    (UNDER_HIDDEN, Node::new(Role::Button)),
+                    (LAST, Node::new(Role::Button)),
+                ],
+                tree: Some(TreeInfo::new(ROOT)),
+                tree_id: TreeId::ROOT,
+                focus: ROOT,
+            },
+            false,
+        )
+    }
+
+    fn ids<'a>(nodes: impl Iterator<Item = crate::NodeRef<'a>>) -> Vec<NodeId> {
+        nodes.map(|node| node.locate().0).collect()
+    }
+
+    #[test]
+    fn walks_go_on_past_a_hidden_sibling() {
+        let tree = tree();
+        let state = tree.state();
+        let node = |id| state.node_by_tree_local_id(id, TreeId::ROOT).unwrap();
+        assert_eq!(
+            ids(state.root().filtered_children(&common_filter)),
+            [FIRST, LAST]
+        );
+        assert_eq!(
+            ids(state.root().filtered_children(&common_filter).rev()),
+            [LAST, FIRST]
+        );
+        assert_eq!(
+            ids(node(FIRST).following_filtered_siblings(&common_filter)),
+            [LAST]
+        );
+        assert_eq!(
+            ids(node(LAST).preceding_filtered_siblings(&common_filter)),
+            [FIRST]
+        );
     }
 }

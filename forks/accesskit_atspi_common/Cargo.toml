@@ -42,8 +42,11 @@ path = "src/lib.rs"
 [dependencies.accesskit]
 version = "0.25.2"
 
+# mirin: the fork of the consumer, also when this crate is built alone
+# (`MIRIN.md`).
 [dependencies.accesskit_consumer]
 version = "0.39.2"
+path = "../accesskit_consumer"
 
 [dependencies.atspi-common]
 version = "0.13"

@@ -14,6 +14,7 @@ use accesskit::{
 };
 use alloc::{
     string::{String, ToString},
+    sync::Arc,
     vec,
     vec::Vec,
 };
@@ -57,20 +58,23 @@ pub(crate) struct ParentAndIndex(pub(crate) FullNodeId, pub(crate) usize);
 #[derive(Debug)]
 pub(crate) struct NodeState {
     pub(crate) parent_and_index: Option<ParentAndIndex>,
-    pub(crate) data: Node,
+    // mirin: shared (`MIRIN.md`): the tree is kept twice (`Tree`'s `state`
+    // and `next_state`), and a node's data is the same in both until an
+    // update replaces it, so the copies share it instead of each holding it.
+    pub(crate) data: Arc<Node>,
 }
 
 impl Clone for NodeState {
     fn clone(&self) -> Self {
         Self {
             parent_and_index: self.parent_and_index,
-            data: self.data.clone(),
+            data: Arc::clone(&self.data),
         }
     }
 
     fn clone_from(&mut self, source: &Self) {
         self.parent_and_index = source.parent_and_index;
-        self.data.clone_from(&source.data);
+        self.data = Arc::clone(&source.data);
     }
 }
 

@@ -18,7 +18,7 @@ use atspi_common::{
     Role as AtspiRole, ScrollType, State, StateSet,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     sync::{Arc, RwLock, RwLockReadGuard, Weak},
 };
@@ -692,15 +692,48 @@ impl NodeWrapper<'_> {
     fn notify_children_changes(&self, adapter: &Adapter, old: &NodeWrapper<'_>) {
         let old_filtered_children = old.filtered_child_ids().collect::<Vec<FullNodeId>>();
         let new_filtered_children = self.filtered_child_ids().collect::<Vec<FullNodeId>>();
+        // mirin: each list is looked up in the other through a set when both
+        // are long, not searched once a child (`MIRIN.md`): a parent with n
+        // children took n² comparisons whenever it changed (a window resized
+        // with a list of 2500 among its children: 2-3 ms on its thread).
+        let old_set = ChildSet::new(&old_filtered_children, new_filtered_children.len());
+        let new_set = ChildSet::new(&new_filtered_children, old_filtered_children.len());
         for (index, child) in new_filtered_children.iter().enumerate() {
-            if !old_filtered_children.contains(child) {
+            if !old_set.contains(child) {
                 adapter.emit_object_event(self.id(), ObjectEvent::ChildAdded(index, *child));
             }
         }
-        for child in old_filtered_children.into_iter() {
-            if !new_filtered_children.contains(&child) {
-                adapter.emit_object_event(self.id(), ObjectEvent::ChildRemoved(child));
+        for child in old_filtered_children.iter() {
+            if !new_set.contains(child) {
+                adapter.emit_object_event(self.id(), ObjectEvent::ChildRemoved(*child));
             }
+        }
+    }
+}
+
+/// mirin: a list of children to look children up in: the list itself when
+/// it is short or looked up in a few times, else a set made from it.
+enum ChildSet<'a> {
+    Listed(&'a [FullNodeId]),
+    Hashed(HashSet<FullNodeId>),
+}
+
+impl<'a> ChildSet<'a> {
+    /// Lists longer than this, looked up in as often, are hashed.
+    const LISTED: usize = 16;
+
+    fn new(children: &'a [FullNodeId], lookups: usize) -> Self {
+        if children.len() > Self::LISTED && lookups > Self::LISTED {
+            Self::Hashed(children.iter().copied().collect())
+        } else {
+            Self::Listed(children)
+        }
+    }
+
+    fn contains(&self, child: &FullNodeId) -> bool {
+        match self {
+            Self::Listed(children) => children.contains(child),
+            Self::Hashed(children) => children.contains(child),
         }
     }
 }
@@ -932,9 +965,12 @@ impl PlatformNode {
 
     pub fn index_in_parent(&self) -> Result<i32> {
         self.resolve_with_context(|node, _tree, context| {
-            if node.filtered_parent(&filter).is_some() {
-                i32::try_from(node.preceding_filtered_siblings(&filter).count())
-                    .map_err(|_| Error::IndexOutOfRange)
+            // mirin: looked up for a parent with many children (`sibling_index.rs`).
+            if let Some(parent) = node.filtered_parent(&filter) {
+                let index = context
+                    .sibling_index()
+                    .index(context.generation(), &node, &parent);
+                i32::try_from(index).map_err(|_| Error::IndexOutOfRange)
             } else {
                 let index = context
                     .read_app_context()
@@ -947,9 +983,12 @@ impl PlatformNode {
 
     pub fn cache_node(&self) -> Result<CacheNode> {
         self.resolve_with_context(|node, tree, context| {
-            let index_in_parent = if node.filtered_parent(&filter).is_some() {
-                i32::try_from(node.preceding_filtered_siblings(&filter).count())
-                    .map_err(|_| Error::IndexOutOfRange)?
+            // mirin: looked up for a parent with many children (`sibling_index.rs`).
+            let index_in_parent = if let Some(parent) = node.filtered_parent(&filter) {
+                let index = context
+                    .sibling_index()
+                    .index(context.generation(), &node, &parent);
+                i32::try_from(index).map_err(|_| Error::IndexOutOfRange)?
             } else {
                 let index = context
                     .read_app_context()

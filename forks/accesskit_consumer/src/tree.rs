@@ -4,7 +4,7 @@
 // the LICENSE-MIT file), at your option.
 
 use accesskit::{Node, NodeId, TreeId, TreeInfo, TreeUpdate};
-use alloc::{vec, vec::Vec};
+use alloc::{sync::Arc, vec, vec::Vec};
 use core::fmt;
 use hashbrown::{HashMap, HashSet};
 
@@ -218,7 +218,8 @@ impl TreeState {
             }
             let state = NodeState {
                 parent_and_index,
-                data,
+                // mirin: shared by the tree's two states (`NodeState`).
+                data: Arc::new(data),
             };
             nodes.insert(id, state);
             if let Some(changes) = changes {
@@ -268,7 +269,7 @@ impl TreeState {
                         unreachable.insert(mapped_existing_child_id);
                     }
                 }
-                if node_state.data != node_data {
+                if *node_state.data != node_data {
                     if node_data.tree_id().is_some() && !node_data.children().is_empty() {
                         panic!(
                             "Node {:?} has both tree_id and children. \
@@ -286,7 +287,8 @@ impl TreeState {
                             record_graft(&mut pending_grafts, new_subtree_id, node_id);
                         }
                     }
-                    node_state.data = node_data;
+                    // mirin: shared by the tree's two states (`NodeState`).
+                    node_state.data = Arc::new(node_data);
                     if let Some(changes) = &mut changes {
                         changes.updated_node_ids.insert(node_id);
                     }
@@ -3220,5 +3222,79 @@ mod tests {
         let state = tree.state();
         assert_eq!("AccessKit", state.toolkit_name());
         assert_eq!(None, state.toolkit_version());
+    }
+}
+
+// mirin: the tree's two states share each node's data (`MIRIN.md`).
+#[cfg(test)]
+mod shared_data {
+    use super::{ChangeHandler, Tree};
+    use crate::NodeRef;
+    use accesskit::{Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate};
+    use alloc::{sync::Arc, vec, vec::Vec};
+
+    const ROOT: NodeId = NodeId(0);
+    const KEPT: NodeId = NodeId(1);
+    const CHANGED: NodeId = NodeId(2);
+
+    fn labelled(label: &str) -> Node {
+        let mut node = Node::new(Role::Button);
+        node.set_label(label);
+        node
+    }
+
+    fn update(label: &str, tree: bool) -> TreeUpdate {
+        let mut root = Node::new(Role::Window);
+        root.set_children(vec![KEPT, CHANGED]);
+        TreeUpdate {
+            nodes: vec![
+                (ROOT, root),
+                (KEPT, labelled("kept")),
+                (CHANGED, labelled(label)),
+            ],
+            tree: tree.then(|| TreeInfo::new(ROOT)),
+            tree_id: TreeId::ROOT,
+            focus: ROOT,
+        }
+    }
+
+    /// The labels each update's handler saw before and after.
+    #[derive(Default)]
+    struct Updated(Vec<(Option<alloc::string::String>, Option<alloc::string::String>)>);
+    impl ChangeHandler for Updated {
+        fn node_added(&mut self, _: &NodeRef) {}
+        fn node_updated(&mut self, old: &NodeRef, new: &NodeRef) {
+            self.0.push((old.label(), new.label()));
+        }
+        fn focus_moved(&mut self, _: Option<&NodeRef>, _: Option<&NodeRef>) {}
+        fn node_removed(&mut self, _: &NodeRef) {}
+    }
+
+    fn data(tree: &super::TreeState, id: NodeId) -> &Arc<Node> {
+        let node = tree.node_by_tree_local_id(id, TreeId::ROOT).unwrap();
+        &tree.nodes[&node.id()].data
+    }
+
+    #[test]
+    fn a_node_is_held_once_until_it_changes() {
+        let mut tree = Tree::new(update("before", true), false);
+        for id in [ROOT, KEPT, CHANGED] {
+            assert!(Arc::ptr_eq(
+                data(&tree.state, id),
+                data(&tree.next_state, id)
+            ));
+        }
+        let mut updated = Updated::default();
+        tree.update_and_process_changes(update("after", false), &mut updated);
+        // The handler saw the node as it was and as it is.
+        assert_eq!(updated.0, [(Some("before".into()), Some("after".into()))]);
+        assert_eq!(data(&tree.state, CHANGED).label(), Some("after"));
+        // And both states share every node again, the changed one too.
+        for id in [ROOT, KEPT, CHANGED] {
+            assert!(Arc::ptr_eq(
+                data(&tree.state, id),
+                data(&tree.next_state, id)
+            ));
+        }
     }
 }

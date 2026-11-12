@@ -532,7 +532,7 @@ impl Adapter {
 
     pub fn update(&mut self, update: TreeUpdate) {
         let mut handler = AdapterChangeHandler::new(self);
-        let mut tree = self.context.tree.write().unwrap();
+        let mut tree = self.context.write_tree();
         tree.update_and_process_changes(update, &mut handler);
         drop(tree);
         handler.emit_selection_changed();
@@ -540,7 +540,7 @@ impl Adapter {
 
     pub fn update_window_focus_state(&mut self, is_focused: bool) {
         let mut handler = AdapterChangeHandler::new(self);
-        let mut tree = self.context.tree.write().unwrap();
+        let mut tree = self.context.write_tree();
         tree.update_host_focus_state_and_process_changes(is_focused, &mut handler);
     }
 

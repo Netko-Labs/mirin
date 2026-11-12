@@ -6,9 +6,11 @@
 use accesskit::{ActionHandler, ActionRequest};
 use accesskit_consumer::Tree;
 use std::fmt::{Debug, Formatter};
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::WindowBounds;
+use crate::sibling_index::SiblingIndex;
 
 /// This is an implementation detail of `accesskit_unix`, required for robust
 /// state transitions with minimal overhead.
@@ -37,6 +39,10 @@ pub(crate) struct Context {
     pub(crate) tree: RwLock<Tree>,
     pub(crate) action_handler: Arc<dyn ActionHandlerNoMut + Send + Sync>,
     pub(crate) root_window_bounds: RwLock<WindowBounds>,
+    // mirin: which state of the tree this is (each write is a new one), and
+    // the filtered children's places remembered for it (`sibling_index.rs`).
+    generation: AtomicU64,
+    sibling_index: Mutex<SiblingIndex>,
 }
 
 impl Debug for Context {
@@ -62,11 +68,33 @@ impl Context {
             tree: RwLock::new(tree),
             action_handler,
             root_window_bounds: RwLock::new(root_window_bounds),
+            generation: AtomicU64::new(0),
+            sibling_index: Mutex::default(),
         })
     }
 
     pub(crate) fn read_tree(&self) -> RwLockReadGuard<'_, Tree> {
         self.tree.read().unwrap()
+    }
+
+    /// mirin: the tree to change, as a new generation of it. The generation
+    /// moves while the write lock is held, so a reader holding the read lock
+    /// sees the generation of the tree it reads.
+    pub(crate) fn write_tree(&self) -> RwLockWriteGuard<'_, Tree> {
+        let tree = self.tree.write().unwrap();
+        self.generation.fetch_add(1, Ordering::Relaxed);
+        tree
+    }
+
+    /// mirin: the tree's generation; read it while holding `read_tree`.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
+    /// mirin: the filtered children's places (`sibling_index.rs`). Taken
+    /// while the tree is read, never the other way round.
+    pub(crate) fn sibling_index(&self) -> MutexGuard<'_, SiblingIndex> {
+        self.sibling_index.lock().unwrap()
     }
 
     pub(crate) fn read_root_window_bounds(&self) -> RwLockReadGuard<'_, WindowBounds> {

@@ -819,6 +819,20 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
     bounds change, at most once a second, so a client that registers
     later hears them within a second. Orca registers for no bounds changes (its listeners:
     `src/orca/script.py`), nor does the Dashi shell.
+  - *The adapter's thread.* AccessKit takes an update on the window's
+    thread and queues what it tells the bus; its own thread (named
+    `accesskit`) turns that into D-Bus calls and signals. An update that
+    adds nodes sends an `AddAccessible` for each, with the node's place
+    among its parent's children. Upstream counted the siblings before the
+    node for each one, so n children added under one parent (a view
+    switched, a list replaced) cost the thread O(n²); mirin's fork of
+    AccessKit's AT-SPI layer (`forks/accesskit_atspi_common/MIRIN.md`)
+    lists a parent's children once for each state of the tree and looks
+    the places up. A node with many children that changes (a window
+    resized whose list is among its children) no longer compares its
+    lists child by child on the window's thread either, and AccessKit's
+    two states of the tree (as last reported, and as the next update
+    makes it) share each node's data (`forks/accesskit_consumer/MIRIN.md`).
   - *Checking it.* `access/tests/` drives runs of patches, focus, typing,
     scrolls, pushes and subtrees kept or no longer, recording each frame in
     the layout map as the renderer does, and hands every update to
@@ -2070,6 +2084,71 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   drawings would fill the window's parking budget (24,000 primitives,
   about the 2,500 cards' whole drawing).
 
+- The accessibility adapter's thread (2026-11-12, round 6; release host,
+  `host-r5` and this one back to back, two runs each, medians; the
+  session has accessibility on, as the benches run). Round 5's resize
+  profiles put AccessKit's thread at 35–56% of all samples, in
+  `previous_filtered_sibling` and `is_hidden`. Measured per thread (the
+  thread is now named `accesskit`, and `bench/stress.tsx` reports its
+  part of each scenario's CPU), none of that is per update: select,
+  type, hover, grow, scroll, resize and hscroll take 0.0–0.5 ms of that
+  thread's CPU an update, within the 10 ms ticks' noise, before and after.
+  It was the switch of the cards into the scroll view, which the
+  profiles' window took in: every card's node is removed and made anew,
+  and the thread sent an `AddAccessible` for each with the node's place
+  among its parent's filtered children, counted by walking the siblings
+  before it and running the filter at each step: O(n²) for 2500 cards
+  under one parent, 77% of the thread's samples. On a loaded machine
+  the burst ran past the 2.5 s the bench waits, into the next
+  scenario's CPU (a base run measured scroll at 17.9 ms a step, 10.2 of
+  them the adapter's, and hscroll at 20.8, 14.0 the adapter's).
+
+  | stress bench (7604 accessibility nodes) | before | after |
+  | --- | --- | --- |
+  | switch to the scroll view: the adapter thread's CPU | 870 ms (570–1710 under load) | 150–230 ms (400 under load) |
+  | the same, on the window's thread (the tree, and AccessKit taking it) | 35–50 ms | 37–52 ms (noise) |
+  | per update, every scenario: host CPU / the adapter's part | 3.0–6.7 / 0.0–0.5 ms | the same |
+  | accessibility's RSS (on minus off), first tree | 22 MB | 18–19 MB |
+  | the same, after the tree is replaced whole (switches, heap trimmed) | 37–40 MB | 31–34 MB |
+  | stand-alone, 7600 nodes: `AddAccessible` for a replaced grid / AccessKit's tree / a root with 2500 children changed | 350 ms / 6.0 MB / 2.0–2.6 ms | 13 ms / 2.4 MB / 0.7 ms |
+
+  What changed (`forks/accesskit_atspi_common/MIRIN.md`,
+  `forks/accesskit_consumer/MIRIN.md`, both new forks):
+  - *A node's place among its siblings is looked up.* Past 16 siblings
+    before it, the parent's filtered children are listed once for each
+    state of the tree (a generation each write of it moves) and the place
+    is found in the list; `GetIndexInParent` the same. What remains of a
+    switch on the thread is D-Bus: registering and dropping each node's
+    objects and serializing about 27,000 signals.
+  - *A parent's children gained and lost are found through sets* when
+    both lists are long, on the window's thread (a node with 2500
+    filtered children that changes: 2.2–2.6 → 0.7 ms; Metal's stress
+    bench changes no such node per update).
+  - *AccessKit's two copies of the tree share each node's data*
+    (`Arc<Node>`): its tree is kept as last reported and as the next
+    update makes it, and every node was deep-copied into both.
+  - *A bug in the consumer's sibling walks*, found by the random trees
+    that check the places: after an empty container a hidden sibling was
+    walked into and the walk ended there, so siblings after it were
+    missing. Metal's trees never hold that pair (nothing in them is
+    hidden or clips), so nothing it publishes changes.
+
+  Checks: `bench/a11y/extents.tsx` gives the same 21 dumps, byte for
+  byte, from `host-r5` and this host; `bench/a11y/signals.sh` over the
+  whole stress bench counts the same signals of every kind (15,007
+  `StateChanged`, 15,002 `RemoveAccessible`, 15,001 `AddAccessible`,
+  10,006 `ChildrenChanged`, …); `MIRIN_METAL_ACCESS_CHECK=1` on the whole
+  stress bench: no complaint; `layout-check` against `host-r5` (`grid`,
+  `browser`, `scroll`, `scroll-fractional`) and against itself without
+  retention: identical. The places, child counts and children events are
+  checked against upstream's count on random trees changed at random
+  (`forks/accesskit_atspi_common/src/sibling_index/tests.rs`).
+
+  Evaluated and not done: sending `object:state-changed:defunct` only
+  while something registered for it, as bounds changes are (a third of a
+  switch's signals; at-spi2-atk sends only what is registered). Nothing
+  per update is left on the adapter's thread to cut.
+
 Open, on upstream GPUI (`docs/metal/gpui-next.md` section 6, "Round 5"):
 retained subtrees there now move, are left out, park their drawings and
 are built again onto their kept nodes, so grow, scroll and resize cost
@@ -2111,8 +2190,13 @@ move on their own (a reflow, a window resized) are handed over one by one,
 about 5 µs a node on the window's thread (holding them until the content
 settles needs the adapter to fetch what is held before it answers a
 query: `Component`'s three geometry calls in the fork, waiting on the
-window's thread); and the tree a session with
-accessibility on but nothing reading it still pays for once. For the
+window's thread); the tree a session with
+accessibility on but nothing reading it still pays for once; a tree
+replaced whole (a view switched) still costs the adapter's thread about
+25 µs a node replaced in D-Bus work, and leaves accessibility's footprint
+at 31–34 MB where the first tree took 18–19 (7604 nodes; constant over
+further switches, so not a leak: likely what the burst leaves in the
+heap, not measured further; round 6 above). For the
 driver ("The driver at rest, its start, its fibers" above has what round 4
 closed): an app that imports a path it makes at run time (the example
 browser) is not bundled; `mirin-metal run` is a second Bun start (~5 ms);
@@ -2267,7 +2351,8 @@ cargo test                      # headless: GPUI's test platform, no display
 ```
 
 The forks live at the repository root (`forks/gpui`, `forks/taffy`,
-`forks/blade-graphics`, `forks/accesskit_unix`; `forks/README.md` explains the
+`forks/blade-graphics`, `forks/accesskit_unix`, `forks/accesskit_atspi_common`,
+`forks/accesskit_consumer`; `forks/README.md` explains the
 upstream branch). The
 GPUI fork's own tests build it alone with this crate's lockfile:
 
@@ -2279,7 +2364,8 @@ cd ../../forks/gpui && cp ../../crates/mirin-metal/Cargo.lock . \
 
 The AccessKit adapter fork's the same way (`cd ../../forks/accesskit_unix`,
 `CARGO_TARGET_DIR=../../crates/mirin-metal/target/accesskit-alone cargo
-test --lib`).
+test --lib`), and its AT-SPI layer's and consumer's (`atspi-alone`,
+`consumer-alone`; each fork's `MIRIN.md`).
 
 The GPUI fork is gpui 0.2.2, the newest release on crates.io, a year behind
 Zed's tree. [`docs/metal/gpui-next.md`](metal/gpui-next.md) is a spike on

@@ -13,12 +13,16 @@ changed code carries a `// mirin:` comment.
 | `taffy` | `taffy` 0.9.0 (DioxusLabs, MIT), the version GPUI pins | `forks/gpui` |
 | `blade-graphics` | `blade-graphics` 0.7.1 (Dzmitry Malyshau, MIT), the version GPUI pins | `forks/gpui` |
 | `accesskit_unix` | `accesskit_unix` 0.24.1 (AccessKit, MIT OR Apache-2.0) | `crates/mirin-metal` |
+| `accesskit_atspi_common` | `accesskit_atspi_common` 0.21.1 (AccessKit, MIT OR Apache-2.0), the version `accesskit_unix` pins | `forks/accesskit_unix` |
+| `accesskit_consumer` | `accesskit_consumer` 0.39.2 (AccessKit, MIT OR Apache-2.0), the version `accesskit_atspi_common` pins | `forks/accesskit_atspi_common`, `crates/mirin-metal`'s tests |
 | `zed` | the GPUI crates of the zed repository at `f8cfc7ed` (2026-11-10; Zed Industries, every crate Apache-2.0) | `crates/mirin-metal/next` (the build on upstream GPUI) |
 | `taffy-next` | `taffy` 0.15.0 (DioxusLabs, MIT), the version upstream GPUI pins | `forks/zed` |
 
 `crates/mirin-metal/Cargo.toml` points `[patch.crates-io]` here (`gpui`,
-`taffy`, `blade-graphics`, `accesskit_unix`); `crates/mirin-metal/next/Cargo.toml`
-builds the same sources on `zed` and `taffy-next` instead
+`taffy`, `blade-graphics`, `accesskit_unix`, `accesskit_atspi_common`,
+`accesskit_consumer`); `crates/mirin-metal/next/Cargo.toml`
+builds the same sources on `zed` and `taffy-next` instead (and the same
+AccessKit forks)
 (`docs/metal/gpui-next.md`). The forks are
 excluded from the root Cargo workspace; each builds alone with mirin-metal's
 lockfile (`forks/gpui/MIRIN.md`).
