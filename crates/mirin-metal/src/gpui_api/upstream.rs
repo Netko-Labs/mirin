@@ -13,9 +13,13 @@ use gpui::{
 pub(crate) use gpui::layer_shell::{KeyboardInteractivity, Layer};
 pub(crate) use gpui::ScrollEvent as ScrollWheelEvent;
 
-/// The application, on the platform GPUI picks.
+/// The application, on the platform GPUI picks, with GPUI's own AccessKit
+/// adapter off: mirin's `access/` tree is the one screen readers get (it is
+/// incremental and survives retained subtrees, which GPUI's is not and does
+/// not), so GPUI's would only publish a second, empty application
+/// (docs/metal/gpui-next.md, "Round 5: a small app's footprint").
 pub(crate) fn application() -> Application {
-    gpui_platform::application()
+    Application::new_inaccessible(gpui_platform::current_platform(false))
 }
 
 /// The event loop goes on when the last window closes (a resident host hides it).

@@ -1032,7 +1032,8 @@ at creation announced, bounds changes sent only while someone listens).
 **Recommendation: keep mirin's tree, and turn GPUI's adapter off in the
 upstream build (`Application::new_inaccessible` in `gpui_api/upstream.rs`)**:
 −2.1 MB and a thread now, and no second, empty application for a screen
-reader to find. Not switched in this round, as the brief asks.
+reader to find. Not switched in round 5, as its brief asked; switched
+after it (GPUI's adapter is off on the upstream build).
 
 Checks: `layout-check` of host-next-r4 against this host, `--scene`, for
 `grid`, `browser`, `scroll` and `scroll-fractional`: identical, layouts and
@@ -1057,7 +1058,7 @@ kept nodes (round 5). Left of section 5's steps, updated:
 | 3 | done | — |
 | 4 | session lock, Dashi chrome, screen by name and stretched layer surfaces, file drag icon, X11 min size (~400 lines in `gpui_linux`) | 3–4 days |
 | 5 | retained: done in round 5 for moves at power-of-two scales, skips, parked drawings and building onto kept nodes. Left: the fork's mask map (a drawing whose own masks or border strips its view's edge clipped is built again onto its nodes as it comes into view), the device grid (moves at 1.25, 1.5 …), glyphs placed from their line's grid point, element state scopes and `insert_spanning` (what select, type and hover still cost over the fork: 2 ms of 4), and resize's taffy time (taffy 0.15 measures each card more than once) | 4–6 days |
-| 6 | footprint: done in round 5 (below), but for the binary's size and the heap; accessibility: measured, keeping `access/` recommended (below), GPUI's adapter still on beside it | 1 day (turn GPUI's adapter off) |
+| 6 | footprint: done in round 5 (below), but for the binary's size and the heap; accessibility: mirin's `access/` kept, GPUI's adapter turned off (below) | — |
 | 7 | decide the measured-size rounding (keep upstream's `ceil`, or round as the fork did and keep Dashi's layouts), check every Dashi app, benches, footprint; switch the default; delete `forks/gpui`, `forks/taffy`, `forks/blade-graphics` | 3–5 days |
 
 About 12–20 working days remain of the 23–34 the spike estimated (with
