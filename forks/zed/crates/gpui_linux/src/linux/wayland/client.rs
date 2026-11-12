@@ -79,10 +79,15 @@ use wayland_protocols::{
 };
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+// mirin: session-lock surfaces for a lock screen.
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1,
+};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
+    dashi_chrome::{dashi_chrome_manager_v1, dashi_chrome_v1}, // mirin:
     display::{WaylandDisplay, refresh_interval_from_millihertz},
     window::{ImeInput, WaylandWindowStatePtr},
 };
@@ -256,6 +261,11 @@ pub struct Globals {
         Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    // mirin: session-lock surfaces for a lock screen.
+    pub session_lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
+    // mirin: Dashi's private chrome protocol (unified title bar); None on
+    // every other compositor.
+    pub dashi_chrome: Option<dashi_chrome_manager_v1::DashiChromeManagerV1>,
     pub kde_blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
     pub background_effects_manager:
         Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
@@ -308,6 +318,8 @@ impl Globals {
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
+            session_lock_manager: globals.bind(&qh, 1..=1, ()).ok(), // mirin:
+            dashi_chrome: globals.bind(&qh, 1..=1, ()).ok(),         // mirin:
             kde_blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             background_effects_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -527,6 +539,22 @@ pub(crate) struct ExternalDrag {
     source: wl_data_source::WlDataSource,
     bytes: Vec<u8>,
     window: WaylandWindowStatePtr,
+    // mirin: a drag `start_file_drag` began: its icon's surface and buffer,
+    // kept until it ends, and no `FileDropEvent::Ended` to the window, whose
+    // gpui drag never began (as `../gpui`'s).
+    icon: Option<(wl_surface::WlSurface, wl_buffer::WlBuffer)>,
+    gpui_drag: bool,
+}
+
+impl ExternalDrag {
+    // mirin: the source and the icon go together.
+    fn destroy(&self) {
+        self.source.destroy();
+        if let Some((surface, buffer)) = &self.icon {
+            surface.destroy();
+            buffer.destroy();
+        }
+    }
 }
 
 fn file_uri_list(paths: &FileDragPaths) -> String {
@@ -680,6 +708,41 @@ impl WaylandClientStatePtr {
         surface: &wl_surface::WlSurface,
         payload: &ExternalDragPayload,
     ) -> bool {
+        self.start_drag_out(
+            surface,
+            payload,
+            DndAction::Copy | DndAction::Move,
+            None,
+            true,
+        )
+    }
+
+    // mirin: a drag of `paths` from `surface`, started by the app itself
+    // (`Window::start_file_drag`), offered for copying only, with the image
+    // at `icon` drawn `icon_size` logical pixels across (× `scale`) under
+    // the pointer, centered. Must come while the button that pressed is held.
+    pub fn start_file_drag(
+        &self,
+        surface: &wl_surface::WlSurface,
+        paths: &[std::path::PathBuf],
+        icon: Option<&std::path::Path>,
+        icon_size: u32,
+        scale: i32,
+    ) -> bool {
+        let entries = paths.iter().map(|path| (path.clone(), path.is_dir()));
+        let payload = ExternalDragPayload::Files(FileDragPaths::new(entries));
+        let icon = icon.map(|path| (path, icon_size, scale.max(1)));
+        self.start_drag_out(surface, &payload, DndAction::Copy, icon, false)
+    }
+
+    fn start_drag_out(
+        &self,
+        surface: &wl_surface::WlSurface,
+        payload: &ExternalDragPayload,
+        actions: DndAction,
+        icon: Option<(&std::path::Path, u32, i32)>, // mirin:
+        gpui_drag: bool,                            // mirin:
+    ) -> bool {
         let client = self.get_client();
         let mut state = client.borrow_mut();
 
@@ -704,13 +767,46 @@ impl WaylandClientStatePtr {
         let source =
             data_device_manager.create_data_source(&state.globals.qh, DataSourceKind::Drag);
         source.offer(FILE_LIST_MIME_TYPE.to_string());
-        source.set_actions(DndAction::Copy | DndAction::Move);
-        data_device.start_drag(Some(&source), surface, None, serial.as_raw());
+        source.set_actions(actions);
+        // mirin: the icon, drawn into a buffer of its own surface.
+        let qh = state.globals.qh.clone();
+        let icon = icon.and_then(|(path, size, scale)| {
+            let (pixels, width, height) = super::drag_icon::rasterize(path, size * scale as u32)?;
+            let buffer = shm_buffer(&state.globals.shm, &qh, &pixels, width, height)?;
+            let icon_surface = state.globals.compositor.create_surface(&qh, ());
+            Some((icon_surface, buffer, width as i32, height as i32, scale))
+        });
+        data_device.start_drag(
+            Some(&source),
+            surface,
+            icon.as_ref().map(|icon| &icon.0),
+            serial.as_raw(),
+        );
+        let icon = icon.map(|(icon_surface, buffer, width, height, scale)| {
+            // Centered under the pointer.
+            let (dx, dy) = (-width / scale / 2, -height / scale / 2);
+            if icon_surface.version() >= 5 {
+                icon_surface.attach(Some(&buffer), 0, 0);
+                icon_surface.offset(dx, dy);
+            } else {
+                icon_surface.attach(Some(&buffer), dx, dy);
+            }
+            icon_surface.set_buffer_scale(scale);
+            icon_surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
+            icon_surface.commit();
+            (icon_surface, buffer)
+        });
 
+        // mirin: a drag still under way gives way to the new one.
+        if let Some(old) = state.external_drag.take() {
+            old.destroy();
+        }
         state.external_drag = Some(ExternalDrag {
             source,
             bytes: uri_list.into_bytes(),
             window,
+            icon,
+            gpui_drag,
         });
         true
     }
@@ -1341,6 +1437,14 @@ impl WaylandConnection {
                 .find(|(id, _)| id.protocol_id() as u64 == target_protocol_id)
                 .map(|(_, output)| output.clone())
         });
+        // mirin: a lock surface needs a screen: with none named, the first
+        // the compositor advertised.
+        let target_output = target_output.or_else(|| {
+            (params.kind == WindowKind::SessionLock)
+                .then(|| state.output_globals.iter().min_by_key(|(name, _)| **name))
+                .flatten()
+                .and_then(|(_, id)| state.wl_outputs.get(id).cloned())
+        });
 
         let appearance = state.common.borrow().appearance;
         let compositor_gpu = state.compositor_gpu.take();
@@ -1686,6 +1790,30 @@ delegate_noop!(WaylandClientStatePtr: ignore wl_region::WlRegion);
 delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
+// mirin: session-lock surfaces for a lock screen.
+delegate_noop!(WaylandClientStatePtr: ignore ext_session_lock_manager_v1::ExtSessionLockManagerV1);
+// mirin: Dashi's unified title bar.
+delegate_noop!(WaylandClientStatePtr: ignore dashi_chrome_manager_v1::DashiChromeManagerV1);
+
+// mirin: the compositor tells where its traffic lights are (`controls`).
+impl Dispatch<dashi_chrome_v1::DashiChromeV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &dashi_chrome_v1::DashiChromeV1,
+        event: dashi_chrome_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+        window.handle_chrome_event(event);
+    }
+}
 delegate_noop!(WaylandClientStatePtr: ignore xdg_positioner::XdgPositioner);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
 delegate_noop!(WaylandClientStatePtr: ignore ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1);
@@ -1852,6 +1980,52 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
             // The close logic will be handled in drop_window()
             window.close();
         }
+    }
+}
+
+// mirin: session-lock surfaces for a lock screen. `finished` means the
+// compositor refused the lock (another client holds one) or ended it: the
+// window closes.
+impl Dispatch<ext_session_lock_v1::ExtSessionLockV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &ext_session_lock_v1::ExtSessionLockV1,
+        event: ext_session_lock_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let ext_session_lock_v1::Event::Finished = event {
+            let client = this.get_client();
+            let mut state = client.borrow_mut();
+            let Some(window) = get_window(&mut state, surface_id) else {
+                return;
+            };
+            drop(state);
+            window.close();
+        }
+    }
+}
+
+// mirin: session-lock surfaces for a lock screen.
+impl Dispatch<ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ObjectId>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _: &ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+        event: ext_session_lock_surface_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+        window.handle_lock_surface_event(event);
     }
 }
 
@@ -3045,6 +3219,38 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
     }
 }
 
+// mirin: a drag icon's pixels in a shm buffer of their own (`start_file_drag`).
+fn shm_buffer(
+    shm: &wl_shm::WlShm,
+    qh: &QueueHandle<WaylandClientStatePtr>,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<wl_buffer::WlBuffer> {
+    use std::io::Write;
+    use std::os::fd::AsFd;
+    // SAFETY: memfd_create takes a NUL-terminated name and flags; it returns a new fd or -1.
+    let fd = unsafe { libc::memfd_create(c"gpui-drag-icon".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return None;
+    }
+    // SAFETY: the fd was just created and nothing else owns it.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    file.write_all(pixels).ok()?;
+    let pool = shm.create_pool(file.as_fd(), pixels.len() as i32, qh, ());
+    let buffer = pool.create_buffer(
+        0,
+        width as i32,
+        height as i32,
+        width as i32 * 4,
+        wl_shm::Format::Argb8888,
+        qh,
+        (),
+    );
+    pool.destroy();
+    Some(buffer)
+}
+
 impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
@@ -3078,7 +3284,11 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
                 let Some(external_drag) = state.external_drag.take() else {
                     return;
                 };
-                external_drag.source.destroy();
+                external_drag.destroy(); // mirin: and its icon
+                // mirin: only a drag gpui handed over hears that it ended.
+                if !external_drag.gpui_drag {
+                    return;
+                }
 
                 let input = PlatformInput::FileDrop(FileDropEvent::Ended);
                 drop(state);

@@ -1043,6 +1043,99 @@ tests on this build: 190 pass, 1 ignored. GPUI's own tests still can't run
 from `forks/zed` (round 4), so `cosmic_text_system.rs`' tests (lazy faces)
 did not run; mirin's text tests go through it.
 
+### Round 6: the platform and text ports (next-platform)
+
+Branch `next-platform` (from `metal-forks` at `467af84`). Every stand-in
+this lane owned in `src/gpui_api/upstream.rs` is gone, and `src/` calls the
+same GPUI API on both builds for each: `Window::start_file_drag`,
+`unlock_session`, `observe_window_chrome`/`chrome_controls`,
+`StyledText::with_paragraph_sizes`, `TextLayout::line_height_for_index`,
+`List::on_content_origin` and `describe_glyph_variants` are called directly,
+and their shims left both `gpui_api` files. `with_surface` stays a shim (the
+fork takes layer options and a lock flag on `WindowOptions`, upstream a
+window kind), now taking `cx` to find a screen by name. One `GAP` is left in
+`upstream.rs`, round 5's `stretchable` (not this lane's). The rows are in
+`forks/zed/MIRIN.md`; in short:
+
+- **Session lock.** `WindowKind::SessionLock` (upstream's shape: a kind
+  beside `LayerShell`) locks the session with ext-session-lock-v1 on the
+  display `display_id` names, or the first output advertised; the lock
+  surface is configured like a layer surface (no commit before its first
+  configure) and unlocks only through `Window::unlock_session`.
+- **Dashi's unified title bar.** The protocol XML and its bindings moved
+  into `gpui_linux` (`wayland-scanner`); the chrome object lives with the
+  toplevel. The upstream host used to send a `standard`/`null` chrome event
+  at start that the fork never sent; it no longer does.
+- **Layer surfaces.** Upstream already opened a layer surface on
+  `display_id`'s output and heard the outputs' names before a window
+  opened; a display now has a name (`PlatformDisplay::name`) to find it by.
+  A surface anchored to both ends of an axis asks for 0 along it, at open
+  and on every configure, so it stretches on any compositor.
+- **File drag-out.** `start_file_drag` reuses upstream's outbound drag
+  (`start_external_drag`, a gpui drag handed over as it leaves the window)
+  with the fork's icon (`drag_icon.rs`), offered for copying only, and no
+  `FileDropEvent::Ended` for a drag gpui never began.
+- **X11 least size.** `WM_NORMAL_HINTS`, keeping the largest size upstream
+  sets at open.
+- **Text.** Per-paragraph sizes and `fit_to` as the fork has them, the
+  measure's cut shared with `fit_to` (`cut_text`); ink-end alignment for
+  the layer a line paints in too (`line_paint_bounds`, upstream's own,
+  aligned by the row's full width before); a glyph of a line placed from
+  the line's device position and its own distance apart
+  (`Window::paint_line_glyph`, `place_glyph_x`), on upstream's rounding
+  (quarter-pixel variants to nearest, halves down), so it places every
+  glyph right of zero exactly as `paint_glyph` did (120,000 positions
+  checked) and a whole-pixel move keeps every variant: a retained subtree
+  with text is no longer refused a move across because a glyph sits by a
+  variant's edge, only when its line's position is not exact in `f32`.
+  Without the fork's device grid this holds at power-of-two scales.
+  Scene descriptions name each glyph's variant on request
+  (`MIRIN_METAL_TRACE_SCENE_GLYPHS=1`), and a list says where it paints its
+  content, so a list's rows move as one layout-map group and accessibility
+  node on upstream too.
+
+**How each was checked.** The Wayland features under the nested
+`dashi-comp --backend winit` (one output, `winit`, 2240×1400), with a small
+driver per mode (`out/nplat/plat/app.tsx`), its events and a `grim`
+screenshot of the whole output, on `host-r5`, `host-next-r5` and this
+branch's upstream host. A layer surface anchored top, left and right, and
+one left, top and bottom; one naming the output `winit`, and one naming no
+screen there; a window asking for the unified title bar; a lock surface,
+unlocked after 4 s. This branch's host matches `host-r5` in every event
+and every root size (bars 2240×300 and 400×1400, the named screen's bar
+2240×300, the unknown name's surface 400×300 where the compositor put it,
+the chrome `unified` with controls 76×38 at 0,0, the lock 2240×1400 and its
+host exiting after the unlock), and the screenshots differ only inside
+the labels' text (the two builds' glyphs). `host-next-r5` opened the lock
+as a 400×300 window and reported `standard` chrome. Not exercised: the
+stretch itself (Dashi stretches a surface anchored at both ends whatever
+size it asks for, so both builds were already 2240 wide there; other
+compositors center the asked width), choosing among two screens (the
+nested compositor has one), and the drag (the simulation's drag reaches
+the driver, not the compositor, and a drag needs a real press's serial).
+X11 is unexercised (no X server here). Text, lists and glyphs: mirin-metal's
+tests on both builds (a new one for paragraph sizes), and `layout-check
+--scene` (below). Unit tests added in `forks/zed` (`line_paint_bounds`,
+`place_glyph_x`, `needs_refit`, `request_size`) do not run here: zed's
+workspace manifest names crates that are not imported, and `gpui`'s
+dev-dependencies need one (`util_macros`); `place_glyph_x`'s was run as a
+copy.
+
+**Layout, scenes and cost.** `layout-check --scene` against
+`host-next-r5`: grid, browser and scroll identical, scenes included (the
+glyph placement draws the same frames). Against itself with
+`MIRIN_METAL_RETAIN=0`: grid, browser, scroll, scroll-fractional and
+across identical, and browser, scroll and across identical with
+`MIRIN_METAL_TRACE_SCENE_GLYPHS=1` (each glyph's variant compared too).
+The stress bench with `MIRIN_METAL_ACCESS_CHECK=1`: no complaints. Frame
+time is unchanged within noise (stress bench, medians of five runs of
+`host-next-r5` and three of this branch's host, interleaved, one loaded
+run of this host left out): select 4.0 / 3.9 ms, type 3.3 / 3.6, hover
+3.5 / 3.6, grow 4.2 / 4.4, grow in the scroll view 5.2 / 5.3, scroll 5.0 /
+5.3, resize 10.9 / 11.4, scroll across 4.4 / 4.5, RSS idle 192 / 192 MB.
+Nothing here was meant to be faster; type's 0.3 ms is the largest gap and
+is inside the runs' spread (3.2–3.4 against 3.5–3.9 on a shared machine).
+
 ### State, what is left, and the default
 
 The branch builds both hosts, the default exactly as before; the upstream
@@ -1053,10 +1146,10 @@ kept nodes (round 5). Left of section 5's steps, updated:
 | Step | What is left | Effort |
 | --- | --- | --- |
 | 1 | done (import, side-by-side build, re-sync recipe) | — |
-| 2 | per-paragraph sizes, `fit_to`, ink-end alignment (~250 lines; text painting was restructured) | 2–3 days |
+| 2 | done in round 6 (next-platform, below): per-paragraph sizes, `fit_to`, the rest of ink-end alignment, glyph variants in scene traces, the list's content origin. Left: none of the fork's text rows; a fit when a truncated text wraps at another width than it was measured at keeps the measured wrap width, as the fork does | — |
 | 3 | done | — |
-| 4 | session lock, Dashi chrome, screen by name and stretched layer surfaces, file drag icon, X11 min size (~400 lines in `gpui_linux`) | 3–4 days |
-| 5 | retained: done in round 5 for moves at power-of-two scales, skips, parked drawings and building onto kept nodes. Left: the fork's mask map (a drawing whose own masks or border strips its view's edge clipped is built again onto its nodes as it comes into view), the device grid (moves at 1.25, 1.5 …), glyphs placed from their line's grid point, element state scopes and `insert_spanning` (what select, type and hover still cost over the fork: 2 ms of 4), and resize's taffy time (taffy 0.15 measures each card more than once) | 4–6 days |
+| 4 | done in round 6 (next-platform, below). Left: the file drag with its icon exercised by a person's real press (no simulated input reaches the compositor), the lock and the layer screen on a session with two screens | ½ day (by hand, on Dashi) |
+| 5 | retained: done in round 5 for moves at power-of-two scales, skips, parked drawings and building onto kept nodes. Left: the fork's mask map (a drawing whose own masks or border strips its view's edge clipped is built again onto its nodes as it comes into view), the device grid (moves at 1.25, 1.5 …), glyphs placed from their line's grid point, element state scopes and `insert_spanning` (what select, type and hover still cost over the fork: 2 ms of 4), and resize's taffy time; glyphs placed from their line's position are done (round 6, next-platform), which lifts the glyph check for moves across at power-of-two scales (taffy 0.15 measures each card more than once) | 4–6 days |
 | 6 | footprint: done in round 5 (below), but for the binary's size and the heap; accessibility: measured, keeping `access/` recommended (below), GPUI's adapter still on beside it | 1 day (turn GPUI's adapter off) |
 | 7 | decide the measured-size rounding (keep upstream's `ceil`, or round as the fork did and keep Dashi's layouts), check every Dashi app, benches, footprint; switch the default; delete `forks/gpui`, `forks/taffy`, `forks/blade-graphics` | 3–5 days |
 
@@ -1065,6 +1158,11 @@ both round 5 lanes merged: retention's 16–24 counted step 6 at 4–6 days,
 and the footprint lane did most of it). The retained port is no longer
 the uncertain part: what moves costs 1–6 ms over host-r4 on upstream
 instead of 100–150 ms more. Dashi's layouts (step 7) are now as large.
+
+After round 6's next-platform lane (steps 2 and 4 done, less half a day
+of checking the drag, the lock and the layer screen by hand on Dashi with
+two screens): about 7–14 working days remain, steps 5 to 7 and that
+check, before the other round 6 lanes' share of step 5 is counted.
 
 **Not switching the default (round 5).** Moving no longer blocks it: grow,
 scroll and scroll across cost 4–6 ms a frame on upstream (host-r4: 2.4–3.7),

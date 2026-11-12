@@ -283,6 +283,15 @@ impl Window {
             self.retained_paint_steadiness.set(Some(steady));
         }
     }
+
+    /// A position is used as it is while painting: a line's device
+    /// position, which its glyphs are placed from (`paint_line_glyph`).
+    pub(crate) fn retained_exact(&self, axis: usize, device: f32) {
+        if let Some(mut steady) = self.retained_paint_steadiness.get() {
+            steady.exact(axis, device);
+            self.retained_paint_steadiness.set(Some(steady));
+        }
+    }
 }
 
 impl Recording {

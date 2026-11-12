@@ -473,11 +473,20 @@ impl Primitive {
             Primitive::MonochromeSprite(mut sprite_) => {
                 sprite_.order = 0;
                 sprite_.tile = sprite(&sprite_.tile);
+                // mirin: which subpixel variant of the glyph it is (`pad`,
+                // see `Window::paint_line_glyph`), only when asked: a scene
+                // described so is told from one described without it.
+                if !describes_glyph_variants() {
+                    sprite_.pad = 0;
+                }
                 format!("{sprite_:?}")
             }
             Primitive::SubpixelSprite(mut sprite_) => {
                 sprite_.order = 0;
                 sprite_.tile = sprite(&sprite_.tile);
+                if !describes_glyph_variants() {
+                    sprite_.pad = 0; // mirin: as a monochrome sprite's
+                }
                 format!("{sprite_:?}")
             }
             Primitive::PolychromeSprite(mut sprite_) => {
@@ -1246,4 +1255,22 @@ impl PathVertex<Pixels> {
             content_mask: self.content_mask.scale(factor),
         }
     }
+}
+
+/// mirin: whether a scene's description (`Window::scene_drawn`) says which
+/// subpixel variant each glyph is (`describe_glyph_variants`).
+static GLYPH_VARIANTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// mirin: make a scene's description (`Window::scene_drawn`) say which
+/// subpixel variant each glyph is drawn as: for checking that a glyph moved
+/// with a retained subtree is the one drawing it there gives. A scene
+/// described so differs from one described without it. Always on in this
+/// crate's tests. Port of `../gpui`'s row.
+#[doc(hidden)]
+pub fn describe_glyph_variants(on: bool) {
+    GLYPH_VARIANTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn describes_glyph_variants() -> bool {
+    cfg!(test) || GLYPH_VARIANTS.load(std::sync::atomic::Ordering::Relaxed)
 }

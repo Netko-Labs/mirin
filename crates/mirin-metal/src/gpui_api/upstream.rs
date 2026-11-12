@@ -2,12 +2,9 @@
 //! stand-ins for fork features not yet ported to `forks/zed` (the feature is
 //! off, or does less); each is a row of docs/metal/gpui-next.md.
 
-use std::path::{Path, PathBuf};
-
 use gpui::{
-    px, App, Application, AsyncApp, Bounds, BoxShadow, FocusHandle, Hsla, Keystroke, ListState,
-    Pixels, Point, ScrollHandle, ShapedLine, Size, StyledText, Subscription, TextLayout, Window,
-    WindowKind, WindowOptions,
+    px, App, Application, AsyncApp, BoxShadow, FocusHandle, Hsla, Keystroke, ListState, Pixels,
+    Point, ScrollHandle, ShapedLine, Size, Subscription, Window, WindowKind, WindowOptions,
 };
 
 pub(crate) use gpui::layer_shell::{KeyboardInteractivity, Layer};
@@ -129,8 +126,8 @@ pub struct LayerShellOptions {
     pub exclusive_zone: i32,
     pub margin: LayerMargin,
     pub keyboard_interactivity: KeyboardInteractivity,
-    /// GAP: upstream picks the screen by `WindowOptions::display_id`, and a
-    /// `PlatformDisplay` has no connector name to match; the compositor picks.
+    /// The screen by its output name (`PlatformDisplay::name`, forks/zed);
+    /// the compositor picks when unset or when no screen has that name.
     pub output: Option<String>,
 }
 
@@ -160,15 +157,30 @@ impl LayerShellOptions {
 }
 
 /// The window's surface role: a layer surface or the lock screen; neither, a
-/// toplevel. GAP: no session lock upstream; a lock surface opens as a window.
+/// toplevel. A layer surface that names its screen opens on the display of
+/// that name.
 pub(crate) fn with_surface(
     options: WindowOptions,
     layer: Option<&LayerShellOptions>,
     lock: bool,
+    cx: &App,
 ) -> WindowOptions {
-    let _ = lock;
+    let screen = layer
+        .and_then(|layer| layer.output.as_deref())
+        .and_then(|name| {
+            cx.displays()
+                .into_iter()
+                .find(|display| display.name().as_deref() == Some(name))
+        })
+        .map(|display| display.id());
+    let kind = if lock {
+        WindowKind::SessionLock
+    } else {
+        layer.map_or(WindowKind::Normal, LayerShellOptions::window_kind)
+    };
     WindowOptions {
-        kind: layer.map_or(WindowKind::Normal, LayerShellOptions::window_kind),
+        kind,
+        display_id: screen.or(options.display_id),
         ..options
     }
 }
@@ -183,65 +195,17 @@ pub(crate) fn observe_visibility(window: &mut Window, mut callback: impl FnMut(b
         .detach();
 }
 
-/// GAP: no `dashi_chrome_manager_v1` upstream: the unified style is never
-/// granted, so the controls are reported once, as none.
-pub(crate) fn observe_chrome(
-    _window: &mut Window,
-    mut callback: impl FnMut(Option<Bounds<Pixels>>) + 'static,
-) {
-    callback(None);
-}
-
-/// GAP: no session lock upstream; there is nothing to unlock.
-pub(crate) fn unlock_session(_window: &mut Window) {}
-
 /// Upstream always paints scroll views at whole device pixels
 /// (`Window::layout_bounds` snaps the element offset, halves toward zero);
 /// the switch to paint them at their offset (`MIRIN_METAL_SCROLL_SNAP=0`) is
 /// the fork's alone.
 pub(crate) fn set_scroll_snap(_window: &mut Window, _snap: bool) {}
 
-/// GAP: upstream's drag-out (`external_drag_payload`) has another shape and
-/// no icon; this build can't start one.
-pub(crate) fn start_file_drag(
-    _window: &Window,
-    _paths: &[PathBuf],
-    _icon: Option<&Path>,
-    _icon_size: u32,
-) -> bool {
-    false
-}
-
-/// GAP: upstream shapes a text at one size; every paragraph takes the text's.
-pub(crate) fn with_paragraph_sizes(text: StyledText, _sizes: Vec<Option<Pixels>>) -> StyledText {
-    text
-}
-
-/// GAP: one line height for the whole text upstream.
-pub(crate) fn line_height_at(layout: &TextLayout, _index: usize) -> Pixels {
-    layout.line_height()
-}
-
 /// Draw the window's next frame and drop it (tests).
 #[cfg(test)]
 pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear(cx);
 }
-
-/// GAP: upstream's list does not say where it paints its content, so its rows
-/// stay in the group around it and each moves on its own (`list.rs`).
-pub(crate) const LIST_CONTENT_ORIGIN: bool = false;
-
-/// GAP: never called upstream (`LIST_CONTENT_ORIGIN` is false).
-pub(crate) fn on_list_content_origin(
-    list: gpui::List,
-    _listener: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
-) -> gpui::List {
-    list
-}
-
-/// GAP: upstream's scene traces have no glyph variants; this does nothing.
-pub(crate) fn describe_glyph_variants(_on: bool) {}
 
 /// GAP: upstream's retained subtrees are copied in place only; one that was
 /// resized is drawn again, so this changes nothing.
