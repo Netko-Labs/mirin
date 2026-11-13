@@ -343,6 +343,9 @@ export function spawnNativeHost(
     void forwardLines(child.stderr, options.onStderr);
   }
   const listeners: Array<(event: NativeEvent) => void> = [];
+  // The host's word on patches, kept: it is said once, as the host starts,
+  // and a host kept warm said it long before anything rendered into it.
+  let protocol: NativeEvent | null = null;
   const toplevelListeners: Array<(event: ToplevelEvent) => void> = [];
   const closeListeners: Array<() => void> = [];
   void child.exited.then(() => {
@@ -373,6 +376,7 @@ export function spawnNativeHost(
         }
         const event = nativeEventFromRecord(record);
         if (event) {
+          if (event.type === "protocol") protocol = event;
           for (const listener of listeners) {
             listener(event);
           }
@@ -390,6 +394,9 @@ export function spawnNativeHost(
     },
     onEvent(listener) {
       listeners.push(listener);
+      // A listener that comes after the host's word hears it now: `render`
+      // would otherwise wait `HOST_WORD_MS` for it and never patch.
+      if (protocol) listener(protocol);
     },
     onClose(listener) {
       closeListeners.push(listener);
