@@ -10,9 +10,9 @@ use std::sync::mpsc;
 #[cfg(target_os = "linux")]
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
-    parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind, HostMessage,
-    NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar, OPEN_MIN_SIZE_MARKER,
-    RESIDENT_MARKER,
+    parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
+    HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar,
+    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -268,8 +268,13 @@ fn start_toplevels() -> Option<Toplevels> {
     }
 }
 
-/// A stdin line is either a tree or `{"sim": {...}}`.
+/// A stdin line is a tree, a patch (`{"patch": [...]}`), or `{"sim": {...}}`.
 fn parse_line(line: &str) -> Result<DriverMessage, String> {
+    if line.trim_start().starts_with("{\"patch\"") {
+        return parse_patch(line)
+            .map(DriverMessage::Patch)
+            .map_err(|e| e.to_string());
+    }
     // Parse once: trees are large, and sim lines are recognisable by their
     // leading key (the driver writes `{"sim":…}` for them).
     if line.trim_start().starts_with("{\"sim\"") {
@@ -289,6 +294,8 @@ fn parse_line(line: &str) -> Result<DriverMessage, String> {
 /// `MIRIN_METAL_PROFILE=<path>` (with `--features profiling`): sample the
 /// process for `MIRIN_METAL_PROFILE_SECS` seconds (default 10) and write
 /// folded stacks (`frame;frame;frame count`) to `<path>`.
+/// `MIRIN_METAL_PROFILE_AFTER` seconds pass first (default 0), to leave the
+/// first frames out.
 #[cfg(feature = "profiling")]
 fn start_profiler() {
     let Ok(path) = std::env::var("MIRIN_METAL_PROFILE") else {
@@ -298,7 +305,12 @@ fn start_profiler() {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(10);
+    let after = std::env::var("MIRIN_METAL_PROFILE_AFTER")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
     std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(after));
         let guard = match pprof::ProfilerGuardBuilder::default()
             .frequency(1000)
             .build()
@@ -355,6 +367,16 @@ fn main() {
         mirin_metal::trace::log(format_args!("vulkan drivers limited to {filter}"));
     }
     start_profiler();
+    // Before anything else on stdout: this host applies patches, so the
+    // driver may send them after its next whole tree (`patch/`).
+    mirin_metal::trace::log(format_args!(
+        "{PATCH_MARKER}: patch protocol {PATCH_PROTOCOL}"
+    ));
+    write_line(&serde_json::json!({
+        "type": "protocol",
+        "nodeId": "root",
+        "patches": PATCH_PROTOCOL,
+    }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
     // open it again as often as the driver asks (a resident host).

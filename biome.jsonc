@@ -110,6 +110,10 @@
       "!**/.mirin",
       "!**/target",
       "!**/vendor",
+      "!forks",
+      // A tree as @mirinjs/metal serialized it, one line, as the host reads it.
+      "!crates/mirin-metal/src/render/fixtures",
+      "!spikes/gpui-next/zed",
       "!**/vendor/cef",
       "!**/dist",
       "!**/build",

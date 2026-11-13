@@ -6,10 +6,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     div, point, prelude::*, px, size, Context, Div, Modifiers, MouseButton, Pixels, Point,
-    ScrollDelta, ScrollHandle, ScrollWheelEvent, Stateful, TestAppContext, VisualTestContext,
-    Window,
+    ScrollDelta, ScrollHandle, Stateful, TestAppContext, VisualTestContext, Window,
 };
 
+use crate::gpui_api::ScrollWheelEvent;
 use crate::scrollbar::{bars_for, thumb_span, Activity, Scrolled};
 
 /// What a test page holds: a column that scrolls, as `render.rs` draws a
@@ -158,7 +158,7 @@ fn open(
 fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         window.refresh();
-        window.draw(cx).clear();
+        crate::gpui_api::draw(window, cx);
     });
 }
 
@@ -170,7 +170,7 @@ fn resize(cx: &mut VisualTestContext, width: f32, height: f32) {
 }
 
 fn max(handle: &ScrollHandle) -> f32 {
-    f32::from(handle.max_offset().height)
+    f32::from(crate::gpui_api::scroll_max(handle).height)
 }
 
 fn scrolled(handle: &ScrollHandle) -> f32 {
@@ -251,6 +251,59 @@ fn the_end_stays_in_reach_and_in_range_as_the_window_changes(cx: &mut TestAppCon
     resize(cx, 548.5, 333.5);
     assert_eq!(max(&outer), 166.5);
     assert_eq!(scrolled(&outer), 166.5);
+}
+
+#[gpui::test]
+fn a_view_scrolled_between_pixels_paints_on_them_and_keeps_its_offset(cx: &mut TestAppContext) {
+    // The second row is a scroll view itself: where it is painted says
+    // where the page painted its rows. A test window draws two device
+    // pixels to a logical one.
+    let spec = Spec {
+        inner: Some((120.0, 6)),
+        ..Spec::default()
+    };
+    let (_, outer, inner, cx) = open(cx, spec, 400.0, 300.0);
+    cx.update(|window, _| crate::gpui_api::set_scroll_snap(window, true));
+    let at = point(px(100.0), px(20.0));
+    let painted = |inner: &ScrollHandle| f32::from(inner.bounds().top());
+    let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+    assert_eq!(painted(&inner), 50.0);
+
+    // A touchpad's small steps add up in the offset, which the scroll bar
+    // reads; the rows move by a device pixel at a time.
+    for (step, top) in [
+        (1, 50.0),
+        (2, 49.5),
+        (3, 49.5),
+        (4, 49.0),
+        (5, 49.0),
+        (6, 49.0),
+    ] {
+        wheel(cx, at, -0.2);
+        assert!(near(scrolled(&outer), 0.2 * step as f32), "step {step}");
+        assert!(near(down(&outer).geometry().scrolled.1, 0.2 * step as f32));
+        assert_eq!(painted(&inner), top, "step {step}");
+    }
+
+    // The end is where it was (taffy lays out in device pixels, so it is
+    // on one); a little back from it, the rows are on the nearest pixel.
+    resize(cx, 400.0, 333.5);
+    assert_eq!(max(&outer), 236.5);
+    wheel(cx, at, -10_000.0);
+    assert_eq!(scrolled(&outer), 236.5);
+    assert_eq!(painted(&inner), 50.0 - 236.5);
+    wheel(cx, at, 0.3);
+    assert!(near(scrolled(&outer), 236.2));
+    assert_eq!(painted(&inner), 50.0 - 236.0);
+
+    // Without it (`MIRIN_METAL_SCROLL_SNAP=0`), painted at the offset.
+    // Upstream GPUI always paints there (`gpui_api::set_scroll_snap`).
+    #[cfg(not(feature = "gpui-next"))]
+    {
+        cx.update(|window, _| crate::gpui_api::set_scroll_snap(window, false));
+        draw(cx);
+        assert!(near(painted(&inner), 50.0 - 236.2));
+    }
 }
 
 #[gpui::test]
@@ -470,7 +523,7 @@ fn content_wider_than_a_view_that_scrolls_down_has_no_bar_across(cx: &mut TestAp
     });
     resize(cx, 400.0, 300.0);
     assert!(
-        f32::from(handle.max_offset().width) > 0.0,
+        f32::from(crate::gpui_api::scroll_max(&handle).width) > 0.0,
         "GPUI measures it"
     );
     let geometry = down(&handle).geometry();

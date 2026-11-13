@@ -38,10 +38,34 @@ pub enum NodeSpec {
     Image { props: ImageProps },
 }
 
+impl NodeSpec {
+    /// A view with nothing in it (what a hidden window is left holding).
+    pub(crate) fn empty() -> Self {
+        NodeSpec::View {
+            props: Box::default(),
+            children: Vec::new(),
+        }
+    }
+
+    /// The id a patch addresses this node by (`patch/`): a view's or an
+    /// input's `id`, and the `id` a patching driver gives every other node.
+    pub fn key(&self) -> Option<&str> {
+        match self {
+            NodeSpec::View { props, .. } => props.id.as_deref(),
+            NodeSpec::Text { props, .. } => props.id.as_deref(),
+            NodeSpec::Input { props } => Some(props.id.as_str()),
+            NodeSpec::Svg { props } => props.id.as_deref(),
+            NodeSpec::Image { props } => props.id.as_deref(),
+        }
+    }
+}
+
 /// Props for an `svg` node.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct SvgProps {
+    /// Stable identity, only to address the node in a patch (`patch/`).
+    pub id: Option<String>,
     /// Complete `<svg>` document. Strokes and fills become the mask; the
     /// renderer paints it with `color`.
     pub markup: String,
@@ -56,6 +80,8 @@ pub struct SvgProps {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageProps {
+    /// Stable identity, only to address the node in a patch (`patch/`).
+    pub id: Option<String>,
     /// Absolute path to a PNG/JPEG/GIF/WebP/SVG file.
     pub src: String,
     pub width: Option<f32>,
@@ -275,6 +301,8 @@ pub struct DragFiles {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextProps {
+    /// Stable identity, only to address the node in a patch (`patch/`).
+    pub id: Option<String>,
     /// Text color, `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
     pub color: Option<String>,
     /// Font size in pixels.
@@ -291,6 +319,9 @@ pub struct TextProps {
     pub line_through: bool,
     /// Line height in pixels.
     pub line_height: Option<f32>,
+    /// How far apart the text's tab stops are, in `0`s of its font; GPUI's
+    /// default (4) without it.
+    pub tab_size: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -368,6 +399,14 @@ pub struct InputProps {
     /// wraps, but holds one paragraph); Ctrl/Cmd+Enter always submits.
     #[serde(default)]
     pub submit_on_enter: bool,
+    /// Tab types a tab in a multiline field instead of moving the keyboard
+    /// on (a document's text); Shift+Tab and Ctrl/Cmd+Tab still move it.
+    #[serde(default)]
+    pub insert_tab: bool,
+    /// How far apart the field's tab stops are, in `0`s of its font; GPUI's
+    /// default (4) without it.
+    #[serde(default)]
+    pub tab_size: Option<u32>,
     /// Report Escape, ArrowUp, and ArrowDown (a launcher's list navigation).
     #[serde(default)]
     pub on_key: bool,
@@ -481,6 +520,8 @@ impl Default for InputProps {
             on_submit: false,
             focus_next_on_submit: false,
             submit_on_enter: false,
+            insert_tab: false,
+            tab_size: None,
             on_key: false,
             selection: None,
             on_selection: false,
@@ -509,6 +550,8 @@ pub enum Align {
     Center,
     End,
     Stretch,
+    /// A row's items line up by their first line of text, whatever its size.
+    Baseline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -683,6 +726,45 @@ mod tests {
         let mut inputs = Vec::new();
         collect_inputs(&tree, &mut inputs);
         assert!(inputs[0].multiline && inputs[0].submit_on_enter);
+        assert!(!inputs[0].insert_tab);
+    }
+
+    #[test]
+    fn a_multiline_input_can_type_tabs() {
+        let tree = parse_tree(
+            r#"{"type":"input","props":{"id":"text","value":"","multiline":true,"insertTab":true}}"#,
+        )
+        .expect("valid tree must parse");
+        let mut inputs = Vec::new();
+        collect_inputs(&tree, &mut inputs);
+        assert!(inputs[0].insert_tab);
+        assert_eq!(inputs[0].tab_size, None);
+    }
+
+    #[test]
+    fn an_input_can_set_its_tab_stops() {
+        let tree =
+            parse_tree(r#"{"type":"input","props":{"id":"text","value":"a\tb","tabSize":8}}"#)
+                .expect("valid tree must parse");
+        let mut inputs = Vec::new();
+        collect_inputs(&tree, &mut inputs);
+        assert_eq!(inputs[0].tab_size, Some(8));
+    }
+
+    #[test]
+    fn a_text_can_set_its_tab_stops() {
+        let tree = parse_tree(r#"{"type":"text","props":{"tabSize":8},"children":["a\tb"]}"#)
+            .expect("valid tree must parse");
+        let NodeSpec::Text { props, .. } = tree else {
+            panic!("a text node");
+        };
+        assert_eq!(props.tab_size, Some(8));
+        let plain =
+            parse_tree(r#"{"type":"text","props":{},"children":["a"]}"#).expect("valid tree");
+        let NodeSpec::Text { props, .. } = plain else {
+            panic!("a text node");
+        };
+        assert_eq!(props.tab_size, None);
     }
 
     #[test]

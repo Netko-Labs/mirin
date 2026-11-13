@@ -5,7 +5,7 @@
  * read it through `useTheme()`.
  */
 
-import { createContext, useContext } from "react";
+import { createContext, use, useContext } from "react";
 import { THEMES } from "./themes.generated.ts";
 
 export type ThemeName = keyof typeof THEMES;
@@ -95,6 +95,28 @@ export const ThemeContext = createContext<ThemeApi>({
 
 export function useTheme(): ThemeApi {
   return useContext(ThemeContext);
+}
+
+/**
+ * What styling reads of the theme. `viewportWidth` is the widest breakpoint
+ * the window has reached (`breakpointFloor`), not its width: it answers every
+ * breakpoint variant the same, and the value changes only when one is
+ * crossed, so a window being resized re-renders no element until then.
+ */
+export interface StyleTheme {
+  colors: ThemeTokens;
+  radius: number;
+  mode: "light" | "dark";
+  viewportWidth: number;
+}
+
+/** Provided by `ThemeScope` (provider.tsx) beside `ThemeContext`; null under a bare `ThemeContext`. */
+export const StyleThemeContext = createContext<StyleTheme | null>(null);
+
+/** The theme as elements style themselves by it (`Box`, icons, inputs). */
+export function useStyleTheme(): StyleTheme {
+  // `use`, not `useContext`: the whole theme is read (and followed) only where no scope is.
+  return useContext(StyleThemeContext) ?? use(ThemeContext);
 }
 
 /** Blend `color` (`#RRGGBB`) with `alpha` in `0..1` into `#RRGGBBAA`. */

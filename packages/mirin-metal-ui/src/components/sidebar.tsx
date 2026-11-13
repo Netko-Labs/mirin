@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useIsMobile } from "../hooks/use-mobile.ts";
-import { PanelLeftIcon } from "../icons/index.ts";
+import { PanelLeftIcon } from "../icons/core.generated.ts";
 import { cn, cva, type VariantProps } from "../lib/cn.ts";
 import { Slot } from "../primitives/slot.tsx";
 import { Button } from "./button.tsx";

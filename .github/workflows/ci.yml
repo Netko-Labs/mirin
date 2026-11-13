@@ -176,13 +176,13 @@ jobs:
       - name: Tests
         run: cargo test --locked
 
-      # The GPUI fork's own tests (vendor/gpui/MIRIN.md): the fork isn't a
+      # The GPUI fork's own tests (forks/gpui/MIRIN.md): the fork isn't a
       # package of its own, so it builds alone with mirin-metal's lockfile.
       - name: GPUI fork tests
-        working-directory: crates/mirin-metal/vendor/gpui
+        working-directory: forks/gpui
         run: |
-          cp ../../Cargo.lock .
-          CARGO_TARGET_DIR=../../target/gpui-alone cargo test --lib --features test-support
+          cp ../../crates/mirin-metal/Cargo.lock .
+          CARGO_TARGET_DIR=../../crates/mirin-metal/target/gpui-alone cargo test --lib --features test-support
           rm Cargo.lock
 
   security:

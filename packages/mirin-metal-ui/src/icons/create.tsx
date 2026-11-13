@@ -3,14 +3,17 @@
  * the icon takes `size`, `color`, `strokeWidth`, and `className` (`size-4`,
  * `text-muted-foreground`), defaults to the inherited text color like
  * `currentColor`, and to the inherited icon size (`[&_svg]:size-4`) or 16px.
+ * `node` may be a function that loads the data: the generated icons read
+ * their file of the `lucide` package when they first render, so importing
+ * the icons costs no data.
  */
 
 import { Svg, View } from "@mirinjs/metal";
 import { type ReactNode, useMemo } from "react";
 import { useInherited } from "../runtime/context.ts";
 import { useHasRegistration } from "../runtime/has.ts";
-import { useTheme } from "../theme.ts";
-import { translate } from "../tw/index.ts";
+import { useStyleTheme } from "../theme.ts";
+import { styleFor } from "../tw/index.ts";
 
 export type IconNode = ReadonlyArray<
   readonly [string, Readonly<Record<string, string | number | undefined>>]
@@ -25,6 +28,9 @@ export interface LucideProps {
   "aria-hidden"?: boolean | "true" | "false";
   [attr: string]: unknown;
 }
+
+/** An icon's vector data, or a function that loads the module whose default export it is. */
+export type IconSource = IconNode | (() => { default: IconNode });
 
 export type LucideIcon = ((props: LucideProps) => ReactNode) & {
   displayName: string;
@@ -48,16 +54,17 @@ function markupFor(node: IconNode, strokeWidth: number): string {
 
 const NO_ATTRS = {};
 
-export function createLucideIcon(name: string, node: IconNode): LucideIcon {
-  const markups = new Map<number, string>();
+export function createLucideIcon(name: string, source: IconSource): LucideIcon {
+  // Made by the first render: 2,000 icons are created, a handful are drawn.
+  let markups: Map<number, string> | undefined;
   function Icon({ size, color, strokeWidth = 2, className }: LucideProps): ReactNode {
     // Icons render as <svg> on the web, so `has-[>svg]` matches them.
     useHasRegistration("svg", NO_ATTRS, "");
-    const theme = useTheme();
+    const theme = useStyleTheme();
     const inherited = useInherited();
     const tw = useMemo(
       () =>
-        translate(className, theme.colors, theme.radius, {
+        styleFor(className, theme.colors, theme.radius, {
           attrs: {},
           groups: {},
           dark: theme.mode === "dark",
@@ -67,9 +74,10 @@ export function createLucideIcon(name: string, node: IconNode): LucideIcon {
     );
     if (tw.hidden) return null;
     const stroke = Number(strokeWidth) || 2;
-    let markup = markups.get(stroke);
+    let markup = markups?.get(stroke);
     if (!markup) {
-      markup = markupFor(node, stroke);
+      markup = markupFor(typeof source === "function" ? source().default : source, stroke);
+      markups ??= new Map();
       markups.set(stroke, markup);
     }
     const numeric = Number(size);

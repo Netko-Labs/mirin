@@ -7,12 +7,12 @@
 //! compositor does, so buffers are shared without copies: the compositor
 //! names its main device through `linux-dmabuf` feedback, and this module
 //! limits the loader to that device's driver, once a child of the process
-//! has seen that driver find a device; otherwise (a VM's GPU without 3D, a
-//! card its Vulkan driver doesn't run) every driver loads, software Vulkan
-//! included, and the app still gets a window.
+//! has seen that driver find a device (asked once per session); otherwise
+//! (a VM's GPU without 3D, a card its Vulkan driver doesn't run) every
+//! driver loads, software Vulkan included, and the app still gets a window.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_registry::WlRegistry;
@@ -45,9 +45,25 @@ pub fn prefer_display_gpu() -> Option<String> {
     // an old card its Vulkan driver doesn't run) would leave GPUI with no
     // GPU at all and the app with no window. Ask a child of this process,
     // so the probe's driver threads never run beside the setenv below; with
-    // no device there, every driver loads, software Vulkan included.
-    if !driver_has_device(&filter) {
-        return None;
+    // no device there, every driver loads, software Vulkan included. A yes
+    // is remembered for the session: the probe loads the driver (~18 ms of
+    // a ~50 ms start), and every app of a desktop would ask the same thing.
+    let marker = std::env::var_os("XDG_RUNTIME_DIR")
+        .and_then(|dir| probe_marker(Path::new(&dir), &filter, device));
+    let known = marker
+        .as_deref()
+        .is_some_and(|path| fs::symlink_metadata(path).is_ok_and(|file| file.is_file()));
+    if !known {
+        match driver_has_device(&filter) {
+            Some(true) => {
+                if let Some(path) = &marker {
+                    let _ = fs::write(path, b"");
+                }
+            }
+            Some(false) => return None,
+            // The probe could not run: the filter stays, as before it existed.
+            None => {}
+        }
     }
     // Sound in practice: documented to run before any other thread exists.
     std::env::set_var("VK_LOADER_DRIVERS_SELECT", &filter);
@@ -59,23 +75,35 @@ pub const PROBE_ARG: &str = "--mirin-vulkan-probe";
 
 /// Whether the Vulkan drivers `filter` selects see at least one device:
 /// this program, run again with [`PROBE_ARG`] and the filter, says so by its
-/// exit status. Unknown (it could not run) counts as yes: the filter stays,
-/// as before the probe existed.
-fn driver_has_device(filter: &str) -> bool {
-    let Ok(program) = std::env::current_exe() else {
-        return true;
-    };
-    match std::process::Command::new(program)
+/// exit status. None when it could not say (it could not run, or died).
+fn driver_has_device(filter: &str) -> Option<bool> {
+    let program = std::env::current_exe().ok()?;
+    let status = std::process::Command::new(program)
         .arg(PROBE_ARG)
         .env("VK_LOADER_DRIVERS_SELECT", filter)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-    {
-        Ok(status) => status.success() || status.code().is_none_or(|code| code != PROBE_NO_DEVICE),
-        Err(_) => true,
+        .ok()?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(PROBE_NO_DEVICE) => Some(false),
+        _ => None,
     }
+}
+
+/// The file whose presence says the probe found a device for this driver
+/// and compositor device, in the session's runtime directory (private to
+/// the user, emptied at logout). None when the directory isn't an absolute
+/// path or the filter names no driver.
+fn probe_marker(runtime_dir: &Path, filter: &str, device: u64) -> Option<PathBuf> {
+    let driver: String = filter.chars().filter(char::is_ascii_alphanumeric).collect();
+    if !runtime_dir.is_absolute() || driver.is_empty() {
+        return None;
+    }
+    let (major, minor) = split_dev(device);
+    Some(runtime_dir.join(format!("mirin-metal-gpu-{driver}-{major}-{minor}")))
 }
 
 /// The probe's exit status when the drivers it was given see no device.
@@ -210,6 +238,26 @@ mod tests {
         // 226:128 is the first DRM render node.
         assert_eq!(split_dev((226 << 8) | 128), (226, 128));
         assert_eq!(split_dev((226 << 8) | 1), (226, 1));
+    }
+
+    #[test]
+    fn names_the_probe_marker_by_driver_and_device() {
+        let device = (226 << 8) | 128;
+        assert_eq!(
+            probe_marker(Path::new("/run/user/1000"), "*radeon*", device),
+            Some(PathBuf::from(
+                "/run/user/1000/mirin-metal-gpu-radeon-226-128"
+            ))
+        );
+        // Nothing of the filter but letters and digits reaches the file name.
+        assert_eq!(
+            probe_marker(Path::new("/run/user/1000"), "../*intel*", device),
+            Some(PathBuf::from(
+                "/run/user/1000/mirin-metal-gpu-intel-226-128"
+            ))
+        );
+        assert_eq!(probe_marker(Path::new("run"), "*radeon*", device), None);
+        assert_eq!(probe_marker(Path::new("/run/user/1000"), "*", device), None);
     }
 
     #[test]

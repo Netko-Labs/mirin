@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon } from "../icons/index.ts";
+import { ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 
 import { type Button, buttonVariants } from "./button.tsx";

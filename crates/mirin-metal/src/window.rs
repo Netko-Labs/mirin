@@ -15,6 +15,7 @@ use crate::field::Field;
 use crate::height::Heights;
 use crate::ime::CaretReported;
 use crate::list::VirtualList;
+use crate::patch::{Applied, Document, PatchError, PatchOp, Touched};
 use crate::pointer::capture_root;
 use crate::render::{record_root_bounds, render_node};
 use crate::selection::SelectionState;
@@ -74,6 +75,9 @@ impl Default for NativeUiOptions {
 pub enum DriverMessage {
     /// Replace the rendered tree (last write wins per tick).
     Tree(Box<NodeSpec>),
+    /// Change the tree in place (`patch/`); patches apply in order, after
+    /// the newest whole tree of the tick.
+    Patch(Vec<PatchOp>),
     /// Simulate input or query layout (`sim.rs`).
     Sim(SimCommand),
     /// Unlock the session this lock surface locked, then quit
@@ -140,8 +144,10 @@ pub(crate) struct InputState {
 
 /// The root view: renders whatever tree the driver last sent.
 pub(crate) struct RootView {
-    /// Shared so each frame can walk it without a deep copy.
-    pub(crate) tree: Rc<NodeSpec>,
+    /// The driver's tree, replaced whole or patched in place (`patch/`),
+    /// with the generation each node last changed in. A frame shares it
+    /// (`Document::tree`) only while it walks it.
+    pub(crate) tree: Document,
     pub(crate) events: EventSender,
     pub(crate) inputs: HashMap<String, InputState>,
     /// Bounds of id'd nodes from the last paint, for simulated clicks.
@@ -181,8 +187,14 @@ pub(crate) struct RootView {
     content_painted: bool,
     /// The accessibility tree, published after each paint (`access/`); none when turned off.
     pub(crate) access: Option<Rc<RefCell<Accessibility>>>,
+    /// Trims the heap once the window has gone quiet (`idle.rs`).
+    idle: crate::idle::IdleTrim,
     /// Which field or view the keyboard goes to with Tab and the arrows (`focus/`).
     pub(crate) focus: crate::focus::FocusState,
+    /// The subtrees GPUI keeps across frames (`retain.rs`).
+    pub(crate) boundaries: crate::retain::Boundaries,
+    /// While a retained subtree is built: its group (`sim::LayoutMap`).
+    pub(crate) group: Option<u64>,
 }
 
 /// A view with `onKeyDown`: its focus, and whether it still has to take it.
@@ -195,14 +207,14 @@ impl RootView {
     /// A view showing `tree`; `placeholder` when it is the host's stand-in
     /// rather than the driver's.
     pub(crate) fn new(
-        tree: NodeSpec,
+        tree: Document,
         placeholder: bool,
         events: EventSender,
         layout: LayoutMap,
         cx: &mut App,
     ) -> Self {
         let mut view = Self {
-            tree: Rc::new(tree),
+            tree,
             events,
             inputs: HashMap::new(),
             layout,
@@ -221,8 +233,12 @@ impl RootView {
             placeholder,
             content_painted: false,
             access: None,
+            idle: crate::idle::IdleTrim::default(),
             focus: crate::focus::FocusState::new(cx),
+            boundaries: crate::retain::Boundaries::default(),
+            group: None,
         };
+        view.boundaries.sync(None, &view.tree, false, cx);
         view.focus.sync(&view.tree, cx);
         view.sync_inputs(cx);
         view.sync_key_targets(cx);
@@ -233,17 +249,74 @@ impl RootView {
 
     /// Replace the tree and reconcile input state with it.
     pub(crate) fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
-        self.tree = Rc::new(tree);
+        // A whole tree: retained subtrees are compared with the old one (retain.rs).
+        let old = Rc::clone(self.tree.tree());
+        self.tree.replace(tree);
+        self.boundaries.sync(Some(&old), &self.tree, false, cx);
+        drop(old);
         self.placeholder = false;
-        self.focus.sync(&self.tree, cx);
-        self.sync_inputs(cx);
-        self.sync_key_targets(cx);
-        crate::list::sync(&mut self.lists, &self.tree);
-        self.heights.sync(&self.tree);
-        let mut ids = HashSet::new();
-        collect_scroll_ids(&self.tree, &mut ids);
-        self.scrolls.retain(|id, _| ids.contains(id));
-        self.scroll_activity.retain(|id, _| ids.contains(id));
+        self.tree_changed(&Applied::everything(), cx);
+    }
+
+    /// Change the tree in place (`patch/`) and reconcile input state with
+    /// it. On an error the tree is as far as the patch got; the driver is
+    /// to send it whole.
+    pub(crate) fn apply_patch(
+        &mut self,
+        ops: Vec<PatchOp>,
+        cx: &mut App,
+    ) -> Result<(), PatchError> {
+        let applied = self.tree.apply(ops);
+        // A patch: the generations say which retained subtrees changed (retain.rs).
+        self.boundaries.sync(None, &self.tree, applied.is_ok(), cx);
+        self.placeholder = false;
+        match &applied {
+            Ok(applied) => self.tree_changed(applied, cx),
+            Err(_) => self.tree_changed(&Applied::everything(), cx),
+        }
+        applied.map(|_| ())
+    }
+
+    /// Bring the renderer's own state (focus, fields, key views, lists,
+    /// heights, scroll views) in line with the tree as it now is: the parts
+    /// a change may concern (`touched`), each a walk of the whole tree, and
+    /// the fields whose props changed.
+    fn tree_changed(&mut self, applied: &Applied, cx: &mut App) {
+        let touched = applied.touched;
+        if touched.contains(Touched::FOCUS) {
+            self.focus.sync(&self.tree, cx);
+        }
+        if touched.contains(Touched::INPUTS) {
+            self.sync_inputs(cx);
+        } else {
+            for id in &applied.fields {
+                if let Some(NodeSpec::Input { props }) = self.tree.find(id) {
+                    sync_input(&mut self.inputs, &self.events, props, cx);
+                }
+            }
+        }
+        if touched.contains(Touched::KEYS) {
+            self.sync_key_targets(cx);
+        }
+        // A list's rows are copies: a change inside them (its generation) needs them again.
+        let generation = self.tree.generation();
+        if touched.contains(Touched::LISTS)
+            || self
+                .lists
+                .keys()
+                .any(|id| self.tree.subtree_generation(id) == generation)
+        {
+            crate::list::sync(&mut self.lists, &self.tree);
+        }
+        if touched.contains(Touched::HEIGHTS) {
+            self.heights.sync(&self.tree);
+        }
+        if touched.contains(Touched::SCROLLS) {
+            let mut ids = HashSet::new();
+            collect_scroll_ids(&self.tree, &mut ids);
+            self.scrolls.retain(|id, _| ids.contains(id));
+            self.scroll_activity.retain(|id, _| ids.contains(id));
+        }
     }
 
     /// Create state for new inputs, reset buffers whose driver value changed,
@@ -254,44 +327,7 @@ impl RootView {
         let mut seen = Vec::with_capacity(specs.len());
         for spec in specs {
             seen.push(spec.id.clone());
-            match self.inputs.get_mut(&spec.id) {
-                Some(state) => {
-                    let mut reset = false;
-                    if state.revision != spec.revision {
-                        state.revision = spec.revision;
-                        state.field.reset(&spec.value);
-                        state.synced_value = spec.value.clone();
-                        state.echoes.clear();
-                        reset = true;
-                    } else if state.synced_value != spec.value {
-                        if driver_resets(&mut state.echoes, spec.value.as_str()) {
-                            state.field.reset(&spec.value);
-                            reset = true;
-                        }
-                        state.synced_value = spec.value.clone();
-                    }
-                    let field = &mut state.field;
-                    state.selection.sync(field, spec, reset, &self.events);
-                }
-                None => {
-                    let mut field = Field::new(&spec.value);
-                    let selection = SelectionState::new(&mut field, spec);
-                    self.inputs.insert(
-                        spec.id.clone(),
-                        InputState {
-                            focus: cx.focus_handle(),
-                            field,
-                            synced_value: spec.value.clone(),
-                            echoes: VecDeque::new(),
-                            revision: spec.revision,
-                            wants_focus: spec.autofocus,
-                            caret_reported: CaretReported::default(),
-                            selection,
-                            scroll: Rc::default(),
-                        },
-                    );
-                }
-            }
+            sync_input(&mut self.inputs, &self.events, spec, cx);
         }
         self.inputs.retain(|id, _| seen.contains(id));
     }
@@ -329,8 +365,14 @@ impl RootView {
     /// Move focus from the field `from` to the next (`+1`) or previous
     /// (`-1`) field or focusable view in the Tab order (`focus/`), wrapping
     /// around. Tab / Shift+Tab.
-    pub(crate) fn focus_neighbor(&mut self, from: &str, step: isize, window: &mut Window) {
-        self.tab_from(Some(from), step < 0, window);
+    pub(crate) fn focus_neighbor(
+        &mut self,
+        from: &str,
+        step: isize,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.tab_from(Some(from), step < 0, window, cx);
     }
 
     /// The field or key-taking view with the keyboard, and what is typed in a field.
@@ -356,36 +398,50 @@ impl RootView {
             })
     }
 
-    /// Painted last, after everything else: publishes the accessibility tree
-    /// with this frame's bounds (`access/`).
-    fn access_canvas(&self, window: &Window) -> Option<gpui::AnyElement> {
-        let access = Rc::clone(self.access.as_ref()?);
-        let tree = Rc::clone(&self.tree);
+    /// Bring the published accessibility tree in line with the tree and the
+    /// bounds last painted (`access/`): after each paint, and when a screen
+    /// reader starts listening.
+    pub(crate) fn refresh_access(&self, window: &Window) {
+        if let Some(access) = &self.access {
+            access.borrow_mut().refresh(
+                &self.tree,
+                &self.layout,
+                &|id| self.boundaries.group(id),
+                self.focused(window),
+                window.is_window_active(),
+            );
+        }
+    }
+
+    /// Painted last, after everything else: the frame's bounds are all
+    /// recorded, so the layout finds what the frame no longer draws, and the
+    /// accessibility tree is published with them.
+    fn frame_end_canvas(&self, cx: &Context<Self>) -> gpui::AnyElement {
+        // The view is read when the canvas paints: nothing of the tree is
+        // held meanwhile (a share of it would make the next patch copy it).
+        let view = cx.weak_entity();
         let layout = self.layout.clone();
-        let focused = self.focused(window);
-        let active = window.is_window_active();
-        Some(
-            gpui::canvas(
-                |_, _, _| {},
-                move |_, (), _, _| {
-                    access
-                        .borrow_mut()
-                        .refresh(&tree, &layout, focused.clone(), active);
-                },
-            )
-            .absolute()
-            .size_0()
-            .into_any_element(),
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, (), window, cx| {
+                layout.end_frame();
+                if let Some(view) = view.upgrade() {
+                    view.read(cx).refresh_access(window);
+                }
+            },
         )
+        .absolute()
+        .size_0()
+        .into_any_element()
     }
 
     /// Honour pending `autofocus` requests. Runs outside of rendering.
-    pub(crate) fn apply_pending_focus(&mut self, window: &mut Window) {
-        self.focus_window_if_asked(window);
+    pub(crate) fn apply_pending_focus(&mut self, window: &mut Window, cx: &mut App) {
+        self.focus_window_if_asked(window, cx);
         for target in self.key_targets.values_mut() {
             if target.wants_focus {
                 target.wants_focus = false;
-                window.focus(&target.focus);
+                crate::gpui_api::focus(window, &target.focus, cx);
             }
         }
         // Several new fields asking at once: one wins, the same one every time (focus/order.rs).
@@ -400,9 +456,9 @@ impl RootView {
             state.wants_focus = false;
         }
         if let Some(state) = chosen.and_then(|id| self.inputs.get(&id)) {
-            window.focus(&state.focus);
+            crate::gpui_api::focus(window, &state.focus, cx);
         }
-        self.settle_focus(window);
+        self.settle_focus(window, cx);
     }
 }
 
@@ -411,11 +467,13 @@ impl Render for RootView {
         // The tree is immutable per frame; hold a reference so input state can
         // be read and listeners attached while walking it.
         let started = std::time::Instant::now();
+        self.idle.frame_drawn(cx);
         self.layout.begin_frame();
+        self.layout.set_scale(window.scale_factor());
         if self.drop_target.is_some() && !cx.has_active_drag() {
             self.files_gone(window);
         }
-        let tree = self.tree.clone();
+        let tree = Rc::clone(self.tree.tree());
         let content = render_node(&tree, self, window, cx);
         record_root_bounds(&self.layout, &self.events, &tree, window.viewport_size());
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -426,25 +484,26 @@ impl Render for RootView {
         // opening the app first sees of it (traced).
         let first_content = !self.placeholder && !self.content_painted;
         self.content_painted |= first_content;
-        let access = self.access_canvas(window);
+        let frame_end = self.frame_end_canvas(cx);
         if !first && !crate::trace::enabled() {
-            return match access {
-                Some(access) => gpui::div()
-                    .size_full()
-                    .child(root)
-                    .child(access)
-                    .into_any_element(),
-                None => root,
-            };
+            return gpui::div()
+                .size_full()
+                .child(root)
+                .child(frame_end)
+                .into_any_element();
         }
         // Painted last, so its paint callback marks the end of GPUI's layout,
         // prepaint, and paint for this frame: the trace's timing, and a new
         // window's first frame (`{"type":"frame"}`, for a driver timing an open).
         let size = window.viewport_size();
         let events = self.events.clone();
+        let layout = self.layout.clone();
         let marker = gpui::canvas(
             |_, _, _| {},
-            move |_, (), _, _| {
+            move |_, (), window, _| {
+                // Part of the frame the trace times (the canvas after this
+                // one finds it done).
+                layout.end_frame();
                 if first {
                     events.frame();
                 }
@@ -459,11 +518,29 @@ impl Render for RootView {
                         crate::trace::since_start_ms()
                     ));
                 }
+                trace_scale(window.scale_factor());
+                if let Some(dump) = scene_traced() {
+                    // For a check that two hosts draw the same (`layout-check --scene`).
+                    let digest = window.scene_digest();
+                    crate::trace::log(format_args!("scene {digest:016x}"));
+                    if let Some(path) = dump {
+                        dump_scene(path, digest, &window.scene_drawn());
+                    }
+                }
+                let drawn = crate::retain::take_counts();
                 crate::trace::log(format_args!(
-                    "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms",
+                    "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms, \
+                     retained subtrees {} built, {} redrawn ({} apart), {} reused, {} moved, \
+                     {} skipped",
                     f32::from(size.width),
                     f32::from(size.height),
-                    started.elapsed().as_secs_f64() * 1000.0
+                    started.elapsed().as_secs_f64() * 1000.0,
+                    drawn.built,
+                    drawn.redrawn,
+                    gpui::take_built_apart(),
+                    drawn.reused,
+                    drawn.moved,
+                    drawn.skipped,
                 ));
             },
         )
@@ -473,8 +550,100 @@ impl Render for RootView {
             .size_full()
             .child(root)
             .child(marker)
-            .children(access)
+            .child(frame_end)
             .into_any_element()
+    }
+}
+
+/// Trace the scale factor frames are drawn at when it is not the last one
+/// traced: what a benchmark at another scale ran at (`MIRIN_METAL_SCALE`).
+fn trace_scale(scale: f32) {
+    static TRACED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if TRACED.swap(scale.to_bits(), std::sync::atomic::Ordering::Relaxed) != scale.to_bits() {
+        crate::trace::log(format_args!("scale factor {scale}"));
+    }
+}
+
+/// Whether each frame's trace says what it drew (`MIRIN_METAL_TRACE_SCENE=1`,
+/// with `MIRIN_METAL_TRACE=1`): a digest of the scene's primitives and
+/// hitboxes, for comparing two hosts. Any other value is a file every
+/// frame's primitives and hitboxes are appended to as well (the inner
+/// `Some`), for finding what differs. With `MIRIN_METAL_TRACE_SCENE_GLYPHS=1`
+/// it also says which subpixel variant each glyph is drawn as (a host from
+/// before that ignores it, so compare such a trace only with another).
+fn scene_traced() -> Option<Option<&'static std::path::Path>> {
+    static TRACED: std::sync::OnceLock<Option<Option<std::path::PathBuf>>> =
+        std::sync::OnceLock::new();
+    TRACED
+        .get_or_init(|| {
+            let value = std::env::var("MIRIN_METAL_TRACE_SCENE").ok()?;
+            if std::env::var("MIRIN_METAL_TRACE_SCENE_GLYPHS").is_ok_and(|glyphs| glyphs == "1") {
+                gpui::describe_glyph_variants(true);
+            }
+            Some((value != "1").then(|| value.into()))
+        })
+        .as_ref()
+        .map(|dump| dump.as_deref())
+}
+
+/// Append a frame's drawing to the scene dump (`scene_traced`).
+fn dump_scene(path: &std::path::Path, digest: u64, drawn: &[String]) {
+    use std::io::Write;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path);
+    if let Ok(mut file) = file {
+        let _ = writeln!(file, "frame {digest:016x}\n{}", drawn.join("\n"));
+    }
+}
+
+/// Create the editing state of a field new to the tree, or bring an existing
+/// one in line with its props: a new `value` (not an echo) or `revision`
+/// resets the buffer, a new `selection` selects.
+fn sync_input(
+    inputs: &mut HashMap<String, InputState>,
+    events: &EventSender,
+    spec: &crate::tree::InputProps,
+    cx: &mut App,
+) {
+    match inputs.get_mut(&spec.id) {
+        Some(state) => {
+            let mut reset = false;
+            if state.revision != spec.revision {
+                state.revision = spec.revision;
+                state.field.reset(&spec.value);
+                state.synced_value = spec.value.clone();
+                state.echoes.clear();
+                reset = true;
+            } else if state.synced_value != spec.value {
+                if driver_resets(&mut state.echoes, spec.value.as_str()) {
+                    state.field.reset(&spec.value);
+                    reset = true;
+                }
+                state.synced_value = spec.value.clone();
+            }
+            let field = &mut state.field;
+            state.selection.sync(field, spec, reset, events);
+        }
+        None => {
+            let mut field = Field::new(&spec.value);
+            let selection = SelectionState::new(&mut field, spec);
+            inputs.insert(
+                spec.id.clone(),
+                InputState {
+                    focus: cx.focus_handle(),
+                    field,
+                    synced_value: spec.value.clone(),
+                    echoes: VecDeque::new(),
+                    revision: spec.revision,
+                    wants_focus: spec.autofocus,
+                    caret_reported: CaretReported::default(),
+                    selection,
+                    scroll: Rc::default(),
+                },
+            );
+        }
     }
 }
 

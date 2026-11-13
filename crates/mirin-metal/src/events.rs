@@ -94,6 +94,9 @@ pub enum EventKind {
     /// A newly opened window painted its first frame (node id is `"root"`),
     /// so a driver can time an open; sent once per open.
     Frame,
+    /// A patch didn't apply (`patch/`): the host asks the driver for the
+    /// whole tree, and drops patches until it comes (node id is `"root"`).
+    Resync { reason: String },
     /// Something outside asked the window to close (the close control, a
     /// shell's close or quit) and the window stayed, because the driver
     /// asked to answer closes itself (`ask_to_close`; node id is `"root"`).
@@ -205,6 +208,7 @@ impl EventKind {
             EventKind::Chrome(_) => "chrome",
             EventKind::Frame => "frame",
             EventKind::CloseRequest => "close-request",
+            EventKind::Resync { .. } => "resync",
         }
     }
 
@@ -229,7 +233,8 @@ impl EventKind {
             | EventKind::CloseRequest => None,
             EventKind::Change { value }
             | EventKind::Submit { value }
-            | EventKind::Key { value } => Some(value),
+            | EventKind::Key { value }
+            | EventKind::Resync { reason: value } => Some(value),
         }
     }
 }
@@ -254,6 +259,11 @@ pub(crate) struct EventSender {
 impl EventSender {
     pub(crate) fn new(tx: mpsc::Sender<NativeUiEvent>, layout: LayoutMap) -> Self {
         Self { tx, layout }
+    }
+
+    /// The channel the events go out on.
+    pub(crate) fn sender(&self) -> mpsc::Sender<NativeUiEvent> {
+        self.tx.clone()
     }
 
     pub(crate) fn press(&self, node_id: &str, modifiers: Modifiers) {

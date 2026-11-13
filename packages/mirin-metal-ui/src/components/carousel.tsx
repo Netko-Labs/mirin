@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowLeft, ArrowRight } from "../icons/index.ts";
+import { ArrowLeft, ArrowRight } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import useEmblaCarousel, {
   type UseEmblaCarouselType,

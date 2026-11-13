@@ -1,16 +1,20 @@
 /**
  * Tailwind class strings → Metal styles. Variants are evaluated against the
  * element's attributes (see `variants.ts`); utilities are translated by
- * `utilities.ts`. Results are memoized per (class string, state signature).
+ * `utilities.ts`. A class string is split once and its style kept per theme
+ * and variant outcome (`cache.ts`): elements read the kept style through
+ * `styleFor`; `translate` builds a fresh one a caller may change.
  */
 
 import type { ThemeTokens } from "../theme.ts";
-import { applyUtility, emptyStyle, type TwStyle } from "./utilities.ts";
-import { resolveVariants, type StyleState, splitVariants } from "./variants.ts";
+import { translateFresh } from "./cache.ts";
+import type { TwStyle } from "./utilities.ts";
+import type { StyleState } from "./variants.ts";
 
+export { clearStyleCache, styleFor } from "./cache.ts";
 export { spacing } from "./scale.ts";
 export { color, type Display, type TwStyle } from "./utilities.ts";
-export { emptyState, type StyleState } from "./variants.ts";
+export { breakpointFloor, emptyState, type StyleState } from "./variants.ts";
 
 /** Translate a class list under `state`. Later classes win, like Tailwind's cascade order. */
 export function translate(
@@ -19,22 +23,7 @@ export function translate(
   radiusBase: number,
   state: StyleState,
 ): TwStyle {
-  const acc = emptyStyle();
-  if (!className) return acc;
-  for (const raw of className.split(/\s+/)) {
-    if (!raw) continue;
-    const parts = splitVariants(raw);
-    let utility = parts.pop() ?? "";
-    if (utility.startsWith("!")) utility = utility.slice(1);
-    if (utility.endsWith("!")) utility = utility.slice(0, -1);
-    const target = parts.length === 0 ? "self" : resolveVariants(parts, state);
-    if (target === "skip") continue;
-    applyUtility(utility, target, theme, radiusBase, acc);
-  }
-  if (acc.leading !== undefined && acc.text.lineHeight === undefined) {
-    acc.text.lineHeight = Math.round((acc.text.fontSize ?? 14) * acc.leading);
-  }
-  return acc;
+  return translateFresh(className, theme, radiusBase, state);
 }
 
 /**

@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { XIcon } from "../icons/index.ts";
+import { XIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { Dialog as SheetPrimitive } from "../primitives/dialog.tsx";
 

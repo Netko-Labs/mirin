@@ -5,7 +5,7 @@
  * and react-day-picker's `data-*` attributes.
  */
 
-import { format } from "date-fns";
+import { format } from "date-fns/format";
 import type * as React from "react";
 import { cn } from "../../lib/cn.ts";
 import type { SyntheticEvent } from "../../runtime/events.ts";

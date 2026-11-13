@@ -1,13 +1,21 @@
 //! The tree over AT-SPI, through AccessKit's Unix adapter: it joins the
-//! accessibility bus when a screen reader is running, asks for the tree
-//! then, and turns each update into the events Orca listens for (focus, the
-//! active descendant, names, states). Its handlers run on its own thread.
+//! accessibility bus when the session has accessibility on
+//! (`org.a11y.Status.IsEnabled`), asks for the tree then, and turns each
+//! update into the events Orca listens for (focus, the active descendant,
+//! names, states). Its handlers run on its own thread.
+//!
+//! The tree lives on the window's thread, so the adapter is never handed
+//! one from its own: asked for the first tree, it is told there is none
+//! yet and the window is woken to publish it (`wake`). Until it asks, and
+//! after accessibility is turned off again, nobody listens and the window
+//! builds nothing.
 //!
 //! A shown window that has the keyboard announces itself (`window:activate`,
-//! then the focused node: the vendored adapter, vendor/accesskit_unix), and
+//! then the focused node: the vendored adapter, forks/accesskit_unix), and
 //! one that goes (closed, or hidden by a resident host) deactivates first.
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use accesskit::{
     Action, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, NodeId,
@@ -15,14 +23,28 @@ use accesskit::{
 };
 use accesskit_unix::Adapter;
 
-/// The newest tree, for a screen reader that starts listening later.
-type Latest = Arc<Mutex<Option<TreeUpdate>>>;
+/// What the adapter's thread tells the window's. Both are set while the
+/// adapter's state is locked, as is the update the window answers with, so
+/// an adapter waiting for its first tree always gets a whole one.
+#[derive(Default)]
+struct Listening {
+    /// The adapter is on the accessibility bus.
+    active: AtomicBool,
+    /// It has no tree: the next update is the whole tree.
+    whole: AtomicBool,
+}
 
-struct Activation(Latest);
+struct Activation<W> {
+    listening: Arc<Listening>,
+    wake: W,
+}
 
-impl ActivationHandler for Activation {
+impl<W: Fn() + Send> ActivationHandler for Activation<W> {
     fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
-        self.0.lock().ok().and_then(|latest| latest.clone())
+        self.listening.whole.store(true, Ordering::Release);
+        self.listening.active.store(true, Ordering::Release);
+        (self.wake)();
+        None
     }
 }
 
@@ -38,10 +60,12 @@ impl<F: Fn(Action, NodeId) + Send> ActionHandler for Actions<F> {
     }
 }
 
-struct Deactivation;
+struct Deactivation(Arc<Listening>);
 
 impl DeactivationHandler for Deactivation {
-    fn deactivate_accessibility(&mut self) {}
+    fn deactivate_accessibility(&mut self) {
+        self.0.active.store(false, Ordering::Release);
+    }
 }
 
 /// Name the application on the accessibility bus; only the first name, given
@@ -52,7 +76,7 @@ pub(crate) fn name_app(name: &str) {
 
 pub(crate) struct Publisher {
     adapter: Adapter,
-    latest: Latest,
+    listening: Arc<Listening>,
 }
 
 impl Drop for Publisher {
@@ -64,23 +88,55 @@ impl Drop for Publisher {
 }
 
 impl Publisher {
-    /// `press` gets what a screen reader asked (a click or a focus) and its node.
-    pub(crate) fn new(press: impl Fn(Action, NodeId) + Send + 'static) -> Self {
-        let latest: Latest = Arc::default();
+    /// `act` gets what a screen reader asked (a click or a focus) and its
+    /// node; `wake` is called when the adapter wants the tree. Both run on
+    /// the adapter's thread.
+    pub(crate) fn new(
+        act: impl Fn(Action, NodeId) + Send + 'static,
+        wake: impl Fn() + Send + 'static,
+    ) -> Self {
+        let listening: Arc<Listening> = Arc::default();
         let adapter = Adapter::new(
-            Activation(Arc::clone(&latest)),
-            Actions(press),
-            Deactivation,
+            Activation {
+                listening: Arc::clone(&listening),
+                wake,
+            },
+            Actions(act),
+            Deactivation(Arc::clone(&listening)),
         );
-        Self { adapter, latest }
+        Self { adapter, listening }
     }
 
-    /// Hand the adapter a full tree, and whether the window has the keyboard.
-    pub(crate) fn publish(&mut self, update: TreeUpdate, window_active: bool) {
-        if let Ok(mut latest) = self.latest.lock() {
-            *latest = Some(update.clone());
-        }
-        self.adapter.update_if_active(|| update);
-        self.adapter.update_window_focus_state(window_active);
+    /// Whether the adapter is on the accessibility bus: while it is not,
+    /// a tree would go nowhere.
+    pub(crate) fn listening(&self) -> bool {
+        self.listening.active.load(Ordering::Acquire)
+    }
+
+    /// Whether the adapter waits for its first tree.
+    pub(crate) fn wants_whole(&self) -> bool {
+        self.listening.whole.load(Ordering::Acquire)
+    }
+
+    /// How many AT-SPI signals the process has made for the accessibility
+    /// bus so far: the difference across an update is what it tells the bus.
+    pub(crate) fn signals(&self) -> u64 {
+        accesskit_unix::signals_queued()
+    }
+
+    /// Whether the window has the keyboard, for an adapter that is given no
+    /// tree (it announces the window when a screen reader starts).
+    pub(crate) fn window_active(&mut self, active: bool) {
+        self.adapter.update_window_focus_state(active);
+    }
+
+    /// Hand the adapter what `build` makes, if it is listening: the whole
+    /// tree when `build` is told so (the adapter has none), else what
+    /// changed. Then whether the window has the keyboard.
+    pub(crate) fn publish(&mut self, active: bool, build: impl FnOnce(bool) -> TreeUpdate) {
+        let listening = &self.listening;
+        self.adapter
+            .update_if_active(|| build(listening.whole.swap(false, Ordering::AcqRel)));
+        self.adapter.update_window_focus_state(active);
     }
 }

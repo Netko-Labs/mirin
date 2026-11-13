@@ -4,17 +4,14 @@
 //! paths a person does without touching the desktop. The layout query reports
 //! the painted bounds of every id'd node so a driver can target nodes by id.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-
 use gpui::{
-    point, px, App, Bounds, FocusHandle, Keystroke, ListState, Modifiers, Pixels, Point,
-    ScrollHandle, Window,
+    point, px, App, FocusHandle, Keystroke, ListState, Modifiers, Pixels, Point, ScrollHandle,
+    Window,
 };
 use serde::Deserialize;
 
 use crate::events::{EventSender, Modifiers as Held, PointerPhase};
+pub(crate) use crate::layout::LayoutMap;
 use crate::tree::NodeSpec;
 use crate::window::RootView;
 
@@ -55,12 +52,31 @@ pub enum SimCommand {
     ContextMenu { id: String },
     /// Pointer enters (`true`) or leaves (`false`) node `id`.
     Hover { id: String, hovered: bool },
+    /// Move the pointer to the centre of node `id`, or to the point (`x`,
+    /// `y`) in window pixels, as a real pointer move: GPUI's hover styles
+    /// (`hoverBackground`) and `onHover` respond to it.
+    Move {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        x: Option<f32>,
+        #[serde(default)]
+        y: Option<f32>,
+    },
     /// Window management the user would do with the title bar: `zoom`
     /// toggles maximized, `minimize` minimizes.
     Window { action: String },
     /// Scroll the scrollable node `id` down by `dy` pixels (negative scrolls
-    /// up), clamped to its content, as a wheel turn over it would.
-    Scroll { id: String, dy: f32 },
+    /// up) and right by `dx` (negative scrolls left; a virtualized list
+    /// scrolls down only), clamped to its content, as a wheel turn over it
+    /// would.
+    Scroll {
+        id: String,
+        #[serde(default)]
+        dy: f32,
+        #[serde(default)]
+        dx: f32,
+    },
     /// Give the keyboard to field or `focusable` view `id`, pressing nothing
     /// (a screen reader's focus).
     Focus { id: String },
@@ -80,126 +96,6 @@ pub struct LayoutNode {
     pub height: f32,
 }
 
-/// Bounds recorded during the last paint, keyed by node id. Entries carry the
-/// frame that painted them; lookups only see the latest frame, so nodes that
-/// left the tree or scrolled out of a virtualized list are not reported at
-/// stale positions.
-#[derive(Clone, Default)]
-pub(crate) struct LayoutMap(Rc<RefCell<LayoutState>>);
-
-#[derive(Default)]
-pub(crate) struct LayoutState {
-    frame: u64,
-    nodes: HashMap<String, (Bounds<Pixels>, u64)>,
-    /// Bumped whenever a node's bounds change, one is painted anew, or one
-    /// is forgotten: what the accessibility tree checks before rebuilding.
-    revision: u64,
-}
-
-impl LayoutMap {
-    /// Start a frame: forget nodes the previous frame did not paint.
-    pub(crate) fn begin_frame(&self) {
-        let mut state = self.0.borrow_mut();
-        state.frame += 1;
-        let previous = state.frame - 1;
-        let before = state.nodes.len();
-        state.nodes.retain(|_, (_, frame)| *frame >= previous);
-        if state.nodes.len() != before {
-            state.revision += 1;
-        }
-    }
-
-    /// Changes with any recorded bounds (see `LayoutState::revision`).
-    pub(crate) fn revision(&self) -> u64 {
-        self.0.borrow().revision
-    }
-
-    /// Record a node's bounds; returns whether they changed since it was last
-    /// painted (or it is newly painted).
-    pub(crate) fn record(&self, id: &str, bounds: Bounds<Pixels>) -> bool {
-        let mut state = self.0.borrow_mut();
-        let frame = state.frame;
-        let changed = match state.nodes.get_mut(id) {
-            Some(entry) => {
-                let changed = entry.0 != bounds;
-                *entry = (bounds, frame);
-                changed
-            }
-            None => {
-                state.nodes.insert(id.to_string(), (bounds, frame));
-                true
-            }
-        };
-        if changed {
-            state.revision += 1;
-        }
-        changed
-    }
-
-    /// Bounds painted in the latest frame.
-    fn painted(&self) -> Vec<(String, Bounds<Pixels>)> {
-        let state = self.0.borrow();
-        state
-            .nodes
-            .iter()
-            .filter(|(_, (_, frame))| *frame == state.frame)
-            .map(|(id, (bounds, _))| (id.clone(), *bounds))
-            .collect()
-    }
-
-    /// The smallest painted node containing `point`.
-    pub(crate) fn innermost_at(&self, point: Point<Pixels>) -> Option<String> {
-        self.painted()
-            .into_iter()
-            .filter(|(_, bounds)| bounds.contains(&point))
-            .min_by(|(_, a), (_, b)| {
-                let area = |b: &Bounds<Pixels>| f32::from(b.size.width) * f32::from(b.size.height);
-                area(a).total_cmp(&area(b))
-            })
-            .map(|(id, _)| id)
-    }
-
-    /// Painted bounds of one node.
-    /// A node's bounds, if it was painted in the current frame.
-    pub(crate) fn bounds(&self, id: &str) -> Option<Bounds<Pixels>> {
-        let state = self.0.borrow();
-        state
-            .nodes
-            .get(id)
-            .filter(|(_, frame)| *frame == state.frame)
-            .map(|(bounds, _)| *bounds)
-    }
-
-    pub(crate) fn node(&self, id: &str) -> Option<LayoutNode> {
-        let state = self.0.borrow();
-        state
-            .nodes
-            .get(id)
-            .filter(|(_, frame)| *frame == state.frame)
-            .map(|(bounds, _)| layout_node(id.to_string(), *bounds))
-    }
-
-    pub(crate) fn snapshot(&self) -> Vec<LayoutNode> {
-        let mut nodes: Vec<LayoutNode> = self
-            .painted()
-            .into_iter()
-            .map(|(id, bounds)| layout_node(id, bounds))
-            .collect();
-        nodes.sort_by(|a, b| a.id.cmp(&b.id));
-        nodes
-    }
-}
-
-fn layout_node(id: String, bounds: Bounds<Pixels>) -> LayoutNode {
-    LayoutNode {
-        id,
-        x: f32::from(bounds.origin.x),
-        y: f32::from(bounds.origin.y),
-        width: f32::from(bounds.size.width),
-        height: f32::from(bounds.size.height),
-    }
-}
-
 /// What a command resolves to once the view has been consulted. Resolution
 /// needs the view (layout, inputs, tree); dispatch must not hold the view,
 /// because GPUI re-enters its listeners.
@@ -212,9 +108,12 @@ pub(crate) enum SimAction {
     Drag(String, LayoutNode, [(f32, f32); 2]),
     ContextMenu(String, f32, f32),
     Hover(String, bool),
+    /// A pointer move to window coordinates.
+    Move(Point<Pixels>),
     Zoom,
     Minimize,
-    Scroll(ScrollTarget, f32),
+    /// A scroll by (across, down) pixels.
+    Scroll(ScrollTarget, (f32, f32)),
 }
 
 /// What a simulated scroll moves: a plain scroll view or a virtualized list.
@@ -259,7 +158,7 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             );
             None
         }
-        SimCommand::Key { keystroke } => match Keystroke::parse(keystroke) {
+        SimCommand::Key { keystroke } => match crate::gpui_api::parse_keystroke(keystroke) {
             Ok(keystroke) => Some(SimAction::Keystrokes(vec![keystroke.with_simulated_ime()])),
             Err(error) => {
                 eprintln!("[mirin-metal] sim key {keystroke:?}: {error:?}");
@@ -321,6 +220,23 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             ))
         }
         SimCommand::Hover { id, hovered } => Some(SimAction::Hover(id.clone(), *hovered)),
+        SimCommand::Move { id, x, y } => match (id, x, y) {
+            (Some(id), _, _) => {
+                let Some(bounds) = view.layout.node(id) else {
+                    eprintln!("[mirin-metal] sim move: no painted node with id {id:?}");
+                    return None;
+                };
+                Some(SimAction::Move(point(
+                    px(bounds.x + bounds.width / 2.0),
+                    px(bounds.y + bounds.height / 2.0),
+                )))
+            }
+            (None, Some(x), Some(y)) => Some(SimAction::Move(point(px(*x), px(*y)))),
+            _ => {
+                eprintln!("[mirin-metal] sim move needs an id or x/y");
+                None
+            }
+        },
         SimCommand::Focus { id } => {
             let handle = match view.inputs.get(id) {
                 Some(state) => Some(&state.focus),
@@ -332,18 +248,21 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
             };
             Some(SimAction::Focus(handle.clone()))
         }
-        SimCommand::Scroll { id, dy } => {
+        SimCommand::Scroll { id, dy, dx } => {
             if let Some(list) = view.lists.get(id) {
                 return Some(SimAction::Scroll(
                     ScrollTarget::List(list.state.clone()),
-                    *dy,
+                    (0.0, *dy),
                 ));
             }
             let Some(handle) = view.scrolls.get(id) else {
                 eprintln!("[mirin-metal] sim scroll: no scrollable node with id {id:?}");
                 return None;
             };
-            Some(SimAction::Scroll(ScrollTarget::View(handle.clone()), *dy))
+            Some(SimAction::Scroll(
+                ScrollTarget::View(handle.clone()),
+                (*dx, *dy),
+            ))
         }
         SimCommand::Window { action } => match action.as_str() {
             "zoom" => Some(SimAction::Zoom),
@@ -359,7 +278,7 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
 /// Dispatch a resolved action with the window leased but not the view.
 pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Window, cx: &mut App) {
     match action {
-        SimAction::Focus(handle) => window.focus(&handle),
+        SimAction::Focus(handle) => crate::gpui_api::focus(window, &handle, cx),
         SimAction::Press(id) => events.press(&id, Held::default()),
         SimAction::Keystrokes(keystrokes) => {
             for keystroke in keystrokes {
@@ -374,20 +293,31 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
         }
         SimAction::ContextMenu(id, x, y) => events.context_menu(&id, x, y, Held::default()),
         SimAction::Hover(id, hovered) => events.hover(&id, hovered),
+        SimAction::Move(position) => {
+            let _ = window.dispatch_event(
+                gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+        }
         SimAction::Zoom => {
             crate::trace::log(format_args!("zoom requested"));
             window.zoom_window();
         }
         SimAction::Minimize => window.minimize_window(),
-        SimAction::Scroll(ScrollTarget::View(handle), dy) => {
+        SimAction::Scroll(ScrollTarget::View(handle), (dx, dy)) => {
             // GPUI offsets are negative once scrolled: content moves up.
             let offset = handle.offset();
-            let max = handle.max_offset();
+            let max = crate::gpui_api::scroll_max(&handle);
+            let x = (offset.x - px(dx)).clamp(-max.width, px(0.0));
             let y = (offset.y - px(dy)).clamp(-max.height, px(0.0));
-            handle.set_offset(point(offset.x, y));
+            handle.set_offset(point(x, y));
             window.refresh();
         }
-        SimAction::Scroll(ScrollTarget::List(state), dy) => {
+        SimAction::Scroll(ScrollTarget::List(state), (_, dy)) => {
             state.scroll_by(px(dy));
             window.refresh();
         }
@@ -439,38 +369,6 @@ fn pressable(node: &NodeSpec, id: &str) -> bool {
         | NodeSpec::Input { .. }
         | NodeSpec::Svg { .. }
         | NodeSpec::Image { .. } => false,
-    }
-}
-
-#[cfg(test)]
-mod layout_tests {
-    use gpui::{point, px, size, Bounds};
-
-    use super::LayoutMap;
-
-    fn at(x: f32) -> Bounds<gpui::Pixels> {
-        Bounds::new(point(px(x), px(0.)), size(px(10.), px(10.)))
-    }
-
-    #[test]
-    fn the_revision_moves_only_when_bounds_do() {
-        let layout = LayoutMap::default();
-        layout.begin_frame();
-        layout.record("a", at(0.));
-        let first = layout.revision();
-        layout.begin_frame();
-        layout.record("a", at(0.));
-        assert_eq!(layout.revision(), first, "the same bounds again");
-        layout.begin_frame();
-        layout.record("a", at(5.));
-        assert!(layout.revision() > first, "a scroll or resize moved it");
-        let moved = layout.revision();
-        layout.begin_frame();
-        layout.begin_frame();
-        assert!(
-            layout.revision() > moved,
-            "a node no longer painted is forgotten"
-        );
     }
 }
 

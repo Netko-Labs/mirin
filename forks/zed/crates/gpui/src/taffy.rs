@@ -1,0 +1,1213 @@
+use crate::{
+    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
+    Style, Window, size,
+    util::{round_stroke_to_device_pixel, round_to_device_pixel},
+};
+use collections::{FxHashMap, FxHashSet};
+use std::{fmt::Debug, ops::Range};
+use taffy::{
+    TaffyTree, TraversePartialTree as _,
+    geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
+    prelude::{max_content, min_content},
+    style::AvailableSpace as TaffyAvailableSpace,
+    tree::NodeId,
+};
+
+#[cfg(feature = "stacker")]
+type StackSafe<T> = stacksafe::StackSafe<T>;
+#[cfg(not(feature = "stacker"))]
+type StackSafe<T> = T;
+
+type MeasureFn =
+    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>;
+type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
+
+struct NodeContext {
+    measure: NodeMeasureFn,
+    // mirin: what it was last asked (logical pixels) and in which layout
+    // (`TaffyLayoutEngine::epoch`), so an element built again onto the node
+    // can be asked the same (`end_bind`).
+    last: Option<(Size<Option<Pixels>>, Size<AvailableSpace>)>,
+    asked: u64,
+    // mirin: how far under its top its first baseline is, in device pixels
+    // (`TaffyLayoutEngine::set_first_baseline`).
+    first_baseline: Option<f32>,
+}
+
+/// mirin: a retained subtree's elements built again onto the nodes it kept
+/// (`TaffyLayoutEngine::begin_bind`): each node its elements ask for is the
+/// one it made last time, in the same order, so nothing is laid out again.
+struct Bind {
+    nodes: Vec<LayoutId>,
+    next: usize,
+    failed: bool,
+    /// The measured leaves bound, whose new functions are asked at the end.
+    measured: Vec<LayoutId>,
+}
+pub struct TaffyLayoutEngine {
+    taffy: TaffyTree<NodeContext>,
+    absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
+    /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
+    absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
+    computed_layouts: FxHashSet<LayoutId>,
+    layout_bounds_scratch_space: Vec<LayoutId>,
+    // mirin: the tree is kept across frames for retained subtrees
+    // (`elements::retained`). Nodes made this frame, in the order they were
+    // made, go at its end; nodes made while a retained subtree is built are
+    // its own (`begin_owned`/`end_owned`) and stay until it lets them go
+    // (`released`). With nothing retained the tree is cleared whole, as before.
+    frame_nodes: Vec<LayoutId>,
+    owning: Vec<Vec<LayoutId>>,
+    owned_count: usize,
+    released: std::rc::Rc<std::cell::RefCell<Vec<LayoutId>>>,
+    /// The unrounded absolute origin (device pixels) a parentless node is
+    /// laid out at: a retained subtree's copy laid out apart, placed where its
+    /// twin sits so its edges round as the twin's do (`place_detached`).
+    /// With it, the rounded origin it is laid out at: the twin's.
+    detached_origins: FxHashMap<LayoutId, (Point<f32>, Point<f32>)>,
+    /// mirin: each node's rounded absolute origin (device pixels), as
+    /// `layout_bounds` rounds it.
+    rounded_origins: FxHashMap<LayoutId, Point<f32>>,
+    /// mirin: while a retained subtree is drawn anew, what the edges it
+    /// lays out round to (`elements::retained`, step 2), and per node laid
+    /// out meanwhile whether its unrounded origin was summed exactly from
+    /// the subtree's root, across and down.
+    pub(crate) steadiness: Option<crate::elements::Steadiness>,
+    exact_origins: FxHashMap<LayoutId, [bool; 2]>,
+    /// mirin: the layout being made (one per frame, `clear`), and the
+    /// retained subtree being built again onto its kept nodes, if one is.
+    epoch: u64,
+    bind: Option<Bind>,
+}
+
+const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
+
+impl TaffyLayoutEngine {
+    pub fn new() -> Self {
+        let mut taffy = TaffyTree::new();
+        taffy.disable_rounding();
+        TaffyLayoutEngine {
+            taffy,
+            absolute_layout_bounds: FxHashMap::default(),
+            absolute_outer_origins: FxHashMap::default(),
+            computed_layouts: FxHashSet::default(),
+            layout_bounds_scratch_space: Vec::new(),
+            frame_nodes: Vec::new(),
+            owning: Vec::new(),
+            owned_count: 0,
+            released: Default::default(),
+            detached_origins: FxHashMap::default(),
+            rounded_origins: FxHashMap::default(),
+            steadiness: None,
+            exact_origins: FxHashMap::default(),
+            epoch: 0,
+            bind: None,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        // mirin: keep the nodes retained subtrees own; free the frame's own
+        // and the ones let go, children before their parents.
+        let released = std::mem::take(&mut *self.released.borrow_mut());
+        self.owned_count = self.owned_count.saturating_sub(released.len());
+        if self.owned_count == 0 && self.owning.is_empty() {
+            self.taffy.clear();
+            self.owned_count = 0;
+        } else {
+            for id in self.frame_nodes.iter().chain(&released) {
+                let _ = self.taffy.remove(id.0);
+            }
+        }
+        self.frame_nodes.clear();
+        self.absolute_layout_bounds.clear();
+        self.absolute_outer_origins.clear();
+        self.computed_layouts.clear();
+        self.detached_origins.clear();
+        self.rounded_origins.clear();
+        self.exact_origins.clear();
+        self.epoch += 1;
+    }
+
+    /// mirin: nodes made from now until `end_owned` belong to a retained
+    /// subtree and are kept across frames.
+    pub(crate) fn begin_owned(&mut self) {
+        self.owning.push(Vec::new());
+    }
+
+    /// mirin: the nodes made since `begin_owned`, in the order they were made.
+    pub(crate) fn end_owned(&mut self) -> Vec<LayoutId> {
+        let owned = self.owning.pop().unwrap_or_default();
+        self.owned_count += owned.len();
+        owned
+    }
+
+    /// mirin: where retained subtrees put the nodes they let go of (when
+    /// their state is dropped or rebuilt); they are freed at the frame's end.
+    pub(crate) fn released(&self) -> std::rc::Rc<std::cell::RefCell<Vec<LayoutId>>> {
+        self.released.clone()
+    }
+
+    /// mirin: whether `id` is still in the tree.
+    pub(crate) fn contains(&self, id: LayoutId) -> bool {
+        self.taffy.contains(id.0)
+    }
+
+    fn made(&mut self, id: LayoutId) -> LayoutId {
+        match self.owning.last_mut() {
+            Some(owned) => owned.push(id),
+            None => self.frame_nodes.push(id),
+        }
+        id
+    }
+
+    /// mirin: the layout being made: one per frame.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// mirin: whether a layout after `epoch` changed the layout of a node
+    /// below `id` (taffy's `below_changed_since`).
+    pub(crate) fn below_changed_since(&self, id: LayoutId, epoch: u64) -> bool {
+        self.taffy.below_changed_since(id.0, epoch)
+    }
+
+    /// mirin: whether a measured leaf among `nodes` was asked for its size
+    /// in a layout after `epoch`. A measured element holds what its last
+    /// measure left it with; for nodes asked only in the layout they were
+    /// made for, that is what a layout from nothing asks last, and an
+    /// element built again onto them can be asked the same (`end_bind`).
+    pub(crate) fn any_asked_since(&self, nodes: &[LayoutId], epoch: u64) -> bool {
+        nodes.iter().any(|id| {
+            self.taffy
+                .get_node_context(id.0)
+                .is_some_and(|context| context.asked > epoch)
+        })
+    }
+
+    /// mirin: build a retained subtree's elements again onto `nodes`, the
+    /// ones it made (in that order) and kept: until `end_bind`, each layout
+    /// requested is answered with the next of them instead of a new node.
+    pub(crate) fn begin_bind(&mut self, nodes: Vec<LayoutId>) {
+        self.bind = Some(Bind {
+            nodes,
+            next: 0,
+            failed: false,
+            measured: Vec::new(),
+        });
+    }
+
+    /// mirin: give up on the subtree being bound, if one is (something in
+    /// it asked for what its kept nodes can't answer).
+    pub(crate) fn fail_bind(&mut self) {
+        if let Some(bind) = &mut self.bind {
+            bind.failed = true;
+        }
+    }
+
+    /// mirin: whether the subtree bound since `begin_bind` asked for exactly
+    /// its kept nodes. Each measured leaf's new function is then asked what
+    /// the old one was last asked, so its element holds what the old one did.
+    pub(crate) fn end_bind(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        let Some(bind) = self.bind.take() else {
+            return false;
+        };
+        if bind.failed || bind.next != bind.nodes.len() {
+            return false;
+        }
+        for id in bind.measured {
+            let Some(context) = self.taffy.get_node_context_mut(id.0) else {
+                return false;
+            };
+            let Some((known, available)) = context.last else {
+                return false;
+            };
+            (context.measure)(known, available, window, cx);
+        }
+        true
+    }
+
+    /// mirin: the kept node that answers a layout request while a subtree is
+    /// bound (`begin_bind`): the next it made, if it has these `children`
+    /// (`None`: a measured leaf).
+    fn bound(&mut self, children: Option<&[LayoutId]>) -> Option<LayoutId> {
+        let bind = self.bind.as_mut().filter(|bind| !bind.failed)?;
+        let id = bind.nodes.get(bind.next).copied();
+        let matches = id.is_some_and(|id| {
+            self.taffy.contains(id.0)
+                && match children {
+                    Some(children) => {
+                        self.taffy.get_node_context(id.0).is_none()
+                            && self
+                                .taffy
+                                .child_ids(id.0)
+                                .eq(children.iter().map(|child| child.0))
+                    }
+                    None => {
+                        self.taffy.child_count(id.0) == 0
+                            && self.taffy.get_node_context(id.0).is_some()
+                    }
+                }
+        });
+        if !matches {
+            bind.failed = true;
+            return None;
+        }
+        bind.next += 1;
+        id
+    }
+
+    /// mirin: the unrounded absolute origin (device pixels) `layout_bounds`
+    /// found for `id` this frame.
+    pub(crate) fn unrounded_origin(&self, id: LayoutId) -> Option<Point<f32>> {
+        self.absolute_outer_origins.get(&id).copied()
+    }
+
+    /// mirin: a node's unrounded size, border and padding (device pixels):
+    /// what lays out what is inside it, for a retained subtree whose root it
+    /// is (`elements::retained`).
+    pub(crate) fn node_box(&self, id: LayoutId) -> Option<[f32; 10]> {
+        let layout = self.taffy.layout(id.0).ok()?;
+        let (border, padding) = (layout.border, layout.padding);
+        Some([
+            layout.size.width,
+            layout.size.height,
+            border.left,
+            border.top,
+            border.right,
+            border.bottom,
+            padding.left,
+            padding.top,
+            padding.right,
+            padding.bottom,
+        ])
+    }
+
+    /// mirin: `layout_bounds` rounds a node's edges while a retained subtree
+    /// is drawn anew: note whether they round the same way with the subtree
+    /// moved by whole device pixels (`elements::retained::Steadiness`). An
+    /// origin is summed exactly from the subtree's root when its parent's
+    /// was and it is exact itself; a node laid out before the recording
+    /// began (the root) is exact when its origin is.
+    fn note_rounded(
+        &mut self,
+        id: LayoutId,
+        parent: Option<taffy::NodeId>,
+        origin: Point<f32>,
+        far: Point<f32>,
+    ) {
+        use crate::elements::is_exact;
+        let parent = parent.map(LayoutId::from);
+        let parent_exact = match parent.and_then(|parent| self.exact_origins.get(&parent)) {
+            Some(exact) => *exact,
+            None => match parent.and_then(|parent| self.absolute_outer_origins.get(&parent)) {
+                Some(origin) => [is_exact(origin.x), is_exact(origin.y)],
+                None => [true, true],
+            },
+        };
+        let exact = [
+            parent_exact[0] && is_exact(origin.x),
+            parent_exact[1] && is_exact(origin.y),
+        ];
+        self.exact_origins.insert(id, exact);
+        if let Some(steady) = &mut self.steadiness {
+            steady.round_half(0, origin.x, 1., exact[0]);
+            steady.round_half(1, origin.y, 1., exact[1]);
+            steady.round_half(0, far.x, 1., exact[0] && is_exact(far.x));
+            steady.round_half(1, far.y, 1., exact[1] && is_exact(far.y));
+        }
+    }
+
+    /// mirin: lay `root` (a retained subtree's copy, made this frame) out
+    /// apart from the tree, as its `twin` (kept in the tree) is laid out
+    /// there: the twin's size, no margins or offsets of its own, and edges
+    /// rounded from where the twin sits. Its bounds are then the twin's.
+    pub(crate) fn place_detached(&mut self, root: LayoutId, twin: LayoutId) -> Size<Pixels> {
+        let twin_layout = *self.taffy.layout(twin.0).expect(EXPECT_MESSAGE);
+        let mut style = self.taffy.style(root.0).expect(EXPECT_MESSAGE).clone();
+        style.size = taffy::geometry::Size {
+            width: taffy::style::Dimension::length(twin_layout.size.width),
+            height: taffy::style::Dimension::length(twin_layout.size.height),
+        };
+        style.min_size = taffy::geometry::Size::auto();
+        style.max_size = taffy::geometry::Size::auto();
+        style.margin = taffy::geometry::Rect::zero();
+        style.inset = taffy::geometry::Rect::auto();
+        style.position = taffy::style::Position::Relative;
+        self.taffy.set_style(root.0, style).expect(EXPECT_MESSAGE);
+        if let (Some(origin), Some(rounded)) = (
+            self.absolute_outer_origins.get(&twin).copied(),
+            self.rounded_origins.get(&twin).copied(),
+        ) {
+            self.detached_origins.insert(root, (origin, rounded));
+        }
+        Size {
+            width: Pixels(twin_layout.size.width),
+            height: Pixels(twin_layout.size.height),
+        }
+    }
+
+    pub fn request_layout(
+        &mut self,
+        style: Style,
+        rem_size: Pixels,
+        scale_factor: f32,
+        children: &[LayoutId],
+    ) -> LayoutId {
+        // mirin: a retained subtree built again onto its kept nodes.
+        if let Some(id) = self.bound(Some(children)) {
+            return id;
+        }
+        let taffy_style = style.to_taffy(rem_size, scale_factor);
+
+        let id = if children.is_empty() {
+            self.taffy
+                .new_leaf(taffy_style)
+                .expect(EXPECT_MESSAGE)
+                .into()
+        } else {
+            self.taffy
+                // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
+                .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
+                .expect(EXPECT_MESSAGE)
+                .into()
+        };
+        // mirin: kept with a retained subtree, or freed with the frame.
+        self.made(id)
+    }
+
+    pub fn request_measured_layout(
+        &mut self,
+        style: Style,
+        rem_size: Pixels,
+        scale_factor: f32,
+        measure: impl FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> Size<Pixels>
+        + 'static,
+    ) -> LayoutId {
+        let measure = Box::new(measure) as Box<MeasureFn>;
+        #[cfg(feature = "stacker")]
+        let measure = StackSafe::new(measure);
+        // mirin: a retained subtree built again onto its kept nodes: the
+        // node takes the new element's function (asked at `end_bind`).
+        if let Some(id) = self.bound(None) {
+            if let Some(context) = self.taffy.get_node_context_mut(id.0) {
+                context.measure = measure;
+            }
+            if let Some(bind) = &mut self.bind {
+                bind.measured.push(id);
+            }
+            return id;
+        }
+        let taffy_style = style.to_taffy(rem_size, scale_factor);
+
+        let id = self
+            .taffy
+            .new_leaf_with_context(
+                taffy_style,
+                NodeContext {
+                    measure,
+                    last: None,
+                    asked: 0,
+                    first_baseline: None,
+                },
+            )
+            .expect(EXPECT_MESSAGE)
+            .into();
+        // mirin: kept with a retained subtree, or freed with the frame.
+        self.made(id)
+    }
+
+    /// Treats any `auto` dimension of the given node's style as filling `size`.
+    ///
+    /// This is applied to window roots before layout so they behave like the
+    /// root element on the web, which stretches to fill the initial containing
+    /// block (the viewport) unless given an explicit size. Explicitly styled
+    /// dimensions are preserved.
+    pub fn stretch_auto_size_to_fill(
+        &mut self,
+        id: LayoutId,
+        size: Size<Pixels>,
+        scale_factor: f32,
+    ) {
+        let style = self.taffy.style(id.0).expect(EXPECT_MESSAGE);
+        let stretch_width = style.size.width.is_auto();
+        let stretch_height = style.size.height.is_auto();
+        if !stretch_width && !stretch_height {
+            return;
+        }
+        let mut style = style.clone();
+        if stretch_width {
+            style.size.width =
+                taffy::style::Dimension::length(round_to_device_pixel(size.width.0, scale_factor));
+        }
+        if stretch_height {
+            style.size.height =
+                taffy::style::Dimension::length(round_to_device_pixel(size.height.0, scale_factor));
+        }
+        self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+    }
+
+    // Used to understand performance
+    #[allow(dead_code)]
+    fn count_all_children(&self, parent: LayoutId) -> anyhow::Result<u32> {
+        let mut count = 0;
+
+        for child in self.taffy.children(parent.0)? {
+            // Count this child.
+            count += 1;
+
+            // Count all of this child's children.
+            count += self.count_all_children(LayoutId(child))?
+        }
+
+        Ok(count)
+    }
+
+    // Used to understand performance
+    #[allow(dead_code)]
+    fn max_depth(&self, depth: u32, parent: LayoutId) -> anyhow::Result<u32> {
+        println!(
+            "{parent:?} at depth {depth} has {} children",
+            self.taffy.child_count(parent.0)
+        );
+
+        let mut max_child_depth = 0;
+
+        for child in self.taffy.children(parent.0)? {
+            max_child_depth = std::cmp::max(max_child_depth, self.max_depth(0, LayoutId(child))?);
+        }
+
+        Ok(depth + 1 + max_child_depth)
+    }
+
+    // Used to understand performance
+    #[allow(dead_code)]
+    fn get_edges(&self, parent: LayoutId) -> anyhow::Result<Vec<(LayoutId, LayoutId)>> {
+        let mut edges = Vec::new();
+
+        for child in self.taffy.children(parent.0)? {
+            edges.push((parent, LayoutId(child)));
+
+            edges.extend(self.get_edges(LayoutId(child))?);
+        }
+
+        Ok(edges)
+    }
+
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
+    pub fn compute_layout(
+        &mut self,
+        id: LayoutId,
+        available_space: Size<AvailableSpace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        // Leaving this here until we have a better instrumentation approach.
+        // println!("Laying out {} children", self.count_all_children(id)?);
+        // println!("Max layout depth: {}", self.max_depth(0, id)?);
+
+        // Output the edges (branches) of the tree in Mermaid format for visualization.
+        // println!("Edges:");
+        // for (a, b) in self.get_edges(id)? {
+        //     println!("N{} --> N{}", u64::from(a), u64::from(b));
+        // }
+        //
+
+        if !self.computed_layouts.insert(id) {
+            let stack = &mut self.layout_bounds_scratch_space;
+            stack.push(id);
+            while let Some(id) = stack.pop() {
+                self.absolute_layout_bounds.remove(&id);
+                self.absolute_outer_origins.remove(&id);
+                self.rounded_origins.remove(&id);
+                stack.extend(
+                    self.taffy
+                        .children(id.into())
+                        .expect(EXPECT_MESSAGE)
+                        .into_iter()
+                        .map(LayoutId::from),
+                );
+            }
+        }
+
+        let scale_factor = window.scale_factor();
+
+        let transform = |v: AvailableSpace| match v {
+            AvailableSpace::Definite(pixels) => {
+                AvailableSpace::Definite(Pixels(pixels.0 * scale_factor))
+            }
+            AvailableSpace::MinContent => AvailableSpace::MinContent,
+            AvailableSpace::MaxContent => AvailableSpace::MaxContent,
+        };
+        let available_space = size(
+            transform(available_space.width),
+            transform(available_space.height),
+        );
+
+        let epoch = self.epoch;
+        // mirin: what this layout changes below a node is counted in it.
+        self.taffy.set_layout_epoch(epoch);
+        self.taffy
+            .compute_layout_with_measure(
+                id.into(),
+                available_space.into(),
+                |input, _id, node_context, style| {
+                    // mirin: the leaf's first baseline (`set_first_baseline`).
+                    let first_baseline = node_context
+                        .as_ref()
+                        .and_then(|context| context.first_baseline);
+                    let mut output = taffy::compute_leaf_layout(
+                        input,
+                        style,
+                        |_, _| 0.0,
+                        |known_dimensions, available_space| {
+                            let Some(node_context) = node_context else {
+                                return taffy::geometry::Size::default();
+                            };
+
+                            let known_dimensions = Size {
+                                width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
+                                height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
+                            };
+
+                            let available_space: Size<AvailableSpace> = available_space.into();
+                            let untransform = |ev: AvailableSpace| match ev {
+                                AvailableSpace::Definite(pixels) => {
+                                    AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
+                                }
+                                AvailableSpace::MinContent => AvailableSpace::MinContent,
+                                AvailableSpace::MaxContent => AvailableSpace::MaxContent,
+                            };
+                            let available_space = size(
+                                untransform(available_space.width),
+                                untransform(available_space.height),
+                            );
+
+                            // mirin: kept for `end_bind`.
+                            node_context.last = Some((known_dimensions, available_space));
+                            node_context.asked = epoch;
+                            let measured_size: Size<Pixels> = (node_context.measure)(
+                                known_dimensions,
+                                available_space,
+                                window,
+                                cx,
+                            );
+                            // mirin: as measured, unrounded: mirin's default
+                            // build lays text out at its line height's
+                            // fraction and rounds only edges (`layout_bounds`).
+                            size(
+                                measured_size.width.0.max(0.0) * scale_factor,
+                                measured_size.height.0.max(0.0) * scale_factor,
+                            )
+                            .into()
+                        },
+                    );
+                    if first_baseline.is_some() {
+                        output.baselines.first = first_baseline;
+                    }
+                    output
+                },
+            )
+            .expect(EXPECT_MESSAGE);
+    }
+
+    /// mirin: how far under its top a measured node's first baseline is (a
+    /// text's first line). A row that aligns its items by baseline
+    /// (`items_baseline`) lines them up by it; without one taffy takes the
+    /// node's bottom edge, which is not where a text's letters sit. Port of
+    /// `../gpui`'s (there taffy keeps it; here the leaf's output, which
+    /// GPUI makes, carries it). The same baseline again leaves the node's
+    /// cache alone, so a retained subtree's text bound again keeps its layout.
+    pub fn set_first_baseline(&mut self, id: LayoutId, baseline: Pixels, scale_factor: f32) {
+        let baseline = Some(baseline.0 * scale_factor);
+        let Some(context) = self.taffy.get_node_context_mut(id.into()) else {
+            return;
+        };
+        if context.first_baseline == baseline {
+            return;
+        }
+        context.first_baseline = baseline;
+        self.taffy.mark_dirty(id.into()).expect(EXPECT_MESSAGE);
+    }
+
+    // Pixel snapping
+    //
+    // Painting primitives at non-integer pixel coordinates produces blurry
+    // output. Pixel snapping converts layout coordinates into integer
+    // device-pixel coordinates so painted edges land exactly on physical
+    // pixel boundaries.
+    //
+    // Non-integer coordinates can arise for several reasons, including:
+    //   - flex distribution, percentages, centering, and text measurement
+    //     can produce fractional element sizes and positions;
+    //   - at fractional scale factors (for example 125% or 150%), integer
+    //     logical-pixel values can map to non-integer device-pixel values.
+    //
+    // We pixel-snap by rounding in device-pixel space, after multiplying
+    // by `scale_factor`, so that snapping targets physical pixels. Bounds
+    // are divided by `scale_factor` before being returned to GPUI.
+    //
+    // Midpoints are rounded toward zero. This is a stylistic choice: a
+    // 1-logical-pixel line at 150% scale should render as 1 dp rather than
+    // 2 dp.
+    //
+    // Pixel snapping is done in two phases:
+    //
+    //  1. Pre-layout metric snapping. Before Taffy computes layout, all
+    //     authored absolute lengths are rounded in `to_taffy`. This
+    //     includes borders, padding, gaps, and explicit sizes.
+    //     Custom-measured leaf nodes have their measured sizes rounded up
+    //     to integer device-pixel lengths.
+    //
+    //  2. Post-layout edge snapping. After Taffy resolves the tree, layout
+    //     relationships such as flex shares, grid tracks, percentages, and
+    //     centering can produce new fractional edge positions. Boxes now
+    //     have edges in absolute coordinates, and snapping must decide
+    //     where those edges land on the device-pixel grid.
+    //
+    // Ideally, post-layout snapping would satisfy:
+    //
+    //  - Edge closure. Two raw layout edges at the same absolute position
+    //    should snap to the same pixel column.
+    //  - Translation stability. A component's internal geometry should not
+    //    change when it moves to a new absolute position.
+    //
+    // These goals are in tension because rounding is not associative.
+    // The simple local schemes make different tradeoffs:
+    //
+    //  - Absolute edge rounding gives each window coordinate one answer,
+    //    so coincident edges always close globally. But a span's snapped
+    //    length is `round(far) - round(near)`, which may change by 1 dp
+    //    as its absolute origin moves.
+    //
+    //  - Parent-relative edge rounding rounds each child inside its
+    //    parent's coordinate space. This guarantees translation stability,
+    //    but a shared edge reached through different parents can
+    //    accumulate different rounding, causing non-closure between
+    //    cousins.
+    //
+    //  - Length rounding rounds each width, height, and thickness
+    //    independently and then places boxes from those rounded lengths.
+    //    Sizes stay stable under translation, but neighboring boxes derive
+    //    their shared boundary from different sources, so closure is not
+    //    guaranteed.
+    //
+    // We apply absolute edge rounding for each element's outer box in
+    // post-layout rounding to preserve closure. Border and padding widths
+    // are not touched by post-layout rounding; they keep their pre-layout
+    // rounded value so that they remain stable under translation.
+    //
+    // This gives both closure and translation stability in the case that
+    // all local metrics are integer device-pixel lengths. Pre-layout
+    // rounding covers that in most cases. The exception is metrics
+    // resolved by layout relationships, such as percentages. Outer box
+    // edges will still close globally, and painted border widths are still
+    // snapped independently, but the raw content-box origin can carry a
+    // 1dp residual into descendants.
+
+    /// mirin: how far a node's content reaches from its top left, its end
+    /// border included: its scrollable overflow (children's boxes and what
+    /// overflows them visibly, then a scroll container's end padding), as
+    /// taffy measured it from the padding box, and the borders around it.
+    /// A scroll view scrolls by this less its size.
+    pub fn layout_scroll_extent(&self, id: LayoutId, scale_factor: f32) -> Size<Pixels> {
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let reach = layout.scrollable_overflow_rect;
+        size(
+            Pixels((layout.border.left + reach.right + layout.border.right) / scale_factor),
+            Pixels((layout.border.top + reach.bottom + layout.border.bottom) / scale_factor),
+        )
+    }
+
+    pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
+        if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
+            return layout;
+        }
+
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let layout_location = layout.location;
+        let layout_size = layout.size;
+        let parent = self.taffy.parent(id.0);
+
+        // mirin: rounded as mirin's default build rounds (taffy 0.9's
+        // `round_layout`, which Dashi's layouts are made against), not by
+        // absolute edges: a node's place in its parent rounded on its own
+        // (halves away from zero), its size the difference of its rounded
+        // absolute edges. So the rounded origin is the parent's plus the
+        // rounded place (`rounded_origins`), not the absolute one rounded.
+        let location = Point::from(layout_location);
+        let (absolute_outer_origin, parent_rounded) = match parent {
+            Some(parent_id) => {
+                let parent_id = LayoutId::from(parent_id);
+                self.layout_bounds(parent_id, scale_factor);
+                let parent_origin = *self
+                    .absolute_outer_origins
+                    .get(&parent_id)
+                    .expect("parent absolute outer origin should be cached");
+                let parent_rounded = *self
+                    .rounded_origins
+                    .get(&parent_id)
+                    .expect("parent rounded origin should be cached");
+                (parent_origin + location, parent_rounded)
+            }
+            // mirin: a retained subtree's copy laid out apart sits where its twin does.
+            None => {
+                let (origin, rounded) = self.detached_origins.get(&id).copied().unwrap_or_default();
+                (origin + location, rounded)
+            }
+        };
+        self.absolute_outer_origins
+            .insert(id, absolute_outer_origin);
+
+        let absolute_far = absolute_outer_origin + Point::from(Size::from(layout_size));
+        // mirin: what a retained subtree being drawn anew rounds.
+        if self.steadiness.is_some() {
+            self.note_rounded(id, parent, absolute_outer_origin, absolute_far);
+        }
+        let rounded_origin = parent_rounded + location.map(f32::round);
+        self.rounded_origins.insert(id, rounded_origin);
+        let rounded_size = absolute_far.map(f32::round) - absolute_outer_origin.map(f32::round);
+        let snapped_bounds = Bounds::new(rounded_origin, size(rounded_size.x, rounded_size.y));
+
+        let bounds = (snapped_bounds / scale_factor).map(Pixels);
+        self.absolute_layout_bounds.insert(id, bounds);
+        bounds
+    }
+}
+
+/// A unique identifier for a layout node, generated when requesting a layout from Taffy
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[repr(transparent)]
+pub struct LayoutId(NodeId);
+
+impl LayoutId {
+    fn to_taffy_slice(node_ids: &[Self]) -> &[taffy::NodeId] {
+        // SAFETY: LayoutId is repr(transparent) to taffy::tree::NodeId.
+        unsafe { std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(node_ids) }
+    }
+}
+
+impl std::hash::Hash for LayoutId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        u64::from(self.0).hash(state);
+    }
+}
+
+impl From<NodeId> for LayoutId {
+    fn from(node_id: NodeId) -> Self {
+        Self(node_id)
+    }
+}
+
+impl From<LayoutId> for NodeId {
+    fn from(layout_id: LayoutId) -> NodeId {
+        layout_id.0
+    }
+}
+
+fn border_widths_to_taffy(
+    widths: &Edges<AbsoluteLength>,
+    rem_size: Pixels,
+    scale_factor: f32,
+) -> TaffyRect<taffy::style::LengthPercentage> {
+    let snap = |w: &AbsoluteLength| {
+        taffy::style::LengthPercentage::length(round_stroke_to_device_pixel(
+            w.to_pixels(rem_size).0,
+            scale_factor,
+        ))
+    };
+    TaffyRect {
+        top: snap(&widths.top),
+        right: snap(&widths.right),
+        bottom: snap(&widths.bottom),
+        left: snap(&widths.left),
+    }
+}
+
+trait ToTaffy<Output> {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> Output;
+}
+
+impl ToTaffy<taffy::style::Style> for Style {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Style {
+        use taffy::style_helpers::{fr, length, minmax, repeat};
+
+        fn to_grid_line(
+            placement: &Range<crate::GridPlacement>,
+        ) -> taffy::Line<taffy::GridPlacement> {
+            taffy::Line {
+                start: placement.start.into(),
+                end: placement.end.into(),
+            }
+        }
+
+        fn to_grid_repeat<T: taffy::style::CheapCloneStr>(
+            unit: &Option<GridTemplate>,
+        ) -> Vec<taffy::GridTemplateComponent<T>> {
+            unit.map(|template| {
+                match template.min_size {
+                    // grid-template-*: repeat(<number>, minmax(0, 1fr));
+                    crate::GridTemplateMinSize::Zero => {
+                        vec![repeat(
+                            template.repeat,
+                            vec![minmax(length(0.0_f32), fr(1.0_f32))],
+                        )]
+                    }
+                    // grid-template-*: repeat(<number>, minmax(min-content, 1fr));
+                    crate::GridTemplateMinSize::MinContent => {
+                        vec![repeat(
+                            template.repeat,
+                            vec![minmax(min_content(), fr(1.0_f32))],
+                        )]
+                    }
+                    // grid-template-*: repeat(<number>, minmax(0, max-content))
+                    crate::GridTemplateMinSize::MaxContent => {
+                        vec![repeat(
+                            template.repeat,
+                            vec![minmax(length(0.0_f32), max_content())],
+                        )]
+                    }
+                }
+            })
+            .unwrap_or_default()
+        }
+
+        taffy::style::Style {
+            display: self.display.into(),
+            overflow: self.overflow.into(),
+            scrollbar_width: self.scrollbar_width.to_taffy(rem_size, scale_factor),
+            position: self.position.into(),
+            inset: self.inset.to_taffy(rem_size, scale_factor),
+            size: self.size.to_taffy(rem_size, scale_factor),
+            min_size: self.min_size.to_taffy(rem_size, scale_factor),
+            max_size: self.max_size.to_taffy(rem_size, scale_factor),
+            aspect_ratio: self.aspect_ratio,
+            margin: self.margin.to_taffy(rem_size, scale_factor),
+            padding: self.padding.to_taffy(rem_size, scale_factor),
+            border: border_widths_to_taffy(&self.border_widths, rem_size, scale_factor),
+            align_items: self.align_items.map(Into::into).unwrap_or_default(),
+            align_self: self.align_self.map(|x| x.into()),
+            align_content: self.align_content.map(Into::into).unwrap_or_default(),
+            justify_content: self.justify_content.map(Into::into).unwrap_or_default(),
+            gap: self.gap.to_taffy(rem_size, scale_factor),
+            flex_direction: self.flex_direction.into(),
+            flex_wrap: self.flex_wrap.into(),
+            flex_basis: self.flex_basis.to_taffy(rem_size, scale_factor),
+            flex_grow: self.flex_grow,
+            flex_shrink: self.flex_shrink,
+            // mirin: explicit track lists win over `repeat(N, minmax(0, 1fr))`.
+            grid_template_rows: self
+                .grid_template_rows
+                .as_deref()
+                .map(|tracks| to_grid_tracks(tracks, scale_factor))
+                .unwrap_or_else(|| to_grid_repeat(&self.grid_rows)),
+            grid_template_columns: self
+                .grid_template_columns
+                .as_deref()
+                .map(|tracks| to_grid_tracks(tracks, scale_factor))
+                .unwrap_or_else(|| to_grid_repeat(&self.grid_cols)),
+            justify_items: self.justify_items.map(Into::into).unwrap_or_default(),
+            justify_self: self.justify_self.map(|x| x.into()),
+            grid_row: self
+                .grid_location
+                .as_ref()
+                .map(|location| to_grid_line(&location.row))
+                .unwrap_or_default(),
+            grid_column: self
+                .grid_location
+                .as_ref()
+                .map(|location| to_grid_line(&location.column))
+                .unwrap_or_default(),
+            ..Default::default()
+        }
+    }
+}
+
+// mirin: explicit grid tracks; lengths in device pixels, rounded as every length is.
+fn to_grid_tracks<T: taffy::style::CheapCloneStr>(
+    tracks: &[crate::GridTrack],
+    scale_factor: f32,
+) -> Vec<taffy::GridTemplateComponent<T>> {
+    use crate::TrackBreadth;
+    use taffy::style::{MaxTrackSizingFunction as Max, MinTrackSizingFunction as Min};
+    tracks
+        .iter()
+        .map(|track| {
+            let min = match track.min {
+                TrackBreadth::Pixels(px) => Min::length(round_to_device_pixel(px, scale_factor)),
+                TrackBreadth::Percent(fraction) => Min::percent(fraction),
+                TrackBreadth::MinContent => Min::min_content(),
+                TrackBreadth::MaxContent => Min::max_content(),
+                TrackBreadth::Auto | TrackBreadth::Fr(_) => Min::auto(),
+            };
+            let max = match track.max {
+                TrackBreadth::Pixels(px) => Max::length(round_to_device_pixel(px, scale_factor)),
+                TrackBreadth::Percent(fraction) => Max::percent(fraction),
+                TrackBreadth::Fr(fr) => Max::fr(fr),
+                TrackBreadth::MinContent => Max::min_content(),
+                TrackBreadth::MaxContent => Max::max_content(),
+                TrackBreadth::Auto => Max::auto(),
+            };
+            taffy::GridTemplateComponent::Single(taffy::geometry::MinMax { min, max })
+        })
+        .collect()
+}
+
+impl ToTaffy<f32> for AbsoluteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
+        round_to_device_pixel(self.to_pixels(rem_size).0, scale_factor)
+    }
+}
+
+impl ToTaffy<taffy::style::LengthPercentageAuto> for Length {
+    fn to_taffy(
+        &self,
+        rem_size: Pixels,
+        scale_factor: f32,
+    ) -> taffy::prelude::LengthPercentageAuto {
+        match self {
+            Length::Definite(length) => length.to_taffy(rem_size, scale_factor),
+            Length::Auto => taffy::prelude::LengthPercentageAuto::auto(),
+        }
+    }
+}
+
+impl ToTaffy<taffy::style::Dimension> for Length {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::prelude::Dimension {
+        match self {
+            Length::Definite(length) => length.to_taffy(rem_size, scale_factor),
+            Length::Auto => taffy::prelude::Dimension::auto(),
+        }
+    }
+}
+
+impl ToTaffy<taffy::style::LengthPercentage> for DefiniteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentage {
+        match self {
+            DefiniteLength::Absolute(length) => length.to_taffy(rem_size, scale_factor),
+            DefiniteLength::Fraction(fraction) => {
+                taffy::style::LengthPercentage::percent(*fraction)
+            }
+        }
+    }
+}
+
+impl ToTaffy<taffy::style::LengthPercentageAuto> for DefiniteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentageAuto {
+        match self {
+            DefiniteLength::Absolute(length) => length.to_taffy(rem_size, scale_factor),
+            DefiniteLength::Fraction(fraction) => {
+                taffy::style::LengthPercentageAuto::percent(*fraction)
+            }
+        }
+    }
+}
+
+impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Dimension {
+        match self {
+            DefiniteLength::Absolute(length) => length.to_taffy(rem_size, scale_factor),
+            DefiniteLength::Fraction(fraction) => taffy::style::Dimension::percent(*fraction),
+        }
+    }
+}
+
+impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentage {
+        taffy::style::LengthPercentage::length(self.to_taffy(rem_size, scale_factor))
+    }
+}
+
+impl ToTaffy<taffy::style::LengthPercentageAuto> for AbsoluteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentageAuto {
+        taffy::style::LengthPercentageAuto::length(self.to_taffy(rem_size, scale_factor))
+    }
+}
+
+impl ToTaffy<taffy::style::Dimension> for AbsoluteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Dimension {
+        taffy::style::Dimension::length(self.to_taffy(rem_size, scale_factor))
+    }
+}
+
+impl<T, T2> From<TaffyPoint<T>> for Point<T2>
+where
+    T: Into<T2>,
+    T2: Clone + Debug + Default + PartialEq,
+{
+    fn from(point: TaffyPoint<T>) -> Point<T2> {
+        Point {
+            x: point.x.into(),
+            y: point.y.into(),
+        }
+    }
+}
+
+impl<T, T2> From<Point<T>> for TaffyPoint<T2>
+where
+    T: Into<T2> + Clone + Debug + Default + PartialEq,
+{
+    fn from(val: Point<T>) -> Self {
+        TaffyPoint {
+            x: val.x.into(),
+            y: val.y.into(),
+        }
+    }
+}
+
+impl<T, U> ToTaffy<TaffySize<U>> for Size<T>
+where
+    T: ToTaffy<U> + Clone + Debug + Default + PartialEq,
+{
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> TaffySize<U> {
+        TaffySize {
+            width: self.width.to_taffy(rem_size, scale_factor),
+            height: self.height.to_taffy(rem_size, scale_factor),
+        }
+    }
+}
+
+impl<T, U> ToTaffy<TaffyRect<U>> for Edges<T>
+where
+    T: ToTaffy<U> + Clone + Debug + Default + PartialEq,
+{
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> TaffyRect<U> {
+        TaffyRect {
+            top: self.top.to_taffy(rem_size, scale_factor),
+            right: self.right.to_taffy(rem_size, scale_factor),
+            bottom: self.bottom.to_taffy(rem_size, scale_factor),
+            left: self.left.to_taffy(rem_size, scale_factor),
+        }
+    }
+}
+
+impl<T, U> From<TaffySize<T>> for Size<U>
+where
+    T: Into<U>,
+    U: Clone + Debug + Default + PartialEq,
+{
+    fn from(taffy_size: TaffySize<T>) -> Self {
+        Size {
+            width: taffy_size.width.into(),
+            height: taffy_size.height.into(),
+        }
+    }
+}
+
+impl<T, U> From<Size<T>> for TaffySize<U>
+where
+    T: Into<U> + Clone + Debug + Default + PartialEq,
+{
+    fn from(size: Size<T>) -> Self {
+        TaffySize {
+            width: size.width.into(),
+            height: size.height.into(),
+        }
+    }
+}
+
+/// The space available for an element to be laid out in
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
+pub enum AvailableSpace {
+    /// The amount of space available is the specified number of pixels
+    Definite(Pixels),
+    /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
+    #[default]
+    MinContent,
+    /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
+    MaxContent,
+}
+
+impl AvailableSpace {
+    /// Returns a `Size` with both width and height set to `AvailableSpace::MinContent`.
+    ///
+    /// This function is useful when you want to create a `Size` with the minimum content constraints
+    /// for both dimensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gpui::AvailableSpace;
+    /// let min_content_size = AvailableSpace::min_size();
+    /// assert_eq!(min_content_size.width, AvailableSpace::MinContent);
+    /// assert_eq!(min_content_size.height, AvailableSpace::MinContent);
+    /// ```
+    pub const fn min_size() -> Size<Self> {
+        Size {
+            width: Self::MinContent,
+            height: Self::MinContent,
+        }
+    }
+}
+
+impl From<AvailableSpace> for TaffyAvailableSpace {
+    fn from(space: AvailableSpace) -> TaffyAvailableSpace {
+        match space {
+            AvailableSpace::Definite(Pixels(value)) => TaffyAvailableSpace::Definite(value),
+            AvailableSpace::MinContent => TaffyAvailableSpace::MinContent,
+            AvailableSpace::MaxContent => TaffyAvailableSpace::MaxContent,
+        }
+    }
+}
+
+impl From<TaffyAvailableSpace> for AvailableSpace {
+    fn from(space: TaffyAvailableSpace) -> AvailableSpace {
+        match space {
+            TaffyAvailableSpace::Definite(value) => AvailableSpace::Definite(Pixels(value)),
+            TaffyAvailableSpace::MinContent => AvailableSpace::MinContent,
+            TaffyAvailableSpace::MaxContent => AvailableSpace::MaxContent,
+        }
+    }
+}
+
+impl From<Pixels> for AvailableSpace {
+    fn from(pixels: Pixels) -> Self {
+        AvailableSpace::Definite(pixels)
+    }
+}
+
+impl From<Size<Pixels>> for Size<AvailableSpace> {
+    fn from(size: Size<Pixels>) -> Self {
+        Size {
+            width: AvailableSpace::Definite(size.width),
+            height: AvailableSpace::Definite(size.height),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn border_widths_to_taffy_use_stroke_snapping() {
+        let border_widths = Edges {
+            top: Pixels(0.0).into(),
+            right: Pixels(0.4).into(),
+            bottom: Pixels(0.5).into(),
+            left: Pixels(1.6).into(),
+        };
+        let taffy_border = border_widths_to_taffy(&border_widths, Pixels(16.0), 1.0);
+
+        assert_eq!(
+            taffy_border.top,
+            taffy::style::LengthPercentage::length(0.0)
+        );
+        assert_eq!(
+            taffy_border.right,
+            taffy::style::LengthPercentage::length(1.0)
+        );
+        assert_eq!(
+            taffy_border.bottom,
+            taffy::style::LengthPercentage::length(1.0)
+        );
+        assert_eq!(
+            taffy_border.left,
+            taffy::style::LengthPercentage::length(2.0)
+        );
+    }
+}

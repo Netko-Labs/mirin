@@ -65,8 +65,8 @@ import {
 } from "../src/components/sidebar.tsx";
 import { FileIcon } from "../src/icons/index.ts";
 import { snapPositions } from "../src/primitives/embla.tsx";
-import { ThemeProvider } from "../src/provider.tsx";
-import { ThemeContext, useTheme } from "../src/theme.ts";
+import { ThemeProvider, ThemeScope } from "../src/provider.tsx";
+import { useTheme } from "../src/theme.ts";
 import { mount, type TreeNode } from "./harness.ts";
 
 function findAll(node: TreeNode | string, predicate: (node: TreeNode) => boolean): TreeNode[] {
@@ -328,11 +328,7 @@ describe("Chat components", () => {
 
 function Wide({ children }: { children: ReactNode }) {
   const theme = useTheme();
-  return (
-    <ThemeContext.Provider value={{ ...theme, viewportWidth: 1280 }}>
-      {children}
-    </ThemeContext.Provider>
-  );
+  return <ThemeScope value={{ ...theme, viewportWidth: 1280 }}>{children}</ThemeScope>;
 }
 
 function SidebarDemo() {

@@ -1,6 +1,6 @@
 //! CSS grid for views: track lists, item placement, and inline-axis
 //! alignment, laid out by taffy through mirin's GPUI fork
-//! (`vendor/gpui/MIRIN.md`).
+//! (`forks/gpui/MIRIN.md`).
 //!
 //! Tracks arrive as JSON: a number is pixels; strings are `"1fr"`, `"25%"`,
 //! `"auto"`, `"min-content"`, `"max-content"`; `{"min": …, "max": …}` is
@@ -92,6 +92,7 @@ fn to_gpui(align: Align) -> gpui::AlignItems {
         Align::Center => gpui::AlignItems::Center,
         Align::End => gpui::AlignItems::End,
         Align::Stretch => gpui::AlignItems::Stretch,
+        Align::Baseline => gpui::AlignItems::Baseline,
     }
 }
 

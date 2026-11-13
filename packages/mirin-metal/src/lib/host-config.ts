@@ -1,8 +1,8 @@
 /**
  * react-reconciler host config (mutation mode): normal React — components,
- * hooks, state — drives this; commits mutate the host-instance tree and
- * `resetAfterCommit` hands the container back to the renderer for
- * serialization to the native side.
+ * hooks, state — drives this; commits mutate the host-instance tree, each
+ * change is logged (`lib/commit-log.ts`), and `resetAfterCommit` hands the
+ * container back to the renderer, which sends the native side what changed.
  */
 
 import { createContext } from "react";
@@ -19,8 +19,16 @@ function warnUnknownHost(type: string): void {
 }
 
 import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
-import type { Container, HostInstance, HostNode, RawTextInstance } from "./instances.ts";
-import { insertNodeBefore, removeNode } from "./instances.ts";
+import { logDirty, logMutation, noteChildren, sameProps } from "./commit-log.ts";
+import type {
+  Container,
+  HostInstance,
+  HostNode,
+  HostParent,
+  RawTextInstance,
+} from "./instances.ts";
+import { forgetHints, insertNodeBefore, ownText, removeNode } from "./instances.ts";
+import { committed } from "./rest.ts";
 
 type HostType =
   | typeof VIEW_TYPE
@@ -51,6 +59,20 @@ export type HostConfig = ReactReconciler.HostConfig<
 >;
 
 let nextInstanceId = 1;
+/** Strings get their own ids ("r1", …), so the instances' numbers stay what they always were. */
+let nextTextId = 1;
+
+function place(parent: HostParent, child: HostNode, before: HostNode | null): void {
+  child.parent = parent;
+  logMutation({ kind: "place", parent, child, before });
+}
+
+function remove(parent: HostParent, child: HostNode): void {
+  noteChildren(parent);
+  removeNode(parent.children, child);
+  child.parent = null;
+  logMutation({ kind: "remove", parent, child });
+}
 let currentUpdatePriority: number = NoEventPriority;
 
 export const hostConfig: HostConfig = {
@@ -62,33 +84,46 @@ export const hostConfig: HostConfig = {
 
   createInstance(type, props) {
     const id = nextInstanceId++;
+    const base = {
+      id,
+      key: String(id),
+      children: [],
+      parent: null,
+      slot: -1,
+      propCount: -1,
+      styleCount: -1,
+    };
     // Type-only narrowing: the reconciler types props as the union across host
     // types, but the element type discriminates which props these are.
-    if (type === VIEW_TYPE) return { kind: "view", id, props: props as ViewProps, children: [] };
-    if (type === INPUT_TYPE) {
-      return { kind: "input", id, props: props as TextInputProps, children: [] };
+    if (type === VIEW_TYPE) return { kind: "view", props: props as ViewProps, ...base };
+    if (type === INPUT_TYPE) return { kind: "input", props: props as TextInputProps, ...base };
+    if (type === SVG_TYPE) return { kind: "svg", props: props as SvgProps, ...base };
+    if (type === IMAGE_TYPE) return { kind: "image", props: props as ImageProps, ...base };
+    if (type === TEXT_TYPE_NAME) {
+      // Its own text takes a string's id, as the node React no longer makes for it did.
+      if (ownText(props as TextProps) !== null) nextTextId += 1;
+      return { kind: "text", props: props as TextProps, ...base };
     }
-    if (type === SVG_TYPE) return { kind: "svg", id, props: props as SvgProps, children: [] };
-    if (type === IMAGE_TYPE) return { kind: "image", id, props: props as ImageProps, children: [] };
-    if (type === TEXT_TYPE_NAME)
-      return { kind: "text", id, props: props as TextProps, children: [] };
     // An unknown host type (e.g. a library rendering "form" with React's own
     // JSX runtime): keep its children visible as a plain view.
     warnUnknownHost(type);
-    return { kind: "view", id, props: {} as ViewProps, children: [] };
+    return { kind: "view", props: {} as ViewProps, ...base };
   },
   createTextInstance(text) {
-    return { kind: "raw", text };
+    return { kind: "raw", text, key: `r${nextTextId++}`, parent: null, slot: -1 };
   },
   appendInitialChild(parent, child) {
     parent.children.push(child);
+    child.parent = parent;
   },
   finalizeInitialChildren() {
     return false;
   },
-  shouldSetTextContent() {
-    return false;
+  shouldSetTextContent(type, props) {
+    return type === TEXT_TYPE_NAME && typeof (props as TextProps).children !== "object";
   },
+  // A `<Text>` whose one string became several: they come as nodes next.
+  resetTextContent() {},
   getRootHostContext() {
     return HOST_CONTEXT;
   },
@@ -102,7 +137,9 @@ export const hostConfig: HostConfig = {
     return null;
   },
   resetAfterCommit(container) {
+    forgetHints();
     container.onCommit();
+    committed();
   },
   preparePortalMount() {},
   scheduleTimeout(fn, delay) {
@@ -122,34 +159,55 @@ export const hostConfig: HostConfig = {
   },
   detachDeletedInstance() {},
 
+  // A portal's container is a mounted instance; the root's is a Container.
+  // A child whose parent this already is, is being moved: it leaves its old
+  // place first. A new one is in no list, so none is searched for it.
   appendChild(parent, child) {
-    removeNode(parent.children, child);
+    noteChildren(parent);
+    if (child.parent === parent) removeNode(parent.children, child);
     parent.children.push(child);
+    place(parent, child, null);
   },
   appendChildToContainer(container, child) {
-    removeNode(container.children, child);
+    noteChildren(container);
+    if (child.parent === container) removeNode(container.children, child);
     container.children.push(child);
+    place(container, child, null);
   },
   insertBefore(parent, child, before) {
-    insertNodeBefore(parent.children, child, before);
+    noteChildren(parent);
+    insertNodeBefore(parent.children, child, before, child.parent === parent);
+    place(parent, child, before);
   },
   insertInContainerBefore(container, child, before) {
-    insertNodeBefore(container.children, child, before);
+    noteChildren(container);
+    insertNodeBefore(container.children, child, before, child.parent === container);
+    place(container, child, before);
   },
   removeChild(parent, child) {
-    removeNode(parent.children, child);
+    remove(parent, child);
   },
   removeChildFromContainer(container, child) {
-    removeNode(container.children, child);
+    remove(container, child);
   },
   commitTextUpdate(textInstance, _oldText, newText) {
     textInstance.text = newText;
+    logDirty(textInstance);
   },
-  commitUpdate(instance, _type, _prevProps, nextProps) {
+  commitUpdate(instance, _type, prevProps, nextProps) {
     instance.props = nextProps;
+    // A new props object every render; only a change that may be sent is logged.
+    if (!sameProps(prevProps, nextProps, instance)) logDirty(instance);
+    // A `<Text>`'s own string is its children, which props compare leaves out.
+    else if (
+      instance.kind === "text" &&
+      ownText(prevProps as TextProps) !== ownText(nextProps as TextProps)
+    ) {
+      logDirty(instance);
+    }
   },
   clearContainer(container) {
-    container.children.length = 0;
+    for (const child of [...container.children]) remove(container, child);
   },
 
   NotPendingTransition: null,

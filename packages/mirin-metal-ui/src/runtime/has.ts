@@ -7,16 +7,7 @@
  * once with what it learned. Elements outside any owner do no extra work.
  */
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { createContext, useContext, useId, useLayoutEffect, useRef, useState } from "react";
 import type { Attrs, HasEntry } from "../tw/variants.ts";
 
 interface Registry {
@@ -40,38 +31,67 @@ function sameEntry(a: HasEntry | undefined, b: HasEntry): boolean {
   );
 }
 
+const NO_ENTRIES: ReadonlyMap<string, HasEntry> = new Map();
+const NO_LIST: HasEntry[] = [];
+
+/** What an owner keeps between renders: its scope, and what it last derived. */
+interface OwnerCell {
+  own: HasScope | null;
+  parent: HasScope | null;
+  indirect: HasScope | null;
+  entries: ReadonlyMap<string, HasEntry>;
+  list: HasEntry[];
+}
+
 /**
  * Own a registry when `active`. Returns the entries descendants registered
- * and the scope to provide to children (null when nothing changes).
+ * and the scope to provide to children (null when nothing changes). Every
+ * element calls this on every render, and nearly all own nothing and sit
+ * under no owner: those make nothing here.
  */
 export function useHasOwner(active: boolean): {
   entries: HasEntry[];
   scope: HasScope | null;
 } {
   const parent = useContext(HasContext);
-  const [entries, setEntries] = useState<ReadonlyMap<string, HasEntry>>(() => new Map());
-  const set = useCallback((id: string, entry: HasEntry | null) => {
-    setEntries((current) => {
-      if (entry === null) {
-        if (!current.has(id)) return current;
-        const next = new Map(current);
-        next.delete(id);
-        return next;
-      }
-      if (sameEntry(current.get(id), entry)) return current;
-      return new Map(current).set(id, entry);
-    });
-  }, []);
-  const own = useMemo<HasScope>(() => ({ registry: { set }, direct: true }), [set]);
+  const [entries, setEntries] = useState(NO_ENTRIES);
+  const kept = useRef<OwnerCell | null>(null);
+  if (!active && !parent?.direct) return INERT;
+  kept.current ??= { own: null, parent: null, indirect: null, entries: NO_ENTRIES, list: NO_LIST };
+  const cell = kept.current;
+  if (cell.entries !== entries) {
+    cell.entries = entries;
+    cell.list = [...entries.values()];
+  }
+  if (active) {
+    cell.own ??= {
+      registry: {
+        set(id, entry) {
+          setEntries((current) => {
+            if (entry === null) {
+              if (!current.has(id)) return current;
+              const next = new Map(current);
+              next.delete(id);
+              return next;
+            }
+            if (sameEntry(current.get(id), entry)) return current;
+            return new Map(current).set(id, entry);
+          });
+        },
+      },
+      direct: true,
+    };
+    return { entries: cell.list, scope: cell.own };
+  }
   // Children of a direct child are no longer direct children of the owner.
-  const indirect = useMemo<HasScope | null>(
-    () => (parent?.direct ? { registry: parent.registry, direct: false } : null),
-    [parent],
-  );
-  const list = useMemo(() => [...entries.values()], [entries]);
-  if (active) return { entries: list, scope: own };
-  return { entries: list, scope: indirect };
+  if (cell.parent !== parent) {
+    cell.parent = parent;
+    cell.indirect = parent ? { registry: parent.registry, direct: false } : null;
+  }
+  return { entries: cell.list, scope: cell.indirect };
 }
+
+const INERT: { entries: HasEntry[]; scope: HasScope | null } = { entries: NO_LIST, scope: null };
 
 /** Register this element (tag + attributes) with the nearest `has-` owner. */
 export function useHasRegistration(tag: string, attrs: Attrs, key: string): void {

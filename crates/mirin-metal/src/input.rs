@@ -154,6 +154,9 @@ pub(crate) fn render_input(
     };
     let mut text = StyledText::new(SharedString::from(display.text.clone()))
         .with_highlights(styled.highlights);
+    if let Some(tab_size) = props.tab_size {
+        text = text.with_tab_size(tab_size);
+    }
     if props.multiline && !styled.sizes.is_empty() {
         text = text.with_paragraph_sizes(styled.sizes);
     }
@@ -364,7 +367,7 @@ pub(crate) fn render_input(
         cx.listener(move |view, event: &MouseDownEvent, window, cx| {
             view.press_claimed = true;
             if let Some(state) = view.inputs.get(&focus_id) {
-                window.focus(&state.focus);
+                crate::gpui_api::focus(window, &state.focus, cx);
             }
             view.press_field(&focus_id, event, &press);
             cx.notify();
@@ -373,6 +376,7 @@ pub(crate) fn render_input(
     let key_id = props.id.clone();
     let multiline = props.multiline;
     let submit_on_enter = props.submit_on_enter;
+    let insert_tab = props.insert_tab;
     let secure = props.secure;
     let on_change = props.on_change;
     let on_submit = props.on_submit;
@@ -393,6 +397,7 @@ pub(crate) fn render_input(
             let mut env = KeyEnv {
                 multiline,
                 submit_on_enter,
+                insert_tab,
                 secure,
                 clipboard: &mut clipboard,
                 lines,
@@ -406,8 +411,8 @@ pub(crate) fn render_input(
         }
         match outcome {
             Edit::None => {}
-            Edit::FocusNext => view.focus_neighbor(&key_id, 1, window),
-            Edit::FocusPrevious => view.focus_neighbor(&key_id, -1, window),
+            Edit::FocusNext => view.focus_neighbor(&key_id, 1, window, cx),
+            Edit::FocusPrevious => view.focus_neighbor(&key_id, -1, window, cx),
             Edit::Changed => {
                 if on_change {
                     view.report_change(&key_id);
@@ -428,7 +433,7 @@ pub(crate) fn render_input(
                 }
                 // Before the driver hears of it: the next key already goes there.
                 if next_on_submit {
-                    view.focus_neighbor(&key_id, 1, window);
+                    view.focus_neighbor(&key_id, 1, window, cx);
                 }
             }
             Edit::Key(key) => {

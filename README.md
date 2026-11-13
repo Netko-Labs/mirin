@@ -112,7 +112,7 @@ not yet wired into `mirin dev` / `build` / `release`.
 | --- | --- | --- |
 | `@mirinjs/metal` | `packages/mirin-metal` | The React renderer: `<View>`, `<Text>`, `<TextInput>`, `<ScrollView>`, and a transport to the host. |
 | `@mirinjs/metal-ui` | `packages/mirin-metal-ui` | shadcn/ui ported 1:1 onto Metal: same components, props, variants and theme tokens, `className` strings translated from Tailwind. |
-| `mirin-metal` crate | `crates/mirin-metal` | The renderer and its `mirin-metal-host` binary: GPUI windows, Wayland layer-shell and lock surfaces, text input, accessibility over AT-SPI. Vendors small, documented forks of GPUI, taffy and AccessKit's Unix adapter (`vendor/*/MIRIN.md`). |
+| `mirin-metal` crate | `crates/mirin-metal` | The renderer and its `mirin-metal-host` binary: GPUI windows, Wayland layer-shell and lock surfaces, text input, accessibility over AT-SPI. Vendors small, documented forks of GPUI, taffy and AccessKit's Unix adapter (`forks/*/MIRIN.md`). |
 
 Platforms: **Linux** (Wayland first, X11 fallback; a Vulkan driver at runtime)
 is where Metal is built, tested and used every day. macOS (Apple Metal) builds

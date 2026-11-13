@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "../icons/index.ts";
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { Select as SelectPrimitive } from "../primitives/select.tsx";
 

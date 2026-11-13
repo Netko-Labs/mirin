@@ -71,8 +71,13 @@ export interface ViewStyle {
   flexGrow?: number;
   /** `flexShrink: 0` keeps the view from shrinking below its content. */
   flexShrink?: 0 | 1;
-  alignItems?: "flex-start" | "center" | "flex-end" | "stretch";
-  alignSelf?: "flex-start" | "center" | "flex-end" | "stretch";
+  /**
+   * `"baseline"` lines a row's items up by their first line of text, whatever its size: small
+   * text beside larger text shares its baseline (centered, the two boxes line up and the small
+   * text sits high). An item with no text is aligned by its bottom edge.
+   */
+  alignItems?: "flex-start" | "center" | "flex-end" | "stretch" | "baseline";
+  alignSelf?: "flex-start" | "center" | "flex-end" | "stretch" | "baseline";
   justifyContent?: "flex-start" | "center" | "flex-end" | "space-between";
   /**
    * `"grid"` lays children out as a CSS grid. `alignItems`/`alignSelf` then
@@ -129,6 +134,8 @@ export interface TextStyle {
   fontStyle?: "normal" | "italic";
   textDecorationLine?: "none" | "underline" | "line-through";
   lineHeight?: number;
+  /** How far apart the text's tab stops are, in widths of its font's "0": 4 unless given (see `TextInputProps.tabSize`). */
+  tabSize?: number;
 }
 
 /** Appearance for a `<TextInput>`. */
@@ -445,6 +452,19 @@ export interface TextInputProps extends AccessibilityProps {
    */
   submitBehavior?: "submit" | "newline";
   /**
+   * What Tab does in a multiline field: "focus" (the default) moves the keyboard to the next
+   * control; "insert" types a tab, for a document's text (a text editor). Shift+Tab still moves
+   * the keyboard back, and Ctrl/Cmd+Tab on. A single-line field always moves it.
+   */
+  tabBehavior?: "focus" | "insert";
+  /**
+   * How far apart the field's tab stops are, counted in the width of its font's "0" (CSS's
+   * `tab-size` in `ch`): 4 unless given, from 1 to 64. A tab moves what follows it to the next
+   * stop, so columns line up; the caret, the selection and a click follow. In a fixed-pitch font
+   * that is as many spaces.
+   */
+  tabSize?: number;
+  /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
    * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
    */
@@ -596,6 +616,14 @@ export type NativeEvent =
    * `onKeyDown` is not typing. A host older than this never sends it.
    */
   | { type: "typing"; nodeId: "root"; typing: boolean }
+  /**
+   * The host applies tree patches of protocol `patches` (sent once, as it
+   * starts): `render` then sends only what each commit changed. A host older
+   * than patches never sends it, and gets the whole tree every commit.
+   */
+  | { type: "protocol"; nodeId: "root"; patches: number }
+  /** A patch didn't apply (`reason`): the host wants the whole tree, and drops patches until it comes. */
+  | { type: "resync"; nodeId: "root"; reason: string }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
   | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }
@@ -624,8 +652,14 @@ export type SimCommand =
   | { kind: "drag"; id: string; fromX?: number; fromY?: number; toX?: number; toY?: number }
   | { kind: "contextmenu"; id: string }
   | { kind: "hover"; id: string; hovered: boolean }
-  /** Scroll a scrollable node down by `dy` px (negative scrolls up). */
-  | { kind: "scroll"; id: string; dy: number }
+  /** Move the pointer to node `id`'s centre (or `x`, `y`) as a real pointer would: hover styles respond. */
+  | { kind: "move"; id: string }
+  | { kind: "move"; x: number; y: number }
+  /**
+   * Scroll a scrollable node down by `dy` px (negative scrolls up) and right
+   * by `dx` (negative scrolls left; a virtualized list scrolls down only).
+   */
+  | { kind: "scroll"; id: string; dy: number; dx?: number }
   /** Give the keyboard to a field or `focusable` view, pressing nothing (a screen reader's focus). */
   | { kind: "focus"; id: string }
   | { kind: "window"; action: "zoom" | "minimize" };

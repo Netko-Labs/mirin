@@ -14,8 +14,8 @@
 import type { Bounds } from "@mirinjs/metal";
 import { Children, isValidElement, type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn.ts";
-import { useTheme } from "../theme.ts";
-import { translate } from "../tw/index.ts";
+import { useStyleTheme } from "../theme.ts";
+import { styleFor } from "../tw/index.ts";
 
 export type EmblaEventType =
   | "init"
@@ -246,12 +246,12 @@ export function useEmblaTrack(
   api: EmblaCarouselType | undefined,
   children: ReactNode,
 ): Record<string, unknown> {
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const [size, setSize] = useState({ width: 0, height: 0 });
   const engine = api ? ENGINES.get(api) : undefined;
   const slides = Children.toArray(children).filter(isValidElement);
   const first = slides[0]?.props as { className?: unknown } | undefined;
-  const basis = translate(
+  const basis = styleFor(
     cn("basis-full", typeof first?.className === "string" ? first.className : undefined),
     theme.colors,
     theme.radius,

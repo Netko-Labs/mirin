@@ -80,13 +80,14 @@ normal React ──react-reconciler──▶ element tree JSON ──▶ mirin-m
 
 | Piece | Lives in | Role |
 | --- | --- | --- |
-| `@mirinjs/metal` | `packages/mirin-metal` | Custom React renderer. Host components `<View>` and `<Text>`; each commit serializes the host tree to JSON and sends it over a transport; events come back keyed by node id and invoke the matching handler. |
-| `mirin-metal` crate | `crates/mirin-metal` | Parses the tree strictly (`tree.rs`, unknown fields rejected), maps it to GPUI elements (`render.rs`), owns the window and GPUI's event loop (`window.rs`), and reports interactions (`events.rs`). |
-| `mirin-metal-host` | `crates/mirin-metal/src/bin/host.rs` | Alpha transport: a subprocess speaking newline-delimited JSON. Trees in on stdin, events out on stdout. |
+| `@mirinjs/metal` | `packages/mirin-metal` | Custom React renderer. Host components `<View>` and `<Text>`; the first commit sends the host tree as JSON over a transport, and each later one only what it changed (a patch, section "Patches") to a host that takes them; events come back keyed by node id and invoke the matching handler. |
+| `mirin-metal` crate | `crates/mirin-metal` | Parses trees and patches strictly (`tree.rs`, `patch/`; unknown fields, ops and ids rejected), keeps the tree and patches it in place (`patch::Document`), maps it to GPUI elements (`render.rs`), owns the window and GPUI's event loop (`window.rs`), and reports interactions (`events.rs`). |
+| `mirin-metal-host` | `crates/mirin-metal/src/bin/host.rs` | Alpha transport: a subprocess speaking newline-delimited JSON. Trees and patches in on stdin, events out on stdout. |
 
 The model deliberately mirrors React Native: the driver (React in Bun) owns
 state and describes UI; the renderer is a pure function of the latest tree.
-"Last write wins" per update tick; there is no diffing protocol yet.
+A whole tree replaces the last one ("last write wins" per update tick);
+patches change it in place, in order (section "Patches").
 
 ## 2. Element tree (v2)
 
@@ -280,10 +281,13 @@ state and describes UI; the renderer is a pure function of the latest tree.
   GPUI's mouse dispatch is crate-private, so hit-testing is approximated),
   `{"kind":"key","keystroke":"ctrl-enter"}` and `{"kind":"type","text"}` go
   through GPUI's real keystroke dispatch, `{"kind":"layout"}` asks for bounds
-  (only nodes painted in the latest frame), `{"kind":"scroll","id","dy"}`
-  scrolls a scroll view or virtualized list, and `{"kind":"focus","id"}` gives
+  (only nodes painted in the latest frame), `{"kind":"scroll","id","dy","dx"}`
+  scrolls a scroll view down and across (`dx`, optional) or a virtualized
+  list down, `{"kind":"focus","id"}` gives
   a field or `focusable` view the keyboard without pressing it (a screen
-  reader's focus).
+  reader's focus), and `{"kind":"move","id"}` / `{"kind":"move","x","y"}`
+  moves the pointer there through GPUI's real mouse dispatch, so
+  `hoverBackground` and `onHover` respond (`hover` only reports `onHover`).
 - Grid: `grid` lays children out as a CSS grid (taffy) with `gridColumns` /
   `gridRows` track lists (a number is px; `"1fr"`, `"25%"`, `"auto"`,
   `"min-content"`, `"max-content"`; `{"min","max"}` is `minmax`), item
@@ -322,6 +326,21 @@ state and describes UI; the renderer is a pure function of the latest tree.
   - **The wheel** scrolls the innermost view under the pointer that can still
     move that way; at its end the turn goes on to the view around it. Every
     view used to take every turn, so a list scrolled with its page.
+  - **Painted on pixels.** A view's offset keeps its fraction: a touchpad's
+    steps of a third of a pixel add up, and the scroll bar, the range and
+    the ends are what they were. Its content is painted at that offset
+    rounded to device pixels, as browsers do (`Window::set_scroll_snap` in
+    the GPUI fork; a list rounds its whole offset, not the part inside its
+    first row), and what is painted is what is hit: a press lands on the
+    node drawn under it. The ends are where they were: a view's range is
+    whole device pixels (taffy lays out in them), and an offset at the very
+    end is painted as it is. Content between pixels blurred, and no row
+    landed a whole number of pixels from where it was, so every row in view
+    was drawn again each frame (section 5b). `MIRIN_METAL_SCROLL_SNAP=0`
+    paints at the offset itself, as before, for comparing the two. A
+    whole-pixel scroll paints what it did. Nothing reports a scroll
+    position to the app yet; when something does, it is the offset, not
+    where it was painted.
   - **The scroll bar** (`scrollbar.rs`) is an overlay, as on macOS: a thumb 6
     wide along the right edge (and the bottom, for `scrollX`), drawn over the
     content, with no room kept for it. It shows while the view scrolls and
@@ -335,9 +354,15 @@ state and describes UI; the renderer is a pure function of the latest tree.
   is the worked example.
 
 The TypeScript side (`packages/mirin-metal/src/lib/serialize.ts`) maps React
-Native-style props: `<View style>` (`flex`, `alignItems`, `justifyContent`,
+Native-style props: `<View style>` (`flex`, `alignItems` (with `"baseline"`: a row's items line
+up by their first line of text, so small text beside larger text shares its baseline; GPUI's
+text names its first baseline to mirin's taffy fork, `set_first_baseline`), `justifyContent`,
 `overflow: "scroll" | "hidden"`, `hoverBackgroundColor`, …), `<Text
-numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>`,
+numberOfLines={1} style={{ fontWeight, fontFamily: "monospace" }}>` (a one-line text is as wide
+as its box and cut with an ellipsis, so two of them side by side in a row each ask for the whole
+row and get half of it, whatever their words: put each in a `<View style={{ flexShrink: 0 }}>` to
+keep its own width, or give one `flex: 1`; nothing is kept from a text's earlier words, each
+frame measures the words it has: `render::one_line_tests`),
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
 (`onKeyPress` reports Escape, and ArrowUp and ArrowDown in a single-line field,
 for list navigation), React Native's `selection` (`{ start, end }`, controlled),
@@ -356,13 +381,123 @@ nothing), `lineNumbers` (`{ width, color }`) and `focusNextOnSubmit` (Enter
 also moves the keyboard on, as Tab does, in the host, so keys typed right
 after land in the next field: a title, then its body), `submitBehavior`
 (`"submit"` makes Enter submit a multiline field instead of breaking its line:
-a title that wraps but is one paragraph; Ctrl/Cmd+Enter always submits); a run's `color` may be
+a title that wraps but is one paragraph; Ctrl/Cmd+Enter always submits) and `tabBehavior`
+(`"insert"` makes Tab type a tab in a multiline field instead of moving the keyboard on: a text
+editor's document; Shift+Tab still moves it back and Ctrl/Cmd+Tab on) and `tabSize` (how far
+apart the tab stops are, in `0`s of the field's font: 4 unless given; see "Tab stops"); a run's `color` may be
 translucent (GPUI blends a highlight's color over the text's, so the host
 sends it opaque with its alpha as a fade),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
 `<TextInput>` below it takes unless it sets its own (a theme gives fields its
 selection color once), and
 `<ScrollView>` (a scrolling `<View>`).
+
+### Patches
+
+After its first whole tree, a driver sends only what each commit changed,
+and the host changes the tree it keeps in place (`src/patch/`). What a patch
+costs to send, parse and apply follows the change, not the tree: on the 15k
+node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
+
+- **Negotiation.** A host that takes patches says so on stdout as it starts,
+  before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
+  (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`). A driver
+  patches only a host that announced a version it speaks; until then, and
+  for a host that never announces (older ones), it sends the whole tree on
+  every commit, as before. Switching, it sends the whole tree once more, now
+  with ids on every node. A transport that knows its host says this first
+  (`spawnNativeHost`'s, `lib/handshake.ts`) holds the driver's commits until
+  the host has said it, or 250 ms have passed with nothing (a host from
+  before patches), and sends the tree once, with ids; other transports send
+  at once as above. An older driver never patches, so a new host takes
+  its whole trees as before. An old host given a patch line would refuse it
+  (a line it can't parse), never draw it wrong; the announcement keeps a new
+  driver from sending one.
+- **Ids.** Every node has an id: views and inputs their `id`, and a
+  patching driver also gives `text`, `svg` and `image` nodes an `id` prop
+  (only patches address them by it; they take no events). `@mirinjs/metal`
+  uses each host instance's number, and `r1`, `r2`, … for a string placed
+  directly in a view (a text node of its own). Ids are unique in the tree,
+  and the root has one, or no patch applies.
+- **Lines.** `{"patch":[op, …]}`, ops applied in order as one update:
+  - `{"op":"insert","parent":P,"before":B?,"node":N}`: the new subtree `N`
+    (a node as in a whole tree, children included) under the view `P`, in
+    front of its child `B`, or last without `before`. Every id in `N` is new.
+  - `{"op":"move","id":C,"parent":P,"before":B?}`: the node `C` already in
+    the tree, with its subtree, under `P` before `B` (a keyed reorder; React
+    only reorders within a parent, but the host allows another one, never
+    inside `C` itself).
+  - `{"op":"remove","id":C}`: `C` and its subtree go (never the root).
+  - `{"op":"set","id":C,"node":N}`: `C`'s own props, and a text node's
+    strings, become `N`'s; `N` keeps `C`'s type and id. A view keeps its
+    children (`N` has none); every other node is replaced whole.
+  Parsing is strict (`deny_unknown_fields`, unknown ops refused), and so is
+  applying: an unknown id, a `before` that is not a child of the parent, a
+  parent that is not a view, an id already in the tree, a set that changes
+  a type or an id. A root that is replaced (another host type, another root
+  component) goes as a whole tree.
+- **Resync.** A patch applies whole or not at all: when an op fails, the
+  ops before it are undone (`patch/undo.rs` keeps how to take each back),
+  so a frame never shows half a commit. The host logs `patch refused` on
+  stderr, sends `{"type":"resync","nodeId":"root","value":reason}`, and
+  drops every patch until a whole tree comes (they were made against a tree
+  it doesn't have); the driver sends one at once (`lib/tree-sync.ts`).
+  Patches before the window opens, or while a resident host's window is
+  hidden, apply to the tree it keeps for the next open.
+- **The runtime spec's v2.** `docs/metal/spec.html` §7 sketches the FFI
+  protocol's batches (`create`/`append`/`insert`/`update` with set and unset
+  lists, `ctx` for UI contexts, a length-prefixed commit). This stdio form
+  is its first step and differs: ops are objects, a set sends a node's
+  whole props (a node's head is small; a key-level diff can come with the
+  binary encoding), and there is no `ctx` yet. The ids, ordering,
+  atomicity, strictness and the whole-tree fallback are the same.
+- **What changed, for the renderer.** Every update (a whole tree, a patch)
+  has a generation, one more than the last (`Document::generation`).
+  `Document::own_generation(id)` is the update a node's own props, text, or
+  list of children last changed in, and `subtree_generation(id)` the update
+  anything at or under it did; a whole tree changes every node, and an id
+  the document doesn't know answers the newest generation. The renderer
+  keeps what it built for a subtree whose generation it has already drawn.
+  The host's own state follows the same way: after a patch it walks the
+  tree only for what the patch could concern (`patch::Touched`: fields,
+  key views, the Tab order, scroll views, height transitions, virtualized
+  lists, whose rows are refreshed when their list's generation moves), and
+  a field whose props changed is brought in line by itself.
+- **Trace.** With `MIRIN_METAL_TRACE=1` the host logs `line parsed (N KB)
+  in Xms` for every line, then `tree applied in Xms` for a whole tree or
+  `patch applied (N ops) in Xms` for a patch (`bench/stress.tsx` reads
+  both). Every frame logs `render WxH took Xms, frame Xms, retained
+  subtrees N built, N redrawn (N apart), N reused, N moved, N skipped`
+  (section 5b says what each is), and with `MIRIN_METAL_TRACE_SCENE=1` also
+  `scene <digest>`: a digest of the frame's primitives and hitboxes, for
+  comparing what two hosts drew (`bench/layout-check.tsx --scene`). Any
+  other value is a file each frame's primitives and hitboxes are appended
+  to as well, under a `frame <digest>` line, for finding what differs.
+  `MIRIN_METAL_TRACE_SCENE_GLYPHS=1` adds which subpixel variant each
+  glyph is drawn as (the atlas tile is left out, and with it the variant):
+  a trace with it differs from one without, so compare it only with
+  another host given it too.
+- **Driver side.** The host config logs each mutation React makes
+  (`appendChild`, `insertBefore`, `removeChild`, the portal container's
+  own) and each node whose props or text changed (`lib/commit-log.ts`; a
+  shallow look first, so a re-render that changes only handlers or makes new
+  but equal `style` objects sends nothing), and `lib/tree-sync.ts` turns the
+  log into ops after the commit: a new subtree goes whole in its insert, a
+  node already sent is moved, and a set goes only when the node's head (its
+  JSON without children) differs from what was sent. A view whose children
+  React moved more than twice in one commit is sent its new order instead
+  of React's moves (React places every row between two it swaps): the log
+  keeps each view's children as they were before the commit first changed
+  them, the children on a longest run of that order stay (of the longest,
+  the one that ends first), the ones after the last that stays go to the
+  end in order (`move`/`insert` without `before`), and each other one goes
+  before the child that follows it now, last to first (`lib/order.ts`). A
+  swap of two rows is two moves, a row moved to the front one, a reversed
+  list what React sends. Events find their
+  handler on the node's current props by id, so a handler that changed
+  needs nothing sent. `root.lastTree()` is the whole tree as the host now
+  has it, and `root.nodeId(testID)` the last node in document order with
+  that `testID`, as before.
 
 ### Focus
 
@@ -435,11 +570,34 @@ in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
   group, a grid's two-dimensional arrows, rings on views in a virtualized
   list that clip them.
 
+### Tab stops
+
+A tab in any text moves what follows it to the next tab stop of its line, so
+columns line up. Stops are counted from the line's start, every `tabSize`
+times the width of the font's `0` (CSS's `ch`): 4 by default; an `input` may
+set its own (`tabSize`, 1 to 64), and so may a `<Text>` (`style.tabSize`), so
+a text that mirrors a field wraps as the field does. In a fixed-pitch font that is as many
+spaces; in a proportional one a `0` is about twice a space, so four are wide
+enough to line words up (four spaces there are about one em, which lines
+nothing up). A tab always moves on: one that sits on a stop goes to the next.
+
+The stops are set in GPUI's line layout (`apply_tab_stops`,
+`forks/gpui/src/text_system/line_layout.rs`), after the platform shaped the
+line, so every platform has the same ones and everything that reads a glyph's
+place follows: the caret, the selection's wash (a selected tab is as wide as
+it is drawn), a click, ↑ and ↓, the text's measured width and where it wraps.
+A line breaks after a tab, as after a space.
+
+Limits: on a line that soft-wraps, the stops of its later rows are still
+counted from where the paragraph began, not from each row's start; a line set
+right to left keeps the shaper's own tabs; a text cut with an ellipsis is
+measured for its cut with a tab as wide as one character.
+
 ### Visibility
 
 A window learns when no one can see it. On Wayland the compositor says so
 with xdg_toplevel's `suspended` state (xdg-shell 6; mirin's GPUI fork binds
-`xdg_wm_base` up to 6 and reads it, `vendor/gpui/MIRIN.md`): minimized, on
+`xdg_wm_base` up to 6 and reads it, `forks/gpui/MIRIN.md`): minimized, on
 a desktop that isn't shown, fully covered where the compositor tracks that.
 The host sends `{"type":"visibility","nodeId":"root","visible":false}` when
 it is suspended and `true` when it is seen again; only changes are sent and
@@ -467,6 +625,13 @@ strings unchanged (`scripts/port-ui.ts` rewrites only imports).
   anchored by painted bounds.
 - `<form>` behaves like the DOM: submit and reset buttons (also through
   `form="id"`), `FormData` on submit, and named controls registering values.
+- An HTML element is two fibers, its `Box` and the host view it makes (a run
+  of text is one, the host text). What flows down like CSS inheritance (text
+  style, the parent's direction) and a child's place among its siblings
+  (`first:`/`last:`) reach a child box as props set on its element; only a
+  child that is not a box (a component, a control, an icon) reads them from
+  context, under providers that are always there, so none is added or
+  dropped above a subtree (which would remount it).
 
 Layout follows CSS where shadcn depends on it: grids are native (track lists,
 placement, `justify-*`), tables are rows sharing one grid template (pinned
@@ -520,9 +685,9 @@ Decisions, following §0:
    same feature modules (`engine/dialog`, `clipboard`, `notification`, …) so
    the Worker-side `mirinjs` code is shared verbatim; only window creation and
    the element-tree commands differ.
-3. **Diffing.** Whole-tree replacement is fine for the alpha; a patch protocol
-   (`insert` / `remove` / `update`) is a Metal-only change and can land whenever
-   trees get large, without touching `mirinjs`.
+3. **Diffing.** Landed 2026-11-10 as a Metal-only change, without touching
+   `mirinjs`: after the first whole tree a patching host gets `insert` /
+   `move` / `remove` / `set` ops (section 2, "Patches").
 
 ## 4. Platform notes
 
@@ -548,7 +713,7 @@ Radeon 890M with Mesa RADV:
   every frame callback, drawn or not, so an unchanged window commits at the
   display's rate and an on-demand compositor never goes idle. The fork asks
   for a frame callback only when a frame draws and wakes idle windows when
-  they become dirty (`vendor/gpui/MIRIN.md`). Measured in dashi-comp: an
+  they become dirty (`forks/gpui/MIRIN.md`). Measured in dashi-comp: an
   idle desktop draws nothing.
 
 ### Unified title bar (Dashi)
@@ -560,14 +725,14 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
 `dashi_chrome_v1`; `set_style(standard | unified)`; the event
 `controls(x, y, width, height)`). The XML lives in dashi-comp
 (`comp/protocols/dashi-chrome-v1.xml`) and is copied into the GPUI fork
-(`vendor/gpui/protocols/`).
+(`forks/gpui/protocols/`).
 
 - **Ask for it.** `spawnNativeHost(binary, { titleBar: "unified" })`, or
   `MIRIN_METAL_TITLEBAR=unified`. The value is `standard` (default) or
   `unified`; anything else makes the host exit with status 2. In the host it
   becomes `TitlebarOptions::appears_transparent`, and the Wayland client binds
   the manager when it is advertised and sets the style before the window's
-  first commit (`vendor/gpui/MIRIN.md`). Windows still ask for server-side
+  first commit (`forks/gpui/MIRIN.md`). Windows still ask for server-side
   decorations, which Dashi needs to honor the style.
 - **What the compositor does.** No title bar and no title text; the surface
   starts at the top of the frame. Dashi still draws the rounded corners, the
@@ -622,12 +787,106 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
 
 - **The tree.** Every window publishes an accessibility tree over AT-SPI
   through AccessKit's Unix adapter (`src/access/`), so Orca reads Metal's UI.
-  It is built after each paint from the element tree and what only the
-  renderer knows: painted bounds, which field has the keyboard, and what is
-  typed in it (the buffer, not the driver's lagging value; never a password
-  field's). The adapter watches whether assistive technology is on and hands
-  the tree to the accessibility bus only then; the tree is rebuilt only when
-  the element tree, the focus, the typed text, or the window's focus changed.
+  It is made from the element tree and what only the renderer knows: painted
+  bounds, which field has the keyboard, and what is typed in it (the buffer,
+  not the driver's lagging value; never a password field's), and brought in
+  line after each paint in which the element tree, painted bounds, the
+  focus, the typed text, or the window's focus changed.
+- **What it costs.** Nothing while the session has accessibility off, and
+  what changed while it is on.
+  - *Who listens.* AccessKit's adapter joins the accessibility bus when
+    `org.a11y.Status.IsEnabled` is true on the session bus (GNOME's
+    `toolkit-accessibility` setting; a screen reader turns it on, and it
+    stays on) and asks the window for its tree then. That is all it knows:
+    not whether anything on that bus reads the tree. Until it asks, and
+    after the setting goes off, the host builds nothing and keeps nothing
+    (it used to build the whole tree on every update either way). Asked,
+    the adapter is told there is no tree yet and the window is woken to
+    publish one at once, painted or not (the tree lives on the window's
+    thread; a window out of sight paints no frame).
+  - *What an update carries.* The host keeps the tree as the adapter has it
+    (`access/published.rs`) and hands over only nodes that differ from it.
+    A view's subtree is remembered by `Document::subtree_generation`, so a
+    patch has only the views it reached made again (`access/walk.rs`), the
+    views on the way down to them included; a whole tree makes every node
+    again and still sends only the ones that differ. What is typed in the
+    focused field and the option a focused combo box points at are laid
+    over that one node, so typing and moving the focus rebuild nothing.
+    Nodes that left the tree are never named: AccessKit drops what is no
+    longer under the root.
+  - *Bounds.* They follow the paint, not the tree (a scroll, a resize, a
+    row that grew above), and what moves as one is one node. The layout
+    map (`src/layout.rs`) keeps each painted node by where it sits in what
+    draws it, a *group*: a retained subtree, or a scroll view's content
+    (its top left is recorded by a zero-size first child, before anything
+    in it); a group is kept by where it sits in the group around it. A
+    scroll, or a push from above, changes one group's place and no node's.
+    In the tree a view that is such a group, with a node under it that has
+    bounds, is a *frame* (`access/place.rs`): its node carries a transform
+    (the group's place), and the bounds under it are from its top left.
+    A view that is only layout gets a node for the frame alone, a generic
+    container, which AccessKit's adapters leave out of what they publish:
+    its children are the node above's to a screen reader, as before.
+    AccessKit adds the transforms up when a client asks where a node is
+    (`Component.GetExtents`, a hit test), so the answer is current at once,
+    with nothing held back to settle. When a frame ends the layout map
+    names exactly the nodes and groups whose place changed, came or went
+    (`layout::Changes`): only those are looked at, and a frame in which
+    nothing moved looks at none. A node whose frame and group disagree (a
+    frame not painted yet, a tree newer than the paint) is placed by where
+    things are in the window and looked at again whenever anything moved.
+    A virtualized list's rows are its content's group too: GPUI's list
+    says where it paints its content before it prepaints a row
+    (`List::on_content_origin` in the fork), so its scroll is one frame's
+    transform, as a scroll view's is. A scroll view's own children have
+    bounds (GPUI handed a view with a tracked scroll handle none, so they
+    were in no layout answer and a screen reader heard no extents for
+    them).
+  - *Signals.* A frame's move tells the bus nothing: no node a client
+    sees changed its own bounds. Nodes that move on their own (a reflow)
+    each change, and AccessKit sends `object:bounds-changed` for each;
+    mirin's fork of the adapter sends it only while something on the bus
+    registered for it (`forks/accesskit_unix/MIRIN.md`), as at-spi2-atk
+    does: it asks the registry when it joins the bus and again while
+    bounds change, at most once a second, so a client that registers
+    later hears them within a second. Orca registers for no bounds changes (its listeners:
+    `src/orca/script.py`), nor does the Dashi shell.
+  - *The adapter's thread.* AccessKit takes an update on the window's
+    thread and queues what it tells the bus; its own thread (named
+    `accesskit`) turns that into D-Bus calls and signals. An update that
+    adds nodes sends an `AddAccessible` for each, with the node's place
+    among its parent's children. Upstream counted the siblings before the
+    node for each one, so n children added under one parent (a view
+    switched, a list replaced) cost the thread O(n²); mirin's fork of
+    AccessKit's AT-SPI layer (`forks/accesskit_atspi_common/MIRIN.md`)
+    lists a parent's children once for each state of the tree and looks
+    the places up. A node with many children that changes (a window
+    resized whose list is among its children) no longer compares its
+    lists child by child on the window's thread either, and AccessKit's
+    two states of the tree (as last reported, and as the next update
+    makes it) share each node's data (`forks/accesskit_consumer/MIRIN.md`).
+  - *Checking it.* `access/tests/` drives runs of patches, focus, typing,
+    scrolls, pushes and subtrees kept or no longer, recording each frame in
+    the layout map as the renderer does, and hands every update to
+    AccessKit's own tree (`accesskit_consumer`, which refuses an update it
+    cannot place): after each, what a screen reader has is what a tree
+    made from nothing gives, every node is found where it was painted
+    (AccessKit's `bounding_box`, the adapter's way), and the tree as a
+    screen reader walks it is the one without frames. `layout/tests.rs`
+    runs random frames against the layout map as it was before
+    (`layout/tests/old.rs`): the same nodes painted at the same places, and
+    the changes named are exactly the places that changed.
+    `MIRIN_METAL_ACCESS_CHECK=1` makes both comparisons in a running host
+    after every update and reports a difference on stderr.
+    `bench/a11y/extents.tsx` reads an app's whole AT-SPI tree over the bus
+    after each of a series of scrolls and changes, the moment the frame is
+    painted, for comparing two hosts.
+  - *Trace.* `access: built N nodes, published M in X ms (P placed again;
+    the adapter took Y ms, S signals)` after each update: nodes made again
+    from their elements, nodes handed over, the time on the window's
+    thread, the kept nodes the layout said moved, and the AT-SPI signals
+    the update queued for the bus (`bench/stress.tsx` and metal-ui's
+    `bench/native.tsx` read it).
 - **What it says.** A view with `access` (`accessibilityRole`,
   `accessibilityLabel`, `accessibilityState`, `accessibilityLiveRegion` in
   `@mirinjs/metal`, React Native's names) is a node with that role, name and
@@ -649,7 +908,7 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   first window's title, never the host binary's file name (AccessKit's
   default, which made Orca call every app "mirin-metal-host"). The first
   window of a host names it for the host's life. The name is set through
-  mirin's fork of AccessKit's Unix adapter (`vendor/accesskit_unix/MIRIN.md`).
+  mirin's fork of AccessKit's Unix adapter (`forks/accesskit_unix/MIRIN.md`).
 - **Windows shown and gone.** A window that has the keyboard when its tree
   first reaches the bus announces itself: `window:activate`, then the
   focused node, so Orca reads a resident launcher's field each time it is
@@ -689,9 +948,9 @@ Renders through DirectX. Not yet verified.
   caret, focus, paste, change/submit events), scroll views, hover, borders,
   alignment, truncation, and monospace text landed 2026-10-29 and were driven
   with synthetic keyboard input on Fedora/KDE. Still open: press verified only
-  through the fake transport, image nodes, a tree patch protocol. (Text
-  selection landed 2026-11-06: caret placement, drag and Shift selection,
-  Cut and Copy, a controlled `selection`.)
+  through the fake transport, image nodes. (Text selection landed
+  2026-11-06: caret placement, drag and Shift selection, Cut and Copy, a
+  controlled `selection`. The tree patch protocol landed 2026-11-10.)
 - **M2 — in-process transport.** `libmirin_metal` C ABI + polled event queue
   replacing the stdio host; host/Worker boot shared with the CEF runtime;
   `docs/architecture.md` gains the Metal arm.
@@ -708,7 +967,10 @@ in an off-screen virtual compositor (`startHeadlessDisplay()`, which runs
 examples and scrolls the example list through the simulation channel, and
 splits each click into driver, transport, and frame stages from the host's
 `MIRIN_METAL_TRACE=1` log. For CPU profiles, build the host with
-`--features profiling` and set `MIRIN_METAL_PROFILE=<path>` (folded stacks).
+`--features profiling` and set `MIRIN_METAL_PROFILE=<path>` (folded stacks;
+`MIRIN_METAL_PROFILE_SECS` long, after `MIRIN_METAL_PROFILE_AFTER` seconds,
+to leave the first frames out; `bench/stress.tsx --only=scroll` runs one
+scenario).
 
 Findings and fixes (2026-10-29, release host, 866-node tree, medians):
 
@@ -746,7 +1008,7 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   private virtual KWin session (own D-Bus, so Spectacle talks to it) for
   visual review without touching the desktop. Fixes it drove: native grid and
   `has-*` (above); text min-content; a taffy fork for fit-content flex base
-  sizes (`crates/mirin-metal/vendor/taffy/MIRIN.md`); flex's zero minimum no
+  sizes (`forks/taffy/MIRIN.md`); flex's zero minimum no
   longer overrides explicit `min-w`/`min-h`; `w-full` on inputs is width,
   not growth; the full Tailwind v4 palette (generated).
 
@@ -759,9 +1021,1425 @@ Findings and fixes (2026-10-29, release host, 866-node tree, medians):
   laptop: the tree is in by ~60 ms) paint their content first, 76–97 ms
   after the host starts, where the stand-in painted 14–38 ms before it.
 
-Open: React work per update (the demo re-renders its whole list on select),
-whole-tree JSON per update (the patch protocol, B3), GPUI's full relayout for
-trees that are not long lists.
+- Patches (2026-11-10, B3; release host, `bench/stress.tsx` in
+  `packages/mirin-metal`, ~15k nodes, one card's style or one text per
+  update, medians of two runs each, baseline host and this one back to
+  back). `driver` is from the simulated input to the last line sent, so it
+  includes the host's turn to report the input; `parse` and `apply` are the
+  host's trace (whole tree, or patch):
+
+  | | whole tree | patches |
+  | --- | --- | --- |
+  | sent per update, select / type | 1367 KB / 1367 KB | 0.2 KB / 0.3 KB |
+  | driver, select | 12 ms | 1 ms |
+  | host parse + apply, select | 11.8–14.4 ms | 0.0–0.1 ms |
+  | host parse + apply, type | 11.8–12.6 ms | 0.0–0.1 ms |
+  | input → painted frame, select | 364–424 ms | 365–425 ms |
+
+  The driver alone (React and the send on a fake transport, no host): a
+  select 13.6 → 0.4 ms; typing 22.3 → 10.4 ms, where typing re-renders the
+  whole dashboard (no `memo`) and React's own reconciliation is the rest
+  (the stress bench's `driver` for typing, ~165–210 ms either way, waits
+  for the host to finish a frame before it reports the keystroke). Before
+  `patch::Touched`, a patch walked the whole tree once per kind of host state
+  (fields, focus, lists, …): 0.8–1.3 ms of the apply. The frame (GPUI's
+  layout and paint, ~130–160 ms at this size) is unchanged by patches and
+  dominates; the generations above are what it can use to skip unchanged
+  subtrees. On the example browser (`bench/native.tsx`, ~900 nodes, one
+  example swapped for another per click): 180.7 → 4.3 KB per click, parse
+  1.0 → 0.1 ms, apply 0.6 → 0.6–1.2 ms (the swapped example is inserted
+  under a scroll view, so its lists and scroll views are checked), driver
+  alone 7.7 → 6.5 ms; its click-to-frame time is the frame's.
+
+- Retained subtrees (2026-11-10; release host, `bench/stress.tsx` with
+  patches, medians, two runs each of the baseline host and this one back to
+  back on a nested dashi-comp; `hover` now moves the real pointer, sim
+  `move`). A frame used to build, lay out, prepaint and paint all ~15k
+  nodes whatever changed. Now a view whose subtree renders from its content
+  alone (no field, focus, scroll view, virtualized list, height transition,
+  drag source or drop target inside) and has at least four nodes is a
+  *retained subtree* (`crates/mirin-metal/src/retain.rs`, GPUI fork's
+  `elements/retained.rs`): it is built only when its content changed
+  (after a patch, its subtree generation; after a whole tree, a comparison
+  with the old tree) or GPUI notified it (a hover style; each subtree has a
+  small entity for that), its taffy nodes and taffy's cache stay in a layout
+  tree kept across frames, and when it lands where it was drawn last frame
+  its hitboxes, listeners, dispatch nodes, element states and scene
+  primitives are copied instead of drawn. Subtrees nest (a row of cards in a
+  grid); one that moved (a row above it grew) is built again and laid out
+  detached exactly as its kept nodes sit. `MIRIN_METAL_RETAIN=0` turns it off
+  for comparison.
+
+  | stress bench (15k nodes) | baseline | retained |
+  | --- | --- | --- |
+  | select: frame | 155–157 ms | 5.3–5.8 ms |
+  | type: frame | 160–161 ms | 3.6–4.9 ms |
+  | hover: frame (`MIRIN_METAL_RETAIN=0` for baseline) | 110–178 ms | 4.3–6.1 ms |
+  | patch apply (incl. the retained sync) | — | 0.6–0.8 ms |
+  | RSS | 368 MB | 264–267 MB |
+  | example browser (~900 nodes): full frame | 1.8–1.9 ms | 1.5–1.7 ms |
+
+  `total` (input to painted frame) stayed 300–450 ms in this environment for
+  every host: the nested compositor delivers frame callbacks about once a
+  second, so it measures the compositor, not the host. What made it cheap,
+  in the forks (`forks/gpui/MIRIN.md`, `forks/taffy/MIRIN.md`): GPUI's layout
+  engine no longer clears taffy every frame (it frees only the frame's own
+  nodes and subtrees no longer drawn); taffy rounds only nodes a layout
+  touched (rounding walked all 15k every frame); a retained subtree keeps its
+  elements' states in its own state (GPUI moved every element state between
+  two hash maps every frame, cloning a 32-deep id path each time: a third of
+  a fully reused frame); and mirin-metal gives a GPUI element id only to
+  views that interact (5 of every 6 nodes in the bench needed no state).
+  Layout equivalence: `bun bench/layout-check.tsx <grid|browser> <host-a>
+  <host-b>` in `packages/mirin-metal-ui` compares every id'd node's bounds
+  after each of a series of interactions (selections that grow a row and
+  move every row below it, hovers, typing; example swaps, a list scroll, a
+  theme switch, a search): identical to the baseline host on both apps. The
+  GPUI fork's `retained` test checks that kept, recolored and moved rows draw
+  the same quads, glyphs and hitboxes as drawing everything.
+
+  Left in a frame (profile after): the accessibility tree, rebuilt and
+  published whole after every update (~45% of the host's draw time, in
+  paint after the traced frame ends; since made to cost what changed, see
+  below); copying reused primitives into the
+  scene and re-inserting their bounds for draw order (~15–20%); taffy's
+  pass over the spine and the changed row (~19%); reshaping the rebuilt
+  card's text. A subtree that moves (scrolled, or below one that grew) is
+  built again rather than its drawing offset. (All but the first are the
+  next entry's; the accessibility tree has its own.)
+
+- Moved and unseen subtrees (2026-11-11; release host, `bench/stress.tsx`,
+  medians of two runs each of the host before (`retained` above) and this
+  one, back to back on a nested dashi-comp). A retained subtree that landed
+  anywhere but where it was drawn was built, laid out and drawn again with
+  everything inside it, so a frame that moved content cost what it did
+  without retention: a scroll view scrolled one wheel step, or a banner
+  above the grid growing, drew all 15k nodes. And rows out of view were
+  copied every frame. Now each kept subtree is drawn the cheapest way that
+  gives what drawing it anew would (the trace counts them):
+
+  - *reused*: where it was, under the same clip: last frame's drawing is
+    copied, as before;
+  - *moved*: somewhere else, laid out inside as it was: the same drawing is
+    copied there, each hitbox and primitive under the content mask it has
+    there (the frame keeps every mask as it was pushed, so the masks inside
+    the subtree move with it and are clipped again by the ones around it);
+  - *skipped*: nothing of it shows (a row scrolled out, or below the fold
+    of an `overflow: hidden` box): it is not drawn at all, and its nodes'
+    bounds are still reported, moved with it (`sim::LayoutMap`);
+  - *redrawn*: its elements are built again for the layout nodes it kept
+    (no layout runs), and the subtrees inside it are each reused, moved,
+    skipped or redrawn in turn. A scroll view's content is redrawn at its
+    own level every scrolled frame (its rows come and go), which costs its
+    own nodes, not its rows'. *apart* counts the ones that could not be
+    built onto their nodes and were laid out again as a detached copy, as
+    before: elements that differ from one build to the next, and subtrees
+    one of whose texts taffy measured again since they were built (what
+    the text then holds depends on taffy's cache, not on the layout);
+  - *built*: its content changed, or it was notified.
+
+  A drawing is moved only when the copy is exactly what drawing it there
+  gives (`forks/gpui/MIRIN.md` has the list): by whole device pixels at a
+  scale factor of 1, 2 or 4 (at any, since "Scrolling between pixels"
+  below), not sideways when it holds text (until round 4, below), not under the
+  pointer (hover styles), and only where it is whole. For the last, a
+  subtree drawn anew keeps what its clip hides within 256 px (so a row
+  scrolled into view is drawn once, not on every frame until it all
+  shows), and remembers where anything was left out. Otherwise it is
+  redrawn, which is still far cheaper than it was. mirin-metal lets a
+  subtree move unless a view in it has `onLayout` (it must hear of every
+  move), and be skipped unless one has `onHover` (it must hear the pointer
+  left).
+
+  | stress bench (15k nodes), frame | retained (before) | now |
+  | --- | --- | --- |
+  | scroll, one 40 px step a frame (p95) | 113.8–114.1 ms (141–142) | 3.8–4.0 ms (4.5–4.6) |
+  | grow: a banner above the grid, 12 ↔ 40 px | 110.6–111.3 ms | 3.4–3.9 ms |
+  | grow, the grid in a scroll view | 117.0–117.2 ms | 4.1 ms |
+  | select | 4.2–6.0 ms | 2.6 ms |
+  | select, the grid in a scroll view | 6.1–6.8 ms | 2.3–2.9 ms |
+  | type | 3.4–4.0 ms | 1.7–1.8 ms |
+  | hover | 4.7–4.8 ms | 2.5–2.6 ms |
+  | RSS (both layouts drawn) | 311–315 MB | 266–269 MB |
+  | example browser (~900 nodes): scroll frame (p95) | 1.7–1.8 ms (2.2–2.3) | 1.3–1.5 ms (1.9–2.1) |
+
+  What made the frames that reuse cheaper too, from a profile of each:
+  replaying a drawing put every primitive into the scene's bounds tree
+  again to find its draw order (a third of a frame); a drawing that shows
+  what it did is now placed once, as its bounds, its primitives keeping
+  their order among themselves. Taffy's incremental rounding walked every
+  node below one that moved (4 ms of a grow frame); a subtree moved by
+  whole pixels now rounds as it did. A text built again for a kept layout
+  takes over the lines the element before it shaped (a row scrolled into
+  view was reshaped: 0.7 ms a frame). The scroll frame is now the row that
+  comes into view (built once: ~150 nodes, 26 subtrees) and little else.
+
+  Checks: `bun bench/layout-check.tsx scroll <host-a> <host-b>` (in
+  `packages/mirin-metal-ui`) drives the grid in a scroll view through
+  scrolls (whole and half pixels, to the end and back), a banner growing
+  above it, and presses and pointer moves by window coordinates, and
+  compares every id'd node's bounds and the node each press and hover
+  reached: identical to the host before on it, on `grid` and on `browser`.
+  With `--scene --env-b=MIRIN_METAL_RETAIN=0` and the same host twice it
+  also compares what each frame drew (primitives and hitboxes, with real
+  text): identical with retention and without. The GPUI fork's tests
+  compare retained frames against drawing everything for moves, partial
+  clipping, rows scrolled out and in, a row growing above, subtrees inside
+  moved subtrees and a pointer resting over moving rows; they compare what
+  is painted over what, since draw order numbers now differ.
+
+- Measuring (2026-11-10): headless Weston has no `wl_seat` (GPUI's Wayland
+  client requires one) and headless dashi-comp loses the Vulkan surface, so
+  without KWin the benches run with `--visible` inside a nested compositor:
+  `dashi-comp --backend winit --no-xwayland -c "bun bench/stress.tsx <host> --visible"`
+  (with `DASHI_COMP_SOCKET` set when a session's dashi-comp is running). Read
+  `frame`, `parse` and `apply` there; `total` (input → painted frame) also
+  waits for the compositor's next frame callback, which the host does by
+  design (section 4). A nested dashi-comp only draws when the outer session
+  asks its window to (winit `Redraw`), and a surface it did not draw hears
+  `wl_callback.done` once a second (`send_frames`' throttle; seen with
+  `WAYLAND_DEBUG=1`, done timestamps exactly 1000 ms apart). So with the
+  nested window out of sight (screen off, another desktop, covered) `total`
+  is 200–400 ms for any host; with it on screen it was ~20 ms. With
+  patches and retained subtrees together, a select on the stress bench is
+  ~1 ms of driver, ~0.7 ms of apply and ~4.5 ms of frame, where it was ~12,
+  ~12 and ~150 ms.
+
+- The accessibility tree (2026-11-10; release host, the host before and
+  this one back to back, one to four runs each, medians; `access`, `cpu`
+  and the node counts are `bench/stress.tsx`'s new columns). The host
+  built the whole tree after every update and handed it to AccessKit whole,
+  whether or not the adapter was on the accessibility bus: on the stress
+  bench that was twice the frame it followed. Now nothing is built while
+  the session has accessibility off, and with it on an update makes and
+  hands over what changed (section 4, "What it costs"). `off`, `on` and
+  `listener` are `bench/a11y/run.sh`'s modes (below); `this session` is the
+  desktop the bench ran on, which has accessibility on and whose shell
+  listens for focus changes.
+
+  | stress bench (15k nodes, 7504 accessibility nodes), per update | before | after |
+  | --- | --- | --- |
+  | select: accessibility, off / on / listener / this session | 6.7 / 9.5 / 9.4–13.1 / 9.3–9.6 ms | 0.0 / 0.1 / 0.1 / 0.1 ms |
+  | type: accessibility, off / on / listener / this session | 15.6 / 22.0 / 12.0–22.2 / 12.2–19.2 ms | 0.0 / 0.1 / 0.1–0.3 / 0.1 ms |
+  | select: nodes made / handed over (on) | 7504 / 7504 | 3 / 0 |
+  | type: nodes made / handed over (on) | 7504–15008 / the same | 4–5 / 2–3 |
+  | select: host CPU, off / on / listener / this session | 11.0 / 13.5 / 12.0–20.5 / 11.5–14.0 ms | 6.5 / 6.0 / 5.5–9.0 / 6.5 ms |
+  | type: host CPU, off / on / listener / this session | 20.5 / 19.5 / 17.0–27.5 / 16.5–17.0 ms | 6.5 / 5.5 / 7.0–11.0 / 5.5–7.0 ms |
+  | hover: host CPU (no accessibility work either way) | 4.5–5.5 ms | 5.0–6.0 ms |
+  | RSS, off / on | 244 / 258–262 MB | 240 / 259–261 MB |
+  | example browser (~900 nodes, 550 accessibility nodes): per click, on | 0.8 ms, 554 / 554 | 0.4–0.5 ms, 7–14 / 3–9 |
+  | example browser: per scrolled frame, on | 0.7 ms, 547 / 547 | 0.2 ms, 1 / 31–35 |
+  | example browser: per click, off | 0.5 ms, 554 / 0 | nothing |
+
+  `accessibility` is time on the window's thread after the frame (so not in
+  `frame`); host CPU is user + system for every thread per update over the
+  scenario (10 ms ticks, 20 updates: ±0.5 ms, and other builds ran on the
+  machine: two runs whose frames took twice as long are left out of the
+  hover row). The select changes one card's colors, which a screen reader
+  never hears of: three nodes are made on the way down to the card and none
+  differs. A first whole tree costs what it did (12–30 ms at 7504 nodes,
+  most of it AccessKit taking the nodes). With accessibility on a host
+  keeps the tree three times (the host's, and AccessKit's two) and its
+  nodes on the bus: about 17 MB at 7504 nodes, as before. What the listener
+  heard over a run (names changed, focus, the window activating) was the
+  same from both hosts, and so is the AT-SPI tree read back after each of a
+  series of steps (below).
+- Measuring accessibility (2026-11-10): whether a host's adapter is on is
+  the session's `org.a11y.Status.IsEnabled`, which a real session keeps as
+  a setting, so `packages/mirin-metal/bench/a11y/run.sh <off|on|at> <out>
+  <command…>` runs a bench on a private session bus with its own
+  accessibility bus and registry: `off` (IsEnabled false), `on` (true,
+  nothing on the bus but the registry), or `at` (true, with `listen.py`
+  registered for the events a screen reader listens to and asking each
+  event's source what it is). Nothing in it touches the person's session.
+  Inside such a run `bench/a11y/dump.py "<app name>"` prints the app's
+  whole AT-SPI tree (roles, names, states, extents, actions, text): the
+  example browser driven through `layout-check.tsx`'s steps gives the same
+  dump, to the byte, on the host before and after the tree was kept.
+  `kill -USR1 $A11Y_STATUS_PID` flips IsEnabled under a running app, as
+  turning a screen reader on or off does: an idle app's whole tree is on
+  the bus at once (no frame is painted for it), it leaves the bus and
+  builds nothing while off, and is whole again, as the app then is, when
+  turned back on.
+- Accessibility when content moves (2026-11-11; release host, `host-r2`
+  and this one back to back, three runs each on the stress bench and two
+  on the others, medians; accessibility on, as it is in the session the
+  benches ran in). A content change cost 0.1 ms of accessibility work, but
+  a move cost what the tree's size did: every kept node's bounds were
+  compared after any frame in which the layout's revision moved, and it
+  moved on frames in which no bounds did (a subtree drawn anew after a
+  frame it was reused in counted as newly painted, so a select or a hover
+  paid 1.2–1.4 ms for 2500 comparisons that found nothing); a scroll or a
+  banner growing above the grid handed AccessKit every node that has
+  bounds (2500: 11–14 ms on the window's thread, after a 4 ms frame), and
+  its adapter sent one `object:bounds-changed` a node from its own thread
+  (2500 signals a scroll step, 122 500 over the bench's 48 steps and the
+  switch before them), so a step cost 28 ms of host CPU.
+
+  Now what moves as one is one node, and the layout says what moved
+  (section 4, "Bounds"): a scroll is the transform of the scroll view's
+  content, a banner that grows is the transform of the grid's retained
+  subtree, and neither tells the bus anything, because no node a client
+  sees changed its own bounds. The answer to `Component.GetExtents` is
+  AccessKit's sum of the transforms above a node, so it is current as soon
+  as the frame is published: nothing waits to settle.
+
+  | stress bench (15k nodes, 7504 accessibility nodes), per update | before | after |
+  | --- | --- | --- |
+  | select: frame / accessibility / nodes made, handed over / host CPU | 2.6 / 1.4 ms / 3, 0 / 6.5 ms | 2.7 / 0.1 ms / 5, 0 / 5.0 ms |
+  | hover | 2.7 / 1.2 ms / 1, 0 / 4.5 ms | 2.7 / 0.0 ms / 0, 0 / 4.0 ms |
+  | grow (every row moves) | 4.0 / 13.3 ms / 2, 2501 / 30 ms | 3.8 / 0.1 ms / 2, 2 / 5.8 ms |
+  | grow, the grid in a scroll view | 4.0 / 13.7 ms / 2, 2500 / 31 ms | 4.0 / 0.1 ms / 3, 1 / 6.7 ms |
+  | scroll, 40 px a frame: frame / host CPU a step | 4.1 / 28.1 ms | 4.2 / 6.0 ms |
+  | scroll: accessibility / nodes made, handed over | 13.8 ms / 1, 2500 | 0.04 ms / 1, 1 |
+  | scroll: signals on the accessibility bus a step, nothing listening | 2500 | 0 |
+  | scroll: the same with a listener registered for bounds changes (host CPU a step) | 2500 (34 ms) | 0 (5.6 ms) |
+  | nothing retained, grow, with that listener: bounds signals an update | 2501 | 2501 (it asked for them) |
+  | grow: signals an update | 2501 | 0 |
+  | nothing retained (`MIRIN_METAL_RETAIN=0`), scroll: accessibility / handed over | as above (every card) | 0.2 ms / 1 |
+  | nothing retained, grow (every card moves on its own): accessibility / handed over / signals | 11.9 ms / 2501 / 2501 | 12.3–14.4 ms / 2501 / 0 |
+  | example browser (~900 nodes), its virtualized list scrolled: accessibility / handed over / signals a frame | 0.2 ms / 14–17 / one each | 0.1 ms / 14–18 / 0 |
+  | example browser: scroll frame / host CPU a step | 1.3–1.5 / 2.8 ms | 1.6–1.7 / 2.5 ms |
+
+  What it took:
+  - *The layout map* (`src/layout.rs`, out of `sim.rs`) keeps a node by
+    where it sits in the group that draws it and a group by where it sits
+    in the one around it, so a group that moves changes one place. It
+    finds what a frame no longer draws when the frame ends (a group drawn
+    anew says again everything in it; `layout/sweep.rs`) instead of
+    working it out from frame numbers at every lookup, and names the nodes
+    and groups whose place changed (`Changes`). A scroll view's content is
+    a group too (`layout/scroll.rs`), so content that is not retained (a
+    form: focusable views are never retained) scrolls as one as well. A
+    frame in which nothing moved leaves the revision alone: a watched
+    node recorded again where it was by a subtree drawn anew no longer
+    sends a `layout` event with the bounds it had.
+  - *The tree* (`access/place.rs`, `walk.rs`, `follow.rs`) makes such a
+    group a frame when a node under it has bounds: 101 more nodes on the
+    stress bench (the grid and its rows), none a screen reader sees. Only
+    the nodes and frames the layout names are placed again.
+  - *The adapter* (`forks/accesskit_unix`) sends `object:bounds-changed`
+    only while something on the bus registered for it, and counts the
+    signals it makes (the trace's `S signals`).
+
+  The signals were counted on the bus (`bench/a11y/signals.sh` under
+  `run.sh on`, and `run.sh at` for the listener, which heard 122 500
+  `object:bounds-changed` over a scroll run from the host before and none
+  from this one); `bench/a11y/extents.tsx` reads the whole AT-SPI tree
+  after each of 17 steps (scrolls, a banner growing, a row coming and
+  going, typing, accessibility turned off and on), each the moment its
+  frame is painted: both hosts give the same extents for every node at
+  every step. The example browser's list is virtualized: its rows were
+  drawn in no group, so each row in view still moved on its own (a
+  bounded number: the rows in view), now without a signal each (one
+  group since round 4, below).
+
+  Evaluated and not done: holding bounds back while content moves and
+  publishing them once it settles. A client must be answered with current
+  bounds whenever it asks, so the adapter would have to take what is held
+  from the window's thread before it answers any call (every interface
+  method of the fork, or a wait on the window's thread from the bus's);
+  with frames a move that is one transform has nothing to hold. What is
+  left is nodes that each move on their own (a reflow, a window resized,
+  content that is in no group): they are handed over as before, about
+  5 µs a node on the window's thread (1 µs to make it, 4 µs for AccessKit
+  to take it), and send nothing unless something listens.
+
+- **The driver (2026-11-11).** With the host cheap, the app's own Bun
+  process is the larger half of what an app costs, so it has benches of its
+  own, on a stand-in host (a transport that announces the patch protocol and
+  counts lines: no process, no compositor, so nothing is timed by a frame
+  callback): `packages/mirin-metal-ui/bench/driver.tsx` (`startup`: fresh
+  processes, wall and CPU to each part of the start; `interact`: per switch
+  of example, character typed, theme toggle and window resize on the example
+  browser, with `--profile` the main thread's samples by part, taken with
+  JavaScriptCore's sampling profiler through `node:inspector`; `memory`: the
+  heap after the start and after rounds of 50 interactions; `record`: every
+  line sent over a scripted session) and `packages/mirin-metal/bench/driver.tsx`
+  (a keyed list of 2,500 memoized rows changed sixteen ways, `--scale` for
+  how each grows). Measured on the Ryzen laptop, medians of interleaved runs
+  (the machine was shared: ±30% between runs, the ratios repeat):
+
+  | example browser, driver alone | before | after |
+  | --- | --- | --- |
+  | start: modules loaded | 46 ms | 31 ms |
+  | start: first tree sent, wall / CPU | 68 ms / 117 ms | 48 ms / 92 ms |
+  | start: the example's tree sent, wall / CPU | 76 ms / 147 ms | 55 ms / 109 ms |
+  | heap in use / RSS after the start | 10.6 / 79 MB | 6.8 / 68 MB |
+  | heap after 200 interactions / RSS at rest | 11.8 / 82 MB | 9.9 / 75 MB |
+  | switch example: event → patch sent, CPU | 5.8 ms, 9.9 ms | 5.1 ms, 8.8 ms |
+  | type a character in the search field | 1.9 ms | 1.6 ms |
+  | toggle the theme (every node set, 89 KB) | 7.9 ms | 4.8 ms |
+  | window resized by a pixel | 6.3 ms | 0.24 ms |
+  | with the real host (`bench/native.tsx`): press → last patch sent | 7.0 ms | 6.0 ms |
+  | with the real host (`bench/footprint.tsx`): spawn → first content frame | 105 ms | 93 ms |
+  | with the real host: driver CPU by that frame (10 ms ticks) | 210 ms | 130 ms |
+  | with the real host: driver RSS / PSS / anonymous | 71 / 48 / 40 MB | 62 / 40 / 32 MB |
+
+  `bench/layout-check.tsx browser` against round 2's host on both sides
+  is identical with the driver as it is now. What the lines sent are did
+  not change: the wire record of a session that opens all 243 examples,
+  hovers, types in and presses inside each, types in the search field and
+  toggles the theme (826 lines, 2.2 MB; timers on the session's own clock,
+  `Math.random` seeded, so one build records the same bytes twice) is
+  identical before and after, to the byte, for a host that takes patches
+  and for one that takes whole trees, and so is the list bench's
+  (`--record`). What changed, by what it bought:
+
+  - *Icons.* `@mirinjs/metal-ui/icons` imported the whole `lucide` package
+    and made 2,271 components over it: 22 ms and 16 MB of every start. An
+    icon now names its file of `lucide` and reads it when it first renders
+    (`createLucideIcon(name, () => require(…))`), the twenty icons the
+    components themselves draw carry their data in a module of their own
+    (`core.generated.ts`: a process's first `require()` costs 2 to 4 ms),
+    and every icon is marked pure, so a bundle keeps only the ones used. A
+    module with 6,800 exports still costs a start from source 13 ms and
+    11 MB however little each does (the browser's first tree goes out at
+    33 ms without it, at 48 with): an app that imports no icon of its own
+    doesn't load it, and `@mirinjs/metal-ui/icons/create` has
+    `createLucideIcon` alone, for one that wraps the few it draws over
+    their vector data (an `IconNode`, as one file of `lucide` exports).
+  - *Modules.* `date-fns` came whole for six functions (250 modules: 12 ms,
+    40 ms of CPU, 9 MB for any app importing `@mirinjs/metal-ui`'s entry)
+    and `node:crypto` for one hash (3 ms): each function from its own file,
+    `Bun.CryptoHasher`. Importing the whole entry: 52 ms, 90 ms of CPU and
+    34 MB → 12 ms, 25 ms and 9 MB.
+  - *Class strings.* Every element translated its class string when it
+    mounted and when the theme changed. A string is now split once, and its
+    style kept per theme (by the tokens' values) and per what its variants
+    resolved to (`src/tw/cache.ts`; frozen, shared by every element with
+    that string): the first render translates each distinct string once,
+    and a theme toggled back finds its styles.
+  - *Resize.* The window's width was part of the theme every element reads,
+    so each pixel of a resize re-rendered the whole app (6 ms a step here)
+    to send nothing. Elements now read the theme through `useStyleTheme()`,
+    whose width is the widest breakpoint reached: it changes when one is
+    crossed. `useTheme().viewportWidth` is still the width.
+  - *Per element.* The `has-*` owner hooks make nothing for an element that
+    owns no registry (six hooks → three), attributes are collected in one
+    loop. Of a switch's 6.2 ms on the main thread, React is now 2.9 ms,
+    metal-ui 1.6 ms (it was 2.7), the host config, commit log, tree sync
+    and serialization 0.5 ms; the rest is the app's own render and the
+    bench finding the node to press.
+  - *Lists.* A commit's `removeChild`/`insertBefore` searched the parent's
+    children from the start each time, and a new child was searched for
+    before it was added: a commit of n mutations now looks beside the last
+    one first, and a new child is searched for in no list; ids are spelled
+    once per node. Removing 2,500 rows: 2.4 → 1.2 ms; changing every row's
+    text: 6.0 → 4.2 ms; a swap's share that is ours: 3.4 → 1.6 ms. What is
+    left in the large operations is React's: its commit looks for each
+    placed fiber's next sibling past every other one placed (`getHostSibling`),
+    so 2,500 rows appended to 2,500 in one commit take 15 ms and 5,000 to
+    5,000 take 45, more than half of it there, and swapping two rows 2,480
+    apart is 2,480 moves, 12 ms of it and 145 KB of patch.
+  - *Whole trees.* A whole tree (the start's three, a resync, every commit
+    for a host without patches) writes a view's or an input's head again
+    only for props React has replaced since it last did: the browser's
+    92 KB with nothing changed, 2.3 → 1.3 ms. `lastTree()` still works
+    every head out, so the tests' check against it reads no kept copy.
+  - *The start's environment.* `driverEnv()` and `mirin-metal run`
+    (section 6): React's production build for an app outside this
+    repository (its development build takes a third longer and 40% more
+    CPU to the first tree, 90 ms and 168 ms of CPU where production took
+    67 and 120 in the same run, and 8 MB more), and one collector thread.
+
+  Idle: nothing of Metal's wakes the driver (no timer of its own, no event
+  from an idle host). The 240–760 wakeups per 5 s measured after the start
+  are Bun's collection timer, which ticks every second for about half a
+  minute after the heap last changed size; each collection wakes
+  JavaScriptCore's seven helper threads. 45 s after the start the driver
+  makes no wakeup at all in 5 s. With `BUN_JSC_numberOfGCMarkers=1` the
+  half minute after activity costs 40 wakeups per 5 s instead of 500;
+  `BUN_GC_TIMER_INTERVAL` (ms) or `BUN_GC_TIMER_DISABLE=1` take the rest
+  to 5.
+
+  Not landed, with numbers. *A bundle*: the same entry built with
+  `Bun.build` (`target: "bun"`, minified, `process.env.NODE_ENV` defined)
+  sends its first tree at 32 ms where the source takes 65 in the same run,
+  with 64 ms of CPU for 116 and 13 MB less; with `--bytecode` (CommonJS
+  output) 21 ms and 49 ms of CPU. Before the icons were pure a bundle
+  bought little (58 ms: it evaluated all of `lucide`). So packaging (`mirin
+  build` for Metal, as Dashi's applets already do) should emit one
+  `main.js` per app (ESM, or CommonJS with bytecode when the entry has no
+  top-level `await`), with React inside it once, the app's files beside it
+  for what it reads through `import.meta.dir`, and no `import()` of a path
+  made at run time (the example browser's own, which is why it is not
+  bundled here); start it with `driverEnv()`. *Bun's transpiler cache*
+  already saves 10 to 18 ms of a start from source (off: 55 ms to load the
+  modules for 37). *The first tree goes out three times*: the host says it
+  takes patches as it starts, but the driver is rendering by then and reads
+  that after its first commits, so it sends the tree without ids, the same
+  bytes again after a commit that changes nothing (the overlay layer
+  learning its view: 3 ms and 10 ms of CPU), and a third time with ids
+  (three serializations, three parses of 90 KB). Waiting one turn of the
+  event loop for the host's word sends it once, and the overlay layer could
+  reach its portals without a commit; both change the lines sent (fewer of
+  the same), and the first showed nothing above the noise in two runs.
+  *JavaScriptCore options*: `BUN_JSC_useDFGJIT=0` saves 10 MB and 18 ms of
+  start CPU and makes a switch 7.3 ms for 5.2; `BUN_JSC_useJIT=0` leaves a
+  47 MB driver whose switch takes 22 ms;
+  `BUN_JSC_numberOfDFGCompilerThreads=1` saves 15 ms of start CPU for
+  nothing measured; `--smol` costs 30 ms of it.
+  *Coalescing moves* in the tree sync (the fewest moves for a parent's new
+  order, instead of React's) would send a swap as two ops, not 2,480; the
+  12 ms React spends placing them would remain.
+
+- **The driver at rest, its start, its fibers (2026-11-11, round 4).** What
+  round 3 left open on the driver, measured on the same Ryzen laptop with
+  the real host (`ref/host-r3`, `bench/footprint.tsx`, two rounds of three
+  runs, interleaved with the driver as it was) and on the stand-in
+  (`bench/driver.tsx` in both packages). Nothing the host draws changed:
+  `layout-check --scene` with the driver before and after on `ref/host-r3`
+  is identical for `grid`, `browser`, `scroll` and `scroll-fractional` (node
+  by node and frame digest by frame digest), and so is the host against
+  itself with `MIRIN_METAL_RETAIN=0`.
+
+  | counter app, real host | before (`bun app.tsx`) | round 3's `driverEnv` | now (`mirin-metal run`) |
+  | --- | --- | --- | --- |
+  | driver idle, per 5 s (6 s after the start) | 17–19 ms CPU, 651–685 wakeups | 1.3–1.5 ms, 17 | 0.3–0.5 ms, 4–5 |
+  | driver threads | 16–17 | 10 | 4 (bundle), 10 (sources) |
+  | driver RSS / PSS / anonymous | 29.7 / 9.7 / 7.6 MB | 29.2 / 9.2 / 7.0 MB | 24.4 / 6.4 / 4.5 MB (bundle) |
+  | spawn → first content frame | 54, 57 ms | 56, 51 ms | 52, 52 ms (bundle); 58, 64 (sources) |
+
+  The example browser (which `mirin-metal run` can't bundle: it imports its
+  examples by name): idle 27–35 ms of CPU and 669–771 wakeups per 5 s →
+  1.2–2.1 ms and 5; 18–19 threads → 11–12; RSS 62 → 58 MB, PSS 35 → 31,
+  anonymous 31.7 → 27.5 (fewer fibers). Spawn → first content frame: 94,
+  95 ms before; 92, 85 started bare with the new environment (round 3's
+  `driverEnv`: 92, 84); 100, 101 through `mirin-metal run`, whose second
+  Bun start costs an app it can't bundle 5–10 ms (a launcher that spawns
+  apps itself passes `driverEnv()` and has no second start).
+
+  - *Idle.* What woke the driver was Bun's collection timer: once a second
+    while the heap changes size, and for thirty seconds after, each a
+    collection that wakes JavaScriptCore's helper threads (seven, or the
+    one `BUN_JSC_numberOfGCMarkers=1` leaves), and mimalloc's scavenger
+    after it. Nothing of Metal's (no timer, no polling: the host's stdout is
+    one pending read). `driverEnv()`, and so `mirin-metal run`, now also
+    sets `BUN_GC_TIMER_DISABLE=1`, and the driver collects once itself,
+    two seconds after its last commit (`lib/rest.ts`: `bun:jsc`'s
+    `fullGC`, about 1 ms for the counter, 10–25 ms for the example browser
+    after a hundred interactions; `Bun.gc(false)` only asks for a
+    collection, which a process asleep in its event loop never finishes).
+    After a hundred interactions on the example browser (stand-in) the
+    heap 11 s later is 7.4 MB (with the timer, 1.8–7.4 MB, depending on
+    where its collections fell), and the driver wakes 5–12 times per 5 s
+    instead of 13–24 (350–550 without `driverEnv`). The
+    footprint bench now starts apps through `mirin-metal run`, as they run
+    (`--launch=bun` for a bare `bun`).
+  - *Start.* `mirin-metal run` starts an app from a bundle of itself kept
+    in the user's cache while every file it was built from is unchanged,
+    and from its sources (building the bundle in the background for the
+    next start) otherwise (section 6). Spawn → first tree on a host
+    stand-in (a process that announces patches and notes the first line):
+    the counter 21.2 ms from sources, 14.5 from the bundle, 21.1 through
+    `mirin-metal run` with its bundle; metal-ui's smoke page 47.0, 28.7 and
+    31.8. With the real host the counter's start is bound by the host's own
+    (GPU context and first frame, ~35 ms of the 52), so the bundle buys
+    back the launcher's second Bun start and a little more; the driver's
+    memory is what changes there (above). The launcher loads only what
+    checks the bundle (no `node:fs`, which alone took 2 ms): ~4 ms to its
+    `exec`, 1 ms of it the check.
+  - *The first tree, once.* The host says it takes patches as it starts,
+    but the driver was rendering by then: it sent the tree without ids,
+    the same tree after the overlay layer's commit, and again with ids.
+    A transport from `spawnNativeHost` now holds the driver's commits until
+    the host has said so (250 ms at most, for a host from before patches)
+    and sends the tree once, with ids (section 2, "Negotiation"). Lines
+    the host gets: fewer of the same; what it draws: identical (above).
+  - *Serializing a view.* A view's head looked at every field a view could
+    have (some seventy property misses on a megamorphic style) for each
+    view. It now visits its style's own keys and its props (a string
+    `switch` each), gathers the fields by slot and writes them as JSON text
+    in the order they always had (`lib/view-props.ts`): 0.69 → 0.42 µs a
+    view head, over 142k views and inputs the example browser makes, each
+    head byte for byte what it was. The wire records (the example
+    browser's session, the list bench) are identical to the byte.
+  - *Fibers in metal-ui.* An HTML element was its `Box`, `@mirinjs/metal`'s
+    `View` function, the host view, a `SiblingContext` provider for its
+    place among its siblings and, when it changed what flows down, an
+    `InheritedContext` provider; a run of text was `TextRun`, `Text` and
+    the host text. A box now makes the host view and text itself and hands
+    a child box both values as props on its element; only a child that is
+    not a box reads them from context (section 2b). The example browser's
+    pages: 3,790 → 1,768 fibers (button page, 1,171 host nodes), 3,918 →
+    1,859 (card), 4,317 → 2,182 (table). A box also no longer adds or
+    drops a provider above its view when what it hands down starts or
+    stops differing, which remounted its whole subtree (a cmdk group
+    filtered out and back). What it buys per interaction is within this
+    machine's noise for most: main-thread time sampled over 80 rounds on
+    the stand-in, two interleaved rounds, switching example 6.2, 5.6 →
+    5.1, 5.9 ms (badge/button) and 5.7, 5.9 → 4.7, 6.9 (card/table), a
+    character typed 2.8, 3.0 → 2.7, 3.6, the theme toggled 5.7, 5.9 →
+    5.0, 6.7; React's own share of the badge/button switch, the steadiest
+    part of a profile, 2.7 → 1.1 ms. The whole wire-record session (243
+    examples opened, pressed and typed in, deterministic) takes 7.23, 7.20,
+    7.23 s of CPU before and 7.05, 6.86, 7.06 now. The stand-in's start
+    (the example sent, medians of four interleaved rounds of nine) 76 → 69
+    ms, CPU 138
+    → 122 ms. The session's wire record now differs from
+    round 3's there, a set where it had a remove and an insert, 20 KB less
+    in all, and the host's tree after every one of its 826 lines is the
+    same, ids aside.
+  - *React per update.* Nothing in the host config or the tree sync scales
+    with the tree: a commit's work is its mutations and the nodes React
+    gave new props. The stress demo's whole-grid re-render (on the stand-in,
+    production React, 2,500 cards) is 7.4 ms, 65% of it React's own
+    (render and the commit's walks), 22% `sameProps` on each of the 12,500
+    host nodes it re-rendered (needed to send nothing for them), 1% the
+    patch. What the app re-renders is the app's: memoized cards make it a
+    card's worth.
+
+- **The driver per update (2026-11-11, round 5).** What a commit costs the
+  driver now that the host is cheap, on the same Ryzen laptop, against
+  `metal-forks` at `9d618af`, interleaved. The machine was shared with
+  three other lanes' builds and benches, which stretched wall times two-
+  to threefold from one run to the next, so the stand-in benches now also
+  count the main thread's instructions (`bench/lib/instructions.ts`: the
+  CPU's own counter through `perf_event_open`, user space only; the same
+  work counts within 1–2% across runs, where its time does not). The
+  stress bench's app is in `bench/lib/dashboard.tsx`, and
+  `bench/driver.tsx --stress` times it on the stand-in: typing, growing
+  the banner and selecting a card, as written (an app that memoizes
+  nothing: a character re-renders all 2,500 cards) and with its cards
+  memoized (`--memo` on the real host's `bench/stress.tsx`), the floor
+  for the same app.
+
+  | stress dashboard on the stand-in, production React | before | after |
+  | --- | --- | --- |
+  | type a character, as written: M instructions / ms | 61.8 / 9.6 | 52.0 / 8.3 |
+  | grow the banner, as written: M instructions / ms | 60.6 / 9.3 | 51.9 / 8.2 |
+  | type, cards memoized (the floor): M instructions / ms | 6.1 / 0.3–0.5 | 5.7 / 0.3–0.6 |
+  | the same, React as the bench starts it (no `NODE_ENV`): type / grow ms | 10.2 / 10.2 | 9.2 / 8.9 |
+
+  | real host (`ref/host-r4`), `bench/stress.tsx`, runs whose frames show a quiet machine | before | after |
+  | --- | --- | --- |
+  | `driver`, type / grow (ms, whole ms) | 12–13 / 13–14 | 12–13 / 12–13 |
+  | `driver`, cards memoized (`--memo`), type / grow | 2 / 3 | 2 / 3 |
+
+  The real host's `driver` column (whole milliseconds, from the simulated
+  action through the host and back) doesn't resolve the 1 ms the stand-in
+  shows, and runs on a loaded machine read 17–35 ms on either side;
+  three of eight were. What it does show: of the 12–13 ms, about 10 is
+  this app re-rendering 2,500 cards it doesn't memoize, and memoized the
+  same update is 2–3 ms, most of it the trip through the host.
+
+  | list bench (2,500 memoized rows), stand-in: M instructions | before | after |
+  | --- | --- | --- |
+  | swap two rows | 114.6 | 112.1 |
+  | reverse the rows | 104–107 | 108.7 |
+  | shuffle the rows | 54.1 | 56.7 |
+  | change every row's text | 41.3 | 33.1 |
+  | append, insert or remove one row | 6.8–9.3 | 6.9–9.3 |
+
+  | the same list on the real host: KB sent / host's `patch applied` | before | after |
+  | --- | --- | --- |
+  | swap two rows | 140 KB / 26.6 ms | 0.1 KB / 2.1 ms |
+  | last row first | 102 KB / 11.6 ms | 0.1 KB / 2.1 ms |
+  | reverse the rows (the same lines; that run's frames were 30% slower too) | 102 KB / 14.5–15.0 ms | 102 KB / 16.8 ms |
+
+  | example browser, stand-in (`metal-ui` `bench/driver.tsx`): M instructions | before | after |
+  | --- | --- | --- |
+  | switch example (badge ↔ button) | 17.9 | 16.2 |
+  | switch example (card ↔ table) | 23.9 | 21.8 |
+  | type a character in the search field | 5.36 | 4.85 |
+  | toggle the theme | 26.3 | 24.0 |
+  | heap objects after the start / after 200 interactions | 73,450 / 83,260 | 71,640 / 81,025 |
+  | start: the first tree's render and send, wall / CPU (one quiet run each) | 27 / 70 ms | 22 / 61 ms |
+
+  What changed:
+
+  - *Host components hand their props on.* `View`, `Text`, `TextInput`,
+    `ScrollView`, `Svg` and `Image` made their host element with
+    `createElement`, which copies the props into a new object; they now
+    use React's `jsx`, which keeps the object the app wrote (React
+    compares and the host instance holds that one). Metal-ui's box makes
+    its host view, its text runs and its list items the same way. The
+    components are still the same functions, called the same way.
+  - *A `<Text>`'s one string is its own.* `shouldSetTextContent` is true
+    for a `<Text>` whose children are one string or number: React makes no
+    fiber and no instance for it, and the text node reads it from its
+    props (`ownText`, `lib/instances.ts`); several strings (`#{index}`)
+    are nodes as before. The string still takes the id its node took, so
+    every id, and the wire, stay what they were.
+  - *`sameProps` walks the new props alone.* A host instance keeps how
+    many keys its props and its `style` had when last compared, so the
+    next compare of a re-rendered node (new props, new style, the same
+    keys) walks only the new objects. A style object kept across renders
+    compares by identity and is counted again when it is not.
+  - *A reorder is sent in the fewest moves* (section 2, "Driver side"): a
+    swap of two rows 2,480 apart was 2,480 moves (React places every row
+    between them), 145 KB the host parsed and applied one move at a time;
+    it is two. A row moved from last to first: one move where React sends
+    2,499. A reversed list sends what React sent.
+
+  The wire: the example browser's recorded session (826 lines) is
+  identical to the byte before and after; the list bench's record differs
+  in two of 33 lines (the swap, 16 KB → 125 B; the shuffle, 15.4 → 15.1
+  KB), and the host's tree after every line is identical (applied by a
+  model of `patch/`). `bench/layout-check.tsx --scene` on `ref/host-r4`,
+  recorded with the driver before and after: every node's bounds and every
+  frame's scene digest are identical for `grid`, `browser`, `scroll` and
+  `scroll-fractional` (a first `scroll` recording heard four hovers
+  before its first step, a pointer crossing the nested compositor's
+  window; again, it was identical), and the stress bench with
+  `MIRIN_METAL_ACCESS_CHECK=1` reports nothing. With the real host
+  (`bench/native.tsx`), a press to the last patch sent is 6 ms before and
+  after (whole milliseconds), 4.3 KB a click.
+
+  Evaluated, not landed:
+
+  - *`View` and `Text` as host types.* Exporting the host type names
+    themselves (`View` the string `"mirin-view"`, typed for JSX) takes
+    the wrapper fiber off every host element: the stress dashboard's
+    re-render 61.8 → 45.3 M instructions (−27%, against −16% landed).
+    `View` would no longer be a function (`View(props)` throws; metal-ui's
+    box reads the host type that way), so it changes the package's
+    public surface: the owner's call.
+  - *A leaf element kept across renders.* `View`/`Text` returning their
+    last element when their props say the same (handlers identical, style
+    shallowly equal, text children equal), so React skips the host node:
+    a further 6% on the stress re-render, but a ref hook in every `View`
+    (3% more on a list whose rows change), and a `View` called as a plain
+    function outside a render throws.
+  - *The `has-*` registry without `useId`*, its context read once per box:
+    nothing measurable on the example browser.
+  - *Children flattened once in a box.* `Children.toArray` clones every
+    child element and `placed` clones a box child again; computing
+    `toArray`'s keys without the first clone is about 5% of an
+    interaction (the profile's `mapIntoArray` and clone), and has to match
+    React's key scheme exactly to keep every instance.
+
+  What is the app's and what is React's: the stress dashboard as written
+  re-renders 2,500 cards (about 32,000 fibers) per character; of the main
+  thread's sampled time React's render and commit walks are 60–65%, the
+  cards' own render 12%, and the host config's look at each of the 12,500
+  re-rendered host nodes (`commitUpdate`, `sameProps`) the rest. With its
+  cards memoized the same update is
+  5.7 M instructions and 0.3–0.5 ms. A swap is now two moves on the
+  wire, but React's commit still places the 2,481 fibers between
+  (`getHostSibling` walks the placed siblings after each: quadratic,
+  ~110 M instructions and 7–9 ms on the stand-in); the host's apply of a
+  single move is ~2 ms on the stress-sized list (a cost per patch in
+  `patch/apply.rs`, not per op).
+
+- Scrolling between pixels, other scale factors, rows that come back
+  (2026-11-11; release host, `bench/stress.tsx`, medians of two runs each
+  of the host before (`moved and unseen` above, built with only
+  `MIRIN_METAL_SCALE` added) and this one, back to back on a nested
+  dashi-comp, which draws at 1: the other scale factors are
+  `MIRIN_METAL_SCALE`, section 6). A drawing was moved only by whole device
+  pixels at a scale factor of 1, 2 or 4. A touchpad scrolls by fractions of
+  a pixel and a laptop often runs at 1.25 to 1.75, and there every row in
+  view was drawn again each frame. Three changes, in the GPUI fork
+  (`forks/gpui/MIRIN.md`):
+
+  - *Scroll views paint on device pixels* (section 2): the offset keeps its
+    fraction, the content is painted at the nearest device pixel. A frame
+    whose offset moved by less than a pixel reuses every row in place; any
+    other moves them by whole pixels.
+  - *Positions settle on a device grid*
+    (`forks/gpui/src/elements/retained/grid.rs`). Why only 1, 2 and 4: taffy
+    lays out in whole device pixels, but an element was given logical
+    bounds (each ancestor's position divided by the scale factor, added
+    up) and every primitive multiplied its own back. At a power of two
+    both are exact; at 1.5 each loses a little, by an amount that depends
+    on where the element is, so a drawing copied 60 device pixels down
+    differed in its last bits from the same drawing made there (and a
+    quad's edge sat at 150.99998 where layout said 151). Now a node is
+    placed from its device position and the offset around it in one
+    division, and a device position within 1/64 px of the grid (eighths of
+    a device pixel) is that grid point: for primitives, their masks,
+    layers, hitboxes and content masks, with retained subtrees or without.
+    A move is a whole number of device pixels between grid points, applied
+    to the grid point. What is farther than 1/256 px from the grid keeps
+    its subtree from moving along that axis: a shadow one logical pixel
+    down at 1.1 (no float holds 1.1), an underline at a fraction of a
+    pixel. An icon rounds from its settled position, a half always up (at
+    1.5 half of all icons sit on a half pixel). At a power of two nothing
+    is settled: every position is what it was.
+  - *A row out of view keeps its drawing*
+    (`forks/gpui/src/elements/retained/parked.rs`). A subtree nothing
+    shows of left the frame, and its drawing with it, so a row scrolled
+    out and back was built again: half of a scrolled frame. Its drawing is
+    now taken out of the frame it was last in (if it is whole and may
+    move) and appended to last frame's lists when it shows again, from
+    where it is copied like any drawing that moved; in between it costs
+    nothing. A window keeps at most 24,000 primitives, hitboxes and
+    listeners so and drops the ones parked longest ago, which are drawn
+    anew as before: memory does not grow with the content's length.
+
+  | stress bench (15k nodes), scroll frame (p95) | before | now |
+  | --- | --- | --- |
+  | scale 1, 40 px steps | 4.0–4.1 ms (4.5–4.7) | 3.0–3.4 ms (4.8) |
+  | scale 1, 40.5 px steps | 17.7–21.2 ms (21.4–32.6) | 3.2–3.3 ms (4.8–5.0) |
+  | scale 1, 13.3 px steps | 16.9–19.8 ms (21.3–21.4) | 2.6–2.8 ms (3.1–3.5) |
+  | scale 1.5, 40 px steps | 17.4–20.2 ms (21.1–21.2) | 3.1–3.3 ms (4.7–4.9) |
+  | scale 1.5, 40.5 px steps | 17.1–17.5 ms (20.7–21.1) | 3.1–3.2 ms (4.9) |
+  | scale 1.5, 13.3 px steps | 16.5–20.5 ms (19.9–35.5) | 2.8–3.0 ms (3.5–4.3) |
+  | scale 2, 40 px steps | 4.1–4.3 ms (4.8) | 3.1–3.2 ms (4.5–4.7) |
+  | scale 2, 40.5 px steps | 3.5–4.1 ms (4.6–5.0) | 3.0–3.1 ms (4.8–4.9) |
+  | scale 2, 13.3 px steps | 16.5–20.0 ms (20.8–21.3) | 2.8–3.1 ms (3.2–3.6) |
+
+  A step is one wheel turn a frame, down and back up (24 each way in the
+  full run, scale 1 and 40 px; 16 in the others); 40 px is 60 device pixels at 1.5, and
+  40.5 px is 81 at 2, which the host before already moved. The other
+  scenarios are what they were (select 2.5 → 2.7–2.8, type 1.7 → 1.7–1.8, hover
+  2.1–2.6 → 2.6–2.9, grow 3.9 → 3.7–4.2, grow in the scroll view 4.1–4.2 → 4.3–4.4, select
+  there 3.0 → 3.1–3.2 ms a frame, before → now), and so is the example
+  browser's scrolled frame (1.5–1.6 → 1.0–1.7, p95 1.9–2.0 either way ms). Resident memory: 238–256 → 239–240 MB
+  idle, and 332 → 332–333 MB after the whole run, when the rows that scrolled
+  out are parked (the budget's worst case is about 3 MB).
+
+  A scrolled frame is now 4 to 5 ms when a row shows for the first time
+  (it is built: its first drawing, made out of view, has nothing in it)
+  and about 3 ms otherwise, also when a row comes back: nothing is built
+  for it. What is left is the scroll view's own content, drawn at its own
+  level every scrolled frame, and copying the rows that come in clipped
+  primitive by primitive.
+
+  Checks. The GPUI fork's tests (`retained/tests/`) compare moved frames
+  with drawing everything at 1, 1.25, 1.5, 1.75, 2, 3 and 1.1, with and
+  without snapping, wheel steps of 0.3 px adding up, and rows scrolled out
+  and back with room for all, some and none of their drawings (what was
+  dropped is built again; nothing else is). `layout-check.tsx` (`scroll`,
+  `grid`, `browser`, with `--scene`): this host with
+  `MIRIN_METAL_SCROLL_SNAP=0` draws what the host before did at every
+  step; with snapping, at every step but the two where the view sits half
+  a pixel in (the rows are 0.5 px further up); and what it draws is the
+  same with `MIRIN_METAL_RETAIN=0`. `layout-check.tsx scroll-fractional`
+  (steps of 40.5, 13.3 and 0.3 px, the ends, presses and pointer moves by
+  window coordinates) draws the same with retention and without at 1 and
+  at 1.5, to the bit. At 1.5 the bounds the layout map reports for a
+  copied subtree's nodes differ from a fresh layout in the seventh digit
+  (it moves them by a logical distance, `sim.rs`): `--bounds-digits=3`
+  compares them to that.
+
+  Resize (`bench/stress.tsx`'s `resize`: the window 100 px narrower and
+  back, the rows in the scroll view): 15.8–20.8 → 19.9–20.4 ms a frame at 15k nodes,
+  before and now. From a profile: taffy 28% (each of the 100 rows is a
+  flex container whose width changed; its 25 cards answer from their
+  caches, but the flex algorithm runs for every row), and every row is
+  built again onto its kept layout, the 83 out of view too (a subtree
+  whose size changed is drawn to learn how far it reaches before it can
+  be left out): building them 23%, their prepaint 14%, their paint 15%.
+  Within those, 13% is looking up the retained state of each of the 2,500
+  cards three times a frame, by its whole element id path. One of the
+  three went (a card left out is no longer looked up at paint); the rest
+  is the next entry's.
+
+- Resize (2026-11-11; release host, `bench/stress.tsx` in
+  `packages/mirin-metal`, `host-r3` and this one back to back on a nested
+  dashi-comp, four runs each, medians and ranges of the three the machine
+  was quiet for; the resize scenario's 12 widths, 100 px apart, with the
+  rows in the scroll view). A resize frame cost what a frame that drew
+  every row did: each of the 100 rows was drawn again onto its kept
+  layout, the 83 out of view too, and taffy measured every card twice.
+  Three changes, in the forks (`forks/gpui/MIRIN.md`, `forks/taffy/MIRIN.md`):
+
+  - *A subtree only resized is left out while nothing of it shows*
+    (`Plan::SkipResized`). Taffy now says whether a layout changed
+    anything below a node (`below_changed_since`: the box or place of a
+    node under it), apart from its own box. A row stretched to the new
+    width, its cards where they were, changed nothing below its root: what
+    it draws reaches as far past its root's edges as before, so its last
+    extent, grown right and down by what the root grew, says whether any
+    of it shows. One nothing of which shows is left out without being
+    drawn, and its old drawing (no longer what it would draw) is dropped:
+    it is drawn when it shows. The nodes inside are where they were, so
+    the layout map's bounds for them (and the accessibility tree's) stay
+    right while it is out of view: `layout-check.tsx` now resizes the
+    window in its `grid`, `scroll` and `browser` runs and compares every
+    node's bounds, out of view too.
+  - *Taffy keeps a definite constraint apart from max-content.* Its cache
+    put a node's size under a definite height and under max-content in one
+    slot. A card in a row is asked both ways in one layout (under
+    max-content while the column sizes the row, under the row's height
+    while the row places it), so each evicted the other and every layout
+    measured all 2,500 cards twice: 5,361 flex runs a resize where 367 now
+    run (the rows themselves, whose width changed). Two more slots keep
+    both; what the cache answers is unchanged. Laying the bench's tree out
+    alone at a new width (taffy on its own, no GPUI): 2.4 → 1.1 ms.
+  - *An element id path holds 16 ids, not 32.* Every element state is
+    keyed by its whole id path, moved by value into the frame's maps:
+    32 `ElementId`s inline made each key 1.3 KB, copied on each of the three
+    lookups a retained subtree drawn makes a frame. The bench's deepest
+    path is 8 (only views that interact or are retained have ids); a deeper
+    one spills to the heap.
+
+  | stress bench (15k nodes) | `host-r3` | now |
+  | --- | --- | --- |
+  | resize: frame (p95) | 21.7–22.3 ms (24.5–26.2) | 6.7–8.4 ms (7.7–10.3) |
+  | resize: host CPU a resize | 24.2–25.0 ms | 10.0–10.8 ms |
+  | resize: rows drawn again / left out a frame | 101 (and 2,075 cards left out one by one) / 0 | 18 / 83 |
+  | resize: accessibility a resize | 0.1 ms, nothing handed over | the same |
+  | select / type / hover | 2.0–2.2 / 1.3 / 2.3–2.5 ms | 1.8–2.4 / 1.1–1.7 / 2.2–3.0 ms |
+  | grow / in the scroll view / select there | 3.5–3.6 / 3.5–3.8 / 2.4–2.5 ms | 3.5–3.7 / 3.6–4.7 / 2.1–3.0 ms |
+  | scroll, 40 px steps (p95) | 2.6–2.8 ms (4.0–4.4) | 2.6–3.5 ms (4.3–5.1) |
+  | RSS idle / after the scroll view's scenarios | 252–260 / 339–340 MB | 219–232 / 312 MB |
+  | example browser: full frame / scroll frame (p95) | 0.7 / 1.0 ms (1.6) | 0.8 / 1.1 ms (1.3) |
+  | example browser: resized by the app to 900 px and back: first frame, accessibility | 0.9 ms, 0.1 ms (1 node handed over) | the same |
+
+  Step by step, each back to back with the host before it: leaving the
+  resized rows out took a resize frame from 20.6 to 12.4 ms, the cache
+  slots to 7.2–7.9, the shorter id paths 7.0–8.2 → 6.6–6.8 (with 8
+  inline; 16 landed). What is left of a resize frame (a profile): taffy a
+  third (each of the 100 rows runs its flex algorithm four times, three
+  sizings and its layout, its cards answering from their caches; rounding
+  what they wrote), drawing the 18 rows in view onto their kept layout,
+  copying their 425 cards (their mask changed with the scroll view's
+  width, so each primitive is masked again), and the retained subtrees'
+  state lookups (a tenth).
+
+  `bench/native.tsx`'s maximize/restore (about 800 ms to a settled frame)
+  is neither resize cost nor an animation: in a nested dashi-comp the
+  window is never resized by it (`frames at a new size` is 0 for every
+  host: every frame of the run is 1280×800), and the time is when the
+  last of the frames the nested compositor paces a second apart came
+  inside the bench's 800 ms. The bench now also resizes the window from
+  the app (`setSize`, which the nested compositor honors), across the
+  example browser's breakpoint: 0.9 ms to the first frame at the new width.
+
+  Memory. Resident memory does not grow over resizes (the same after each
+  of 120). The bench's 240 → 340 MB is the switch to the scroll view
+  (a new tree of 15k nodes built while the old one is alive for a frame),
+  and was a high-water mark, not a leak: after it, the allocator held
+  about 100 MB freed but not given back (glibc's arenas, between live
+  allocations; trimming them after such a frame gave back 15 MB), taffy's
+  node slot map had doubled to 79 MB for the two trees of that frame (it
+  never shrinks), and GPUI's element arena, the frame's lists and the
+  layout map's tables had grown to their largest. Switching back and
+  forth five times (`--switches=5`) took it from 339 to 404 MB, less each
+  time (+43, then +0 to +10; now 312 → 373 MB, alike). One thing did
+  grow for good: what each id'd view's subtree was when last walked
+  (`retain.rs`), which a patch updates only for what it changed, so the
+  views a patch removed stayed for the window's life (19 new ids a patch
+  in a list of fresh rows: 3,800 after 200 patches). They now go once
+  twice as many are kept as after the last time. The layout map keeps
+  nodes no longer drawn until its next prune, every 64 frames: a burst of
+  removals stays that long.
+
+- Resize, round 5 (2026-11-11; release host, `bench/stress.tsx --only=resize
+  --resizes=60` in `packages/mirin-metal`, `host-r4` and this one back to
+  back on a nested dashi-comp, three runs each, medians and ranges of the
+  runs the machine was quiet for). What round 4 left of a resize frame:
+  taffy a third (each row ran its flex algorithm four times), the 17 rows
+  in view and the list around them built again onto their kept layout,
+  their 425 cards copied under the scroll view's new mask, and the state
+  lookups those draws make. Three changes, in the forks
+  (`forks/gpui/MIRIN.md`, `forks/taffy/MIRIN.md`):
+
+  - *A row's result holds at another width* (`compute_stretch_bound`,
+    `Cache::get_stretched` in the taffy fork). A row on one line whose
+    items are placed from its start, none of which grows, with no
+    percentage, auto margin or absolutely positioned child in it, lays its
+    items out the same at any known width above the sum of their
+    hypothetical sizes, gaps, padding and border: the flex grow factor is
+    used and nothing grows, so each item keeps its hypothetical size, which
+    the width does not enter (a content-based basis is measured under
+    max-content). Under a definite available width with none known it takes
+    its content's width, whatever that space. The flex algorithm says so
+    with its result and the cache keeps it; a query at another width answers
+    from the entry for the same query, its width replaced, and the items are
+    not laid out again (they are where that entry left them, so nothing in
+    them is rounded again either). A row whose items must shrink, grow, or
+    sit from its end or center runs as before. Randomized trees (rows of
+    every kind: wrapping, reversed, centered, growing and shrinking items,
+    percentages, auto margins, absolute children, text that wraps) laid out
+    across 19 widths, kept and from nothing, compare exactly, rounded and
+    not (`tree::taffy_tree::stretch_tests`); dropping any one of the
+    conditions fails it.
+  - *A retained subtree whose root draws nothing from its size keeps its
+    drawing when only its root is resized* (`Retained::stretchable`).
+    mirin-metal says so for a view with no background, border, shadow,
+    clip or hitbox (`render::draws_nothing_of_its_size`): what it draws is
+    its children's, which taffy says did not change (`below_changed_since`).
+    Its drawing is then taken as of the new layout and copied (under the
+    scroll view's new mask) or left out and parked as if its size had not
+    changed, so the rows in view are copied, not built again with their
+    cards, and the ones out of view keep their parked drawings. A row the
+    view clips is still drawn again (its cards are each moved on their own);
+    one that draws a background or border is too.
+  - *A window records the entities it drew only where that changed*
+    (`App::record_entities_accessed`): every frame took each entity it drew
+    out of the map of windows to invalidate and put it back (0.6 ms of a
+    frame with the bench's 2,600 retained subtrees, each its own entity, in
+    every scenario that draws them).
+
+  | stress bench (15k nodes) | `host-r4` | now |
+  | --- | --- | --- |
+  | resize: frame (p95) | 8.2–8.4 ms (8.9–11.3) | 2.3–2.4 ms (3.0–3.6) |
+  | resize: host CPU a resize | 10.5–10.8 ms | 4.0–4.2 ms |
+  | resize: accessibility a resize | 0.1 ms, 1 handed over | the same |
+  | resize: rows in view built again / copied, and left out, a frame (the trace's retained counts) | 17 (their 425 cards copied) / 0, 83 | 1 (the one the view clips; its 25 cards copied) / 16, 83 |
+  | select / type / hover | 2.0 / 1.2 / 2.2 ms | 2.0 / 1.2 / 2.2–2.3 ms |
+  | grow / in the scroll view / select there | 3.4–3.5 / 3.7–4.2 / 2.3 ms | 2.8–3.3 / 3.6–3.8 / 2.4 ms |
+  | scroll, 40 px steps (p95); across | 2.5–2.7 ms (3.9–4.3); 2.6–3.3 ms | 2.5–2.6 ms (3.8–4.1); 2.5–2.6 ms |
+  | RSS idle / after the resizes | 203–204 / 307–313 MB | 203–205 / 310–315 MB |
+  | example browser (`native.tsx`): full frame / scroll frame / click to frame / setSize to first frame | 0.6–0.7 / 0.9–1.0 / 9.1–9.2 / 0.8 ms | 0.5–0.6 / 0.8–0.9 / 9.1–9.5 / 0.9 ms |
+
+  Every taffy cache entry keeps its bound: about 100 bytes a node more,
+  3 MB of the bench's 30,000 nodes (two trees: the grid's and the scroll
+  view's).
+
+  Step by step (each back to back with `host-r4`): the stretchable rows
+  and the entities took a resize frame from 8.2–8.4 to 5.4–6.0 ms; the
+  rows taffy answers from another width to 2.3–2.4 (working out a copied
+  drawing's masks once a run of primitives, not three times a primitive,
+  did not measure: 2.3–2.4 ms either way; left out). What is left of a
+  resize frame (a profile): copying the rows in view primitive by primitive under the
+  scroll view's new mask (15%), building again the list that holds the
+  rows (its rows changed size, so it is drawn anew: the 100 rows' state
+  looked up, 83 left out, 16 copied) and the row the view clips (a
+  quarter), the accessibility tree's refresh (11%), and taffy's flex
+  algorithm for the columns above the rows (10%).
+
+- Text across, lists as one, other scale factors (2026-11-11, round 4;
+  release host, `bench/stress.tsx` and metal-ui's `bench/native.tsx`,
+  medians of two runs each of `host-r3` built with only the simulation's
+  `dx` added and this one, back to back on a nested dashi-comp). A
+  drawing with text was never moved across: a glyph took its pixel and
+  one of its four subpixel positions from its own place in the window
+  (the line's origin there plus every advance before it, each sum
+  rounded where it landed), so the same line a whole number of device
+  pixels away could round to another variant, and a horizontal scroll
+  drew every row in view again. A virtualized list's rows were in no
+  group, so its scroll handed AccessKit every row in view. At 1.1 or 1.2
+  a card was never moved at all. Changes (`forks/gpui/MIRIN.md`):
+
+  - *A glyph is placed from its line* (`Window::paint_line_glyph`). The
+    line's device position is settled on the grid and split into whole
+    pixels and a fraction; the glyph's distance from the line (summed
+    from zero) is added to the fraction alone. A whole-pixel move then
+    changes the whole pixels and nothing else, so a subtree with text
+    moves across as it does down. Where a glyph lands is the same to a
+    few float steps: a glyph within them of a quarter pixel may take the
+    variant next to the one it had, a sixteenth of a pixel over. In the
+    checks below that compare the drawing with `host-r3`'s, three glyphs
+    did, in the example browser (one of about 300 in a frame); none in
+    the grid, the scroll view or `scroll-fractional`.
+  - *Distances snapped onto the grid where scaling is not exact.* A
+    border is drawn four times, each in a band as deep as the border or
+    the corners; a shadow sits its offset and spread from its box. At 1.1
+    a 6 px band ends 6.6 device pixels in, which is on no grid, so every
+    card was drawn again each scrolled frame. The band depths snap up to
+    the next eighth of a device pixel (6.6 → 6.625: the quad has no
+    background, so a deeper band shows nothing more), a shadow's offset
+    and spread to the nearest (1.1 → 1.125: a blurred shadow 0.025 device
+    pixels lower). At a power of two, and at 1.25, 1.5, 1.75 or 3 (where
+    they are on the grid already), nothing changes.
+  - *A list's rows are one group.* GPUI's list says where it paints its
+    content before it prepaints its rows (`List::on_content_origin`), and
+    mirin-metal keeps the rows in that group, as a scroll view's content
+    (section 4, "Bounds"): a scroll is one frame's transform.
+  - *A scroll view's children have bounds* (section 4).
+  - *A copied subtree's nodes move on the grid* (`layout/state.rs`): at
+    1.5 the layout map moved them by a logical distance, which differed
+    from laying them out there in the seventh digit; it now moves them as
+    GPUI places them (device grid points, one division), to the bit.
+  - *Hover and rows put aside* (a bug found scrolling across and back): a
+    row parked while hovered came back showing its hover where the
+    pointer no longer was, and one parked unhovered came back without it
+    where the pointer had moved meanwhile. A drawing the pointer is over
+    is no longer parked, and one that comes back under the pointer is
+    drawn again.
+
+  | stress bench (15k nodes) | host-r3 | now |
+  | --- | --- | --- |
+  | across, 40 px steps (`hscroll`): frame (p95) / host CPU a step | 15.0–15.5 ms (18.2–19.4) / 18.3–19.6 ms | 3.4–3.7 ms (4.8–4.9) / 5.6–5.8 ms |
+  | across at 1.25 (`MIRIN_METAL_SCALE`), cards with a shadow (`--shadow`) | 17.1–19.4 ms (21.3–21.5) / 21.5–22.5 ms | 3.7–4.0 ms (5.0–8.3) / 6.5–7.3 ms |
+  | down at 1.1, cards with a shadow | 18.7–20.0 ms (23.8–25.1) / 22.7–24.4 ms | 3.7–3.9 ms (5.1–5.3) / 5.8 ms |
+  | across at 1.1, cards with a shadow | 19.4 ms (20.9–21.2) / 22.3–23.1 ms | 3.6–3.9 ms (5.3–6.1) / 6.0–6.3 ms |
+  | down at 1.25, cards with a shadow | 3.9–4.0 ms (5.6–6.3) / 6.0–6.3 ms | 4.0–4.1 ms (5.7–9.7) / 6.3–6.9 ms |
+  | down, 40 px steps (`scroll`) | 3.4–3.5 ms (4.4–4.9) / 5.0–5.4 ms | 3.4–3.5 ms (5.0–5.1) / 5.6–5.8 ms |
+  | select / type / hover / grow / grow and select in the scroll view, frame | 2.8–4.3 / 1.8 / 2.7–3.0 / 4.0–4.1 / 4.1–4.7 / 3.0–3.4 ms | 2.9–3.0 / 1.9 / 2.8 / 3.9–4.2 / 3.9–4.5 / 3.1–3.2 ms |
+  | resize, frame | 16.0–16.7 ms | 16.3–16.8 ms |
+
+  | example browser (`bench/native.tsx`), its list scrolled | host-r3 | now |
+  | --- | --- | --- |
+  | accessibility nodes made / handed over per scrolled frame | 1 / 18 | 1 / 3 |
+  | accessibility per scrolled frame | 0.1–0.2 ms | 0.1 ms |
+  | scroll frame (p95) | 1.6–1.8 ms (2.4–2.7) | 1.7–1.8 ms (2.0–2.6) |
+  | host CPU per scroll step | 3.0–3.3 ms | 2.8–3.3 ms |
+  | at 1.1: handed over / scroll frame (p95) / host CPU a step | 19 / 1.9–2.0 ms (2.8) / 3.3 ms | 8 / 1.8–1.9 ms (2.3–3.0) / 2.8–3.3 ms |
+
+  The stress bench's new `hscroll` scenario is the same 2,500 cards in
+  columns of twelve, side by side in a view that scrolls across
+  (`overflow: "scroll-x"`); the simulation's `scroll` takes a `dx`. A
+  scrolled frame across is now what one down is: the columns that come
+  in, and copies. The list's three nodes handed over a frame are its
+  frame and the rows that come and go; at 1.1 the rows' places in the
+  list differ in their last digits from frame to frame (the list adds
+  its rows' heights up from where it paints the first), so a few more
+  are placed again. The scroll frame is the same with the list as one
+  group (the median of four runs each: 1.7 ms before, 1.75 now; one run
+  of the four was 2.7 ms, with every other number in it slow too).
+
+  Checks. GPUI fork tests: a glyph moved by whole device pixels lands on
+  the same pixel and subpixel variant (and placed the old way, it does
+  not always); rows with text scrolled across at 1, 1.1, 1.25, 1.5, 2
+  and 3, and rows with a rounded border at 1.1, 1.2, 1.25, 1.5 and 2,
+  draw what drawing everything does and are moved; the hovered row
+  above. A scene's description can now say each glyph's subpixel
+  variant (`MIRIN_METAL_TRACE_SCENE_GLYPHS=1`; the atlas tile it leaves
+  out hid it, so a moved glyph on the wrong variant passed every check),
+  which the retained tests always use. `layout-check.tsx` has an `across`
+  app (the cards in columns scrolled across by whole and half pixels,
+  under centered and right-aligned captions, with a strip before them
+  that widens, presses and pointer moves). With `--scene`, the glyphs'
+  variants and `MIRIN_METAL_RETAIN=0` on one side, this host draws the
+  same to the bit with retained subtrees and without on `across` (at 1,
+  1.5 and 1.1), `grid`, `browser`, `scroll` and `scroll-fractional` (at
+  1 and 1.5), and the bounds are the same at 1.5 without
+  `--bounds-digits` (the layout map change above). Against `host-r3`:
+  `grid` identical; `scroll` and `scroll-fractional` draw the same at
+  every step, and differ only in the two children of the scroll view
+  having bounds; `browser` the same, with the content's child in its
+  scroll view having bounds (and, once a search leaves the list short
+  enough not to be virtualized, its rows), and the three glyphs above.
+  `bench/a11y/extents.tsx` (which now also scrolls a virtualized list of
+  pressable rows) reads the same AT-SPI tree from both hosts at every
+  step but for the scroll view's children, which now have extents where
+  they had none: the list's rows have the same extents with the list as
+  one frame as each on its own. `MIRIN_METAL_ACCESS_CHECK=1` on the
+  whole stress bench: no complaint. A scroll and a scroll across send no
+  `object:bounds-changed` (`bench/a11y/signals.sh`).
+
+  Evaluated and not done: keeping a row first drawn out of view. A
+  subtree drawn anew draws only what lies within 256 px of its mask, so
+  a row far out of view is drawn empty, and is drawn again onto its
+  kept layout when it first shows: on the stress bench's scroll, a frame
+  in which a row first shows (29 subtrees redrawn: the row, its cards,
+  the content around them) takes 4.8 ms (median), the others 3.3 ms. Drawing such rows whole
+  when they are first built would move that cost to the first frame,
+  which builds every row already (160–210 ms at this size), and the
+  drawings would fill the window's parking budget (24,000 primitives,
+  about the 2,500 cards' whole drawing).
+
+- The accessibility adapter's thread (2026-11-12, round 6; release host,
+  `host-r5` and this one back to back, two runs each, medians; the
+  session has accessibility on, as the benches run). Round 5's resize
+  profiles put AccessKit's thread at 35–56% of all samples, in
+  `previous_filtered_sibling` and `is_hidden`. Measured per thread (the
+  thread is now named `accesskit`, and `bench/stress.tsx` reports its
+  part of each scenario's CPU), none of that is per update: select,
+  type, hover, grow, scroll, resize and hscroll take 0.0–0.5 ms of that
+  thread's CPU an update, within the 10 ms ticks' noise, before and after.
+  It was the switch of the cards into the scroll view, which the
+  profiles' window took in: every card's node is removed and made anew,
+  and the thread sent an `AddAccessible` for each with the node's place
+  among its parent's filtered children, counted by walking the siblings
+  before it and running the filter at each step: O(n²) for 2500 cards
+  under one parent, 77% of the thread's samples. On a loaded machine
+  the burst ran past the 2.5 s the bench waits, into the next
+  scenario's CPU (a base run measured scroll at 17.9 ms a step, 10.2 of
+  them the adapter's, and hscroll at 20.8, 14.0 the adapter's).
+
+  | stress bench (7604 accessibility nodes) | before | after |
+  | --- | --- | --- |
+  | switch to the scroll view: the adapter thread's CPU | 870 ms (570–1710 under load) | 150–230 ms (400 under load) |
+  | the same, on the window's thread (the tree, and AccessKit taking it) | 35–50 ms | 37–52 ms (noise) |
+  | per update, every scenario: host CPU / the adapter's part | 3.0–6.7 / 0.0–0.5 ms | the same |
+  | accessibility's RSS (on minus off), first tree | 22 MB | 18–19 MB |
+  | the same, after the tree is replaced whole (switches, heap trimmed) | 37–40 MB | 31–34 MB |
+  | stand-alone, 7600 nodes: `AddAccessible` for a replaced grid / AccessKit's tree / a root with 2500 children changed | 350 ms / 6.0 MB / 2.0–2.6 ms | 13 ms / 2.4 MB / 0.7 ms |
+
+  What changed (`forks/accesskit_atspi_common/MIRIN.md`,
+  `forks/accesskit_consumer/MIRIN.md`, both new forks):
+  - *A node's place among its siblings is looked up.* Past 16 siblings
+    before it, the parent's filtered children are listed once for each
+    state of the tree (a generation each write of it moves) and the place
+    is found in the list; `GetIndexInParent` the same. What remains of a
+    switch on the thread is D-Bus: registering and dropping each node's
+    objects and serializing about 27,000 signals.
+  - *A parent's children gained and lost are found through sets* when
+    both lists are long, on the window's thread (a node with 2500
+    filtered children that changes: 2.2–2.6 → 0.7 ms; Metal's stress
+    bench changes no such node per update).
+  - *AccessKit's two copies of the tree share each node's data*
+    (`Arc<Node>`): its tree is kept as last reported and as the next
+    update makes it, and every node was deep-copied into both.
+  - *A bug in the consumer's sibling walks*, found by the random trees
+    that check the places: after an empty container a hidden sibling was
+    walked into and the walk ended there, so siblings after it were
+    missing. Metal's trees never hold that pair (nothing in them is
+    hidden or clips), so nothing it publishes changes.
+
+  Checks: `bench/a11y/extents.tsx` gives the same 21 dumps, byte for
+  byte, from `host-r5` and this host; `bench/a11y/signals.sh` over the
+  whole stress bench counts the same signals of every kind (15,007
+  `StateChanged`, 15,002 `RemoveAccessible`, 15,001 `AddAccessible`,
+  10,006 `ChildrenChanged`, …); `MIRIN_METAL_ACCESS_CHECK=1` on the whole
+  stress bench: no complaint; `layout-check` against `host-r5` (`grid`,
+  `browser`, `scroll`, `scroll-fractional`) and against itself without
+  retention: identical. The places, child counts and children events are
+  checked against upstream's count on random trees changed at random
+  (`forks/accesskit_atspi_common/src/sibling_index/tests.rs`).
+
+  Evaluated and not done: sending `object:state-changed:defunct` only
+  while something registered for it, as bounds changes are (a third of a
+  switch's signals; at-spi2-atk sends only what is registered). Nothing
+  per update is left on the adapter's thread to cut.
+
+Open, on upstream GPUI (`docs/metal/gpui-next.md` section 6, "Round 5"):
+retained subtrees there now move, are left out, park their drawings and
+are built again onto their kept nodes, so grow, scroll and resize cost
+4.4, 5.4 and 14.4 ms (host-r4: 3.5, 2.4 and 8.5) where round 4's upstream host drew everything that moved
+(108–150 ms). Still not on upstream: moving a drawing whose own masks or
+border strips the view's edge clipped (the fork's mask map; such rows are
+built again onto their nodes as they come into view clipped), moves at
+scale factors that are not powers of two (the fork's device grid),
+element states carried as one entry and replayed primitives placed once
+in the bounds tree (what a select or a keystroke still costs over the
+fork), and text boxes lay out a pixel taller than on the fork (upstream
+rounds a measured size up).
+
+On upstream GPUI after round 6's next-platform lane (`docs/metal/gpui-next.md`,
+"Round 6: the platform and text ports"): the session lock, Dashi's unified
+title bar, a layer surface's screen by name and its stretched axis, the
+file drag's icon and X11's least size are ported to `gpui_linux`, and
+per-paragraph text sizes, `fit_to`, ink-end alignment, glyph variants in
+scene traces, a list's content origin and glyphs placed from their line's
+position to `gpui`; mirin-metal calls the same API for each on both builds.
+The nested compositor showed the lock, the chrome and the layer surfaces as
+`host-r5` does; the drag and two screens were not exercised there.
+
+Round 6 on the upstream build (`docs/metal/gpui-next.md`, "Round 6: the
+retention gaps"): a copied drawing goes into the bounds tree as one
+(`insert_spanning`), element states live in their retained subtree, the
+frame keeps every content mask as given so a drawing the view's edge
+clipped moves (the mask map; upstream draws every border in strips under
+masks of their own, so every card at a view's edge was drawn again), and
+positions settle on the device grid at 1.25, 1.5 or 1.75. Also fixed: a
+moved copy dropped a layer that ended up empty and so misplaced the
+drawings inside it (what round 5's attempt to move clipped border strips
+hit). Stress bench, upstream host against host-r5 (two runs each, medians):
+select 2.4 / 2.6 ms, type 1.9 / 1.45, hover 2.35 / 2.25, grow 2.95 /
+4.45, scroll 2.9 / 2.95, scroll across 3.05 / 2.95 (host-next-r5: 3.65,
+3.5, 3.75, 4.25, 4.85, 4.65); at `MIRIN_METAL_SCALE=1.5` grow 3.2 and
+scroll 2.9 ms where round 5's code drew every moved row again (13.4,
+17.1). Open there: scrolling across at a fractional scale (12 ms at 1.5 before
+next-platform placed glyphs from their line's position; to be measured
+with both), a drawing with masks pushed inside moved at a
+fractional scale, a keystroke and a select in a scroll view (0.5–0.7 ms
+over host-r5), and resize.
+
+Round 6 on upstream (`docs/metal/gpui-next.md`, "Round 6: layout as the
+default build's, and resize"): the upstream build now lays out as this one
+does (text at its line height's fraction, edges rounded as taffy 0.9 rounds
+them, scroll offsets halves away from zero): `layout-check` against host-r5
+gives the same bounds for every node of `grid`, `scroll` and
+`scroll-fractional` at every step, and of `browser` but the card example
+(taffy 0.9 makes that card 22 px shorter than its content, which then
+overflows its bottom padding; 0.15 holds it). A resize there costs 4.4–4.6 ms
+a frame (CPU 7.5), was 10.8–10.9 (CPU 14–15): taffy 0.15 answers a row at
+another width from its cache, and rows that draw nothing of their size keep
+their drawings (`Retained::stretchable`). host-r5: 2.0–2.4 ms.
+
+Round 6's three upstream lanes together (`docs/metal/gpui-next.md`,
+"Round 6: the three lanes together"):
+
+- **How they combine.** Moves keep the device grid at 1.25, 1.5 and 1.75,
+  the slack for fractional layouts (now at every scale), and scroll
+  offsets snapped halves away from zero.
+- **Correctness.** Retained drawings are the same as drawing afresh, at 1
+  and at 1.5, for every layout-check app. Layouts match host-r5 but the
+  card taffy 0.9 makes too short.
+- **Speed at scale 1** (stress bench against host-r5, two runs each,
+  medians): select 2.2 / 2.5 ms, type 1.85 / 1.65, hover 2.2 / 2.25,
+  grow 1.8 / 3.8, scroll 3.0 / 2.75, scroll across 3.05 / 2.9, resize
+  1.8 / 2.25. Select in a scroll view is the one slower case: 3.4 /
+  2.55.
+- **Speed at 1.5.** Scrolling across is 3.0 ms (12.1 before glyphs were
+  placed from their line), grow 2.0 (host-r5: 6.5).
+
+Open there: select in a scroll view, and step 7's checks of Dashi's apps
+at other scale factors.
+
+**metal-0.9 (2026-11-13): this work on what Dashi 0.8.0 shipped.** The
+`metal-0.9` branch is `wave5-0.8` at `a79a137` with `metal-forks` merged;
+0.8's six vendored-crate changes (URL breaks, baseline alignment, a card's
+height at its least width, tab stops, continuous scroll, one-line slack)
+are in `forks/gpui` and `forks/taffy`, and on the upstream build in
+`forks/zed` or upstream's own (`docs/metal/gpui-next.md`, "metal-0.9").
+Against the 0.8.0 RPM's host (`host-08`, driven by 0.9's driver, which
+sends it whole trees as 0.8's does): `layout-check` lays `grid` out
+identically; in `browser`, `scroll` and `scroll-fractional` every node both
+hosts report is where host-08 puts it, but for metal-forks' own changes,
+which host-r6 shows against host-08 to the same count: a scroll view's
+children now have bounds (host-08 reports none for them), scroll content is
+painted at whole device pixels (with `MIRIN_METAL_SCROLL_SNAP=0` and bounds
+to three decimals no other node differs), and host-08 has no `move`
+simulation command (the `heard` lines). Against host-r6 with `--scene`,
+layouts and drawings are identical in all four apps. Stress bench, frame
+(medians of two runs each, host-08 / metal-0.9 / its upstream build):
+select 171 / 2.05 / 2.05 ms, type 174 / 1.05 / 1.55, hover 156 / 2.1 /
+2.25, grow 158 / 3.2 / 1.75, scroll 156 / 2.3 / 2.8, resize 170 / 2.45 /
+2.2; host CPU per select 221 / 4.5 / 4.75 ms; 1368 / 0.2 KB sent per
+update; RSS idle 369 / 202 / 195 MB. The counter app's host: 78 / 59 MB
+RSS, 35 / 15 threads, 69 / 14 MB of GPU memory, 288 / 33 ms to its first
+frame.
+
+The upstream build's footprint after round 5 (`docs/metal/gpui-next.md`,
+"Round 5: a small app's footprint"): the counter's host 68 MB RSS, 32 MB
+of GPU memory, 16 threads and 40 ms to its first content frame, where
+host-r4 takes 58 MB, 14 MB, 15 and 34 ms (upstream as imported: 104 MB, 52
+MB, 45 and ~95 ms); the example browser 74 MB and 47 MB of GPU memory
+(host-r4: 65 and 29); the stress bench 230 MB idle (was 266). Open there:
+the larger binary (+6 MB mapped), 2.5 MB more live heap, wgpu's 4 MiB
+memory blocks and upstream's BGRA glyph atlas (+18 MB of GPU memory), and
+GPUI's own accessibility adapter running beside mirin's (+2 MB and a
+thread; keeping mirin's tree is recommended there).
+
+Open: React work per update (the demo re-renders its whole list on select);
+at a scale factor that is not a multiple of 1/8 (1.1, 1.2) what sits a
+logical distance from its box other than a border's bands and a shadow
+(an underline, a text's second line) keeps its subtree from moving; a
+row drawn for the first time out of view is drawn again when it first
+shows (evaluated above); a resize still copies the rows in view primitive
+by primitive under the scroll view's new mask, and builds again what holds
+the rows (the list, whose rows changed size) and any row that draws from
+its own size (a background, a border) or that the view clips; a row whose
+items grow, shrink or are placed from its end or center still runs its
+flex algorithm at each width; a retained subtree's state is still looked
+up by its whole id path, three times a frame it is drawn (a resize now
+draws the list and its rows, not their cards). For the accessibility tree: nodes that each
+move on their own (a reflow, a window resized) are handed over one by one,
+about 5 µs a node on the window's thread (holding them until the content
+settles needs the adapter to fetch what is held before it answers a
+query: `Component`'s three geometry calls in the fork, waiting on the
+window's thread); the tree a session with
+accessibility on but nothing reading it still pays for once; a tree
+replaced whole (a view switched) still costs the adapter's thread about
+25 µs a node replaced in D-Bus work, and leaves accessibility's footprint
+at 31–34 MB where the first tree took 18–19 (7604 nodes; constant over
+further switches, so not a leak: likely what the burst leaves in the
+heap, not measured further; round 6 above). For the
+driver ("The driver at rest, its start, its fibers" above has what round 4
+closed): an app that imports a path it makes at run time (the example
+browser) is not bundled; `mirin-metal run` is a second Bun start (~5 ms);
+React's own render and commit are most of an update (a stress-sized
+re-render is 60–65% React; round 5, "The driver per update", took 16% of
+its instructions off and has what is left: the wrapper fiber under every `View` and
+`Text`, which only exporting them as host types removes, an owner's call);
+a keyed swap is two moves on the wire, but React's commit still places
+every row between (quadratic `getHostSibling`); and Bun's thread pool
+(seven threads after a start from sources) and JavaScriptCore's warm-up
+thread remain, idle.
+
+### Footprint: what one small app costs
+
+A desktop runs a host and a driver per app (section 0b), so the floor
+multiplies. `bun bench/footprint.tsx [host] [--app=counter|browser] [--runs=3]
+[--env=K=V] [--unset=K] [--json] --visible` in `packages/mirin-metal` starts an
+app as it really runs (a driver process, `demo/counter.tsx` or metal-ui's
+`demo/browser.tsx` from its own package directory, that spawns the host) and
+reports, per run and as medians: driver spawn to the host's `first content
+frame painted` and the host's own share, the CPU each process used by then
+(the host's with the children it waited for), and after a quiet spell the
+host's and the driver's RSS, PSS, private dirty and anonymous memory
+(`smaps_rollup`), their mappings by category and the largest by name
+(`smaps`), the GPU memory of the host's DRM client (`fdinfo`: not in RSS, and
+system memory on an integrated GPU), threads by name, and CPU and wakeups
+over 5 s idle. With `MIRIN_METAL_TRACE=1` the host also traces its start
+(`startup: …` lines: the text system, the GPU context, a window's renderer,
+each font face loaded; the GPUI fork logs them on the `mirin::startup`
+target).
+
+Measured 2026-11-10 on a Ryzen laptop (24 threads, Radeon 890M, radv), the
+release host of round 1 and this one back to back in a nested dashi-comp at
+scale 1, medians of three runs:
+
+| host process | counter (800×600) before | after | example browser (1440×900) before | after |
+| --- | --- | --- | --- | --- |
+| RSS | 76.2 MB | 58.9 MB | 89.4 MB | 65.5 MB |
+| PSS | 43.9 MB | 26.6 MB | 56.9 MB | 33.0 MB |
+| private dirty | 12.0 MB | 7.6 MB | 19.3 MB | 12.5 MB |
+| GPU memory | 68.6 MB | 13.9 MB | 124.0 MB | 29.3 MB |
+| threads | 35 | 15 | 35 | 15 |
+| host start → first content frame | 53 ms | 33 ms | 79 ms | 51 ms |
+| host CPU by then (10 ms ticks) | 50 ms | 30–40 ms | 70 ms | 60 ms |
+| idle, per 5 s | 0.4 ms, 10 wakeups | 0.4 ms, 10 wakeups | 0.3 ms, 10 wakeups | 0.3 ms, 10 wakeups |
+
+The driver (Bun) beside it, unchanged: 29 MB RSS, 12 MB PSS and 7 MB
+anonymous for the counter; 71 MB, 48 MB and 40 MB for the example browser
+(its 239 examples and their libraries); 190–220 ms of CPU before the
+browser's first frame, where the host uses 60; and it is not idle: 6–44 ms
+of CPU and 200–760 wakeups per 5 s, nearly all from JavaScriptCore's seven
+heap helper threads. With `BUN_JSC_numberOfGCMarkers=1` in the driver's
+environment it is: 1–3 ms and 20 wakeups per 5 s, 10–12 threads where it had
+16–19, the same memory and the same start (collections mark on one thread,
+which a small app's heap doesn't notice). The driver is the parent process,
+so whatever launches the app sets it: `mirin-metal run` and `driverEnv()` do
+(section 6), and "The driver" above has what the driver itself costs now.
+
+Where it went, and what changed (fork changes in `forks/gpui/MIRIN.md` and
+`forks/blade-graphics/MIRIN.md`):
+
+- **GPU memory.** Blade's allocator used gpu-alloc's prototyping preset: a
+  buddy allocator rounds each texture up to a power of two and grows by a
+  chunk of twice that, so the 8.2 MiB multisampled path target of an 800×600
+  window held 32 MiB. `forks/blade-graphics` (new) gives anything of 256 KiB
+  or more its own allocation: 68 → 23.6 MB. The two window-sized textures
+  paths are drawn through (20 bytes a pixel) are now made by the first frame
+  that has a path and freed by the first without one; Metal draws no paths:
+  → 13.8 MB, which is the swapchain's four images (7.7 MB), one 1 MiB glyph
+  atlas, and the driver's own buffers.
+- **Pipelines.** A window parsed the shaders (~4 ms) and built eight
+  pipelines (~8 ms), and an opaque window did it twice, since its renderer
+  started transparent and was reconfigured before the first frame. Pipelines
+  now belong to the GPU context (one set per surface format and alpha mode,
+  for every window of the process), each is built by the first frame that
+  uses it, and a Wayland renderer starts with its window's transparency. A
+  resident host's second window draws ~1 ms after its renderer exists
+  (it used to build both sets again).
+- **Fonts.** Asking for a family loaded all of its faces (74 of Noto Sans:
+  15 MB of mapped files, 3.7 MB of heap, ~5 ms of the first frame). A face
+  is now loaded when a text picks it. The scan of the system's fonts (7 ms)
+  runs on a thread while the GPU context starts.
+- **Threads.** GPUI's background pool was a thread per core (24); it is four.
+- **The heap.** A window that has drawn nothing for three seconds gives its
+  freed memory back (`malloc_trim`, `idle.rs`): 0.5 MB after the counter's
+  start, 1.7 MB after the browser's. An idle window schedules nothing.
+- **The rest of the start.** The compose table (~2 ms) is read at the first
+  key press. Where the session doesn't set `VK_LOADER_DRIVERS_SELECT`
+  (Dashi's does), the probe of the Vulkan loader finding above cost 18 ms of
+  every start (a child loads the driver); its yes is now kept in the runtime
+  directory for the session (`mirin-metal-gpu-<driver>-<major>-<minor>`).
+
+The counter's start now: 1–21 ms creating the GPU context (loading radv,
+which links LLVM: 6–8 ms; enumerating devices: ~5 ms), ~3 ms the window's
+surface and renderer, ~8 ms the first frame (4 ms of it parsing the shaders,
+2 ms two pipelines), first content frame at 33 ms. Before: the font scan to
+7 ms, the GPU context to 26, the renderer (pipelines) to 40, the pipelines
+again and a wait to 49, a 13 ms first frame (5 of it the family's 74 faces)
+to 62.
+
+What remains in a counter's host, largest first, and what it would take:
+
+| | MB | to cut it |
+| --- | --- | --- |
+| radv and LLVM mapped (shared between hosts) | 26.4, 2.5 of it private | a Mesa whose radv doesn't link LLVM (also 6 ms of each start) |
+| the host binary mapped (shared between hosts) | 15.7, 0.7 private | a smaller binary (`opt-level = "s"`, LTO, panic = abort); not tried |
+| GPU: swapchain | 7.7 (four images) | FIFO presentation needs three, but can block the main thread when the compositor holds its buffers; scales with the window's pixels |
+| GPU: Mesa's buffers, the glyph atlas | ~6 | a 512² first atlas saves 0.75 MB, and costs larger apps draw calls |
+| other libraries mapped (shared) | 7.7, 0.4 private | — |
+| heap and arenas | 3.5 | `MALLOC_ARENA_MAX=1` saves 0.4 MB (1.5 MB in the browser) and makes the reader thread's parse and the window's frame share a lock |
+| thread stacks | 0.5 | the reader's bridge thread could go (`run` taking an async channel) |
+
+Not landed, with numbers: building the eight pipelines on threads (first
+frame 6 ms sooner, 4 MB more in stacks and arenas); parsing the shaders on a
+worker while the window opens (~4 ms sooner, a thread's stack and arena
+more); `MALLOC_ARENA_MAX=1` (above); one path sample instead of four (16
+bytes a pixel while paths show, and jagged paths); FIFO presentation (above).
+For the driver: a production React build changed nothing in the counter's
+memory; the heap helper threads are the one cheap win found (above).
+
+Regression checks against round 1's host: `bench/layout-check.tsx` identical
+on both apps; `grim` screenshots of eight examples, a resident host's second
+window and a translucent layer surface identical pixel for pixel; the stress
+bench's frame, apply and parse unchanged within noise over four rounds
+(select frame 4.2–5.3 ms on both) and its RSS 265 → 249 MB.
 
 ## 5c. Who uses it: Dashi
 
@@ -772,7 +2450,7 @@ more) are React on `@mirinjs/metal` and `@mirinjs/metal-ui`, each window drawn b
 a `mirin-metal-host` process its driver spawns (`spawnNativeHost`). Dashi
 depends on the packages by path (`"@mirinjs/metal": "file:../mirin/..."`, see
 section 6 on sharing one React) and builds the host from this crate. Most of
-the GPUI fork's changes (`vendor/gpui/MIRIN.md`) came from Dashi's needs:
+the GPUI fork's changes (`forks/gpui/MIRIN.md`) came from Dashi's needs:
 layer-shell and session-lock surfaces, the unified title bar on Dashi's
 compositor, idle windows that stop drawing, text input only while a field
 takes text, truncation and wrapping fixes, and scroll views that end where
@@ -790,13 +2468,36 @@ cargo clippy --all-targets -- -D warnings
 cargo test                      # headless: GPUI's test platform, no display
 ```
 
-The GPUI fork's own tests build it alone with this crate's lockfile:
+The forks live at the repository root (`forks/gpui`, `forks/taffy`,
+`forks/blade-graphics`, `forks/accesskit_unix`, `forks/accesskit_atspi_common`,
+`forks/accesskit_consumer`; `forks/README.md` explains the
+upstream branch). The
+GPUI fork's own tests build it alone with this crate's lockfile:
 
 ```sh
-cd vendor/gpui && cp ../../Cargo.lock . \
-  && CARGO_TARGET_DIR=../../target/gpui-alone cargo test --lib --features test-support; \
+cd ../../forks/gpui && cp ../../crates/mirin-metal/Cargo.lock . \
+  && CARGO_TARGET_DIR=../../crates/mirin-metal/target/gpui-alone cargo test --lib --features test-support; \
   rm Cargo.lock
 ```
+
+The AccessKit adapter fork's the same way (`cd ../../forks/accesskit_unix`,
+`CARGO_TARGET_DIR=../../crates/mirin-metal/target/accesskit-alone cargo
+test --lib`), and its AT-SPI layer's and consumer's (`atspi-alone`,
+`consumer-alone`; each fork's `MIRIN.md`).
+
+The GPUI fork is gpui 0.2.2, the newest release on crates.io, a year behind
+Zed's tree. [`docs/metal/gpui-next.md`](metal/gpui-next.md) is a spike on
+moving it onto current upstream (what upstream has absorbed, what ports, how
+it measures, and the order of a migration); `spikes/gpui-next/` builds this
+crate against upstream to repeat it.
+
+The migration has started (round 4, section 6 of that doc): upstream's GPUI
+crates are forks in the tree (`forks/zed`, at zed `f8cfc7ed`, and
+`forks/taffy-next`, taffy 0.15.0), and the same sources build on them with
+`cd crates/mirin-metal/next && cargo build --release --bin mirin-metal-host`
+(`cargo test --lib`, `cargo clippy --all-targets -- -D warnings` there too).
+`src/gpui_api/` is where the two GPUIs differ in shape. The default build is
+still the 0.2.2 fork.
 
 The TypeScript packages are checked with the rest of the repository
 (`bun run fmt-lint`, `bun run typecheck`, `bun run test`). The root `test`
@@ -811,6 +2512,57 @@ Run a demo:
 cd crates/mirin-metal && cargo build --bin mirin-metal-host
 cd ../../packages/mirin-metal && bun demo/counter.tsx
 ```
+
+Start an app's driver as a resident app wants it. The driver is the app's
+own Bun process, and three things about it are decided before its first line
+runs, so only what starts it can set them: `NODE_ENV=production` (Bun leaves
+it unset, and React then runs its development build: the example browser's
+first render takes twice the time and CPU, and 10 MB more),
+`BUN_JSC_numberOfGCMarkers=1` (JavaScriptCore marks on one thread, not
+eight) and `BUN_GC_TIMER_DISABLE=1` (for half a minute after an app last did
+something Bun collects once a second, each time waking the collector's
+threads; with the timer off the driver collects once, two seconds after its
+last commit, `lib/rest.ts`, and an app at rest wakes for nothing; section
+5b, "The driver"). Nothing sets them behind an app's back. Three ways, each
+the app's or its launcher's choice:
+
+```sh
+bunx mirin-metal run app.tsx          # @mirinjs/metal's bin: sets all three, then becomes `bun app.tsx` (or its bundle)
+bunx mirin-metal run --dev app.tsx    # React's development build, always from the sources
+NODE_ENV=production BUN_JSC_numberOfGCMarkers=1 BUN_GC_TIMER_DISABLE=1 bun app.tsx   # by hand, or in a desktop entry's Exec=env …
+```
+
+and a launcher that spawns apps itself (Dashi's shell) passes
+`driverEnv()` from `@mirinjs/metal` as the child's environment
+(`Bun.spawn([bun, "app.tsx"], { env: driverEnv() })`): the caller's
+environment with those three set, and whatever it already says kept.
+`mirin-metal run` replaces its own process with the app's (`execve`), so no
+launcher stays behind; a `bunfig.toml` `define` of `process.env.NODE_ENV`
+in the app's directory (as `packages/mirin-metal-ui` has) is a fourth way
+for that one variable.
+
+`mirin-metal run` (not `--dev`, and with no bun flags before the entry)
+also starts the app from a bundle of itself (`lib/bundle-cache.ts`): one
+file `Bun.build` makes of the entry and everything it imports, with the
+`NODE_ENV` it runs with defined in, kept in
+`$XDG_CACHE_HOME/mirin-metal/bundles/` and keyed on the entry. It is used
+while every file it was built from, and the `tsconfig.json`,
+`jsconfig.json`, `bunfig.toml` and `package.json` above the entry, have the
+size and modification time they had (a few hundred `stat`s, under a
+millisecond); otherwise the app starts from its sources, as before, and a
+process of its own builds the bundle again a second and a half later, for
+the next start. So an edit is never slower to try, and the start after that
+is the bundle's. Each module keeps its own `import.meta.url`, `dir`,
+`path`, `dirname`, `filename` and `main`, and `__dirname` and
+`__filename` (written in as the transpiler would define them, and checked
+against it); an app that resolves a path at run time (an `import()` of a
+path it makes, `require.resolve`, `import.meta.resolve`, a `Worker`) would
+resolve it from the cache, so it is not bundled (the example browser,
+which imports its examples by name), and that verdict is kept as well.
+`Bun.main` (and `process.argv[1]`) name the bundle; the arguments after it
+are the app's, as before. `MIRIN_METAL_BUNDLE=0` always starts from the
+sources. What it buys is in
+section 5b. An app that ships can bundle the same way at build time.
 
 The host reads `MIRIN_METAL_TITLE` and `MIRIN_METAL_SIZE=1280x820`.
 `MIRIN_METAL_SURFACE=<json>` opens a Wayland layer-shell surface (a panel, a
@@ -839,12 +2591,12 @@ last word (a zoomed, tiled, or full-screen window keeps its size, and a later
 configure may restore the size it chose). A maximized or full-screen window
 is not resized at all: the size it goes back to moves by as much as the
 request differs from its size now, so a sidebar shown while zoomed still has
-its room once the window is restored (`vendor/gpui`, `MIRIN.md`); the app learns the size it got from
+its room once the window is restored (`forks/gpui/MIRIN.md`); the app learns the size it got from
 the root's layout, as ever (the root fills the window, so its `onLayout`
 reports the window's size on every change: a tile, an edge dragged, a zoom).
 A `{"minSize":{"width":W,"height":H}}` line changes the least size afterwards
 (`setMinSize()` on the transport; GPUI's `Window::set_window_min_size`,
-`vendor/gpui`, `MIRIN.md`): an app that needs more room while it shows more
+`forks/gpui/MIRIN.md`): an app that needs more room while it shows more
 (Calculator's tape beside its keypad). It doesn't resize the window; send a
 size too (the host applies the least size first). A host from before either
 refuses the line on stderr and ignores the variable.
@@ -879,7 +2631,7 @@ window any other way (the person, the compositor) still ends the host. An
 `open` while the window is shown, and a `hide` while it is hidden or on a host
 that isn't deferred, are refused with a log line. GPUI's Linux clients stop
 their event loop with the last window, so mirin's fork turns that off for a
-deferred host (`gpui::set_quit_when_last_window_closes`, vendor/gpui/MIRIN.md)
+deferred host (`gpui::set_quit_when_last_window_closes`, forks/gpui/MIRIN.md)
 and the host quits itself on a real close. A host binary that does all this
 names `MIRIN_METAL_RESIDENT` (the `RESIDENT_MARKER` const), as one that knows
 deferred hosts names `MIRIN_METAL_DEFERRED`; a driver checks for it before it
@@ -895,3 +2647,13 @@ Or drive the host by hand:
 echo '{"type":"view","props":{"fill":true,"center":true,"background":"#3b82f6"},"children":[{"type":"text","props":{"size":40,"color":"#ffffff"},"children":["mirin metal"]}]}' \
   | crates/mirin-metal/target/debug/mirin-metal-host
 ```
+
+For checks and benchmarks, not for an app to set: `MIRIN_METAL_RETAIN=0`
+draws every frame whole (no retained subtrees, section 5b);
+`MIRIN_METAL_SCROLL_SNAP=0` paints scroll views at their offset itself,
+between device pixels (section 2); and `MIRIN_METAL_SCALE=<factor>` draws at
+that scale factor whatever the compositor says (Wayland, in the GPUI fork: the
+surface is shown at its logical size through its viewport, so it is resampled,
+not sharp), which is how the layout check and the stress bench run at 1.25,
+1.5 or 2 on a display without fractional scaling. With `MIRIN_METAL_TRACE=1`
+the host logs `scale factor N` when the scale it draws at changes.

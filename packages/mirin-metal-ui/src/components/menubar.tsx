@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { CheckIcon, ChevronRightIcon, CircleIcon } from "../icons/index.ts";
+import { CheckIcon, ChevronRightIcon, CircleIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { Menubar as MenubarPrimitive } from "../primitives/menubar.tsx";
 

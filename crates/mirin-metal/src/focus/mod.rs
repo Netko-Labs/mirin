@@ -186,7 +186,7 @@ pub(crate) fn key_root(
 
 impl RootView {
     /// Give the keyboard to a field or a focusable view, from the keyboard (the ring shows).
-    pub(crate) fn focus_stop(&mut self, id: &str, window: &mut Window) {
+    pub(crate) fn focus_stop(&mut self, id: &str, window: &mut Window, cx: &mut App) {
         let handle = match self.inputs.get(id) {
             Some(state) => state.focus.clone(),
             None => match self.focus.handles.get(id) {
@@ -203,22 +203,28 @@ impl RootView {
             self.focus.last.insert(group, id.to_owned());
         }
         self.focus.visible = true;
-        window.focus(&handle);
+        crate::gpui_api::focus(window, &handle, cx);
     }
 
     /// Tab (or Shift+Tab, `back`) from `from`, a field or a view; none: the window.
-    pub(crate) fn tab_from(&mut self, from: Option<&str>, back: bool, window: &mut Window) {
+    pub(crate) fn tab_from(
+        &mut self,
+        from: Option<&str>,
+        back: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         if let Some(id) = self.focus.order.tab(from, back, &self.focus.last) {
-            self.focus_stop(&id, window);
+            self.focus_stop(&id, window, cx);
         }
     }
 
     /// A pointer press: the ring goes, and a focused view gives the keyboard
     /// back to the window (a field keeps it; one pressed takes it itself).
-    pub(crate) fn pointer_pressed(&mut self, window: &mut Window) {
+    pub(crate) fn pointer_pressed(&mut self, window: &mut Window, cx: &mut App) {
         self.focus.visible = false;
         if self.focus.focused_view(window).is_some() {
-            window.focus(&self.focus.root);
+            crate::gpui_api::focus(window, &self.focus.root, cx);
         }
     }
 
@@ -249,21 +255,21 @@ impl RootView {
     /// Before a new tree's autofocus: an `onWindowKey` view or a trap
     /// appeared, so the keyboard goes back to the window (a field that asks
     /// for it takes it after).
-    pub(crate) fn focus_window_if_asked(&mut self, window: &mut Window) {
+    pub(crate) fn focus_window_if_asked(&mut self, window: &mut Window, cx: &mut App) {
         if std::mem::take(&mut self.focus.wants_root) {
-            window.focus(&self.focus.root);
+            crate::gpui_api::focus(window, &self.focus.root, cx);
         }
     }
 
     /// After a new tree's autofocus: what had the keyboard went away, or is
     /// behind the trap now, so the window takes it.
-    pub(crate) fn settle_focus(&mut self, window: &mut Window) {
+    pub(crate) fn settle_focus(&mut self, window: &mut Window, cx: &mut App) {
         let lost = match self.focus.focused_view(window) {
             Some(id) => !self.focus.order.reachable(id),
             None => !self.text_focused(window),
         };
         if lost {
-            window.focus(&self.focus.root);
+            crate::gpui_api::focus(window, &self.focus.root, cx);
         }
     }
 
@@ -286,7 +292,7 @@ impl RootView {
         let key = keystroke.key.as_str();
         match key {
             "tab" if plain => {
-                self.tab_from(focused.as_deref(), held.shift, window);
+                self.tab_from(focused.as_deref(), held.shift, window, cx);
                 cx.stop_propagation();
                 cx.notify();
                 return;
@@ -299,7 +305,7 @@ impl RootView {
                 if let (Some(from), Some(group)) = (focused.as_deref(), group) {
                     let step = if matches!(key, "left" | "up") { -1 } else { 1 };
                     if let Some(to) = self.focus.order.arrow(from, step) {
-                        self.focus_stop(&to, window);
+                        self.focus_stop(&to, window, cx);
                         if self.focus.order.selects(&group) {
                             self.events.press(&to, Modifiers::default());
                         }
