@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { SearchIcon } from "../icons/index.ts";
+import { SearchIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { Command as CommandPrimitive } from "../primitives/cmdk.tsx";
 

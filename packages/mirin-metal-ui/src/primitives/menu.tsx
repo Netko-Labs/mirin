@@ -201,7 +201,8 @@ export function MenuItem({
   const subs = useContext(SubSlotContext);
   const shared: Props = {
     ...props,
-    role: "menuitem",
+    // A checkbox or radio item passes its own role.
+    role: props.role ?? "menuitem",
     "data-disabled": disabled ? "" : undefined,
     "aria-disabled": disabled ? "true" : undefined,
     onMouseEnter: () => subs.setActive(null),

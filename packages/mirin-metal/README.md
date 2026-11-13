@@ -51,6 +51,23 @@ cd crates/mirin-metal && cargo build --bin mirin-metal-host
 cd packages/mirin-metal && bun demo/counter.tsx
 ```
 
+## Starting an app
+
+`bun app.tsx` runs React's development build (Bun leaves `NODE_ENV` unset),
+JavaScriptCore's eight collector threads and Bun's once-a-second collection
+timer. An app people keep open starts through the package's bin, which sets
+`NODE_ENV=production`, `BUN_JSC_numberOfGCMarkers=1` and
+`BUN_GC_TIMER_DISABLE=1` and then becomes `bun app.tsx`, or a bundle of it
+kept in the user's cache while the app's files are as they were when it was
+built (`--dev` and `MIRIN_METAL_BUNDLE=0` always run the sources):
+
+```sh
+bunx mirin-metal run app.tsx
+```
+
+A launcher that spawns apps itself passes `driverEnv()` as their environment.
+See `docs/metal.md`, section 6.
+
 ## Status
 
 Exploratory **alpha** (`0.1.0-alpha.x`). v1 surface: `<View>` (flexDirection,

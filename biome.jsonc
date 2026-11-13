@@ -110,6 +110,8 @@
       "!**/.mirin",
       "!**/target",
       "!**/vendor",
+      "!forks",
+      "!spikes/gpui-next/zed",
       "!**/vendor/cef",
       "!**/dist",
       "!**/build",

@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { ChevronDownIcon } from "../icons/index.ts";
+import { ChevronDownIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { Accordion as AccordionPrimitive } from "../primitives/accordion.tsx";
 

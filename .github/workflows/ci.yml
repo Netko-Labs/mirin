@@ -127,6 +127,64 @@ jobs:
           # distribution instead. Inert on macOS and Windows.
           LD_LIBRARY_PATH: ${{ github.workspace }}/vendor/cef
 
+  metal:
+    name: Metal (${{ matrix.name }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-24.04
+            # GPUI's Linux platform: fontconfig and FreeType for text, xcb and
+            # xkbcommon for X11 and keyboards, Wayland's client library.
+            install-build-tools: >-
+              sudo apt-get update && sudo apt-get install -y
+              libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev
+              libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
+          - name: macOS arm64
+            os: macos-15
+            install-build-tools: "true"
+    # crates/mirin-metal is outside the Cargo workspace (its own lockfile); the
+    # TypeScript side (@mirinjs/metal, @mirinjs/metal-ui) is linted, typechecked
+    # and tested by the static job with the rest of the packages.
+    defaults:
+      run:
+        working-directory: crates/mirin-metal
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: metal-${{ matrix.name }}
+          workspaces: crates/mirin-metal -> target
+
+      - name: Install build tools
+        run: ${{ matrix.install-build-tools }}
+
+      - name: Rust format check
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
+
+      # The GPUI fork's own tests (forks/gpui/MIRIN.md): the fork isn't a
+      # package of its own, so it builds alone with mirin-metal's lockfile.
+      - name: GPUI fork tests
+        working-directory: forks/gpui
+        run: |
+          cp ../../crates/mirin-metal/Cargo.lock .
+          CARGO_TARGET_DIR=../../crates/mirin-metal/target/gpui-alone cargo test --lib --features test-support
+          rm Cargo.lock
+
   security:
     name: Dependency security
     runs-on: ubuntu-24.04

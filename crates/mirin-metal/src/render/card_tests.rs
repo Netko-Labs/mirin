@@ -7,6 +7,7 @@ use std::sync::mpsc;
 use gpui::{px, size, TestAppContext};
 
 use crate::events::EventSender;
+use crate::patch::Document;
 use crate::sim::{LayoutMap, LayoutNode};
 use crate::tree::parse_tree;
 use crate::window::RootView;
@@ -24,7 +25,8 @@ fn laid_out(cx: &mut TestAppContext, json: &str, width: f32, height: f32) -> Vec
     let layout = LayoutMap::default();
     let events = EventSender::new(tx, layout.clone());
     let map = layout.clone();
-    let (_view, cx) = cx.add_window_view(|_, cx| RootView::new(tree, false, events, map, cx));
+    let (_view, cx) =
+        cx.add_window_view(|_, cx| RootView::new(Document::new(tree), false, events, map, cx));
     cx.simulate_resize(size(px(width), px(height)));
     cx.run_until_parked();
     cx.update(|window, cx| {

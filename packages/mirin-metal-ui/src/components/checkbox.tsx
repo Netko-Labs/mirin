@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { CheckIcon } from "../icons/index.ts";
+import { CheckIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { Checkbox as CheckboxPrimitive } from "../primitives/checkbox.tsx";
 

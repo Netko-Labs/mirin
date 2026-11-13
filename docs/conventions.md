@@ -13,6 +13,10 @@ both reference.
   on public API changes.
 - `docs/macos-mvp.md`, `docs/windows-port.md`, and `docs/linux-port.md` record
   platform status, findings, gaps, and milestone history.
+- `docs/metal.md` owns Metal, the CEF-free GPUI flavor: the element-tree
+  protocol, process model decisions, platform findings, and milestones.
+  `forks/*/MIRIN.md` lists every change in the monorepo
+  forks.
 - Code is allowed to move, but source-of-truth docs must move with the behavior
   in the same change.
 
@@ -55,15 +59,24 @@ packages/
   mirin-metal/      `@mirinjs/metal`, the React renderer for Metal
   mirin-metal-ui/   `@mirinjs/metal-ui`, shadcn/ui on Metal (components, theme tokens, Tailwind translator)
   native-*/         prebuilt core, codec, and CEF helper packages
+  docs/             the docs site (mirin.netko.dev)
 examples/
   hello-react/      minimal happy-path app
   kitchen-sink/     native feature coverage app
+  spotlight/        frameless command palette (macOS Liquid Glass)
+  liquid-glass/     native background material picker
+  updater/          updater and release artifacts
 docs/
   architecture.md   process/threading/CEF/IPC source of truth
   api-design.md     public API source of truth
   conventions.md    this rulebook
   metal.md          Metal (CEF-free, GPUI) source of truth
+  metal/            Metal's runtime spec and desktop-shell plan
 ```
+
+Metal's crate keeps GPUI's own layout under `src/` and its forks under
+`vendor/` (`gpui`, `taffy`, `accesskit_unix`), each with a `MIRIN.md` that lists
+mirin's changes; mark every changed line in a fork with a `// mirin:` comment.
 
 Target TypeScript package layout:
 
@@ -455,6 +468,20 @@ cargo test --workspace
 bun audit
 cargo-audit audit
 ```
+
+`crates/mirin-metal` is outside the Cargo workspace, so the workspace commands
+above skip it. When Metal's Rust changes, run from `crates/mirin-metal`:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+and, when `forks/gpui` changes, the fork's own tests (`docs/metal.md`,
+section 6). `bun run test` covers `@mirinjs/metal` and `@mirinjs/metal-ui`; it
+runs metal-ui's tests from that package's directory, where its JSX runtime
+applies.
 
 Use real app checks for native behavior:
 

@@ -5,6 +5,9 @@
  * runs inside a transition (so `useActionState` dispatchers work) and the
  * form's uncontrolled fields reset to their (new) defaults once it settles.
  * Server actions run in-process: a `"use server"` function is just a function.
+ * A string `action` (a URL to navigate to) is left to the form's default
+ * submit, which on Metal goes nowhere: an app has no pages to load. Use a
+ * function action, or `onSubmit`, to act on it.
  */
 
 import { type ReactNode, useEffect, useRef, useTransition } from "react";
@@ -36,8 +39,8 @@ export default function Form({ action, children, ...props }: FormProps): ReactNo
       ref={handle as never}
       onSubmit={(raw) => {
         const event = raw as unknown as SyntheticEvent;
-        event.preventDefault();
         if (typeof action !== "function") return;
+        event.preventDefault();
         const formData = event.formData ?? new FormData();
         submitted.current = true;
         startTransition(async () => {

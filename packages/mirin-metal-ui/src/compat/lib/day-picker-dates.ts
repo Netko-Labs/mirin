@@ -5,17 +5,16 @@
  * for `single`, `multiple`, and `range` modes (mirroring react-day-picker v9).
  */
 
-import {
-  addDays,
-  addMonths,
-  format,
-  isAfter,
-  isBefore,
-  isSameDay,
-  type Locale,
-  startOfDay,
-  startOfMonth,
-} from "date-fns";
+import type { Locale } from "date-fns";
+// Each function from its own file: the package's entry is 250 modules (12 ms, 40 ms of CPU, 9 MB).
+import { addDays } from "date-fns/addDays";
+import { addMonths } from "date-fns/addMonths";
+import { format } from "date-fns/format";
+import { isAfter } from "date-fns/isAfter";
+import { isBefore } from "date-fns/isBefore";
+import { isSameDay } from "date-fns/isSameDay";
+import { startOfDay } from "date-fns/startOfDay";
+import { startOfMonth } from "date-fns/startOfMonth";
 
 export interface DateRange {
   from: Date | undefined;

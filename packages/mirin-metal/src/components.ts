@@ -7,10 +7,14 @@
  *   </View>
  *
  * They resolve to the renderer's host element types; only this renderer can
- * mount them.
+ * mount them. Each hands its props object to its host element as it is
+ * (`jsx`; `createElement` copied every element's props once more): the
+ * element React compares and the host instance holds is the one the app
+ * wrote.
  */
 
-import { createContext, createElement, type ReactElement, useContext } from "react";
+import { createContext, type ReactElement, useContext } from "react";
+import { jsx } from "react/jsx-runtime";
 import type {
   ImageProps,
   SvgProps,
@@ -26,12 +30,18 @@ export const INPUT_TYPE = "mirin-input";
 export const SVG_TYPE = "mirin-svg";
 export const IMAGE_TYPE = "mirin-image";
 
+/**
+ * React's `jsx` for a host type of this renderer. Type-only cast: React's
+ * types take DOM tags and components, not another renderer's type names.
+ */
+const host = jsx as unknown as (type: string, props: object) => ReactElement;
+
 export function View(props: ViewProps): ReactElement {
-  return createElement(VIEW_TYPE, props);
+  return host(VIEW_TYPE, props);
 }
 
 export function Text(props: TextProps): ReactElement {
-  return createElement(TEXT_TYPE, props);
+  return host(TEXT_TYPE, props);
 }
 
 /**
@@ -43,15 +53,12 @@ export const TextInputDefaults = createContext<TextInputDefaultProps>({});
 export function TextInput(props: TextInputProps): ReactElement {
   const defaults = useContext(TextInputDefaults);
   const selectionColor = props.selectionColor ?? defaults.selectionColor;
-  return createElement(
-    INPUT_TYPE,
-    selectionColor === undefined ? props : { ...props, selectionColor },
-  );
+  return host(INPUT_TYPE, selectionColor === undefined ? props : { ...props, selectionColor });
 }
 
 /** A vertically scrolling `<View>`. */
 export function ScrollView(props: ViewProps): ReactElement {
-  return createElement(VIEW_TYPE, {
+  return host(VIEW_TYPE, {
     ...props,
     style: { ...props.style, overflow: "scroll" },
   });
@@ -59,10 +66,10 @@ export function ScrollView(props: ViewProps): ReactElement {
 
 /** A vector icon from inline SVG markup, tinted with `color`. */
 export function Svg(props: SvgProps): ReactElement {
-  return createElement(SVG_TYPE, props);
+  return host(SVG_TYPE, props);
 }
 
 /** A raster image from a local file. */
 export function Image(props: ImageProps): ReactElement {
-  return createElement(IMAGE_TYPE, props);
+  return host(IMAGE_TYPE, props);
 }

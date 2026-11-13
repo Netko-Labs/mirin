@@ -2,3 +2,9 @@
 # leaves unset, so `bun demo/browser.tsx` would run the development build:
 # two to three times slower renders. Default to production for this package.
 define = { "process.env.NODE_ENV" = "\"production\"" }
+
+# Run this package's tests from this directory (`bun run test` here, which the
+# root `bun run test` does): Bun applies this file and tsconfig.json's
+# `jsxImportSource` only for the directory it runs in. From the repository root,
+# `<p>` and `<div>` would bypass the Metal JSX runtime and reach the renderer as
+# raw strings.

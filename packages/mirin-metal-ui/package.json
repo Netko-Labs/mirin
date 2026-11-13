@@ -24,6 +24,7 @@
     "./jsx-runtime": "./src/jsx-runtime.ts",
     "./jsx-dev-runtime": "./src/jsx-dev-runtime.ts",
     "./icons": "./src/icons/index.ts",
+    "./icons/create": "./src/icons/create.tsx",
     "./primitives": "./src/primitives/index.ts",
     "./charts": "./src/charts/index.ts"
   },
@@ -31,6 +32,9 @@
     "src",
     "README.md"
   ],
+  "scripts": {
+    "test": "bun test"
+  },
   "engines": {
     "bun": ">=1.2.0"
   },

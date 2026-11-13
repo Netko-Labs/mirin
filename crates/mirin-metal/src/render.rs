@@ -8,10 +8,11 @@ use std::sync::OnceLock;
 use gpui::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
     ElementId, FontWeight, HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
-    ScrollWheelEvent, SharedString, Stateful, StyledText, Window,
+    SharedString, Stateful, StyledText, Window,
 };
 
 use crate::edges::{apply_box_edges, shadow_preset};
+use crate::gpui_api::ScrollWheelEvent;
 use crate::input::render_input;
 use crate::media::{render_image, render_svg};
 use crate::tree::{
@@ -41,7 +42,11 @@ pub(crate) fn render_node(
     cx: &mut Context<RootView>,
 ) -> AnyElement {
     match node {
-        NodeSpec::View { props, children } => render_view(props, children, view, window, cx),
+        NodeSpec::View { props, children } => match crate::retain::boundary(props, view, cx) {
+            // A subtree kept across frames, built only when it changed (retain.rs).
+            Some(element) => element,
+            None => render_view(props, children, view, window, cx),
+        },
         NodeSpec::Text { props, children } => render_text(props, children),
         NodeSpec::Input { props } => render_input(props, view, window, cx),
         NodeSpec::Svg { props } => render_svg(props),
@@ -191,7 +196,7 @@ fn styled_view(props: &ViewProps) -> Div {
     element
 }
 
-fn render_view(
+pub(crate) fn render_view(
     props: &ViewProps,
     children: &[NodeSpec],
     view: &mut RootView,
@@ -222,41 +227,44 @@ fn render_view_content(
     let child_ids: Vec<Option<String>> = children.iter().map(node_id).collect();
     let child_watch: Vec<bool> = children.iter().map(watches_layout).collect();
     let scrolls_along = scrolls_along_its_direction(props);
+    // A scroll view's content is a group of the layout map: what is drawn in
+    // it is placed in it, and a scroll moves the group alone (`layout/scroll.rs`).
+    // Its marker is a child before the others, so its bounds come first.
+    let around = view.group;
+    let mut content = around;
+    let mut markers = 0;
+    if let Some((group, marker)) = crate::layout::scroll_frame(props, view) {
+        element = element.child(marker);
+        view.group = Some(group);
+        content = Some(group);
+        markers = 1;
+    }
     let mut element = element.children(children.iter().map(|child| {
         view.keeps_length = scrolls_along;
         let element = render_node(child, view, window, cx);
         view.keeps_length = false;
         element
     }));
+    view.group = around;
     if child_ids.iter().any(Option::is_some) {
         let layout = view.layout.clone();
         let events = view.events.clone();
         element = element.on_children_prepainted(move |bounds, _window, _cx| {
+            let bounds = bounds.into_iter().skip(markers);
             for ((id, watch), bounds) in child_ids.iter().zip(&child_watch).zip(bounds) {
                 if let Some(id) = id {
-                    record_child_bounds(&layout, &events, id, *watch, bounds);
+                    record_child_bounds(&layout, &events, id, *watch, bounds, content);
                 }
             }
         });
     }
 
-    // Interaction and scrolling need a stable element id.
-    let Some(id) = props.id.as_deref() else {
-        if props.on_press
-            || props.on_hover
-            || props.on_pointer
-            || props.on_context_menu
-            || props.on_key_down
-            || props.on_wheel
-            || props.on_drop
-            || props.drag_files.is_some()
-            || props.drag_region
-            || props.focusable
-            || props.on_window_key
-            || props.scroll
-            || props.scroll_x
-            || props.hover_background.is_some()
-        {
+    // Interaction and scrolling need a stable element id. A view without
+    // them gets none: GPUI keeps element state per id'd element, carried
+    // from frame to frame, which large trees pay for on every frame.
+    let interactive = interactive(props);
+    let Some(id) = props.id.as_deref().filter(|_| interactive) else {
+        if interactive {
             eprintln!(
                 "[mirin-metal] onPress/dragRegion/scroll/hoverBackground require an id; ignoring"
             );
@@ -335,8 +343,8 @@ fn render_view_content(
                 .track_focus(&focus)
                 .on_mouse_down(
                     MouseButton::Left,
-                    move |_event: &MouseDownEvent, window: &mut Window, _cx: &mut App| {
-                        window.focus(&press_focus);
+                    move |_event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+                        crate::gpui_api::focus(window, &press_focus, cx);
                     },
                 )
                 .on_key_down(
@@ -362,7 +370,8 @@ fn render_view_content(
     if props.on_wheel {
         let wheel_id = id.to_string();
         let events = view.events.clone();
-        element = element.on_scroll_wheel(
+        element = crate::gpui_api::on_wheel(
+            element,
             move |event: &ScrollWheelEvent, window: &mut Window, _cx: &mut App| {
                 let (dx, dy) = match event.delta {
                     ScrollDelta::Lines(lines) => (lines.x, lines.y),
@@ -439,6 +448,48 @@ fn render_view_content(
     element.into_any_element()
 }
 
+/// Whether a view interacts or scrolls (it then needs an id, and has a hitbox).
+fn interactive(props: &ViewProps) -> bool {
+    props.on_press
+        || props.on_hover
+        || props.on_pointer
+        || props.on_context_menu
+        || props.on_key_down
+        || props.on_wheel
+        || props.on_drop
+        || props.drag_files.is_some()
+        || props.drag_region
+        || props.focusable
+        || props.on_window_key
+        || props.scroll
+        || props.scroll_x
+        || props.hover_background.is_some()
+}
+
+/// Whether a view draws nothing from its own size: no fill, border, shadow
+/// or clip of its bounds, and no hitbox (it neither interacts, scrolls nor
+/// occludes). Resized with its children where they were (a row stretched to
+/// a window's new width), it draws what it drew (`gpui::Retained::stretchable`).
+/// Its children's bounds, and its own (which its parent records), are what
+/// the layout says either way.
+pub(crate) fn draws_nothing_of_its_size(props: &ViewProps) -> bool {
+    let bordered = props.border_width > 0.0
+        || [
+            props.border_top,
+            props.border_bottom,
+            props.border_left,
+            props.border_right,
+        ]
+        .iter()
+        .any(|width| width.is_some_and(|width| width > 0.0));
+    props.background.is_none()
+        && !bordered
+        && props.shadow.is_none()
+        && !props.clip
+        && !props.occlude
+        && !interactive(props)
+}
+
 /// Whether a view scrolls along the way it lays its children out (a column
 /// that scrolls down, a row that scrolls across).
 fn scrolls_along_its_direction(props: &ViewProps) -> bool {
@@ -471,16 +522,18 @@ pub(crate) fn flex_from_zero<E: Styled>(mut element: E, flex: f32) -> E {
     element.min_w(px(0.0)).min_h(px(0.0))
 }
 
-/// Record a painted child's bounds; report a `layout` event when a watched
-/// node's bounds changed.
+/// Record a painted child's bounds (`group`: the retained subtree it is
+/// drawn in, `retain.rs`); report a `layout` event when a watched node's
+/// bounds changed.
 pub(crate) fn record_child_bounds(
     layout: &crate::sim::LayoutMap,
     events: &crate::events::EventSender,
     id: &str,
     watch: bool,
     bounds: gpui::Bounds<gpui::Pixels>,
+    group: Option<u64>,
 ) {
-    if layout.record(id, bounds) && watch {
+    if layout.record(id, bounds, group) && watch {
         events.resize(id);
     }
 }
@@ -496,7 +549,7 @@ pub(crate) fn record_root_bounds(
 ) {
     if let Some(id) = node_id(root) {
         let bounds = gpui::Bounds::new(gpui::Point::default(), size);
-        record_child_bounds(layout, events, &id, watches_layout(root), bounds);
+        record_child_bounds(layout, events, &id, watches_layout(root), bounds, None);
     }
 }
 
@@ -733,7 +786,7 @@ mod tests {
     }
 
     /// GPUI paints a wrapped right-aligned line from where its ink ends,
-    /// not after the space it broke at (vendor/gpui `ink_end_x`).
+    /// not after the space it broke at (forks/gpui `ink_end_x`).
     #[test]
     fn a_wrapped_line_ends_before_the_space_it_broke_at() {
         // "4,420 + 316" 10 px a glyph, wrapped before "+": the line ends after "0".
@@ -750,11 +803,15 @@ mod tests {
         assert_eq!(gpui::ink_end_x(px(20.0), before, text), px(20.0));
     }
 
+    // The fork's helper; upstream reuses a layout only for the same
+    // truncation width in its own way (`elements/text.rs`).
+    #[cfg(not(feature = "gpui-next"))]
     use gpui::reuses_layout;
 
     // `numberOfLines: 1` (`render_text`'s `truncate`) is cut with an ellipsis at
     // the width layout finds. Taffy asks a flex item's text for its whole line
     // first, then at its width: the second answer must not be the first one.
+    #[cfg(not(feature = "gpui-next"))]
     #[test]
     fn a_line_cut_to_its_width_is_not_the_whole_line_kept() {
         assert!(!reuses_layout((None, None), (None, Some(px(120.)))));
@@ -765,6 +822,7 @@ mod tests {
         ));
     }
 
+    #[cfg(not(feature = "gpui-next"))]
     #[test]
     fn the_same_query_keeps_its_layout() {
         assert!(reuses_layout(

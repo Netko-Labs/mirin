@@ -616,6 +616,14 @@ export type NativeEvent =
    * `onKeyDown` is not typing. A host older than this never sends it.
    */
   | { type: "typing"; nodeId: "root"; typing: boolean }
+  /**
+   * The host applies tree patches of protocol `patches` (sent once, as it
+   * starts): `render` then sends only what each commit changed. A host older
+   * than patches never sends it, and gets the whole tree every commit.
+   */
+  | { type: "protocol"; nodeId: "root"; patches: number }
+  /** A patch didn't apply (`reason`): the host wants the whole tree, and drops patches until it comes. */
+  | { type: "resync"; nodeId: "root"; reason: string }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
   | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }
@@ -644,8 +652,16 @@ export type SimCommand =
   | { kind: "drag"; id: string; fromX?: number; fromY?: number; toX?: number; toY?: number }
   | { kind: "contextmenu"; id: string }
   | { kind: "hover"; id: string; hovered: boolean }
-  /** Scroll a scrollable node down by `dy` px (negative scrolls up). */
-  | { kind: "scroll"; id: string; dy: number }
+  /** Move the pointer to node `id`'s centre (or `x`, `y`) as a real pointer would: hover styles respond. */
+  | { kind: "move"; id: string }
+  | { kind: "move"; x: number; y: number }
+  /**
+   * Scroll a scrollable node down by `dy` px (negative scrolls up) and right
+   * by `dx` (negative scrolls left; a virtualized list scrolls down only).
+   */
+  | { kind: "scroll"; id: string; dy: number; dx?: number }
+  /** Give the keyboard to a field or `focusable` view, pressing nothing (a screen reader's focus). */
+  | { kind: "focus"; id: string }
   | { kind: "window"; action: "zoom" | "minimize" };
 
 /**

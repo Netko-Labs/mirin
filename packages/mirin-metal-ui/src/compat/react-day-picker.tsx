@@ -9,10 +9,15 @@
  * names, so the upstream styling applies. Dates come from date-fns.
  */
 
-import { format, isAfter, isBefore, isSameDay, type Locale, startOfDay } from "date-fns";
+import type { Locale } from "date-fns";
+import { format } from "date-fns/format";
+import { isAfter } from "date-fns/isAfter";
+import { isBefore } from "date-fns/isBefore";
+import { isSameDay } from "date-fns/isSameDay";
+import { startOfDay } from "date-fns/startOfDay";
 import type * as React from "react";
 import { useState } from "react";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "../icons/index.ts";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "../icons/core.generated.ts";
 import { cn } from "../lib/cn.ts";
 import { useControllableState } from "../lib/state.ts";
 import type { SyntheticEvent } from "../runtime/events.ts";

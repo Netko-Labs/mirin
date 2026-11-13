@@ -8,8 +8,8 @@ import { TextInput, type TextInputStyle } from "@mirinjs/metal";
 import { isValidElement, type ReactNode, useContext, useMemo, useState } from "react";
 import { DismissLayer, Portal } from "../overlay/host.tsx";
 import { Popper } from "../overlay/popper.tsx";
-import { useTheme } from "../theme.ts";
-import { translate } from "../tw/index.ts";
+import { useStyleTheme } from "../theme.ts";
+import { styleFor } from "../tw/index.ts";
 import { Box, collectAttrs, TextRun } from "./box.tsx";
 import { FormContext, useInherited } from "./context.ts";
 import { syntheticEvent } from "./events.ts";
@@ -36,14 +36,14 @@ function useFieldValue(props: Props): [string, (next: string) => void] {
 }
 
 function useInputStyle(props: Props, base: string): TextInputStyle {
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const inherited = useInherited();
   const className = str(props.className);
   const attrs = collectAttrs(props);
   const key = JSON.stringify(attrs);
   // biome-ignore lint/correctness/useExhaustiveDependencies: key summarizes attrs
   return useMemo(() => {
-    const tw = translate(`${base} ${className ?? ""}`, theme.colors, theme.radius, {
+    const tw = styleFor(`${base} ${className ?? ""}`, theme.colors, theme.radius, {
       attrs,
       groups: {},
       dark: theme.mode === "dark",
@@ -130,7 +130,7 @@ function HiddenInput(props: Props) {
 
 function NativeCheck(props: Props) {
   useControlRegistration("input", props);
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const controlled = props.checked !== undefined;
   const [own, setOwn] = useState(props.defaultChecked === true);
   const checked = controlled ? props.checked === true : own;

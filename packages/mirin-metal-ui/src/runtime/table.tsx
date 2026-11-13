@@ -19,8 +19,8 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useTheme } from "../theme.ts";
-import { translate } from "../tw/index.ts";
+import { useStyleTheme } from "../theme.ts";
+import { styleFor } from "../tw/index.ts";
 import { Box, type BoxProps, collectAttrs } from "./box.tsx";
 import { GroupContext } from "./context.ts";
 import { cssToMetal } from "./css.ts";
@@ -108,14 +108,14 @@ export function HtmlRow(props: BoxProps): ReactNode {
 export function HtmlCell(props: BoxProps & { __tag: string }): ReactNode {
   const table = useContext(TableContext);
   const position = useContext(ColumnContext);
-  const theme = useTheme();
+  const theme = useStyleTheme();
   const groups = useContext(GroupContext);
   const { className, style } = props;
   const attrs = collectAttrs(props);
   const attrsKey = JSON.stringify(attrs);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attrsKey summarizes attrs
   const own = useMemo(() => {
-    const tw = translate(className, theme.colors, theme.radius, {
+    const tw = styleFor(className, theme.colors, theme.radius, {
       attrs,
       groups,
       dark: theme.mode === "dark",

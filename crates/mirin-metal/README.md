@@ -21,9 +21,14 @@ driver (state)  ──JSON element tree──▶  mirin-metal / GPUI  ──▶ 
 Exploratory **alpha** (`0.1.0-alpha.x`). Deliberately standalone:
 
 - Excluded from the root Cargo workspace (`exclude` in the root `Cargo.toml`,
-  own lockfile), so the CEF build, CI, and releases are unaffected.
-- Not wired into the FFI surface (`ffi.rs`), the engine, or the TypeScript
-  packages yet.
+  own lockfile), so the CEF build and releases are unaffected; CI checks it in
+  its own `metal` job.
+- Driven by `@mirinjs/metal` (`packages/mirin-metal`) through the
+  `mirin-metal-host` stdio process; not wired into mirin-core's FFI surface
+  (`ffi.rs`) or engine yet.
+
+The element tree below is the first version; `docs/metal.md` is the source of
+truth for the current one (v2).
 
 ## Element tree (v1)
 

@@ -5,6 +5,7 @@
  * eventual in-process FFI transport.
  */
 
+import { markAnnounces } from "./lib/handshake.ts";
 import { parseToplevelEvent, toplevelCommand } from "./lib/toplevels.ts";
 import type {
   Bounds,
@@ -56,6 +57,18 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
     case "visibility":
       return nodeId === "root" && typeof record.visible === "boolean"
         ? { type: "visibility", nodeId: "root", visible: record.visible }
+        : null;
+    case "protocol":
+      return nodeId === "root" && typeof record.patches === "number"
+        ? { type: "protocol", nodeId: "root", patches: record.patches }
+        : null;
+    case "resync":
+      return nodeId === "root"
+        ? {
+            type: "resync",
+            nodeId: "root",
+            reason: typeof record.value === "string" ? record.value : "",
+          }
         : null;
     case "typing":
       return nodeId === "root" && typeof record.typing === "boolean"
@@ -368,7 +381,9 @@ export function spawnNativeHost(
     }
   })();
 
-  return {
+  // The host's first line says which patch protocol it takes (or a host
+  // from before patches says nothing): the first tree waits for it.
+  return markAnnounces<NativeHostTransport>({
     send(treeJson) {
       child.stdin.write(`${treeJson}\n`);
       void child.stdin.flush();
@@ -426,7 +441,7 @@ export function spawnNativeHost(
       void child.stdin.end();
       child.kill();
     },
-  };
+  });
 }
 
 /** Read a byte stream as text and hand each complete line to `onLine`. */

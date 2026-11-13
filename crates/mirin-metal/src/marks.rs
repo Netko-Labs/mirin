@@ -198,6 +198,12 @@ pub(crate) fn paint_line_numbers(
         let mut run = style.to_run(label.len());
         run.color = rgba(color).into();
         let shaped = window.text_system().shape_line(label, size, &[run], None);
-        let _ = shaped.paint(point(right - shaped.width, y), line_height, window, cx);
+        let _ = crate::gpui_api::paint_line(
+            &shaped,
+            point(right - shaped.width, y),
+            line_height,
+            window,
+            cx,
+        );
     }
 }

@@ -14,8 +14,6 @@ dependencies = [
 [[package]]
 name = "accesskit_atspi_common"
 version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24f5baf62e34a4a6c30e3d697e4782f821a7337049c44c3b40576a27dfbb580d"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -28,8 +26,6 @@ dependencies = [
 [[package]]
 name = "accesskit_consumer"
 version = "0.39.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3da8f27636015191b2264ee1df681503170a632cafd832fdc1edfdd4e3a2fd3"
 dependencies = [
  "accesskit",
  "hashbrown 0.17.1",
@@ -651,8 +647,6 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e71cfb73b98eb9f58ee84048aa1bdf4e7497fd20c141b57523499fa066b48fed"
 dependencies = [
  "ash",
  "ash-window",
@@ -3375,10 +3369,12 @@ name = "mirin-metal"
 version = "0.1.0-alpha.1"
 dependencies = [
  "accesskit",
+ "accesskit_consumer",
  "accesskit_unix",
  "ash",
  "futures",
  "gpui",
+ "log",
  "pprof",
  "serde",
  "serde_json",

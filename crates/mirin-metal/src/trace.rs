@@ -7,9 +7,38 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 static STARTED: OnceLock<Instant> = OnceLock::new();
 
-/// Note when the host started (first thing in `main`); later calls keep the first.
+/// The `log` target the GPUI fork reports its startup milestones under (the
+/// text system, the GPU context, a window's renderer, a font family loaded).
+const STARTUP_TARGET: &str = "mirin::startup";
+
+/// Prints the fork's startup milestones as trace lines.
+struct StartupLog;
+
+impl log::Log for StartupLog {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.target() == STARTUP_TARGET
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            log(format_args!(
+                "startup: {}, {:.1}ms after the host started",
+                record.args(),
+                since_start_ms()
+            ));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+/// Note when the host started (first thing in `main`); later calls keep the
+/// first. With tracing on, the GPUI fork's startup milestones are traced too.
 pub fn mark_start() {
     STARTED.get_or_init(Instant::now);
+    if enabled() && log::set_logger(&StartupLog).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
 }
 
 /// Milliseconds since `mark_start` (since the first call, if it never ran).
