@@ -409,7 +409,9 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   (`spawnNativeHost`'s, `lib/handshake.ts`) holds the driver's commits until
   the host has said it, or 250 ms have passed with nothing (a host from
   before patches), and sends the tree once, with ids; other transports send
-  at once as above. An older driver never patches, so a new host takes
+  at once as above. `spawnNativeHost` keeps the word and says it again to a
+  listener added later, so a tree rendered into a host kept warm (spawned
+  long before, `MIRIN_METAL_DEFERRED`) goes at once and is patched too. An older driver never patches, so a new host takes
   its whole trees as before. An old host given a patch line would refuse it
   (a line it can't parse), never draw it wrong; the announcement keeps a new
   driver from sending one.
