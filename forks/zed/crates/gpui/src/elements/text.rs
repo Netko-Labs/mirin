@@ -372,6 +372,8 @@ pub struct StyledText {
     delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
     // mirin: per-paragraph font sizes.
     paragraph_sizes: Option<Vec<Option<Pixels>>>,
+    // mirin: tab stops.
+    tab_size: u32,
     layout: TextLayout,
 }
 
@@ -384,8 +386,17 @@ impl StyledText {
             delayed_highlights: None,
             delayed_font_family_overrides: None,
             paragraph_sizes: None,
+            tab_size: crate::DEFAULT_TAB_SIZE,
             layout: TextLayout::default(),
         }
+    }
+
+    // mirin: tab stops. Port of `../gpui`'s.
+    /// Set this text's tab stops every `tab_size` `0`s of its font, in place
+    /// of [`crate::DEFAULT_TAB_SIZE`]. Zero is taken as one.
+    pub fn with_tab_size(mut self, tab_size: u32) -> Self {
+        self.tab_size = tab_size.max(1);
+        self
     }
 
     // mirin: per-paragraph font sizes.
@@ -566,6 +577,7 @@ impl Element for StyledText {
             self.text.clone(),
             runs,
             self.paragraph_sizes.take(),
+            self.tab_size,
             window,
             cx,
         );
@@ -637,6 +649,8 @@ struct Fit {
     affix: SharedString,
     from: TruncateFrom,
     line_clamp: Option<usize>,
+    // mirin: tab stops.
+    tab_size: u32,
 }
 
 // mirin: a truncated line is cut where it is drawn.
@@ -647,9 +661,20 @@ fn needs_refit(cut_at: Option<Pixels>, measured: Pixels, drawn: Pixels) -> bool 
     const SLACK: f32 = 0.5;
     match cut_at {
         Some(at) => (at - drawn).abs() > px(SLACK),
-        None => measured > drawn + px(SLACK),
+        // mirin: a line that fits its own box is not cut (`CUT_SLACK`).
+        None => measured > drawn + px(CUT_SLACK),
     }
 }
+
+// mirin: a line that fits its own box is not cut. Port of `../gpui`'s.
+/// How far past its box a line may reach before it is cut, in px. A box sized
+/// by its text is the text's width rounded to whole device pixels, so at a
+/// fractional scale (1.75) it can be a part of a pixel narrower than the line
+/// it was made for, and the line lost its last letter to an ellipsis
+/// ("Battery & Powe…" on a button exactly as wide as "Battery & Power…").
+/// One px covers the rounding at any scale of 1 or more; what reaches past
+/// the box by less is side bearing, not ink.
+pub const CUT_SLACK: f32 = 1.0;
 
 // mirin: the text a truncated text shows at `truncate_width` (and wrapped at
 // `wrap_width`), and its runs: what the measure does, shared with `fit_to`.
@@ -680,11 +705,12 @@ fn cut_text<'a>(
         )
     } else if let Some(unclipped) = window
         .text_system()
-        .shape_text(text.clone(), fit.font_size, runs, None, None)
+        .shape_text_tabbed(text.clone(), fit.font_size, runs, None, None, fit.tab_size)
         .log_err()
         && unclipped
             .iter()
-            .all(|line| line.size(fit.line_height).width <= truncate_width)
+            // mirin: a line that fits its own box is not cut (`CUT_SLACK`).
+            .all(|line| line.size(fit.line_height).width <= truncate_width + px(CUT_SLACK))
     {
         // The truncation decision below sums per-character advances,
         // which overestimates the shaped width (no kerning), truncating
@@ -694,7 +720,14 @@ fn cut_text<'a>(
         // already measured untruncated this frame.
         (text.clone(), Cow::Borrowed(runs))
     } else {
-        line_wrapper.truncate_line(text.clone(), truncate_width, &fit.affix, runs, fit.from)
+        // mirin: a line that fits its own box is not cut (`CUT_SLACK`).
+        line_wrapper.truncate_line(
+            text.clone(),
+            truncate_width + px(CUT_SLACK),
+            &fit.affix,
+            runs,
+            fit.from,
+        )
     }
 }
 
@@ -759,7 +792,7 @@ impl TextLayout {
         window: &mut Window,
         cx: &mut App,
     ) -> LayoutId {
-        self.layout_sized(text, runs, None, window, cx)
+        self.layout_sized(text, runs, None, crate::DEFAULT_TAB_SIZE, window, cx)
     }
 
     fn layout_sized(
@@ -767,6 +800,7 @@ impl TextLayout {
         text: SharedString,
         runs: Option<Vec<TextRun>>,
         paragraph_sizes: Option<Vec<Option<Pixels>>>,
+        tab_size: u32,
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
@@ -802,9 +836,28 @@ impl TextLayout {
                 affix,
                 from,
                 line_clamp: text_style.line_clamp,
+                tab_size,
             })
         });
-        window.request_measured_layout(Default::default(), {
+        // mirin: where the first line's baseline is under the text's top, as
+        // `paint` puts it: a row that aligns its items by baseline lines
+        // texts of different sizes up by it, not by their boxes. Port of
+        // `../gpui`'s.
+        let first_baseline = {
+            let size = paragraph_sizes
+                .as_ref()
+                .and_then(|sizes| sizes.first().copied().flatten())
+                .unwrap_or(font_size);
+            let height = text_style
+                .line_height
+                .to_pixels(size.into(), window.rem_size());
+            let font = runs
+                .first()
+                .map_or_else(|| text_style.font(), |run| run.font.clone());
+            let font_id = window.text_system().resolve_font(&font);
+            window.text_system().baseline_offset(font_id, size, height)
+        };
+        let layout_id = window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
@@ -884,12 +937,13 @@ impl TextLayout {
                             .to_pixels(size.into(), window.rem_size());
                         let shaped = window
                             .text_system()
-                            .shape_text(
+                            .shape_text_tabbed(
                                 SharedString::from(paragraph.to_string()),
                                 size,
                                 &runs_within(&runs, range),
                                 wrap_width,
                                 None,
+                                tab_size,
                             )
                             .log_err()
                             .unwrap_or_default();
@@ -920,12 +974,13 @@ impl TextLayout {
 
                 let Some(lines) = window
                     .text_system()
-                    .shape_text(
+                    .shape_text_tabbed(
                         text,
                         font_size,
                         &runs,
                         wrap_width,            // Wrap if we know the width.
                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
+                        tab_size,
                     )
                     .log_err()
                 else {
@@ -965,7 +1020,9 @@ impl TextLayout {
 
                 size
             }
-        })
+        });
+        window.set_layout_first_baseline(layout_id, first_baseline);
+        layout_id
     }
 
     fn prepaint(&self, bounds: Bounds<Pixels>, text: &str, window: &mut Window, cx: &mut App) {
@@ -995,12 +1052,13 @@ impl TextLayout {
         let (text, runs) = cut_text(&fit, &fit.runs, inner.wrap_width, drawn, window, cx);
         let Some(shaped) = window
             .text_system()
-            .shape_text(
+            .shape_text_tabbed(
                 text.clone(),
                 fit.font_size,
                 &runs,
                 inner.wrap_width,
                 fit.line_clamp,
+                fit.tab_size,
             )
             .log_err()
         else {

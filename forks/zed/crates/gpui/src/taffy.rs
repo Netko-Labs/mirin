@@ -29,6 +29,9 @@ struct NodeContext {
     // can be asked the same (`end_bind`).
     last: Option<(Size<Option<Pixels>>, Size<AvailableSpace>)>,
     asked: u64,
+    // mirin: how far under its top its first baseline is, in device pixels
+    // (`TaffyLayoutEngine::set_first_baseline`).
+    first_baseline: Option<f32>,
 }
 
 /// mirin: a retained subtree's elements built again onto the nodes it kept
@@ -409,6 +412,7 @@ impl TaffyLayoutEngine {
                     measure,
                     last: None,
                     asked: 0,
+                    first_baseline: None,
                 },
             )
             .expect(EXPECT_MESSAGE)
@@ -552,7 +556,11 @@ impl TaffyLayoutEngine {
                 id.into(),
                 available_space.into(),
                 |input, _id, node_context, style| {
-                    taffy::compute_leaf_layout(
+                    // mirin: the leaf's first baseline (`set_first_baseline`).
+                    let first_baseline = node_context
+                        .as_ref()
+                        .and_then(|context| context.first_baseline);
+                    let mut output = taffy::compute_leaf_layout(
                         input,
                         style,
                         |_, _| 0.0,
@@ -597,10 +605,33 @@ impl TaffyLayoutEngine {
                             )
                             .into()
                         },
-                    )
+                    );
+                    if first_baseline.is_some() {
+                        output.baselines.first = first_baseline;
+                    }
+                    output
                 },
             )
             .expect(EXPECT_MESSAGE);
+    }
+
+    /// mirin: how far under its top a measured node's first baseline is (a
+    /// text's first line). A row that aligns its items by baseline
+    /// (`items_baseline`) lines them up by it; without one taffy takes the
+    /// node's bottom edge, which is not where a text's letters sit. Port of
+    /// `../gpui`'s (there taffy keeps it; here the leaf's output, which
+    /// GPUI makes, carries it). The same baseline again leaves the node's
+    /// cache alone, so a retained subtree's text bound again keeps its layout.
+    pub fn set_first_baseline(&mut self, id: LayoutId, baseline: Pixels, scale_factor: f32) {
+        let baseline = Some(baseline.0 * scale_factor);
+        let Some(context) = self.taffy.get_node_context_mut(id.into()) else {
+            return;
+        };
+        if context.first_baseline == baseline {
+            return;
+        }
+        context.first_baseline = baseline;
+        self.taffy.mark_dirty(id.into()).expect(EXPECT_MESSAGE);
     }
 
     // Pixel snapping

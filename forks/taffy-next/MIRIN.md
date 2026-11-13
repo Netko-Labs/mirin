@@ -24,7 +24,12 @@ needed: GPUI lays a copy out as a root with its twin's size
 (`TaffyLayoutEngine::place_detached`). What a layout changed inside a node is
 GPUI's comparison of a root's unrounded box (`TaffyLayoutEngine::node_box`),
 and what a measured leaf was last asked is kept by GPUI's measure function
-(`NodeContext::last`), so neither needs taffy.
+(`NodeContext::last`), so neither needs taffy. `../taffy`'s rule that a min-content entry does
+not answer a known width equal to its own (Dashi 0.8's card as tall as its
+rows) is moot: 0.15 answers a query only from an entry for the same one
+(mirin-metal's `render::card_tests` passes on it unchanged). Dashi 0.8's
+first baseline of a measured leaf needs no change here either: in 0.15
+GPUI makes a leaf's output (`../zed/MIRIN.md`).
 
 To update: see `../README.md` (merge the `forks-upstream-next` branch), then
 reconcile the changes above. Keep the version equal to the one upstream GPUI

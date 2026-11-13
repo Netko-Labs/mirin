@@ -1,9 +1,7 @@
 //! Where GPUI breaks a wrapped text, on its test platform (every char one em
 //! wide: 10 px at its size).
 
-use gpui::{
-    div, point, prelude::*, px, size, AvailableSpace, LineWrapper, StyledText, TestAppContext,
-};
+use gpui::{div, point, prelude::*, px, size, AvailableSpace, StyledText, TestAppContext};
 
 const URL_NOTE: &str = "Read the plan at https://github.com/Netko-Labs/dashiOS/blob/release/0.8.0/docs/architecture.md#session-startup-and-the-systemd-user-target before the review.";
 
@@ -62,8 +60,13 @@ fn a_url_that_fits_on_the_next_line_moves_there_whole(cx: &mut TestAppContext) {
     );
 }
 
+// The fork's own rule (`LineWrapper::breaks_inside_word`); upstream GPUI breaks
+// by UAX #14 instead (docs/metal/gpui-next.md).
+#[cfg(not(feature = "gpui-next"))]
 #[test]
 fn a_word_breaks_inside_only_after_a_slash_or_a_hyphen_between_letters() {
+    use gpui::LineWrapper;
+
     let breaks = |text: &str| -> Vec<usize> {
         let chars: Vec<char> = text.chars().collect();
         (2..chars.len())

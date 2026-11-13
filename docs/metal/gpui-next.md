@@ -1547,6 +1547,22 @@ has no scale override):
 | resize | 1.95 ms | 2.1 ms |
 | RSS idle / at the end | 233 / 285 MB | 215 / 318 MB |
 
+### metal-0.9: Dashi 0.8's features on upstream GPUI
+
+`metal-0.9` is Dashi 0.8.0's mirin (`wave5-0.8` at `a79a137`) with
+`metal-forks` merged. 0.8 added six changes to the vendored GPUI and taffy
+(now in `forks/gpui` and `forks/taffy`). On the upstream build each is
+ported or already upstream's; none needed a `GAP` stand-in:
+
+| 0.8 change | Upstream build |
+| --- | --- |
+| A long URL breaks after a slash or a hyphen | Upstream's own: GPUI wraps at UAX #14 break opportunities (`LineWrapper::break_indices`), which allow both. `render::wrap_tests`' three layouts pass as they are; the fork's rule itself (`LineWrapper::breaks_inside_word`, one unit test, `cfg`'d to the default build) may differ at the edges (a path's first slash, a run of hyphens). |
+| Baseline alignment (`items_baseline` by a text's first baseline) | Ported (`forks/zed`: `set_layout_first_baseline`; the baseline rides on GPUI's node context into the leaf's output, so `forks/taffy-next` is unchanged). |
+| A card as tall as its rows at its least width (taffy's cache) | Not needed: taffy 0.15 answers a query only from an entry for the same query. `render::card_tests` passes unchanged. |
+| Tab stops (`tabSize`) | Ported (`forks/zed`: `apply_tab_stops`, `shape_text_tabbed`, `StyledText::with_tab_size`, the tab size in the line layout cache's key). |
+| A continuous source's scroll moves as far as it says | Ported (`forks/zed`: `pixel_scroll_factor` in `gpui_linux`'s Wayland client). |
+| A one-line text that fits its own box is not cut (`CUT_SLACK`) | Ported (`forks/zed`: `cut_text`, `needs_refit`). |
+
 ### State, what is left, and the default
 
 The branch builds both hosts, the default exactly as before; the upstream
