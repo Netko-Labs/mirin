@@ -417,9 +417,11 @@ mod tests {
     #[test]
     fn test_wrap_line_breaks_a_url_after_its_slashes() {
         let mut wrapper = build_wrapper();
+        // Ten and a half chars a line, whatever face the test font resolves to here.
+        let width = wrapper.width_for_char('a') * 10.5;
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("see dashi.dev/docs/guide-book")], px(72.))
+                .wrap_line(&[LineFragment::text("see dashi.dev/docs/guide-book")], width)
                 .collect::<Vec<_>>(),
             &[Boundary::new(4, 0), Boundary::new(14, 0), Boundary::new(19, 0)],
         );
