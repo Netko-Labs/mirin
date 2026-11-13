@@ -1563,6 +1563,16 @@ ported or already upstream's; none needed a `GAP` stand-in:
 | A continuous source's scroll moves as far as it says | Ported (`forks/zed`: `pixel_scroll_factor` in `gpui_linux`'s Wayland client). |
 | A one-line text that fits its own box is not cut (`CUT_SLACK`) | Ported (`forks/zed`: `cut_text`, `needs_refit`). |
 
+`host-next-09` (this build) against `host-next-r6` with `--scene`: the
+same layouts and drawings in `grid`, `browser`, `scroll` and
+`scroll-fractional`; retained against `MIRIN_METAL_RETAIN=0`, the same in
+those and `across`. Against the 0.8.0 host it differs as the default build
+does (`docs/metal.md` section 5b, "metal-0.9"), plus the `browser` card
+taffy 0.15 lays out 11 px higher. Stress bench, frame (medians of two):
+select 2.05 ms, type 1.55, hover 2.25, grow 1.75, grow in a scroll view
+3.0, select in one 3.35, scroll 2.8, scroll across 2.55, resize 2.2; RSS
+idle 195 MB.
+
 ### State, what is left, and the default
 
 The branch builds both hosts, the default exactly as before; the upstream

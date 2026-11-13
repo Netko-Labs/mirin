@@ -2256,6 +2256,30 @@ Round 6's three upstream lanes together (`docs/metal/gpui-next.md`,
 Open there: select in a scroll view, and step 7's checks of Dashi's apps
 at other scale factors.
 
+**metal-0.9 (2026-11-13): this work on what Dashi 0.8.0 shipped.** The
+`metal-0.9` branch is `wave5-0.8` at `a79a137` with `metal-forks` merged;
+0.8's six vendored-crate changes (URL breaks, baseline alignment, a card's
+height at its least width, tab stops, continuous scroll, one-line slack)
+are in `forks/gpui` and `forks/taffy`, and on the upstream build in
+`forks/zed` or upstream's own (`docs/metal/gpui-next.md`, "metal-0.9").
+Against the 0.8.0 RPM's host (`host-08`, driven by 0.9's driver, which
+sends it whole trees as 0.8's does): `layout-check` lays `grid` out
+identically; in `browser`, `scroll` and `scroll-fractional` every node both
+hosts report is where host-08 puts it, but for metal-forks' own changes,
+which host-r6 shows against host-08 to the same count: a scroll view's
+children now have bounds (host-08 reports none for them), scroll content is
+painted at whole device pixels (with `MIRIN_METAL_SCROLL_SNAP=0` and bounds
+to three decimals no other node differs), and host-08 has no `move`
+simulation command (the `heard` lines). Against host-r6 with `--scene`,
+layouts and drawings are identical in all four apps. Stress bench, frame
+(medians of two runs each, host-08 / metal-0.9 / its upstream build):
+select 171 / 2.05 / 2.05 ms, type 174 / 1.05 / 1.55, hover 156 / 2.1 /
+2.25, grow 158 / 3.2 / 1.75, scroll 156 / 2.3 / 2.8, resize 170 / 2.45 /
+2.2; host CPU per select 221 / 4.5 / 4.75 ms; 1368 / 0.2 KB sent per
+update; RSS idle 369 / 202 / 195 MB. The counter app's host: 78 / 59 MB
+RSS, 35 / 15 threads, 69 / 14 MB of GPU memory, 288 / 33 ms to its first
+frame.
+
 The upstream build's footprint after round 5 (`docs/metal/gpui-next.md`,
 "Round 5: a small app's footprint"): the counter's host 68 MB RSS, 32 MB
 of GPU memory, 16 threads and 40 ms to its first content frame, where
