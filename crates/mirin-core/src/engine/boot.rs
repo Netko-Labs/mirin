@@ -140,15 +140,15 @@ fn load_cef() -> Library {
 
 /// Whether to force software rendering (disable the GPU process).
 pub(crate) fn should_disable_gpu() -> bool {
-    if std::env::var_os("MIRIN_DISABLE_GPU").is_some() {
-        return true;
-    }
+    let forced = std::env::var_os("MIRIN_DISABLE_GPU").is_some();
     #[cfg(target_os = "windows")]
     {
-        return win::is_remote_session();
+        forced || win::is_remote_session()
     }
-    #[allow(unreachable_code)]
-    false
+    #[cfg(not(target_os = "windows"))]
+    {
+        forced
+    }
 }
 
 /// The ANGLE backend to force via `--use-angle`, or None to keep Chromium's default.
