@@ -530,7 +530,12 @@ describe("TextInput", () => {
       createElement(
         View,
         null,
-        createElement(TextInput, { value: "", testID: "text", multiline: true, tabBehavior: "insert" }),
+        createElement(TextInput, {
+          value: "",
+          testID: "text",
+          multiline: true,
+          tabBehavior: "insert",
+        }),
         createElement(TextInput, { value: "", testID: "body", multiline: true }),
         createElement(TextInput, { value: "", testID: "line", tabBehavior: "insert" }),
       ),
