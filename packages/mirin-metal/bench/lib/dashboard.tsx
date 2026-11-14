@@ -17,6 +17,8 @@ export interface DashboardOptions {
   shadow?: "sm";
   /** Memoized cards with hoisted styles (`--memo`). */
   memo?: boolean;
+  /** The layout it starts in (`--start=scroll`): the grid in a scroll view from the first frame. */
+  start?: "plain" | "scroll";
 }
 
 function Card({ index, shadow }: { index: number; shadow?: "sm" }): ReactElement {
@@ -81,12 +83,18 @@ const MemoCard = memo(function MemoCard({
   );
 });
 
-export function Dashboard({ rows, cols, shadow, memo: memoized }: DashboardOptions): ReactElement {
+export function Dashboard({
+  rows,
+  cols,
+  shadow,
+  memo: memoized,
+  start = "plain",
+}: DashboardOptions): ReactElement {
   const [query, setQuery] = useState("");
   const [tall, setTall] = useState(false);
   // How the cards are laid out: in the window, in a scroll view, or in
   // columns in a view that scrolls across.
-  const [mode, setMode] = useState<"plain" | "scroll" | "wide">("plain");
+  const [mode, setMode] = useState<"plain" | "scroll" | "wide">(start);
   const Each = memoized ? MemoCard : Card;
   const banner = (
     <View

@@ -14,6 +14,7 @@
 
 mod access;
 mod caret;
+mod counters;
 mod drag;
 mod drive;
 mod edges;

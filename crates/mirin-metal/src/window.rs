@@ -467,6 +467,7 @@ impl Render for RootView {
         // The tree is immutable per frame; hold a reference so input state can
         // be read and listeners attached while walking it.
         let started = std::time::Instant::now();
+        let counted = crate::counters::read();
         self.idle.frame_drawn(cx);
         self.layout.begin_frame();
         self.layout.set_scale(window.scale_factor());
@@ -528,10 +529,16 @@ impl Render for RootView {
                     }
                 }
                 let drawn = crate::retain::take_counts();
+                // With `--features profiling`: what the frame ran, whatever
+                // else the machine was doing (`counters.rs`).
+                let ran = crate::counters::read()
+                    .zip(counted)
+                    .map(|(now, before)| now.since(before))
+                    .unwrap_or_default();
                 crate::trace::log(format_args!(
                     "render {:.0}x{:.0} took {render_ms:.2}ms, frame {:.2}ms, \
                      retained subtrees {} built, {} redrawn ({} apart), {} reused, {} moved, \
-                     {} skipped",
+                     {} skipped{ran}",
                     f32::from(size.width),
                     f32::from(size.height),
                     started.elapsed().as_secs_f64() * 1000.0,
