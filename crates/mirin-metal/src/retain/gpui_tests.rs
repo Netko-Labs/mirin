@@ -54,6 +54,9 @@ struct Scene {
     unsteady: Option<Rc<RefCell<HashMap<usize, usize>>>>,
     /// How often a row's elements, and a cell's, were made.
     builds: Rc<Cell<(usize, usize)>>,
+    /// A cell's build reads the view that renders the rows, as an app's
+    /// build reads its own state (mirin-metal's root view).
+    reads: bool,
 }
 
 struct Rows {
@@ -127,8 +130,9 @@ fn row(
 }
 
 impl Render for Rows {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let scene = self.scene.borrow().clone();
+        let me = cx.entity();
         let rows = scene
             .rows
             .iter()
@@ -154,6 +158,7 @@ impl Render for Rows {
                 let cell_markers = self.cell_markers.clone();
                 let cell_draws = self.draws.clone();
                 let builds = scene.builds.clone();
+                let (me, reads) = (me.clone(), scene.reads);
                 retained(
                     ("kept", index),
                     self.markers[index].entity_id(),
@@ -166,8 +171,12 @@ impl Render for Rows {
                                 let marker = cell_markers[index * cells + cell_index].entity_id();
                                 let draws = cell_draws.clone();
                                 let (tint, builds) = (tint.clone(), builds.clone());
+                                let me = me.clone();
                                 retained(("kept-cell", index * 100 + cell_index), marker, 1, {
-                                    move |_, _| {
+                                    move |_, cx| {
+                                        if reads {
+                                            let _ = me.read(cx).retain;
+                                        }
                                         let (rows, cells_built) = builds.get();
                                         builds.set((rows, cells_built + 1));
                                         cell(index, cell_index, tint.get())
@@ -237,6 +246,7 @@ fn plain(rows: Vec<Row>) -> Scene {
         width: 300.0,
         unsteady: None,
         builds: Rc::default(),
+        reads: false,
     }
 }
 
@@ -260,12 +270,14 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         width: 300.0,
         unsteady: None,
         builds: Rc::default(),
+        reads: false,
     }
 }
 
 type Draws = Rc<RefCell<HashMap<RetainedDraw, usize>>>;
 
 struct Opened<'a> {
+    view: Entity<Rows>,
     scene: Rc<RefCell<Scene>>,
     cell_markers: Vec<Entity<Marker>>,
     scroll: ScrollHandle,
@@ -310,6 +322,7 @@ fn open_at(cx: &mut TestAppContext, scene: Scene, retain: bool, scale: f32) -> O
     cx.run_until_parked();
     draw(cx);
     Opened {
+        view,
         scene: shared,
         cell_markers,
         scroll,
@@ -680,6 +693,58 @@ fn rows_that_may_not_move_are_drawn_where_they_land(cx: &mut TestAppContext) {
 /// Scroll to each of `stops` in turn, with retained rows (`retain`) or
 /// without; what each frame drew, and how many rows and cells had been built
 /// by then.
+/// A clean cell under a pointer its row moved under can't be copied, and is
+/// built again in place, from its row's prepaint: while the row is watched
+/// for the entities it reads. What the cell's build reads is not what the
+/// row is drawn from. Counted for the row, a view the app notifies on every
+/// frame (as mirin-metal's root view is) left the row notified on every
+/// frame, and a notified subtree is never left out: once scrolled out of
+/// view it was copied, unseen, for good.
+#[gpui::test]
+fn what_a_build_reads_does_not_keep_the_subtree_around_it_in_the_frame(cx: &mut TestAppContext) {
+    let run = |cx: &mut TestAppContext, reads: bool| {
+        let mut scene = scrolled(30, 3);
+        scene.reads = reads;
+        let opened = open(cx, scene, true);
+        opened
+            .cx
+            .simulate_mouse_move(point(px(80.0), px(60.0)), None, Modifiers::default());
+        let mut frames = Vec::new();
+        // Rows pass under the pointer, then are scrolled well out of view.
+        for to in [0.0, 9.0, 31.0, 62.0, 150.0, 300.0, 310.0, 320.0] {
+            opened.draws.borrow_mut().clear();
+            opened.scroll.set_offset(point(px(0.0), px(-to)));
+            // The app notifies its view, which draws the window.
+            let view = opened.view.clone();
+            opened
+                .cx
+                .update(|_, cx| view.update(cx, |_, cx| cx.notify()));
+            draw(opened.cx);
+            let draws = opened.draws.borrow();
+            frames.push(
+                [
+                    RetainedDraw::Built,
+                    RetainedDraw::Redrawn,
+                    RetainedDraw::Reused,
+                    RetainedDraw::Moved,
+                    RetainedDraw::Skipped,
+                ]
+                .map(|draw| count(&draws, draw)),
+            );
+        }
+        frames
+    };
+    let (silent, reading) = (run(cx, false), run(cx, true));
+    assert!(
+        silent.iter().any(|[_, redrawn, ..]| *redrawn > 0),
+        "something is built again in place: {silent:?}"
+    );
+    assert_eq!(
+        reading, silent,
+        "built, redrawn, reused, moved and left out, frame by frame"
+    );
+}
+
 fn scroll_through(
     cx: &mut TestAppContext,
     cells: usize,
