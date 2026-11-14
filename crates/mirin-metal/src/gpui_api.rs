@@ -3,8 +3,8 @@
 //! when the engine becomes sumi (docs/metal/engine.md, step 3).
 
 use gpui::{
-    px, App, Application, AsyncApp, BoxShadow, FocusHandle, Hsla, Keystroke, ListState, Pixels,
-    Point, ScrollHandle, ShapedLine, Size, Subscription, Window, WindowKind, WindowOptions,
+    App, Application, AsyncApp, BoxShadow, FocusHandle, Hsla, Keystroke, ListState, Pixels, Point,
+    ScrollHandle, ShapedLine, Size, Subscription, Window, WindowKind, WindowOptions,
 };
 
 #[cfg(target_os = "linux")]
@@ -164,7 +164,7 @@ pub struct LayerShellOptions {
 #[cfg(target_os = "linux")]
 impl LayerShellOptions {
     fn window_kind(&self) -> WindowKind {
-        use gpui::layer_shell::Anchor;
+        use gpui::{layer_shell::Anchor, px};
         let mut anchor = Anchor::empty();
         anchor.set(Anchor::TOP, self.anchor.top);
         anchor.set(Anchor::BOTTOM, self.anchor.bottom);
