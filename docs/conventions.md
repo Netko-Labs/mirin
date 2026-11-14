@@ -478,9 +478,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-and, when `forks/gpui` changes, the fork's own tests (`docs/metal.md`,
-section 6). `bun run test` covers `@mirinjs/metal` and `@mirinjs/metal-ui`; it
-runs metal-ui's tests from that package's directory, where its JSX runtime
+The forks' own tests are in `docs/metal.md`, section 6. `bun run test`
+covers `@mirinjs/metal` and `@mirinjs/metal-ui`; it runs metal-ui's tests from that package's directory, where its JSX runtime
 applies.
 
 Use real app checks for native behavior:

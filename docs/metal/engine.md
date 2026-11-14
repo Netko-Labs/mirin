@@ -17,20 +17,21 @@ history of how Metal got onto upstream GPUI.
 
 ## 1. Where we are
 
-Metal draws with two builds of the same `crates/mirin-metal/src`:
+Metal draws with a fork of Zed's GPUI: `forks/zed` (at `f8cfc7ed`,
+2026-11-10) with `forks/taffy-next` (taffy 0.15) and two small forks for a
+small app's GPU memory (`forks/wgpu`, wgpu-hal alone, and
+`forks/gpu-allocator`). Our changes are rows in each fork's `MIRIN.md`.
 
-| Build | Base | Our changes | State |
-| --- | --- | --- | --- |
-| default | `forks/gpui` (gpui 0.2.2, one crate, blade renderer), `forks/taffy` 0.9, `forks/blade-graphics` | 8,500 lines in 49 files | ships in Dashi 0.9 |
-| upstream | `forks/zed` (Zed's GPUI at `f8cfc7ed`, 2026-11-10), `forks/taffy-next` 0.15 | 7,700 lines in 41 files | at parity or faster on the stress bench, but select in a scroll view |
+Until step 1 (2026-11-14) it built on forks of the crates.io release gpui
+0.2.2, which Dashi 0.9 ships. That was a dead end: one crate with every
+platform inside, a renderer upstream dropped, no releases since. Upstream
+is split the way an engine should be: a core with no platform code, one
+crate per platform, shared renderers (`gpui_wgpu` for Linux, `gpui_apple`'s
+Metal renderer for macOS). sumi starts from it.
 
-`src/gpui_api/{fork,upstream}.rs` (360 lines) hides the differences.
-
-gpui 0.2.2 is a dead end: one crate with every platform inside, a renderer
-upstream dropped, no releases since. Upstream is split the way an engine
-should be: a core with no platform code, one crate per platform, shared
-renderers (`gpui_wgpu` for Linux, `gpui_apple`'s Metal renderer for macOS).
-sumi starts from upstream.
+`src/gpui_api.rs` (220 lines) is what is left of the two-build shim: the
+shapes mirin-metal's code was written against, over the engine's. It folds
+into the engine at step 3.
 
 ## 2. What sumi is
 
@@ -118,15 +119,15 @@ accessibility keeps today.
 
 | Step | What | Effort |
 | --- | --- | --- |
-| 1 | **Switch the default to upstream.** Close select in a scroll view, the footprint at 1.5, layouts at other scales. Then switch, and delete `forks/gpui`, `forks/taffy`, `forks/blade-graphics` and `src/gpui_api/`. | 4–7 days |
+| 1 | **Switch to upstream.** Done 2026-11-14: select in a scroll view, the footprint at 1.5 and layouts at other scales closed; `forks/gpui`, `forks/taffy`, `forks/blade-graphics` and the second build deleted. | done |
 | 2 | **Last sync** to Zed `main`. | 1–2 days |
-| 3 | **Become sumi.** Move the crates to `forks/sumi/`, rename, drop the crates and modules listed above, put Dashi's protocols behind `dashi`. Measure size, RSS and first frame before and after. | 2–3 days |
+| 3 | **Become sumi.** Move the crates to `forks/sumi/`, rename, fold `src/gpui_api.rs` in, drop the crates and modules listed above, put Dashi's protocols behind `dashi`. Measure size, RSS and first frame before and after. | 2–3 days |
 | 4 | **The retained frame** (section 3). | 1–2 weeks |
 | 5 | **Native slots** (section 5): the engine's `NativeSlot`, the protocol's `native` node, drawn fallbacks everywhere. | about a week |
 | 6 | **AppKit host.** | 1–2 weeks, needs a Mac |
 
-Steps 1 to 4 are verifiable here on Linux. Dashi 0.9 ships the default
-build as it is today; the switch reaches Dashi in the release after it.
+Steps 1 to 4 are verifiable here on Linux. Dashi 0.9 ships the 0.2.2
+build; the switch reaches Dashi in the release after it.
 
 ## 5. Native components (macOS, later)
 

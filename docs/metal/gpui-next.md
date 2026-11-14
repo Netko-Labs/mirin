@@ -1,5 +1,14 @@
 # Metal on current upstream GPUI: spike findings
 
+**Done (2026-11-14).** Metal builds on upstream GPUI alone: `forks/zed` and
+`forks/taffy-next` are what `crates/mirin-metal` depends on, and the gpui
+0.2.2 forks (`forks/gpui`, `forks/taffy`, `forks/blade-graphics`), the
+second manifest (`crates/mirin-metal/next`), the two halves of
+`src/gpui_api/` and the spike (`spikes/gpui-next/`) are gone from the tree.
+This document is the record of the move; where it says "the default build"
+or "the fork" it means the 0.2.2 one, and "the upstream build" is now the
+only build. What comes next is in [`engine.md`](engine.md).
+
 Date: 2026-11-10. Branch `perf-gpui-next`. Spike code: `spikes/gpui-next/`
 (its README says how to build it and repeat the numbers).
 

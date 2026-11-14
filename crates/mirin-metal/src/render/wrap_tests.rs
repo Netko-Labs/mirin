@@ -59,27 +59,3 @@ fn a_url_that_fits_on_the_next_line_moves_there_whole(cx: &mut TestAppContext) {
         ["Short one: ", "dashi.dev/docs"]
     );
 }
-
-// The fork's own rule (`LineWrapper::breaks_inside_word`); upstream GPUI breaks
-// by UAX #14 instead (docs/metal/gpui-next.md).
-#[cfg(not(feature = "gpui-next"))]
-#[test]
-fn a_word_breaks_inside_only_after_a_slash_or_a_hyphen_between_letters() {
-    use gpui::LineWrapper;
-
-    let breaks = |text: &str| -> Vec<usize> {
-        let chars: Vec<char> = text.chars().collect();
-        (2..chars.len())
-            .filter(|&at| LineWrapper::breaks_inside_word(chars[at - 2], chars[at - 1], chars[at]))
-            .collect()
-    };
-    assert_eq!(breaks("dashi.dev/docs/guide"), [10, 15]);
-    assert_eq!(breaks("https://dashi.dev"), [8]);
-    assert_eq!(breaks("well-known"), [5]);
-    // A path's first slash, a date, a fraction, a flag, a negative number: whole.
-    assert_eq!(breaks("/usr/bin"), [5]);
-    assert_eq!(breaks("11/11/2026"), Vec::<usize>::new());
-    assert_eq!(breaks("2026-11-11"), Vec::<usize>::new());
-    assert_eq!(breaks("--flag x-1"), Vec::<usize>::new());
-    assert_eq!(breaks("and/or"), [4]);
-}

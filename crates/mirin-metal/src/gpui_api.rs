@@ -1,6 +1,6 @@
-//! The `gpui-next` build: upstream GPUI (`forks/zed`). Items marked `GAP` are
-//! stand-ins for fork features not yet ported to `forks/zed` (the feature is
-//! off, or does less); each is a row of docs/metal/gpui-next.md.
+//! The shapes mirin-metal's code was written against (the gpui 0.2.2 fork it
+//! began on), over the engine's own (`forks/zed`). It folds into the engine
+//! when the engine becomes sumi (docs/metal/engine.md, step 3).
 
 use gpui::{
     px, App, Application, AsyncApp, BoxShadow, FocusHandle, Hsla, Keystroke, ListState, Pixels,

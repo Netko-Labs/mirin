@@ -11,11 +11,10 @@ license = "MIT"
 publish = false
 description = "mirin metal (alpha): GPU-rendered native UI for mirin apps, built on GPUI"
 
-# Keep the lockfile's `libc` at 0.2.186: gpui 0.2.2 pulls `xattr 0.2.3` (via
-# zed-async-tar), which no longer compiles against libc >= 0.2.190 on Linux.
-# After any `cargo update`, re-pin with `cargo update libc --precise 0.2.186`.
 [dependencies]
-gpui = "0.2"
+# The engine: Zed's GPUI, forked (forks/zed; becoming sumi, docs/metal/engine.md).
+gpui = { path = "../../forks/zed/crates/gpui", default-features = false, features = ["wayland", "x11"] }
+gpui_platform = { path = "../../forks/zed/crates/gpui_platform", default-features = false, features = ["wayland", "x11"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async channel that wakes the window when the driver sends (already in gpui's tree).
@@ -33,11 +32,11 @@ pprof = { version = "0.15", optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
-# The shell.toplevels capability (src/toplevels.rs); 0.2 is the version the
-# GPUI fork already builds.
-wayland-protocols-wlr = { version = "0.2", features = ["client"] }
+# The shell.toplevels capability (src/toplevels.rs); the version the engine
+# already builds.
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # Probe that the chosen GPU's Vulkan driver has a device (src/gpu.rs); the
-# version blade-graphics already builds.
+# version wgpu already builds.
 ash = "0.38"
 # Publish the accessibility tree over AT-SPI (src/access/linux.rs), so Orca
 # reads Metal's UI; on zbus 5, which gpui's tree already builds.
@@ -46,7 +45,7 @@ accesskit_unix = "0.24"
 # GPUI's test platform (a window with no GPU, a monospace stand-in for the
 # text system), for tests that lay elements out (src/render/tests.rs).
 [dev-dependencies]
-gpui = { version = "0.2", features = ["test-support"] }
+gpui = { path = "../../forks/zed/crates/gpui", default-features = false, features = ["test-support"] }
 # AccessKit's own tree (already built: the Unix adapter uses it), so the
 # accessibility tests hand it every update as the adapter would.
 accesskit_consumer = "0.39"
@@ -54,21 +53,25 @@ accesskit_consumer = "0.39"
 [features]
 profiling = ["dep:pprof"]
 
-# `gpui-next` is the build on upstream GPUI, declared in next/Cargo.toml
-# (src/gpui_api/); this manifest builds on the fork and never sets it.
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("gpui-next"))'] }
-
-# mirin's forks: gpui 0.2.2, the taffy 0.9.0 and the blade-graphics 0.7.1 it
-# pins, and AccessKit's Unix adapter with its AT-SPI layer and consumer, forked in the monorepo with documented
-# changes (forks/*/MIRIN.md). Keep versions in sync with upstream.
+# mirin's forks (forks/README.md), each with its changes in a MIRIN.md.
+# zed's workspace patches do not reach a dependent outside its workspace: the
+# ones GPUI's crates need are repeated here (forks/zed/Cargo.toml,
+# [patch.crates-io]); keep them in step with it.
 [patch.crates-io]
-gpui = { path = "../../forks/gpui" }
-taffy = { path = "../../forks/taffy" }
-blade-graphics = { path = "../../forks/blade-graphics" }
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+taffy = { path = "../../forks/taffy-next" }
 accesskit_unix = { path = "../../forks/accesskit_unix" }
 accesskit_atspi_common = { path = "../../forks/accesskit_atspi_common" }
 accesskit_consumer = { path = "../../forks/accesskit_consumer" }
+gpu-allocator = { path = "../../forks/gpu-allocator" }
+
+# wgpu-hal alone of the wgpu repository (forks/wgpu/MIRIN.md): fewer command
+# buffers and smaller memory blocks, for a small app's GPU memory.
+[patch."https://github.com/gfx-rs/wgpu"]
+wgpu-hal = { path = "../../forks/wgpu/wgpu-hal" }
 
 # GPUI, taffy, and the text stack are unusably slow unoptimized; optimize
 # dependencies in dev builds too (this crate itself stays fast to compile).

@@ -18,6 +18,16 @@ Windows has not been tried. Metal seeds from the earlier `mirin-native` spike (b
 `claude/mirin-native-gpu-validation-vumae7`), imported and renamed on
 2026-10-29.
 
+**The engine (2026-11-14).** Metal draws with a fork of Zed's GPUI
+(`forks/zed`, with `forks/taffy-next`), on its way to being Metal's own
+engine, sumi ([`docs/metal/engine.md`](metal/engine.md)). Until then it
+built on forks of the crates.io release gpui 0.2.2 (`forks/gpui`,
+`forks/taffy`, `forks/blade-graphics`), which are gone from the tree. This
+document's findings were written as the work happened: where one names
+those three paths, the code is in git history and what was carried over is
+in `forks/zed/MIRIN.md` and `forks/taffy-next/MIRIN.md`
+([`docs/metal/gpui-next.md`](metal/gpui-next.md) has the move).
+
 ## 0. Relationship to mirin
 
 Metal and mirin are **two different worlds that share a contract**. The owner's
@@ -705,11 +715,6 @@ Radeon 890M with Mesa RADV:
   wayland-devel vulkan-loader-devel fontconfig-devel freetype-devel libxcb-devel
   libX11-devel`. Runtime needs a Vulkan driver (RADV, ANV, or NVK; llvmpipe works
   as a software fallback).
-- **libc pin.** `gpui 0.2.2` pulls `xattr 0.2.3` through `zed-async-tar`, which
-  fails to compile against `libc >= 0.2.190` (`ENOATTR` was removed on Linux).
-  The crate's `Cargo.lock` pins `libc 0.2.186`; refresh with
-  `cargo update libc --precise 0.2.186` after any `cargo update`. Revisit when
-  GPUI bumps its tar fork.
 - `proc-macro-error2 2.0.1` triggers a future-incompat warning; harmless today.
 - **Idle windows don't commit.** Stock GPUI commits a Wayland surface after
   every frame callback, drawn or not, so an unchanged window commits at the
@@ -2457,7 +2462,7 @@ more) are React on `@mirinjs/metal` and `@mirinjs/metal-ui`, each window drawn b
 a `mirin-metal-host` process its driver spawns (`spawnNativeHost`). Dashi
 depends on the packages by path (`"@mirinjs/metal": "file:../mirin/..."`, see
 section 6 on sharing one React) and builds the host from this crate. Most of
-the GPUI fork's changes (`forks/gpui/MIRIN.md`) came from Dashi's needs:
+the GPUI fork's changes (`forks/zed/MIRIN.md`) came from Dashi's needs:
 layer-shell and session-lock surfaces, the unified title bar on Dashi's
 compositor, idle windows that stop drawing, text input only while a field
 takes text, truncation and wrapping fixes, and scroll views that end where
@@ -2475,36 +2480,18 @@ cargo clippy --all-targets -- -D warnings
 cargo test                      # headless: GPUI's test platform, no display
 ```
 
-The forks live at the repository root (`forks/gpui`, `forks/taffy`,
-`forks/blade-graphics`, `forks/accesskit_unix`, `forks/accesskit_atspi_common`,
-`forks/accesskit_consumer`; `forks/README.md` explains the
-upstream branch). The
-GPUI fork's own tests build it alone with this crate's lockfile:
-
-```sh
-cd ../../forks/gpui && cp ../../crates/mirin-metal/Cargo.lock . \
-  && CARGO_TARGET_DIR=../../crates/mirin-metal/target/gpui-alone cargo test --lib --features test-support; \
-  rm Cargo.lock
-```
-
-The AccessKit adapter fork's the same way (`cd ../../forks/accesskit_unix`,
+The forks live at the repository root (`forks/zed`, `forks/taffy-next`,
+`forks/wgpu`, `forks/gpu-allocator`, `forks/accesskit_unix`,
+`forks/accesskit_atspi_common`, `forks/accesskit_consumer`;
+`forks/README.md` explains the upstream branches). GPUI's own tests need
+zed's whole workspace and do not run from here; what mirin changed in it is
+tested through this crate (`src/retain/gpui_tests.rs` and the render
+tests). The AccessKit adapter fork's tests build it alone with this crate's
+lockfile (`cd ../../forks/accesskit_unix`, `cp
+../../crates/mirin-metal/Cargo.lock .`,
 `CARGO_TARGET_DIR=../../crates/mirin-metal/target/accesskit-alone cargo
-test --lib`), and its AT-SPI layer's and consumer's (`atspi-alone`,
-`consumer-alone`; each fork's `MIRIN.md`).
-
-The GPUI fork is gpui 0.2.2, the newest release on crates.io, a year behind
-Zed's tree. [`docs/metal/gpui-next.md`](metal/gpui-next.md) is a spike on
-moving it onto current upstream (what upstream has absorbed, what ports, how
-it measures, and the order of a migration); `spikes/gpui-next/` builds this
-crate against upstream to repeat it.
-
-The migration has started (round 4, section 6 of that doc): upstream's GPUI
-crates are forks in the tree (`forks/zed`, at zed `f8cfc7ed`, and
-`forks/taffy-next`, taffy 0.15.0), and the same sources build on them with
-`cd crates/mirin-metal/next && cargo build --release --bin mirin-metal-host`
-(`cargo test --lib`, `cargo clippy --all-targets -- -D warnings` there too).
-`src/gpui_api/` is where the two GPUIs differ in shape. The default build is
-still the 0.2.2 fork.
+test --lib`, `rm Cargo.lock`), and its AT-SPI layer's and consumer's the
+same way (`atspi-alone`, `consumer-alone`; each fork's `MIRIN.md`).
 
 The TypeScript packages are checked with the rest of the repository
 (`bun run fmt-lint`, `bun run typecheck`, `bun run test`). The root `test`

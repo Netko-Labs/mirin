@@ -1,5 +1,0 @@
-# the upstream checkout (fetch-zed.sh) and the generated copy of mirin-metal's sources (prepare.sh)
-/zed
-/src/
-/examples/
-/target/
