@@ -167,6 +167,11 @@ impl SceneReach {
 pub(crate) struct Placing<'a> {
     pub(crate) map: &'a MaskMap,
     pub(crate) by: Option<Point<ScaledPixels>>,
+    /// Whoever copies the drawing takes in how far it reaches itself, from
+    /// what was recorded when it was drawn (`Window::absorb_retained`): a
+    /// subtree being drawn anew around it need not be told again primitive
+    /// by primitive (`SceneReach::take_in`).
+    pub(crate) absorbed: bool,
 }
 
 impl Placing<'_> {
@@ -497,6 +502,8 @@ impl Scene {
                 (None, order) => (shown, order.unwrap_or(DrawOrder::MAX), order.unwrap_or(0)),
             });
         };
+        // mirin: where it was, each shows as it did.
+        let moved = placing.by.is_some();
         for operation in operations {
             let (was, now, order) = match operation {
                 PaintOperation::Primitive(primitive, mask_id)
@@ -504,7 +511,11 @@ impl Scene {
                     let was = primitive
                         .bounds()
                         .intersect(&primitive.content_mask().bounds);
-                    let now = placing.shown(primitive, operation.strip(), *mask_id);
+                    let now = if moved {
+                        placing.shown(primitive, operation.strip(), *mask_id)
+                    } else {
+                        was
+                    };
                     (was, now, Some(primitive.order()))
                 }
                 PaintOperation::StartLayer {
@@ -537,26 +548,71 @@ impl Scene {
             }
             None => None,
         };
+        // mirin: each operation is copied straight into this frame's list
+        // and placed there, and what shows is copied from there into its
+        // primitive list: two copies of a primitive where taking it out,
+        // placing it and handing it on made four or five (a copied frame's
+        // largest single cost on the stress app).
+        self.paint_operations.reserve(operations.len());
         for operation in operations {
             match operation {
                 PaintOperation::Primitive(..) | PaintOperation::Strip(..) => {
-                    let (primitive, strip, mask_id) = operation.placed(placing);
-                    if let Some(reach) = &mut self.reach {
-                        reach.take_in(&primitive, strip.as_ref(), false);
+                    self.paint_operations.push(operation.clone());
+                    let Some(placed) = self.paint_operations.last_mut() else {
+                        continue;
+                    };
+                    placed.place(placing);
+                    let (primitive, strip) = match placed {
+                        PaintOperation::Primitive(primitive, _) => (primitive, None),
+                        PaintOperation::Strip(primitive, strip, _) => (primitive, Some(&*strip)),
+                        _ => continue,
+                    };
+                    if let Some(reach) = self.reach.as_mut().filter(|_| !placing.absorbed) {
+                        reach.take_in(primitive, strip, false);
                     }
                     let shows = !primitive
                         .bounds()
                         .intersect(&primitive.content_mask().bounds)
                         .is_empty();
-                    match rebase {
-                        Some((base, first)) if shows => {
-                            let order = base + (primitive.order() - first);
-                            self.push_ordered(primitive, strip, mask_id, order);
+                    // Hidden as it was: kept, unshown.
+                    let Some((base, first)) = rebase.filter(|_| shows) else {
+                        continue;
+                    };
+                    let order = base + (primitive.order() - first);
+                    match primitive {
+                        Primitive::Shadow(shadow) => {
+                            shadow.order = order;
+                            self.shadows.push(*shadow);
                         }
-                        // Hidden as it was: kept, unshown.
-                        _ => self
-                            .paint_operations
-                            .push(PaintOperation::of(primitive, strip, mask_id)),
+                        Primitive::Quad(quad) => {
+                            quad.order = order;
+                            self.quads.push(*quad);
+                        }
+                        Primitive::Path(path) => {
+                            path.order = order;
+                            path.id = PathId(self.paths.len());
+                            self.paths.push(path.clone());
+                        }
+                        Primitive::Underline(underline) => {
+                            underline.order = order;
+                            self.underlines.push(*underline);
+                        }
+                        Primitive::MonochromeSprite(sprite) => {
+                            sprite.order = order;
+                            self.monochrome_sprites.push(*sprite);
+                        }
+                        Primitive::SubpixelSprite(sprite) => {
+                            sprite.order = order;
+                            self.subpixel_sprites.push(*sprite);
+                        }
+                        Primitive::PolychromeSprite(sprite) => {
+                            sprite.order = order;
+                            self.polychrome_sprites.push(*sprite);
+                        }
+                        Primitive::Surface(surface) => {
+                            surface.order = order;
+                            self.surfaces.push(surface.clone());
+                        }
                     }
                 }
                 PaintOperation::StartLayer {
@@ -579,54 +635,6 @@ impl Scene {
             }
         }
         true
-    }
-
-    /// mirin: put a primitive in the scene at a draw order already worked
-    /// out (`replay_as_one`).
-    fn push_ordered(
-        &mut self,
-        mut primitive: Primitive,
-        strip: Option<Strip>,
-        mask_id: MaskId,
-        order: DrawOrder,
-    ) {
-        match &mut primitive {
-            Primitive::Shadow(shadow) => {
-                shadow.order = order;
-                self.shadows.push(*shadow);
-            }
-            Primitive::Quad(quad) => {
-                quad.order = order;
-                self.quads.push(*quad);
-            }
-            Primitive::Path(path) => {
-                path.order = order;
-                path.id = PathId(self.paths.len());
-                self.paths.push(path.clone());
-            }
-            Primitive::Underline(underline) => {
-                underline.order = order;
-                self.underlines.push(*underline);
-            }
-            Primitive::MonochromeSprite(sprite) => {
-                sprite.order = order;
-                self.monochrome_sprites.push(*sprite);
-            }
-            Primitive::SubpixelSprite(sprite) => {
-                sprite.order = order;
-                self.subpixel_sprites.push(*sprite);
-            }
-            Primitive::PolychromeSprite(sprite) => {
-                sprite.order = order;
-                self.polychrome_sprites.push(*sprite);
-            }
-            Primitive::Surface(surface) => {
-                surface.order = order;
-                self.surfaces.push(surface.clone());
-            }
-        }
-        self.paint_operations
-            .push(PaintOperation::of(primitive, strip, mask_id));
     }
 
     /// mirin: what the finished scene paints over what, whatever numbers
@@ -831,6 +839,25 @@ impl PaintOperation {
             | Self::Strip(_, _, mask_id)
             | Self::StartLayer { mask_id, .. } => Some(mask_id),
             Self::EndLayer => None,
+        }
+    }
+
+    /// mirin: place it as `placing` says, where it is (`replay_as_one`):
+    /// its primitive (and strip) moved and clipped, under the mask it is
+    /// under in this frame. A layer is left as it is.
+    fn place(&mut self, placing: Placing<'_>) {
+        match self {
+            Self::Primitive(primitive, mask_id) => {
+                *mask_id = placing.place(primitive, None, *mask_id).1;
+            }
+            Self::Strip(primitive, strip, mask_id) => {
+                let (placed, id) = placing.place(primitive, Some(*strip), *mask_id);
+                if let Some(placed) = placed {
+                    *strip = placed;
+                }
+                *mask_id = id;
+            }
+            Self::StartLayer { .. } | Self::EndLayer => {}
         }
     }
 

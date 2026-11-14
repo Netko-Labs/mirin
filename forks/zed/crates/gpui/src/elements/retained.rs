@@ -228,6 +228,40 @@ impl Statics {
 
 type Record = Rc<RefCell<Drawn>>;
 
+/// Run `f` on each of `records` and on the records inside each
+/// (`Drawn::nested`), at any depth, in the order they were drawn.
+pub(super) fn each_inside<F: FnMut(&mut Drawn)>(records: &[Record], f: &mut F) {
+    for record in records {
+        let mut drawn = record.borrow_mut();
+        f(&mut drawn);
+        each_inside(&drawn.nested, f);
+    }
+}
+
+/// Tell the records right inside `drawn` what its copies did
+/// (`plan::Carried`): they are about to be planned.
+fn tell_inside(drawn: &mut Drawn) {
+    if let Some(told) = drawn.take_carried() {
+        for record in &drawn.nested {
+            told.tell(&mut record.borrow_mut());
+        }
+    }
+}
+
+/// Tell every record inside `drawn`, at any depth, what the copies of the
+/// drawings around it did, then run `f` on it.
+fn each_told<F: FnMut(&mut Drawn)>(drawn: &mut Drawn, f: &mut F) {
+    let told = drawn.take_carried();
+    for record in &drawn.nested {
+        let mut inside = record.borrow_mut();
+        if let Some(told) = &told {
+            told.tell(&mut inside);
+        }
+        f(&mut inside);
+        each_told(&mut inside, f);
+    }
+}
+
 struct RetainedState {
     version: u64,
     /// Its taffy subtree's root, kept across frames.
@@ -238,9 +272,9 @@ struct RetainedState {
     made: u64,
     released: Rc<RefCell<Vec<LayoutId>>>,
     statics: Statics,
+    /// Its last drawing, and with it the retained subtrees right inside
+    /// (`Drawn::nested`).
     drawn: Record,
-    /// Every retained subtree inside, at any depth.
-    nested: Vec<Record>,
     accessed_entities: FxHashSet<EntityId>,
     /// Its nodes can't be built onto again (`rebuild`): made anew the next
     /// time it is laid out.
@@ -431,7 +465,6 @@ impl Element for Retained {
                         released,
                         statics,
                         drawn,
-                        nested: Vec::new(),
                         accessed_entities: FxHashSet::default(),
                         states: ElementStates::default(),
                         drawing: Some(drawing),
@@ -534,6 +567,9 @@ impl Element for Retained {
                         RetainedPrepaint::Moved { by, old_mask }
                     }
                     Plan::Redraw => {
+                        // mirin: the subtrees right inside are about to be
+                        // planned: their records hear what its copies did.
+                        tell_inside(&mut state.drawn.borrow_mut());
                         let mut element = match built {
                             Some(element) => element,
                             // Its layout kept (or, failing that, laid out
@@ -556,10 +592,11 @@ impl Element for Retained {
                         });
                         state.drawing = Some(drawing);
                         let recorded = window.end_recording();
-                        state.nested = window.retained_nested.pop().unwrap_or_default();
+                        let nested = window.retained_nested.pop().unwrap_or_default();
                         state.accessed_entities = accessed;
                         let end = window.prepaint_index();
                         let mut drawn = state.drawn.borrow_mut();
+                        drawn.nested = nested;
                         drawn.prepaint = Some(start..end);
                         drawn.bounds = bounds;
                         drawn.mask = Some(mask);
@@ -572,10 +609,13 @@ impl Element for Retained {
                     }
                 };
                 // The subtree around it (if any) moves this one's ranges, and
-                // the ones inside it, along when it is copied.
+                // the ones inside it, along when it is copied. mirin: it
+                // keeps this one's record alone, which keeps its own: a list
+                // of every record at any depth cost a subtree drawn anew a
+                // count taken and given back per record inside it, however
+                // they were drawn (2,600 a frame under the stress grid).
                 if let Some(around) = window.retained_nested.last_mut() {
                     around.push(state.drawn.clone());
-                    around.extend(state.nested.iter().cloned());
                 }
                 cx.entities.extend_accessed([view]);
                 (prepaint, state)
@@ -661,6 +701,20 @@ impl RetainedState {
     /// Leave it undrawn at `bounds`: its drawing, with the ones inside,
     /// leaves the frame (its element states are its own already).
     fn skip(&mut self, bounds: Bounds<Pixels>, place: Option<Place>, window: &mut Window) {
+        // mirin: one left out before took the drawings inside it out of the
+        // frame then, and nothing puts one back but its own (`unpark`, a
+        // drawing anew): they are not gone over again every frame it stays
+        // out (83 rows of 25 cards on the stress app). One that leaves now
+        // tells the records inside where their drawings are in it first
+        // (`park` keeps that).
+        let was_out = {
+            let mut drawn = self.drawn.borrow_mut();
+            let was_out = drawn.prepaint.is_none() && drawn.paint.is_none();
+            if !was_out {
+                each_told(&mut drawn, &mut |_| {});
+            }
+            was_out
+        };
         let parked = {
             let drawn = self.drawn.borrow();
             // Only a drawing that may be copied elsewhere is of use, and not
@@ -676,7 +730,7 @@ impl RetainedState {
             let resized = drawn.place.map(|place| place.node) != place.map(|place| place.node);
             let pinned = drawn.recorded.is_none_or(|recorded| recorded.pinned);
             (!hovered && !resized && !pinned)
-                .then(|| window.park(&self.drawn, &drawn, &self.nested))
+                .then(|| window.park(&self.drawn, &drawn))
                 .flatten()
         };
         let mut drawn = self.drawn.borrow_mut();
@@ -684,10 +738,12 @@ impl RetainedState {
             drawn.parked = parked;
         }
         drawn.skip(bounds, place);
-        for nested in &self.nested {
-            let mut nested = nested.borrow_mut();
-            nested.prepaint = None;
-            nested.paint = None;
+        if !was_out {
+            each_inside(&drawn.nested, &mut |nested| {
+                nested.prepaint = None;
+                nested.paint = None;
+                nested.forget_carried();
+            });
         }
     }
 
@@ -715,14 +771,15 @@ impl RetainedState {
         let ((prepaint, paint), nested) = window.unpark(parked);
         drawn.prepaint = Some(prepaint);
         drawn.paint = Some(paint);
-        drop(drawn);
-        for (record, ranges) in self.nested.iter().zip(nested) {
-            let mut record = record.borrow_mut();
-            (record.prepaint, record.paint) = match ranges {
+        drawn.forget_carried();
+        let mut ranges = nested.into_iter();
+        each_inside(&drawn.nested, &mut |record| {
+            (record.prepaint, record.paint) = match ranges.next().flatten() {
                 Some((prepaint, paint)) => (Some(prepaint), Some(paint)),
                 None => (None, None),
             };
-        }
+            record.forget_carried();
+        });
         true
     }
 
@@ -800,33 +857,36 @@ impl RetainedState {
         }
         let end = window.prepaint_index();
         let pointer = window.mouse_position();
-        for nested in &self.nested {
-            let mut nested = nested.borrow_mut();
-            nested.pointer = pointer;
-            nested.prepaint = nested.prepaint.as_ref().map(|range| {
-                range.start.rebase(&old.start, &start)..range.end.rebase(&old.start, &start)
-            });
-            if let Some((by, by_layout, old_mask)) = moved {
-                nested.shift(by, by_layout, scale, (old_mask, &mask));
-            }
-        }
         let mut drawn = self.drawn.borrow_mut();
+        // mirin: the records inside are not gone over for where the copy is
+        // in the frame's lists and where the pointer is: that is kept for
+        // when they are next looked at (`plan::Carried`). One that moved
+        // moves each of them, and tells them on the way.
+        drawn.carry_prepaint(&old.start, &start, pointer);
+        drawn.prepaint = Some(start..end);
         if let Some((by, by_layout, old_mask)) = moved {
+            each_told(&mut drawn, &mut |nested| {
+                nested.shift(by, by_layout, scale, (old_mask, &mask));
+            });
             drawn.shift(by, by_layout, scale, (old_mask, &mask));
         }
-        drawn.prepaint = Some(start..end);
     }
 
     /// Copy last frame's paint where it was, or `moved`.
     fn copy_paint(&mut self, moved: Option<Point<f32>>, window: &mut Window) {
         let start = window.paint_index();
         let old = self.drawn.borrow().paint.clone().unwrap_or_default();
-        window.reuse_paint_moved(old.clone(), moved, true);
-        for nested in &self.nested {
-            let mut nested = nested.borrow_mut();
-            nested.paint = nested.paint.as_ref().map(|range| {
-                range.start.rebase(&old.start, &start)..range.end.rebase(&old.start, &start)
-            });
-        }
+        // mirin: its record says how far it reaches and whether anything in
+        // it knows where it is, and `paint` hands that to the subtree being
+        // drawn anew around it (`absorb_retained`), so its primitives are
+        // not each taken in again. Where scaling is exact, that is: the
+        // record is then what its primitives, moved, add up to, to the bit
+        // (every edge of theirs is a whole device pixel, and adding a whole
+        // move rounds in order); elsewhere the two are a float step apart.
+        let absorbed =
+            self.drawn.borrow().recorded.is_some() && Grid::new(window.scale_factor()).is_exact();
+        window.reuse_paint_moved(old.clone(), moved, true, absorbed);
+        // mirin: the records inside hear of it when they are next looked at.
+        self.drawn.borrow_mut().carry_paint(&old.start, &start);
     }
 }

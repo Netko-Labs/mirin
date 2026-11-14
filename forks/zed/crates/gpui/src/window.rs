@@ -1067,7 +1067,9 @@ pub(crate) struct Frame {
     pub(crate) tab_stops: TabStopMap,
 }
 
-#[derive(Clone, Default)]
+// mirin: `PartialEq`, for a retained subtree copied to where it was in the
+// frame's lists (`elements::retained`).
+#[derive(Clone, Default, PartialEq)]
 pub(crate) struct PrepaintStateIndex {
     pub(crate) hitboxes_index: usize,
     // mirin: `Frame::content_masks`.
@@ -1163,7 +1165,7 @@ impl PaintIndex {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)] // mirin: `PartialEq`, as `PrepaintStateIndex`.
 pub(crate) struct PaintIndex {
     pub(crate) scene_index: usize,
     // mirin: `Frame::content_masks`.
@@ -4742,7 +4744,7 @@ impl Window {
         // mirin: through `reuse_paint_moved`, which can move it; a cached
         // view or a deferred draw is replayed primitive by primitive, as
         // upstream does.
-        self.reuse_paint_moved(range, None, false);
+        self.reuse_paint_moved(range, None, false, false);
     }
 
     /// mirin: `reuse_prepaint` for a retained subtree's drawing moved `by`
@@ -4760,12 +4762,15 @@ impl Window {
     /// masks pushed inside are copied (`MaskMap`), and every primitive moves
     /// with it, clipped by its mask as that clips here
     /// (`Scene::replay_placed`). `as_one`: placed in the bounds tree as one
-    /// where it can be (`Scene::replay_as_one`), for a retained subtree.
+    /// where it can be (`Scene::replay_as_one`), for a retained subtree;
+    /// `absorbed`: the caller takes in how far the drawing reaches itself
+    /// (`Placing::absorbed`).
     pub(crate) fn reuse_paint_moved(
         &mut self,
         range: Range<PaintIndex>,
         moved: Option<Point<f32>>,
         as_one: bool,
+        absorbed: bool,
     ) {
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
@@ -4818,6 +4823,7 @@ impl Window {
         let placing = crate::scene::Placing {
             map: &map,
             by: moved.map(|by| point(ScaledPixels(by.x), ScaledPixels(by.y))),
+            absorbed,
         };
         self.next_frame
             .scene

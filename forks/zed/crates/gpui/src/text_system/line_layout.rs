@@ -557,7 +557,7 @@ struct FrameCache {
     used_wrapped_lines: Vec<Arc<CacheKey>>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)] // mirin: `PartialEq`, as `PrepaintStateIndex`.
 pub(crate) struct LineLayoutIndex {
     // mirin: crate-visible for a parked retained drawing (`elements::retained`).
     pub(crate) font_generation: usize,
@@ -792,14 +792,9 @@ impl LineLayoutCache {
                 wrap_boundaries,
                 wrap_width,
             });
-            let key = Arc::new(CacheKey {
-                text,
-                font_size,
-                runs: SmallVec::from(runs),
-                wrap_width,
-                force_width: None,
-                tab_size,
-            });
+            let key = Arc::new(CacheKey::new(
+                text, font_size, runs, wrap_width, None, tab_size,
+            ));
 
             let mut state = self.state.borrow_mut();
             state
@@ -868,14 +863,14 @@ impl LineLayoutCache {
                 apply_force_width_to_layout(&mut layout, force_width);
             }
 
-            let key = Arc::new(CacheKey {
+            let key = Arc::new(CacheKey::new(
                 text,
                 font_size,
-                runs: SmallVec::from(runs),
-                wrap_width: None,
+                runs,
+                None,
                 force_width,
                 tab_size,
-            });
+            ));
             let layout = Arc::new(layout);
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
@@ -941,6 +936,18 @@ pub struct FontRun {
 
 trait AsCacheKeyRef {
     fn as_cache_key_ref(&self) -> CacheKeyRef<'_>;
+
+    // mirin: what the key hashes to; a stored key keeps it (`CacheKey::hash`).
+    fn key_hash(&self) -> u64 {
+        hash_of(&self.as_cache_key_ref())
+    }
+}
+
+/// mirin: the hash of a key's text, runs and sizes, taken once.
+fn hash_of(key: &CacheKeyRef<'_>) -> u64 {
+    let mut hasher = collections::FxHasher::default();
+    key.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Clone, Debug, Eq)]
@@ -952,6 +959,41 @@ struct CacheKey {
     force_width: Option<Pixels>,
     // mirin: tab stops. 0 for a text with no tab, so it is one entry whatever the size.
     tab_size: u32,
+    // mirin: the hash of the above, taken when the key is made. A layout
+    // used again is taken out of last frame's map and put in this frame's
+    // (`reuse_layouts`, `layout_line`), and each of those hashed its text
+    // and runs again: a window of retained subtrees carries every line it
+    // shows from frame to frame.
+    hash: u64,
+}
+
+impl CacheKey {
+    fn new(
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[FontRun],
+        wrap_width: Option<Pixels>,
+        force_width: Option<Pixels>,
+        tab_size: u32,
+    ) -> Self {
+        let hash = hash_of(&CacheKeyRef {
+            text: &text,
+            font_size,
+            runs,
+            wrap_width,
+            force_width,
+            tab_size,
+        });
+        Self {
+            text,
+            font_size,
+            runs: SmallVec::from(runs),
+            wrap_width,
+            force_width,
+            tab_size,
+            hash,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -1002,7 +1044,8 @@ impl Eq for dyn AsCacheKeyRef + '_ {}
 
 impl Hash for dyn AsCacheKeyRef + '_ {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_cache_key_ref().hash(state)
+        // mirin: the key's hash, kept by a stored key.
+        state.write_u64(self.key_hash())
     }
 }
 
@@ -1017,6 +1060,10 @@ impl AsCacheKeyRef for CacheKey {
             tab_size: self.tab_size,
         }
     }
+
+    fn key_hash(&self) -> u64 {
+        self.hash
+    }
 }
 
 impl PartialEq for CacheKey {
@@ -1027,7 +1074,7 @@ impl PartialEq for CacheKey {
 
 impl Hash for CacheKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_cache_key_ref().hash(state);
+        state.write_u64(self.hash); // mirin: as `dyn AsCacheKeyRef` hashes.
     }
 }
 
