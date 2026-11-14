@@ -124,9 +124,11 @@ impl raw_window_handle::HasDisplayHandle for WebDisplaySource {
     }
 }
 
-/// mirin: the size of a block of GPU memory that small resources share
-/// (wgpu's least; host blocks are half of it, raised to the same least).
-const SMALL_MEMORY_BLOCK: u64 = 4 * 1024 * 1024;
+/// mirin: the size of the first block of GPU memory that small resources
+/// share, and of the largest. Host blocks (what `Queue::write_buffer` and
+/// `write_texture` stage through) are half of each.
+const FIRST_MEMORY_BLOCK: u64 = 2 * 1024 * 1024;
+const LARGEST_MEMORY_BLOCK: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 pub struct CompositorGpuHint {
@@ -474,7 +476,7 @@ impl WgpuContext {
                 // and doubles each new one up to 64 MiB, so an 800x600
                 // window's textures and buffers held ~35 MB of GPU memory.
                 memory_hints: wgpu::MemoryHints::Manual {
-                    suballocated_device_memory_block_size: SMALL_MEMORY_BLOCK..SMALL_MEMORY_BLOCK,
+                    suballocated_device_memory_block_size: FIRST_MEMORY_BLOCK..LARGEST_MEMORY_BLOCK,
                 },
                 trace: wgpu::Trace::Off,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),

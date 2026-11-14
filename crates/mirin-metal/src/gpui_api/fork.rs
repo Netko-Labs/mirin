@@ -124,3 +124,8 @@ pub(crate) fn draw(window: &mut Window, cx: &mut App) {
 pub(crate) fn stretchable(retained: gpui::Retained, stretchable: bool) -> gpui::Retained {
     retained.stretchable(stretchable)
 }
+
+/// GAP: the fork has no way to fill the text system's caches ahead of the
+/// first text (upstream's `TextSystem::prewarm_fonts`); the first text
+/// shaped in a font fills them, as before.
+pub(crate) fn prewarm_fonts(_text_system: &gpui::TextSystem, _fonts: &[gpui::Font]) {}

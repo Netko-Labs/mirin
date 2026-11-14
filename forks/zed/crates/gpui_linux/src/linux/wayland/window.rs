@@ -682,7 +682,12 @@ impl WaylandWindowState {
                     width: DevicePixels(f32::from(options.bounds.size.width) as i32),
                     height: DevicePixels(f32::from(options.bounds.size.height) as i32),
                 },
-                transparent: true,
+                // mirin: as the window will be (`WindowParams::transparent`):
+                // upstream starts every renderer transparent, and an opaque,
+                // server-decorated window's surface was configured again (its
+                // swapchain's images made twice) as soon as GPUI set the
+                // window's decorations and background.
+                transparent: options.transparent,
                 // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
             };
