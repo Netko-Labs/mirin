@@ -209,3 +209,32 @@ stress app at 1.5:
 
 The counter's RSS is the one still over by more than noise: the binary's
 size and 1.7 MB of heap.
+
+**After the switch (2026-11-14).** The one host Metal now builds
+(`host-sumi1`, both lanes merged) beside the 0.2.2 build at step 1's base
+(`host-main`), interleaved on a quiet machine, medians of two runs:
+
+| Measure | sumi | 0.2.2 build | Budget |
+| --- | --- | --- | --- |
+| select, type, hover (ms) | 1.65, 1.1, 1.85 | 1.8, 0.95, 1.9 | 2.05, 1.05, 2.1 |
+| grow, scroll, resize (ms) | 1.5, 2.45, 1.8 | 3.2, 2.4, 2.3 | 1.75, 2.3, 2.2 |
+| select, grow in a scroll view (ms) | 1.8, 1.65 | 2.05, 3.5 | 2.55, 2.95 |
+| scroll across (ms) | 2.2 | 2.2 | 2.4 |
+| stress RSS at idle, at the end | 193, 280 MB | 203, 312 MB | 195 MB |
+| at 1.5: grow, scroll, RSS at idle | 1.6 ms, 2.8 ms, 204 MB | 6.6 ms, 2.7 ms, 216 MB | 215 MB |
+| counter: RSS, GPU memory, first frame | 65.6 MB, 16.2 MB, 30–34 ms | 59.6 MB, 13.8 MB, 34–35 ms | 59 MB, 14 MB, 33 ms |
+
+Every budget is met within noise (0.2 ms, 3 MB) but the counter's RSS,
+6 MB over: the larger binary (24 MB of code against 18) and 2 MB of heap.
+It is the first thing step 3 measures, since removing what Metal never
+calls is what shrinks the binary. From here the budgets are this table's
+sumi column, with the counter's RSS held at 59 MB as the target.
+
+Layouts and drawings: identical to the upstream build before the switch
+(`grid`, `browser`, `scroll`, `scroll-fractional`, with `--scene`);
+retained against `MIRIN_METAL_RETAIN=0` identical at 1 and 1.5 (those and
+`across`); against the 0.2.2 build, the known `browser` card and hover
+lines only. `MIRIN_METAL_ACCESS_CHECK=1` over the stress bench: no
+complaints. Not checked: Dashi's layer surfaces, session lock and file
+drag on a real session with this engine (`gpui-next.md`, step 4's half
+day by hand); Dashi takes this engine only after that.
