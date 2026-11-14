@@ -17,12 +17,15 @@ changed code carries a `// mirin:` comment.
 | `accesskit_consumer` | `accesskit_consumer` 0.39.2 (AccessKit, MIT OR Apache-2.0), the version `accesskit_atspi_common` pins | `forks/accesskit_atspi_common`, `crates/mirin-metal`'s tests |
 | `zed` | the GPUI crates of the zed repository at `f8cfc7ed` (2026-11-10; Zed Industries, every crate Apache-2.0) | `crates/mirin-metal/next` (the build on upstream GPUI) |
 | `taffy-next` | `taffy` 0.15.0 (DioxusLabs, MIT), the version upstream GPUI pins | `forks/zed` |
+| `wgpu` | `wgpu-hal` of the wgpu repository at `cddb2f5d` (gfx-rs, MIT OR Apache-2.0), the commit upstream GPUI pins | `forks/zed` (`gpui_wgpu`, through wgpu) |
+| `gpu-allocator` | `gpu-allocator` 0.28.0 (Traverse Research, MIT OR Apache-2.0), the version wgpu-hal pins | `forks/wgpu` |
 
 `crates/mirin-metal/Cargo.toml` points `[patch.crates-io]` here (`gpui`,
 `taffy`, `blade-graphics`, `accesskit_unix`, `accesskit_atspi_common`,
 `accesskit_consumer`); `crates/mirin-metal/next/Cargo.toml`
 builds the same sources on `zed` and `taffy-next` instead (and the same
-AccessKit forks)
+AccessKit forks), with `wgpu-hal` and `gpu-allocator` patched to `wgpu` and
+`gpu-allocator` here
 (`docs/metal/gpui-next.md`). The forks are
 excluded from the root Cargo workspace; each builds alone with mirin-metal's
 lockfile (`forks/gpui/MIRIN.md`).

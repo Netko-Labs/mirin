@@ -80,9 +80,13 @@ repository = "https://github.com/gfx-rs/wgpu"
 version = "30.0.0"
 
 [workspace.dependencies]
-naga = { version = "30.0.0", path = "./naga" }
+# mirin: only `wgpu-hal` is forked here (`MIRIN.md`). The crates of this
+# repository it depends on come from the repository itself, at the commit
+# this fork was taken from, so they are the same packages the rest of the
+# build (wgpu, wgpu-core, zed's GPUI) resolves.
+naga = { version = "30.0.0", git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007" }
 naga-test = { path = "./naga-test" }
-naga-types = { version = "30.0.0", path = "./naga-types" }
+naga-types = { version = "30.0.0", git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007" }
 wgpu = { version = "30.0.0", path = "./wgpu", default-features = false, features = [
     "std",
     "serde",
@@ -99,10 +103,10 @@ wgpu-core = { version = "30.0.0", path = "./wgpu-core", default-features = false
 wgpu-core-remote = { version = "30.0.0", path = "./wgpu-core-remote" }
 wgpu-core-remote-types = { version = "30.0.0", path = "./wgpu-core-remote-types" }
 wgpu-hal = { version = "30.0.0", path = "./wgpu-hal", default-features = false }
-wgpu-naga-bridge = { version = "30.0.0", path = "./wgpu-naga-bridge" }
-wgpu-sync = { version = "30.0.0", path = "./wgpu-sync", default-features = false }
+wgpu-naga-bridge = { version = "30.0.0", git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007" }
+wgpu-sync = { version = "30.0.0", git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false }
 wgpu-test = { version = "30.0.0", path = "./tests" }
-wgpu-types = { version = "30.0.0", path = "./wgpu-types", default-features = false }
+wgpu-types = { version = "30.0.0", git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false }
 
 # These _cannot_ have a version specified. If it does, crates.io will look
 # for a version of the package on crates when we publish naga. Path dependencies
@@ -338,8 +342,7 @@ termcolor = "1.4.1"
 ndk-sys = "0.6"
 
 # These overrides allow our examples to explicitly depend on release crates
-[patch.crates-io]
-wgpu = { path = "./wgpu" }
+# mirin: upstream patches `wgpu` to `./wgpu` here; that crate is not in this fork.
 
 [profile.release]
 lto = "thin"

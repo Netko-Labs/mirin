@@ -4,7 +4,14 @@ use ash::vk;
 use core::{mem, ops::Range};
 use hashbrown::hash_map::Entry;
 
-const ALLOCATION_GRANULARITY: u32 = 16;
+// mirin: one command buffer at a time (upstream: 16). radv gives every
+// command buffer an 80 KiB buffer of GPU memory when it is allocated, and
+// wgpu-core keeps a pool per encoder it has ever opened (one for a frame, one
+// for the queue's pending writes, more while earlier frames are in flight), so
+// a window that had drawn two frames held 100 command buffers, 7.8 MiB, where
+// it had recorded into 16. An encoder now allocates what it records into; its
+// free list still reuses them, so a frame allocates none once it has enough.
+const ALLOCATION_GRANULARITY: u32 = 1;
 const DST_IMAGE_LAYOUT: vk::ImageLayout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
 
 impl super::Texture {

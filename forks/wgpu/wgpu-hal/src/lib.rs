@@ -490,11 +490,17 @@ impl AllocationSizes {
 
                 // gpu_allocator clamps the sizes between 4MiB and 256MiB, but we clamp them ourselves since we use
                 // the sizes when detecting high memory pressure and there is no way to query the values otherwise.
+                //
+                // mirin: the least block is 256 KiB, not 4 MiB (mirin's fork of
+                // gpu-allocator allows it): a window that draws a few quads and
+                // a line of text held three 4 MiB blocks for 6.5 MiB of
+                // resources, most of one for 2 KiB of staging buffers.
+                const LEAST: u64 = MB / 4;
                 Self {
-                    min_device_memblock_size: device_size.start.clamp(4 * MB, 256 * MB),
-                    max_device_memblock_size: device_size.end.clamp(4 * MB, 256 * MB),
-                    min_host_memblock_size: host_size.start.clamp(4 * MB, 256 * MB),
-                    max_host_memblock_size: host_size.end.clamp(4 * MB, 256 * MB),
+                    min_device_memblock_size: device_size.start.clamp(LEAST, 256 * MB),
+                    max_device_memblock_size: device_size.end.clamp(LEAST, 256 * MB),
+                    min_host_memblock_size: host_size.start.clamp(LEAST, 256 * MB),
+                    max_host_memblock_size: host_size.end.clamp(LEAST, 256 * MB),
                 }
             }
         }

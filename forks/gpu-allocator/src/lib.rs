@@ -297,7 +297,8 @@ impl Default for AllocatorDebugSettings {
 /// Useful for tuning the allocator to your application's needs. For example most games will be fine with the default
 /// values, but eg. an app might want to use smaller block sizes to reduce the amount of memory used.
 ///
-/// Clamped between 4MB and 256MB, and rounds up to the nearest multiple of 4MB for alignment reasons.
+/// Clamped between 256KiB and 256MB, and rounds up to the nearest multiple of 256KiB
+/// (mirin: upstream's least and its step are 4MB; see `adjust_memblock_size`).
 ///
 /// Note that these limits only apply to shared memory blocks that can hold multiple allocations.
 /// If an allocation does not fit within the corresponding maximum block size, it will be placed
@@ -396,20 +397,25 @@ impl AllocationSizes {
         self
     }
 
+    // mirin: a block is a multiple of 256 KiB and at least that (upstream:
+    // of 4 MiB). A small window's buffers and its first glyph atlas fit in a
+    // 2 MiB block and its staging buffers in a 1 MiB one, where the least
+    // upstream allows held 4 MiB for each kind of memory it touched.
     fn adjust_memblock_size(size: u64, kind: &str) -> u64 {
         const MB: u64 = 1024 * 1024;
+        const STEP: u64 = MB / 4;
 
-        let size = size.clamp(4 * MB, 256 * MB);
+        let size = size.clamp(STEP, 256 * MB);
 
-        if size % (4 * MB) == 0 {
+        if size % STEP == 0 {
             return size;
         }
 
-        let val = size / (4 * MB) + 1;
-        let new_size = val * 4 * MB;
+        let val = size / STEP + 1;
+        let new_size = val * STEP;
         log::warn!(
-            "{kind} memory block size must be a multiple of 4MB, clamping to {}MB",
-            new_size / MB
+            "{kind} memory block size must be a multiple of 256KiB, clamping to {}KiB",
+            new_size / 1024
         );
 
         new_size
@@ -428,7 +434,7 @@ impl AllocationSizes {
             (self.min_device_memblock_size, self.max_device_memblock_size)
         };
 
-        // The ranges are clamped to 4MB..256MB so we never need to
+        // The ranges are clamped to 256KiB..256MB (mirin: 4MB upstream) so we never need to
         // shift by more than 7 bits. Clamping here to avoid having
         // to worry about overflows.
         let shift = count.min(7) as u64;

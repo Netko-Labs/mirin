@@ -77,6 +77,12 @@ taffy = { path = "../../../forks/taffy-next" }
 accesskit_unix = { path = "../../../forks/accesskit_unix" }
 accesskit_atspi_common = { path = "../../../forks/accesskit_atspi_common" }
 accesskit_consumer = { path = "../../../forks/accesskit_consumer" }
+gpu-allocator = { path = "../../../forks/gpu-allocator" }
+
+# wgpu-hal alone of the wgpu repository (forks/wgpu/MIRIN.md): fewer command
+# buffers and smaller memory blocks, for a small app's GPU memory.
+[patch."https://github.com/gfx-rs/wgpu"]
+wgpu-hal = { path = "../../../forks/wgpu/wgpu-hal" }
 
 [profile.dev.package."*"]
 opt-level = 3
