@@ -3,7 +3,7 @@
 //! React Native's shadow tree → native views step. The one renderer-owned piece
 //! of state is the editing buffer of `input` nodes (`window::InputState`).
 
-use std::sync::OnceLock;
+use std::sync::{mpsc, Mutex, OnceLock};
 
 use gpui::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
@@ -639,6 +639,10 @@ mod tab_tests;
 #[cfg(test)]
 mod scroll_tests;
 
+// Lengths that are fractions of a device pixel, laid out by GPUI on its test platform.
+#[cfg(test)]
+mod scale_tests;
+
 /// A text cut to one line (`numberOfLines={1}`): as wide as its box, the
 /// rest of the line given to an ellipsis.
 pub(crate) fn one_line<E: Styled>(element: E) -> E {
@@ -665,6 +669,89 @@ pub(crate) fn sans_family() -> SharedString {
             fontconfig_family("sans-serif").unwrap_or_else(|| ".SystemUIFont".into())
         })
         .clone()
+}
+
+/// Find the UI fonts and warm the text system for them on a thread, as the
+/// host starts. `sans_family` asks fontconfig by running `fc-match` (7–8 ms),
+/// and the first text shaped in a weight has the text system look at every
+/// installed face (2 ms and more): both ran inside the first frame, on the
+/// main thread, which until then waits for the GPU. Asked for here, they are
+/// there when the first frame wants them: the family at once, then the
+/// weights of the first window's tree (`warm_weights`), then `mono_family`,
+/// which the first monospace text otherwise waits for mid-frame.
+pub(crate) fn warm_fonts(cx: &gpui::App) {
+    let text_system = cx.text_system().clone();
+    let (weights, first_tree) = mpsc::channel::<Vec<FontWeight>>();
+    let warm = move || {
+        let family = sans_family();
+        // The first window's weights; none when the host ends without one.
+        for weight in first_tree.recv().unwrap_or_default() {
+            let mut font = gpui::font(family.clone());
+            font.weight = weight;
+            // One at a time: the first frame waits for at most one of them.
+            crate::gpui_api::prewarm_fonts(&text_system, &[font]);
+        }
+        mono_family();
+    };
+    // Without the thread the first frame finds them itself, as before.
+    let started = std::thread::Builder::new()
+        .name("FontWarm".to_owned())
+        .spawn(warm);
+    if started.is_ok() {
+        *WARMING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(weights);
+    }
+}
+
+/// Where the first window says which weights its tree draws text in.
+static WARMING: Mutex<Option<mpsc::Sender<Vec<FontWeight>>>> = Mutex::new(None);
+
+/// Tell the warming thread the weights `tree` draws its texts in (the first
+/// window's tree; later calls do nothing).
+pub(crate) fn warm_weights(tree: &NodeSpec) {
+    let waiting = WARMING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    if let Some(waiting) = waiting {
+        let mut weights = Vec::new();
+        text_weights(tree, &mut weights);
+        // The thread is gone only if it panicked: nothing to warm then.
+        let _ = waiting.send(weights);
+    }
+}
+
+/// The weights the texts and fields of `node` are drawn in, each once.
+fn text_weights(node: &NodeSpec, found: &mut Vec<FontWeight>) {
+    let mut note = |weight: Weight| {
+        let weight = match weight {
+            Weight::Normal => FontWeight::NORMAL,
+            Weight::Medium => FontWeight::MEDIUM,
+            Weight::Semibold => FontWeight::SEMIBOLD,
+            Weight::Bold => FontWeight::BOLD,
+        };
+        if !found.contains(&weight) {
+            found.push(weight);
+        }
+    };
+    match node {
+        NodeSpec::View { children, .. } => {
+            for child in children {
+                text_weights(child, found);
+            }
+        }
+        NodeSpec::Text { props, .. } => note(props.weight),
+        NodeSpec::Input { props } => {
+            note(Weight::Normal);
+            props
+                .runs
+                .iter()
+                .filter_map(|run| run.weight)
+                .for_each(note);
+        }
+        NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
+    }
 }
 
 fn fontconfig_family(pattern: &str) -> Option<SharedString> {
@@ -801,41 +888,5 @@ mod tests {
         let text = "abcd";
         let before = (0..2).rev().map(|index| (px(index as f32 * 10.0), index));
         assert_eq!(gpui::ink_end_x(px(20.0), before, text), px(20.0));
-    }
-
-    // The fork's helper; upstream reuses a layout only for the same
-    // truncation width in its own way (`elements/text.rs`).
-    #[cfg(not(feature = "gpui-next"))]
-    use gpui::reuses_layout;
-
-    // `numberOfLines: 1` (`render_text`'s `truncate`) is cut with an ellipsis at
-    // the width layout finds. Taffy asks a flex item's text for its whole line
-    // first, then at its width: the second answer must not be the first one.
-    #[cfg(not(feature = "gpui-next"))]
-    #[test]
-    fn a_line_cut_to_its_width_is_not_the_whole_line_kept() {
-        assert!(!reuses_layout((None, None), (None, Some(px(120.)))));
-        assert!(!reuses_layout((None, Some(px(120.))), (None, None)));
-        assert!(!reuses_layout(
-            (None, Some(px(120.))),
-            (None, Some(px(90.)))
-        ));
-    }
-
-    #[cfg(not(feature = "gpui-next"))]
-    #[test]
-    fn the_same_query_keeps_its_layout() {
-        assert!(reuses_layout(
-            (None, Some(px(120.))),
-            (None, Some(px(120.)))
-        ));
-        assert!(reuses_layout(
-            (Some(px(200.)), None),
-            (Some(px(200.)), None)
-        ));
-        assert!(!reuses_layout(
-            (Some(px(200.)), None),
-            (Some(px(180.)), None)
-        ));
     }
 }

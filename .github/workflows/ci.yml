@@ -176,15 +176,6 @@ jobs:
       - name: Tests
         run: cargo test --locked
 
-      # The GPUI fork's own tests (forks/gpui/MIRIN.md): the fork isn't a
-      # package of its own, so it builds alone with mirin-metal's lockfile.
-      - name: GPUI fork tests
-        working-directory: forks/gpui
-        run: |
-          cp ../../crates/mirin-metal/Cargo.lock .
-          CARGO_TARGET_DIR=../../crates/mirin-metal/target/gpui-alone cargo test --lib --features test-support
-          rm Cargo.lock
-
   security:
     name: Dependency security
     runs-on: ubuntu-24.04

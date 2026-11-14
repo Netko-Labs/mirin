@@ -7,6 +7,7 @@
  *
  *   bun bench/stress.tsx [host-binary] [--rows=100] [--cols=25] [--visible] [--json] [--trace=<path>]
  *     [--only=scroll,grow] [--step=40] [--scroll-steps=24] [--shadow] [--memo]
+ *     [--low] [--start=scroll] [--selects=20] [--types=20] [--grows=12] [--sc-grows=12] [--sc-selects=12] (how many of each: more for a profile)
  *
  * Scenarios, each timed from the driver's action to the host's next painted
  * frame (`MIRIN_METAL_TRACE` log). `parse` is the host reading the line
@@ -43,6 +44,14 @@
  * of the `driver` column for this app. Without it, as an app that memoizes
  * nothing. `bench/driver.tsx --stress` times the same app without a host.
  *
+ * `--low` adds a line with each scenario's tenth-percentile frame: on a
+ * machine that is doing other work the median moves with the load, and the
+ * fastest frames say what the host itself takes. Compare hosts by it with
+ * more of each (`--selects=40`...). A host built with `--features profiling`
+ * also traces what each frame ran on the window's thread (`counters.rs`),
+ * and `--low` then adds the medians of its instructions and CPU cycles,
+ * which the load does not move (instructions) or hardly (cycles).
+ *
  * Runs in an off-screen compositor unless `--visible` (see `startHeadlessDisplay`).
  */
 
@@ -69,6 +78,10 @@ const only = args
   ?.slice("--only=".length)
   .split(",");
 const runs = (scenario: string): boolean => !only || only.includes(scenario);
+// `--start=scroll`: the grid is in its scroll view from the first frame, not
+// switched into it (to tell what the scroll view costs from what the switch
+// leaves behind); run it with `--only=` the scroll view's scenarios.
+const startScrolled = args.includes("--start=scroll");
 const display = args.includes("--visible") ? null : await startHeadlessDisplay();
 if (!display && !args.includes("--visible")) {
   console.error("no headless compositor; pass --visible to use the current display");
@@ -100,7 +113,13 @@ transport.send = (json) => {
 };
 
 const root = render(
-  <Dashboard rows={rows} cols={cols} shadow={shadow} memo={args.includes("--memo")} />,
+  <Dashboard
+    rows={rows}
+    cols={cols}
+    shadow={shadow}
+    memo={args.includes("--memo")}
+    start={startScrolled ? "scroll" : "plain"}
+  />,
   transport,
 );
 await Bun.sleep(4000);
@@ -109,6 +128,18 @@ const hostPid = Number(
     .stdout.toString()
     .trim(),
 );
+
+// What each scenario's frames ran, when the host counts it (`--low`).
+const counted: Record<string, { instructions: number[]; cycles: number[] }> = {};
+let counting = "";
+/** Note what the frame `line` ran under the scenario being run. */
+function count(line: TraceLine): void {
+  const match = line.message.match(/([\d.]+)M instructions, ([\d.]+)M cycles/);
+  if (!match || !counting) return;
+  counted[counting] ??= { instructions: [], cycles: [] };
+  counted[counting]?.instructions.push(Number(match[1]));
+  counted[counting]?.cycles.push(Number(match[2]));
+}
 
 const rendersAfter = (at: number) =>
   trace.filter((line) => line.at >= at && line.message.startsWith("render"));
@@ -162,6 +193,7 @@ async function measure(action: () => void, sent = true, timeout = 2500): Promise
     frame = rendersAfter(after)[0];
   }
   if (!frame) return null;
+  count(frame);
   // The driver may still be sending (a second commit): let it finish.
   await Bun.sleep(60);
   const last = sends.at(-1);
@@ -185,7 +217,10 @@ async function frameAfter(action: () => void, timeout = 2500): Promise<number | 
   action();
   for (let waited = 0; waited < timeout; waited += 4) {
     const line = trace.slice(from).find((entry) => entry.message.startsWith("render"));
-    if (line) return frameMs(line);
+    if (line) {
+      count(line);
+      return frameMs(line);
+    }
     await Bun.sleep(4);
   }
   return null;
@@ -246,7 +281,9 @@ async function scenario(name: string, updates: number, run: () => Promise<void>)
   if (!runs(name)) return;
   const from = ticks();
   const adapterFrom = adapterTicks();
+  counting = name;
   await run();
+  counting = "";
   cpu[name] = ((ticks() - from) * 10) / updates;
   adapterCpu[name] = ((adapterTicks() - adapterFrom) * 10) / updates;
 }
@@ -326,8 +363,10 @@ if (switches > 0) {
 // The same grid in a scroll view: most rows are out of view.
 const adapterBeforeSwitch = adapterTicks();
 const switchedAt = Date.now();
-transport.simulate({ kind: "click", id: nodeId("layout") });
-await Bun.sleep(2500);
+if (!startScrolled) {
+  transport.simulate({ kind: "click", id: nodeId("layout") });
+  await Bun.sleep(2500);
+}
 const adapterAtSwitch = (adapterTicks() - adapterBeforeSwitch) * 10;
 // And on the window's thread: the tree, and AccessKit taking it there.
 const accessAtSwitch = accessAfter(switchedAt);
@@ -349,12 +388,14 @@ await scenario("scroll", scrollSteps * 2, async () => {
 transport.simulate({ kind: "scroll", id: scroller, dy: step * 6 });
 await Bun.sleep(1200);
 let growScrolled: Sample[] = [];
-await scenario("grow/sc", 12, async () => {
-  growScrolled = await presses("banner", 12);
+const growsScrolled = option("sc-grows", 12);
+await scenario("grow/sc", growsScrolled, async () => {
+  growScrolled = await presses("banner", growsScrolled);
 });
 const selectScrolled: Sample[] = [];
-await scenario("select/sc", 12, async () => {
-  for (let index = 0; index < 12; index += 1) {
+const selectsScrolled = option("sc-selects", 12);
+await scenario("select/sc", selectsScrolled, async () => {
+  for (let index = 0; index < selectsScrolled; index += 1) {
     const id = cardId(cols * 8 + ((index * 37) % (cols * 6)));
     const sample = await measure(() => transport.simulate({ kind: "click", id }));
     if (sample) selectScrolled.push(sample);
@@ -382,6 +423,7 @@ await scenario("resize", resizes, async () => {
     for (let waited = 0; waited < 2500; waited += 4) {
       const line = trace.slice(from).find((entry) => entry.message.startsWith(`render ${width}x`));
       if (line) {
+        count(line);
         resize.push(frameMs(line));
         break;
       }
@@ -434,6 +476,11 @@ const median = (values: number[]) => {
 const p95 = (values: number[]) => {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? 0;
+};
+/** The tenth percentile: what the fastest frames took (`--low`). */
+const low = (values: number[]) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length * 0.1)] ?? 0;
 };
 const summary = (samples: Sample[]) => ({
   n: samples.length,
@@ -554,6 +601,30 @@ if (args.includes("--json")) {
   console.log(
     `hscroll  ${String(hscroll.length).padStart(2)} frames of ${scrollSteps * 2} steps of ${step} px across: frame ${median(hscroll).toFixed(1)} ms, p95 ${p95(hscroll).toFixed(1)} ms, cpu ${(cpu.hscroll ?? 0).toFixed(1)} ms (adapter ${(adapterCpu.hscroll ?? 0).toFixed(1)})`,
   );
+  if (args.includes("--low")) {
+    const frames = (samples: Sample[]) => samples.map((sample) => sample.frame);
+    const lows: Array<[string, number[]]> = [
+      ["select", frames(select)],
+      ["type", frames(typing)],
+      ["hover", frames(hover)],
+      ["grow", frames(grow)],
+      ["scroll", scroll],
+      ["grow/sc", frames(growScrolled)],
+      ["select/sc", frames(selectScrolled)],
+      ["resize", resize],
+      ["hscroll", hscroll],
+    ];
+    console.log(
+      `low      ${lows.map(([name, values]) => `${name} ${low(values).toFixed(2)}`).join(", ")} (frame, tenth percentile, ms)`,
+    );
+    const names = lows.map(([name]) => name).filter((name) => counted[name]);
+    if (names.length > 0) {
+      const medians = (pick: "instructions" | "cycles") =>
+        names.map((name) => `${name} ${median(counted[name]?.[pick] ?? []).toFixed(2)}`).join(", ");
+      console.log(`cycles   ${medians("cycles")} (frame, median, millions)`);
+      console.log(`instr    ${medians("instructions")} (frame, median, millions)`);
+    }
+  }
   console.log(
     `adapter  ${adapterAtStart.toFixed(0)} ms CPU for the first tree, ${adapterAtSwitch.toFixed(0)} ms for the switch to the scroll view (on the window's thread: ${accessAtSwitch.ms.toFixed(1)} ms, AccessKit ${adapterTookAtSwitch.toFixed(1)} of it, ${accessAtSwitch.published} nodes handed over)`,
   );

@@ -1465,6 +1465,18 @@ impl App {
         (result, self.entities.pop_access_scope())
     }
 
+    /// mirin: run `callback` with the entities it accesses counted for the
+    /// frame (the window still hears of them) but for none of the scopes
+    /// open around it: what building a retained subtree's elements reads is
+    /// not what the subtree around it is drawn from
+    /// (`elements::retained`'s `rebuild`).
+    pub(crate) fn unattributed_accesses<R>(&mut self, callback: impl FnOnce(&mut App) -> R) -> R {
+        self.entities.push_access_scope();
+        let result = callback(self);
+        self.entities.pop_access_scope_into_frame();
+        result
+    }
+
     pub(crate) fn record_entities_accessed(
         &mut self,
         window_handle: AnyWindowHandle,
@@ -1473,7 +1485,17 @@ impl App {
     ) {
         let mut tracked_entities =
             std::mem::take(self.tracked_entities.entry(window_handle.id).or_default());
+        // mirin: only what changed. Upstream took this window's invalidator
+        // out of every entity tracked last frame and put it back for every
+        // entity accessed in this one: two lookups in a map of maps per
+        // entity, each its own allocation. A window of retained subtrees
+        // accesses the same few thousand entities frame after frame (each
+        // subtree's, drawn or not), and an entity tracked already holds this
+        // window's invalidator, which never changes.
         for entity in tracked_entities.iter() {
+            if entities.contains(entity) {
+                continue;
+            }
             self.window_invalidators_by_entity
                 .entry(*entity)
                 .and_modify(|windows| {
@@ -1481,10 +1503,12 @@ impl App {
                 });
         }
         for entity in entities.iter() {
-            self.window_invalidators_by_entity
-                .entry(*entity)
-                .or_default()
-                .insert(window_handle.id, invalidator.clone());
+            if !tracked_entities.contains(entity) {
+                self.window_invalidators_by_entity
+                    .entry(*entity)
+                    .or_default()
+                    .insert(window_handle.id, invalidator.clone());
+            }
             self.current_window_by_entity
                 .insert(*entity, window_handle.id);
         }

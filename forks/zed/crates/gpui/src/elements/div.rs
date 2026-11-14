@@ -2615,14 +2615,10 @@ impl Interactivity {
             }
 
             let rem_size = window.rem_size();
-            // Taffy lays the box out with the padding snapped to the device pixel
-            // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
-            // rem size, it exceeds `bounds` and leaves the box scrollable by the
-            // sub-pixel difference.
-            let padding = style
-                .padding
-                .to_pixels(bounds.size.into(), rem_size)
-                .map(|edge| window.pixel_snap(*edge));
+            // mirin: the padding as taffy laid it out, which is as authored
+            // (`AbsoluteLength::to_taffy` no longer snaps it to the device
+            // pixel, so neither does this).
+            let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
             let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
             // The floating point values produced by Taffy and ours often vary
             // slightly after ~5 decimal places. This can lead to cases where after

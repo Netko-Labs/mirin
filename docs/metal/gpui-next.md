@@ -1,5 +1,14 @@
 # Metal on current upstream GPUI: spike findings
 
+**Done (2026-11-14).** Metal builds on upstream GPUI alone: `forks/zed` and
+`forks/taffy-next` are what `crates/mirin-metal` depends on, and the gpui
+0.2.2 forks (`forks/gpui`, `forks/taffy`, `forks/blade-graphics`), the
+second manifest (`crates/mirin-metal/next`), the two halves of
+`src/gpui_api/` and the spike (`spikes/gpui-next/`) are gone from the tree.
+This document is the record of the move; where it says "the default build"
+or "the fork" it means the 0.2.2 one, and "the upstream build" is now the
+only build. What comes next is in [`engine.md`](engine.md).
+
 Date: 2026-11-10. Branch `perf-gpui-next`. Spike code: `spikes/gpui-next/`
 (its README says how to build it and repeat the numbers).
 
@@ -1573,6 +1582,185 @@ select 2.05 ms, type 1.55, hover 2.25, grow 1.75, grow in a scroll view
 3.0, select in one 3.35, scroll 2.8, scroll across 2.55, resize 2.2; RSS
 idle 195 MB.
 
+### sumi step 1: a small app's footprint, and other scale factors (sumi-footprint)
+
+Branch `sumi-footprint` (from `metal-arch` at `0e2e2e9`), lane B of step 1
+of `engine.md`: the counter's footprint, the stress app's RSS at 1.5, and
+layouts at 1.25, 1.5 and 2. Measured against `ref/host-main` (the default
+build at the base) and `ref/host-next-main` (the upstream build at the
+base), as "How this was measured" says, on the shared laptop while the other
+lane built and benched.
+
+**Where a counter's GPU memory was.** `fdinfo` gives a total, so every
+buffer the driver made was logged instead: a preloaded shim around `ioctl`
+that prints each `DRM_IOCTL_AMDGPU_GEM_CREATE` (size, domain) and each close,
+on both hosts, with wgpu's own allocator report beside it
+(`Device::generate_allocator_report`). The counter, two frames drawn:
+
+| GPU buffers alive (MiB) | upstream at the base | default build | upstream now |
+| --- | --- | --- | --- |
+| command buffers (radv: 80 KiB each, and 16 KiB of uploads for those used) | 100: 8.0 | 6: 0.5 | 16: 1.4 |
+| the allocator's shared blocks | 3 × 4: 12.0 (6.5 in use) | 1.0 + 3 × 0.25 | 2 + 1: 3.0 (1.8 in use) |
+| swapchain, four images | 8.8 (made twice at start) | 8.8 | 8.8 (made once) |
+| shader code and the rest | 1.0 | 0.8 | 1.0 |
+| alive | 29.8 | 11.8 | 14.2 |
+
+Round 5 took the 11 MB outside the allocator for "the driver's own
+buffers". Most of it was wgpu's: wgpu-hal allocates command buffers 16 at a
+time for every encoder wgpu-core has opened (a frame's, the queue's pending
+writes, more while frames are in flight), and radv backs each with 80 KiB
+when it is allocated, recorded into or not. And the allocator's least block
+was 4 MiB twice over (wgpu-hal clamps what GPUI asks for, gpu-allocator
+clamps again), so the 2 KiB of staging buffers held one, the buffers
+another, and the BGRA glyph atlas (4 MiB at 1024²) filled a third.
+
+What changed (rows in `forks/wgpu/MIRIN.md`, `forks/gpu-allocator/MIRIN.md`
+and `forks/zed/MIRIN.md`):
+
+- **Two small forks**, patched in by `next/Cargo.toml` alone: `forks/wgpu`
+  (wgpu-hal alone, at the commit zed pins; the rest of wgpu stays the
+  repository's) and `forks/gpu-allocator` (0.28.0). wgpu-hal allocates one
+  command buffer at a time (its free list still reuses them), and both let a
+  shared block be as small as 256 KiB. Neither can be done from GPUI: wgpu
+  has no option for either. Three lines of code and a manifest between them.
+- **Blocks of 2 MiB that double to 8** (host blocks: 1 to 4), where round 5
+  had 4 MiB, the least wgpu allowed.
+- **The first atlas texture of colors is 512²** (1 MiB, what the default
+  build's first glyph atlas takes), the rest 1024² as before, and **a
+  window's instance buffer starts at 256 KiB** and doubles in the frame that
+  outgrows it (upstream: 2 MiB). So a counter's buffers and atlas share one
+  2 MiB block.
+- **A window's renderer starts with the transparency the window will
+  have**: the swapchain was made, freed and made again before the first
+  frame (the half of the default build's row round 5 did not port).
+
+The stress app allocates as many blocks as before and none per frame (51
+buffers made over a run where it made 134; 28 MiB alive at the end where it
+had 38.5): its staging buffers still fit the host blocks, which grow to
+4 MiB as they did.
+
+**The stress app at 1.5** held 233 MB at idle where it holds 195 at 1 (the
+default build: 217 and 203). Sampling the host's mappings showed one
+anonymous region twice the size at 1.5, and logging allocations of 8 MiB or
+more with their backtraces named it: taffy's node storage (1,288 bytes a
+node on taffy 0.15). A window opens at a scale of 1 and learns its scale
+factor with its first configure, so its second frame makes every retained
+subtree anew; each lets its old nodes go once the new ones are made, and
+they were freed at the frame's end. The frame held the tree twice (35,200
+nodes for 17,600), and the storage, which never shrinks, stayed at 90 MB
+where it is 45 at 1. The nodes let go so far are now freed when the next
+subtree starts making its own (`TaffyLayoutEngine::free_released`), which
+take their places. This is what a real display at 1.25, 1.5 or 2 does too,
+not only `MIRIN_METAL_SCALE`.
+
+**The first frame.** A profile of 25 starts (`--features profiling`, 1 kHz)
+put two things inside the counter's first frame that are not drawing:
+`render::sans_family` running `fc-match` for the system's sans family (7–8 ms,
+on both builds: round 5's "7.5 ms before the first font is asked for"), and
+cosmic-text building its list of matching faces for the first text of each
+weight (`FontSystem::get_font_matches`: it opens every installed face whose
+weight differs to read its weight axis, 713 faces here, 2 ms of CPU and the
+file system's time). The main thread waits ~15 ms for the GPU before that
+frame, so both now run on a thread as the host starts
+(`render::warm_fonts`: the family, upstream's `TextSystem::prewarm_fonts` for
+its four weights, then the monospace family, which the first monospace text
+otherwise waits for mid-frame). The default build gets the family alone (its
+GPUI has no prewarm: a `GAP` shim in `gpui_api/fork.rs`).
+
+**Layouts at 1.25, 1.5 and 2.** Upstream rounded every authored length and
+border width to the device pixel before layout (`to_taffy`); the default
+build keeps them as authored and rounds only the edges that result. At 1.25,
+3,039 of `grid`'s 3,044 nodes differed between the builds. Lengths now reach
+taffy unrounded (`AbsoluteLength::to_taffy`, borders, grid tracks; a scroll
+view's padding is no longer snapped either), and a scroll view's extent is
+rounded as its size is (the default build reads it from taffy 0.9's rounded
+layout; unrounded, a view scrolled to its end and 0.4 px back painted a
+device pixel away at 1.25 and 2). Borders still paint at whole device
+pixels. A test lays out lengths of half a device pixel on both builds
+(`render::scale_tests`).
+
+| `layout-check`, layouts against `ref/host-main` | 1.25 | 1.5 | 2 |
+| --- | --- | --- | --- |
+| `grid` (11 steps) | identical | identical | identical |
+| `browser` (12 steps) | the card's 20 nodes | the card's 20 nodes | the card's 20 nodes |
+| `scroll` (33 steps) | identical; hover lines | identical; hover lines | identical; hover lines |
+| `scroll-fractional` (31 steps) | identical; hover lines | identical; hover lines | identical; hover lines |
+
+The card is taffy 0.9's short card (round 6), at every scale. The hover
+lines are the ones known at 1: which hover events are heard when content
+moves under a resting pointer (10 to 17 steps), no node's bounds. Retained
+against `MIRIN_METAL_RETAIN=0` with `--scene`, the same four apps at 1,
+1.25, 1.5 and 2: `grid`, `browser` and `scroll-fractional` lay out and draw
+the same at every step. `scroll` does in most runs; in the others two to
+four steps differ in a hover: the retained host hears (and draws) a card
+hovered after a scroll or a resize a step before or after the other does.
+It is timing, and the person's own pointer crossing the bench's visible
+window, not this branch: the same check passes when run again on a quiet
+machine (at 1, twice; at 1.5; at 2), `ref/host-next-main` gave the same
+alternate drawings against itself and against this host (the digests
+match), and no node's bounds ever differ. Against `ref/host-next-main` with `--scene` at 1, all
+four apps are identical, layouts and drawings: at a scale of 1 with
+whole-pixel lengths nothing here changes what is drawn.
+
+**Measured** (`ref/host-next-main`, this branch's host, `ref/host-main`;
+`bench/footprint.tsx --visible`, three starts a run, two runs each for the
+counter and one for the browser; `bench/stress.tsx --visible`, two runs
+each, both given; interleaved, under the bench lock):
+
+| counter demo, 800×600 | upstream at the base | this branch | default build |
+| --- | --- | --- | --- |
+| host RSS | 67.1 / 67.5 MB | **64.6 / 65.2 MB** | 59.6 / 59.7 MB |
+| private dirty | 11.6 MB | 9.4 MB | 7.5 MB |
+| GPU memory (gtt + vram) | 31.8 MB | **16.2 MB** | 13.8 MB |
+| host start → first content frame (a run's median) | 40 / 73 ms | **30 / 33 ms** | 34 / 46 ms |
+| the same, medians of 15 and 12 interleaved starts | 35 ms (before the fonts' thread) | **30 / 27.5 ms** | 30 ms |
+| threads, idle | 15, 0 wakeups | 15, 0 wakeups | 15, 10 wakeups per 5 s |
+| of RSS: binary / heap and anonymous / fonts | 21.1 / 7.0 / 0.3 MB | 20.3 / 5.1 / 0.3 MB | 17.1 / 3.4 / 0.4 MB |
+
+| example browser, 1440×900 | upstream at the base | this branch | default build |
+| --- | --- | --- | --- |
+| host RSS | 73.7 MB | **70.9 MB** | 65.6 MB |
+| GPU memory | 47.2 MB | **35.6 MB** | 29.2 MB |
+| host start → first content frame | 66 ms | **50 ms** | 49 ms |
+
+| stress bench, 15k nodes | upstream at the base | this branch | default build |
+| --- | --- | --- | --- |
+| RSS idle, at 1 | 192 / 188 MB | **185 / 187 MB** | 197 / 197 MB |
+| RSS idle, at 1.5 | 228 / 233 MB | **196 / 202 MB** | 213 / 211 MB |
+| RSS at the end, at 1 | 281 / 280 MB | 277 / 277 MB | 309 / 313 MB |
+| select / type / hover, at 1 | 2.4–2.5 / 1.3–2.0 / 2.2–2.3 ms | 2.2 / 1.6–1.9 / 2.2–2.5 ms | 1.9–2.5 / 1.6 / 2.2–2.4 ms |
+| grow / scroll / resize, at 1 | 2.0–2.2 / 3.1–3.4 / 2.1–2.2 ms | 1.5–2.3 / 3.0 / 2.1–2.5 ms | 3.5 / 2.9–3.0 / 2.3 ms |
+| grow and select in a scroll view / scroll across, at 1 | 2.8–3.5 / 2.6–3.9 / 3.0–3.5 ms | 3.2–3.7 / 3.2–4.2 / 3.1–3.2 ms | 3.2–3.9 / 2.4–2.7 / 2.9–3.1 ms |
+
+Frame times are the other lane's subject and are here to show nothing in
+this one moved them: the two upstream hosts are within each other's
+spread on every scenario (the machine was shared; a run's medians differ
+by up to 0.7 ms on the same host).
+
+**What is still over the budget** (59 MB, 14 MB, 33 ms; noise 3 MB):
+
+| | over | what it is, and what it would take |
+| --- | --- | --- |
+| counter RSS | +5 MB (64.9 against 59.7) | the binary mapped, +3 MB (24.2 MB of code against 18.2: wgpu, naga, two shader modules' validation), shared between hosts: thin LTO built the same size (46.1 against 45.9 MB) and leaving wgpu's GL backend out saved 0.4 MB of code, so neither is in. Heap and anonymous memory, +1.7 MB (5.1 against 3.4; it was +3.6): not found, there is no heap profiler on this machine; `opt-level = "s"` and fat LTO were not tried (each a build of several minutes) |
+| counter GPU memory | +2.4 MB (16.2 against 13.8) | inside the noise the budget allows. 16 command buffers where the default build has 6 (0.9 MB: wgpu-core records a frame into several and keeps a pool per encoder), 3 MiB of blocks where it has 1.75 |
+| first frame | none (30–33 ms) | what is left is the GPU: the instance, adapters and device are ready 18–22 ms after the host starts and the surface and renderer 5 ms later; the frame itself follows within 1–2 ms |
+
+Not done, with what was learned: making the renderer when the first frame
+is drawn rather than when the window opens would let the first layout run
+while the GPU starts, but with the fonts warmed the layout is no longer
+what the frame waits for. cosmic-text's match list still costs 2 ms on the
+main thread for a weight that first appears after the first window's tree
+(`FontMatchKey::new` opens every face of another weight); a per-face cache
+of weight axes there would end it, in a fork of cosmic-text.
+
+Checks: both builds `cargo fmt --check`, `cargo clippy --all-targets -- -D
+warnings` and `cargo test` (the default build 217 and 8 pass, 1 ignored; the
+upstream build 227 and 8 pass, 1 ignored; one new test on both); the GPUI
+fork's own tests 96 pass; gpu-allocator's fork builds its tests (it has none
+without a device); wgpu-hal's do not run from `forks/wgpu` (see its
+`MIRIN.md`). The stress bench with `MIRIN_METAL_ACCESS_CHECK=1`: no complaints.
+
+
 ### State, what is left, and the default
 
 The branch builds both hosts, the default exactly as before; the upstream
@@ -1640,6 +1828,75 @@ still blocks the switch:
   against 215 at 1.5);
 - accessibility's two trees (step 6);
 - step 7's checks of Dashi's apps at other scale factors.
+
+**sumi step 1, frame time (`sumi-frame`, 2026-11-14).** The frame-time
+blockers above are closed at a scale factor of 1; scroll at 1.5 is not.
+
+- **Select in a scroll view was not the scroll view.** Run alone
+  (`stress.tsx --only=select/sc`) it cost what a plain select does, on both
+  builds; it cost 3.1–3.5 ms only after the bench's scroll. A subtree that
+  can't be copied is built again from prepaint, while the subtree around it
+  is watched for the entities it reads, and mirin-metal's build reads the
+  root view: the one around then counted as notified on every frame and was
+  never left out again. Every row that scrolled out of view after a card in
+  it had been built so stayed in the frame, copied unseen (56 subtrees
+  copied a select where 40 show, more with every row scrolled past). What a
+  build reads now counts for the frame alone (`App::unattributed_accesses`).
+- **A frame that copies most of a window copied too much.** Profiles of a
+  keystroke, a select and a scroll put most of the frame in copying last
+  frame's drawing: every record inside a copied subtree gone over twice a
+  frame (now told only when next looked at), each primitive copied five
+  times (two), dispatch nodes pushed and popped through three stacks (one
+  pass), a line layout's key hashed twice a frame (kept), and, after the
+  frame, every entity the window read removed and inserted again (only
+  what changed). `forks/zed/MIRIN.md` has a row each.
+- **Measured** (`stress.tsx --visible`, release hosts, a quiet machine,
+  two interleaved runs each, medians; frame ms):
+
+  | scale 1 | `sumi-frame` | `host-next-main` | `host-main` |
+  | --- | --- | --- | --- |
+  | select / type / hover | 1.6 / 1.0 / 1.75 | 1.9 / 1.4 / 2.15 | 1.85 / 1.0 / 1.95 |
+  | grow / scroll / resize | 1.45 / 2.65 / 1.8 | 1.95 / 3.05 / 2.0 | 3.3 / 2.55 / 2.3 |
+  | select / grow in a scroll view | 1.65 / 1.7 | 3.1 / 2.95 | 2.2 / 3.55 |
+  | scroll across | 2.35 | 2.9 | 2.4 |
+  | RSS idle / at the end | 194 / 282 MB | 193 / 280 MB | 203 / 312 MB |
+
+  | at 1.5 | `sumi-frame` | `host-next-main` (one run) | `host-main` |
+  | --- | --- | --- | --- |
+  | select / type / hover | 1.75 / 1.05 / 1.85 | 2.0 / 1.4 / 2.2 | 1.9 / 1.0 / 2.0 |
+  | grow / scroll / resize | 1.7 / 2.9 / 2.2 | 1.8 / 3.0 / 2.2 | 6.55 / 2.5 / 2.45 |
+  | select / grow in a scroll view | 1.95 / 1.85 | 3.3 / 3.1 | 2.2 / 7.0 |
+  | scroll across | 2.35 | 2.7 | 2.45 |
+
+  Instructions the window's thread runs per frame (a host built with
+  `--features profiling` counts them; load does not move them), millions,
+  before these changes, after, and the default build: select 9.45 / 7.17 /
+  8.69, a keystroke 5.74 / 4.08 / 5.72, scroll 16.23 / 10.41 / 15.40,
+  select in a scroll view 15.47 / 8.21 / 9.33.
+- **Left.** Scroll at 1.5 is 0.4 ms over the default build (2.9 against
+  2.5), as before; at 1 it is at the default build's (2.65 against 2.55).
+  A scroll frame builds the grid again onto its nodes and moves every row
+  in view, with the row under the pointer and its card drawn again, and on
+  the way down the row coming into view is shaped for the first time (21 of
+  the bench's 48 frames). What is left of it is the copy itself (scene
+  operations, dispatch nodes, hitboxes), which the retained frame
+  (`engine.md`, step 4) removes; at 1.5 a drawing with masks pushed inside
+  still does not move. Correctness: `layout-check` against
+  `host-next-main` with `--scene` (`grid`, `browser`, `scroll`,
+  `scroll-fractional`) and against itself with `MIRIN_METAL_RETAIN=0` (those
+  and `across`, at 1 and at 1.5): identical at every step; against
+  `host-main`, the known differences only.
+
+**sumi step 1, lane B (sumi-footprint).** Of what blocked the switch above:
+the footprint at 1.5 is closed (stress RSS at idle 196–202 MB at 1.5 against
+the default build's 211–213, and 185–187 against 197 at 1), and layouts at
+1.25, 1.5 and 2 now match the default build but for the card taffy 0.9
+makes too short (step 7's "other scale factors"). The counter is at 16 MB
+of GPU memory (budget 14, within its noise) and a first frame of 30–33 ms
+(budget 33); its RSS is 65 MB against 59, the binary's size and 1.7 MB of
+heap ("sumi step 1: a small app's footprint" above). Two forks joined for
+it, `forks/wgpu` (wgpu-hal alone) and `forks/gpu-allocator`. Left of step
+7: checking Dashi's apps themselves at their scale factors, by eye.
 
 ## How this was measured
 

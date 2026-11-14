@@ -55,8 +55,8 @@ pub(crate) struct Parked {
     pub(super) recorded: Option<Recorded>,
     pub(super) epoch: u64,
     pub(super) pointer: crate::Point<Pixels>,
-    /// The drawings of the retained subtrees inside it, in the same frame
-    /// (in the order of the state's `nested`).
+    /// The drawings of the retained subtrees inside it, at any depth, in
+    /// the same frame (in the order `each_inside` goes over them).
     nested: Vec<Option<Ranges>>,
     hitboxes: Vec<Hitbox>,
     /// The masks pushed inside it per phase (prepaint, paint) and the ones
@@ -136,14 +136,9 @@ impl Parking {
 
 impl Window {
     /// Take the drawing `drawn` (of `record`) made in last frame out of it,
-    /// with those of `nested` inside it. `None` when it is more than may be
-    /// parked at all.
-    pub(crate) fn park(
-        &mut self,
-        record: &Record,
-        drawn: &Drawn,
-        nested: &[Record],
-    ) -> Option<Box<Parked>> {
+    /// with those of the subtrees inside it. `None` when it is more than
+    /// may be parked at all.
+    pub(crate) fn park(&mut self, record: &Record, drawn: &Drawn) -> Option<Box<Parked>> {
         let (prepaint, paint) = (drawn.prepaint.clone()?, drawn.paint.clone()?);
         if !self.prepaint_range_valid(&prepaint) || !self.paint_range_valid(&paint) {
             return None;
@@ -164,13 +159,10 @@ impl Window {
             prepaint.start.line_layout_index.clone()..prepaint.end.line_layout_index.clone(),
             paint.start.line_layout_index.clone()..paint.end.line_layout_index.clone(),
         ];
-        let nested = nested
-            .iter()
-            .map(|nested| {
-                let nested = nested.borrow();
-                Some((nested.prepaint.clone()?, nested.paint.clone()?))
-            })
-            .collect();
+        let mut nested = Vec::new();
+        super::each_inside(&drawn.nested, &mut |inside| {
+            nested.push(inside.prepaint.clone().zip(inside.paint.clone()));
+        });
         let layouts = layouts.map(|range| self.text_system().park_layouts(range));
         let frame = &mut self.rendered_frame;
         // Its masks, numbered within its own (`relative`).

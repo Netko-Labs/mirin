@@ -244,6 +244,18 @@ impl EntityMap {
         scope
     }
 
+    /// mirin: ends the innermost scope and adds its accessed entities to the
+    /// frame's alone, not to the scopes still open around it
+    /// (`App::unattributed_accesses`).
+    pub fn pop_access_scope_into_frame(&mut self) {
+        let accessed_entities = self.accessed_entities.get_mut();
+        let Some(scope) = accessed_entities.scopes.pop() else {
+            debug_assert!(false, "popped an access scope that wasn't pushed");
+            return;
+        };
+        accessed_entities.frame.extend(scope);
+    }
+
     /// Takes every entity accessed during the draw, to be handed back with
     /// [`Self::restore_accessed`].
     pub fn take_accessed(&mut self) -> FxHashSet<EntityId> {

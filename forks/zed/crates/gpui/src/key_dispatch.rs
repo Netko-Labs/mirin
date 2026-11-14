@@ -294,24 +294,7 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    fn move_node(&mut self, source: &mut DispatchNode) {
-        self.push_node();
-        if let Some(context) = source.context.clone() {
-            self.set_key_context(context);
-        }
-        if let Some(focus_id) = source.focus_id {
-            self.set_focus_id(focus_id);
-        }
-        if let Some(view_id) = source.view_id {
-            self.set_view_id(view_id);
-        }
-
-        let target = self.active_node();
-        target.key_listeners = mem::take(&mut source.key_listeners);
-        target.action_listeners = mem::take(&mut source.action_listeners);
-        target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
-    }
-
+    // mirin: upstream's `move_node` is gone: `reuse_subtree` copies nodes itself.
     pub fn reuse_subtree(
         &mut self,
         old_range: Range<usize>,
@@ -320,35 +303,70 @@ impl DispatchTree {
     ) -> ReusedSubtree {
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
 
+        // mirin: the nodes are copied in one pass. Upstream pushed and
+        // popped each one through the node, context and view stacks to find
+        // its parent and whether it names a view; a frame that copies most
+        // of a window (retained subtrees) copies a few thousand nodes that
+        // hold nothing. The nodes are in the order they were pushed, so a
+        // node's parent inside the range is where it was from the range's
+        // start, one outside it is the node being built now, and a node
+        // names its view unless the nearest node above it that names one
+        // (or, with none in the range, the view being built) names the same,
+        // which is what `set_view_id` checks against the view stack. The
+        // stacks end as they began either way.
+        let base = self.node_stack.last().copied();
+        let outer_view = self.view_stack.last().copied();
+        let (old_start, new_start) = (old_range.start, new_range.start);
         let mut contains_focus = false;
-        let mut source_stack = vec![];
-        for (source_node_id, source_node) in source
+        self.nodes.reserve(old_range.len());
+        for source_node in source
             .nodes
             .iter_mut()
-            .enumerate()
             .skip(old_range.start)
             .take(old_range.len())
         {
-            let source_node_id = DispatchNodeId(source_node_id);
-            while let Some(source_ancestor) = source_stack.last() {
-                if source_node.parent == Some(*source_ancestor) {
-                    break;
-                } else {
-                    source_stack.pop();
-                    self.pop_node();
+            let node_id = DispatchNodeId(self.nodes.len());
+            let copied = node_id.0 - new_start;
+            let parent = match source_node.parent {
+                Some(parent) if parent.0 >= old_start && parent.0 - old_start < copied => {
+                    Some(DispatchNodeId(parent.0 - old_start + new_start))
                 }
-            }
-
-            source_stack.push(source_node_id);
+                _ => base,
+            };
+            let view_id = source_node.view_id.filter(|view_id| {
+                let mut above = parent.filter(|parent| parent.0 >= new_start);
+                let enclosing = loop {
+                    let Some(id) = above else {
+                        break outer_view;
+                    };
+                    let node = &self.nodes[id.0];
+                    if node.view_id.is_some() {
+                        break node.view_id;
+                    }
+                    above = node.parent.filter(|parent| parent.0 >= new_start);
+                };
+                enclosing != Some(*view_id)
+            });
             if source_node.focus_id.is_some() && source_node.focus_id == focus {
                 contains_focus = true;
             }
-            self.move_node(source_node);
-        }
-
-        while !source_stack.is_empty() {
-            source_stack.pop();
-            self.pop_node();
+            if let Some(focus_id) = source_node.focus_id {
+                self.focusable_node_ids.insert(focus_id, node_id);
+            }
+            if let Some(view_id) = view_id {
+                self.view_node_ids.insert(view_id, node_id);
+            }
+            self.nodes.push(DispatchNode {
+                key_listeners: mem::take(&mut source_node.key_listeners),
+                action_listeners: mem::take(&mut source_node.action_listeners),
+                modifiers_changed_listeners: mem::take(
+                    &mut source_node.modifiers_changed_listeners,
+                ),
+                context: source_node.context.clone(),
+                focus_id: source_node.focus_id,
+                view_id,
+                parent,
+            });
         }
 
         ReusedSubtree {

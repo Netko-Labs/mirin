@@ -18,6 +18,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 const MAX_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
+/// mirin: what a window's instance buffer starts at (upstream: 2 MiB). It
+/// doubles in the frame that outgrows it (`grow_instance_data`), so a large
+/// window reaches its size in its first frame and a small one keeps this.
+const INITIAL_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024;
 
 const INSTANCE_TEXTURE_TEXEL_SIZE: u64 = 16;
 
@@ -1015,7 +1019,7 @@ impl WgpuRendererCore {
                 .max_buffer_size
                 .min(device.limits().max_storage_buffer_binding_size)
                 .min(MAX_INSTANCE_BUFFER_SIZE);
-            let initial_capacity = (2 * 1024 * 1024).min(max_buffer_size);
+            let initial_capacity = INITIAL_INSTANCE_BUFFER_SIZE.min(max_buffer_size);
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instance_buffer"),
                 size: initial_capacity,

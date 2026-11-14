@@ -34,6 +34,112 @@ pub(crate) struct Drawn {
     /// Where the pointer was for its hover styles and listeners: when it
     /// was drawn, or copied where they were what they had been.
     pub(super) pointer: Point<Pixels>,
+    /// The records of the retained subtrees right inside it when it was
+    /// last drawn anew, in the order they were drawn; each keeps its own.
+    pub(super) nested: Vec<std::rc::Rc<std::cell::RefCell<Drawn>>>,
+    /// What copying it did that the records inside have not been told.
+    pub(super) carried: Carried,
+}
+
+/// mirin: what copies of a drawing did to the drawings inside it that their
+/// records have not been told yet. A copy puts the drawing elsewhere in the
+/// frame's lists, and the ranges of the records inside move with it; it is
+/// made with the pointer somewhere, which is where their hover styles are
+/// then known to hold. Going over every record inside for that on every
+/// copy cost a frame that copies most of a window what the window holds
+/// (a keystroke on the stress app: the grid's 2,600 records, twice). They
+/// are told when they are next looked at instead: the ones right inside
+/// when it is drawn anew (which plans each of them), all of them when it
+/// moves or is parked. Each one told keeps what it was told for the
+/// records inside it.
+#[derive(Default)]
+pub(super) struct Carried {
+    /// Where the drawing began in a frame's lists when the records inside
+    /// were last told: their ranges count from there.
+    prepaint_from: Option<PrepaintStateIndex>,
+    paint_from: Option<PaintIndex>,
+    /// Where the pointer was at the last copy.
+    pointer: Option<Point<Pixels>>,
+}
+
+/// What `Carried` holds, with where the drawing begins now.
+pub(super) struct Told {
+    prepaint: Option<(PrepaintStateIndex, PrepaintStateIndex)>,
+    paint: Option<(PaintIndex, PaintIndex)>,
+    pointer: Option<Point<Pixels>>,
+}
+
+impl Drawn {
+    /// Its prepaint was copied from `old` on to `new` in the frame's lists,
+    /// with the pointer at `pointer`: kept for the records inside.
+    pub(super) fn carry_prepaint(
+        &mut self,
+        old: &PrepaintStateIndex,
+        new: &PrepaintStateIndex,
+        pointer: Point<Pixels>,
+    ) {
+        if old != new && self.carried.prepaint_from.is_none() {
+            self.carried.prepaint_from = Some(old.clone());
+        }
+        self.carried.pointer = Some(pointer);
+    }
+
+    /// Its paint was copied from `old` on to `new` in the frame's lists.
+    pub(super) fn carry_paint(&mut self, old: &PaintIndex, new: &PaintIndex) {
+        if old != new && self.carried.paint_from.is_none() {
+            self.carried.paint_from = Some(old.clone());
+        }
+    }
+
+    /// What the records right inside are to be told, if anything: taken,
+    /// so they are told once. Its ranges are where its drawing is now.
+    pub(super) fn take_carried(&mut self) -> Option<Told> {
+        let carried = std::mem::take(&mut self.carried);
+        let prepaint = carried
+            .prepaint_from
+            .zip(self.prepaint.as_ref().map(|range| range.start.clone()))
+            .filter(|(from, to)| from != to);
+        let paint = carried
+            .paint_from
+            .zip(self.paint.as_ref().map(|range| range.start.clone()))
+            .filter(|(from, to)| from != to);
+        let told = Told {
+            prepaint,
+            paint,
+            pointer: carried.pointer,
+        };
+        (told.prepaint.is_some() || told.paint.is_some() || told.pointer.is_some()).then_some(told)
+    }
+
+    /// Nothing is owed to the records inside (their drawings are gone, or
+    /// were just put where they are).
+    pub(super) fn forget_carried(&mut self) {
+        self.carried = Carried::default();
+    }
+}
+
+impl Told {
+    /// Tell a record right inside the drawing: its ranges move as the
+    /// drawing did, and the pointer was where it was at the last copy. It
+    /// keeps the same for the records inside it.
+    pub(super) fn tell(&self, inside: &mut Drawn) {
+        if let (Some((from, to)), Some(range)) = (&self.prepaint, inside.prepaint.clone()) {
+            if inside.carried.prepaint_from.is_none() {
+                inside.carried.prepaint_from = Some(range.start.clone());
+            }
+            inside.prepaint = Some(range.start.rebase(from, to)..range.end.rebase(from, to));
+        }
+        if let (Some((from, to)), Some(range)) = (&self.paint, inside.paint.clone()) {
+            if inside.carried.paint_from.is_none() {
+                inside.carried.paint_from = Some(range.start.clone());
+            }
+            inside.paint = Some(range.start.rebase(from, to)..range.end.rebase(from, to));
+        }
+        if let Some(pointer) = self.pointer {
+            inside.pointer = pointer;
+            inside.carried.pointer = Some(pointer);
+        }
+    }
 }
 
 /// Where a retained subtree's root is laid out (its unrounded origin in
