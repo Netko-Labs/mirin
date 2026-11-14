@@ -690,9 +690,6 @@ fn rows_that_may_not_move_are_drawn_where_they_land(cx: &mut TestAppContext) {
     assert!(count(&draws, RetainedDraw::Reused) > 30, "{draws:?}");
 }
 
-/// Scroll to each of `stops` in turn, with retained rows (`retain`) or
-/// without; what each frame drew, and how many rows and cells had been built
-/// by then.
 /// A clean cell under a pointer its row moved under can't be copied, and is
 /// built again in place, from its row's prepaint: while the row is watched
 /// for the entities it reads. What the cell's build reads is not what the
@@ -745,6 +742,9 @@ fn what_a_build_reads_does_not_keep_the_subtree_around_it_in_the_frame(cx: &mut 
     );
 }
 
+/// Scroll to each of `stops` in turn, with retained rows (`retain`) or
+/// without; what each frame drew, and how many rows and cells had been built
+/// by then.
 fn scroll_through(
     cx: &mut TestAppContext,
     cells: usize,

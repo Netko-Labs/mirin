@@ -2,8 +2,8 @@
 
 `wgpu-hal` as it is in the wgpu repository (gfx-rs, MIT OR Apache-2.0) at
 commit `cddb2f5d80dc0009b2ef6767635140cacf90a007`, the commit zed's GPUI pins
-(`../zed/Cargo.toml`), forked in the monorepo so a Metal host on upstream GPUI
-holds the GPU memory it uses (`crates/mirin-metal/next`,
+(`../zed/Cargo.toml`), forked in the monorepo so a Metal host
+holds the GPU memory it uses (`crates/mirin-metal`,
 `docs/metal/gpui-next.md`). Only `wgpu-hal` is here, in the repository's
 layout: `Cargo.toml` is the repository's root manifest (the crate inherits its
 version, edition and dependencies from it; cargo reads it for a path
@@ -22,10 +22,10 @@ To re-sync (when zed's GPUI pins another wgpu commit): on the import branch,
 replace `forks/wgpu/Cargo.toml`, the licenses and `forks/wgpu/wgpu-hal` with
 the repository's at that commit (without `wgpu-hal/examples`), merge, and
 reconcile the changes above; the commit in `Cargo.toml`'s git dependencies and
-in `crates/mirin-metal/next/Cargo.toml`'s patch moves with it.
+in `crates/mirin-metal/Cargo.toml`'s patch moves with it.
 
 Checks: wgpu-hal's own tests do not run from here (the root manifest names
-workspace members that are not imported, as `../zed`'s does); the upstream
-build's `cargo build`, `cargo test --lib` and `cargo clippy --all-targets --
--D warnings` in `crates/mirin-metal/next` build it, and the benches run on
+workspace members that are not imported, as `../zed`'s does); mirin-metal's
+`cargo build`, `cargo test --lib` and `cargo clippy --all-targets --
+-D warnings` in `crates/mirin-metal` build it, and the benches run on
 it.

@@ -2,8 +2,8 @@
 
 `gpu-allocator` 0.28.0 from crates.io (Traverse Research, MIT OR Apache-2.0),
 the version wgpu-hal pins, forked in the monorepo (`forks/gpu-allocator`) so a
-Metal host on upstream GPUI holds the GPU memory it uses
-(`crates/mirin-metal/next`, `docs/metal/gpui-next.md`). Every change is listed
+Metal host holds the GPU memory it uses
+(`crates/mirin-metal`, `docs/metal/gpui-next.md`). Every change is listed
 here and marked with a `// mirin:` comment in the source. `examples/` is left
 out.
 
@@ -13,5 +13,5 @@ out.
 
 To update: see `../README.md` (merge the `forks-upstream` branch), then
 reconcile the change above. Its own tests: `cp
-../../crates/mirin-metal/next/Cargo.lock . && cargo test --lib --features
+../../crates/mirin-metal/Cargo.lock . && cargo test --lib --features
 vulkan; rm Cargo.lock`.

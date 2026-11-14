@@ -1,10 +1,10 @@
 # mirin's taffy 0.15 fork
 
 `taffy` 0.15.0 from crates.io (DioxusLabs, MIT), the version upstream GPUI
-(`../zed`) pins, forked in the monorepo (`forks/taffy-next`) beside the 0.9.0
-fork (`../taffy`) that the gpui 0.2.2 fork uses. Every change is marked with a
-`// mirin:` comment. Rows that port a change of `../taffy` say which
-(`../taffy/MIRIN.md`).
+(`../zed`) pins, forked in the monorepo (`forks/taffy-next`). It replaced a 0.9.0 fork
+(`../taffy`, in git history until 2026-11-14) that the gpui 0.2.2 fork used.
+Every change is marked with a `// mirin:` comment. Rows that port a change of
+that fork say which (its `MIRIN.md`, in history).
 
 | Change | Files | Why |
 | --- | --- | --- |

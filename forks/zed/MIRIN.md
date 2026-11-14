@@ -2,11 +2,11 @@
 
 The GPUI crates of the zed repository (Zed Industries, Apache-2.0) at
 commit `f8cfc7ed` (`../README.md` says what is here and how to re-sync),
-forked in the monorepo so `crates/mirin-metal` can build on upstream GPUI
-(`crates/mirin-metal/next/Cargo.toml`) beside the fork of gpui 0.2.2
-(`../gpui`) until it replaces it (`docs/metal/gpui-next.md`). Every change is
+forked in the monorepo: the engine `crates/mirin-metal` builds on, becoming
+sumi (`docs/metal/engine.md`). It replaced a fork of gpui 0.2.2 (`../gpui`,
+in git history until 2026-11-14; `docs/metal/gpui-next.md`). Every change is
 listed here and marked with a `// mirin:` comment in the source. Rows that
-port a change of `../gpui` say which (`../gpui/MIRIN.md`).
+port a change of that fork say which (its `MIRIN.md`, in history).
 
 | Change | Files | Why |
 | --- | --- | --- |
@@ -91,6 +91,5 @@ so `MIRIN_METAL_SCROLL_SNAP=0` has no effect on this build).
 To update: see `../README.md` (merge the `forks-upstream-next` branch), then
 reconcile the changes above.
 
-Checks: mirin-metal's tests on this fork, `cd crates/mirin-metal/next &&
-cargo test --lib` (the shared sources, with `--features gpui-next` by
-default), and `cargo clippy --all-targets -- -D warnings` there.
+Checks: mirin-metal's tests on this fork, `cd crates/mirin-metal &&
+cargo test --lib`, and `cargo clippy --all-targets -- -D warnings` there.
