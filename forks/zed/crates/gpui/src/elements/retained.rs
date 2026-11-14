@@ -576,8 +576,22 @@ impl Element for Retained {
                             // apart), its elements built again.
                             None => {
                                 let prev = std::mem::take(&mut state.states);
+                                // mirin: what building its elements reads
+                                // is not what the subtree around it is drawn
+                                // from. This runs while that one's prepaint
+                                // is watched for the entities it reads, and
+                                // an app's build reads its own state (mirin's
+                                // root view): the subtree around then counted
+                                // as notified on every frame the root was
+                                // dirty, which is every frame, and was never
+                                // left out again once nothing of it showed
+                                // (rows scrolled out of view were copied,
+                                // unseen, for good). Built from
+                                // `request_layout`, nothing is watching.
                                 let (element, drawing) = with_states(prev, window, |window| {
-                                    state.rebuild(&build, view, window, cx)
+                                    cx.unattributed_accesses(|cx| {
+                                        state.rebuild(&build, view, window, cx)
+                                    })
                                 });
                                 state.drawing = Some(drawing);
                                 element

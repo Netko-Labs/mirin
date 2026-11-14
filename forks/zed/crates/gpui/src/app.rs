@@ -1465,6 +1465,18 @@ impl App {
         (result, self.entities.pop_access_scope())
     }
 
+    /// mirin: run `callback` with the entities it accesses counted for the
+    /// frame (the window still hears of them) but for none of the scopes
+    /// open around it: what building a retained subtree's elements reads is
+    /// not what the subtree around it is drawn from
+    /// (`elements::retained`'s `rebuild`).
+    pub(crate) fn unattributed_accesses<R>(&mut self, callback: impl FnOnce(&mut App) -> R) -> R {
+        self.entities.push_access_scope();
+        let result = callback(self);
+        self.entities.pop_access_scope_into_frame();
+        result
+    }
+
     pub(crate) fn record_entities_accessed(
         &mut self,
         window_handle: AnyWindowHandle,
