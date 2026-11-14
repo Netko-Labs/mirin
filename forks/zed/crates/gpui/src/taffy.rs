@@ -1,7 +1,7 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
     Style, Window, size,
-    util::{round_stroke_to_device_pixel, round_to_device_pixel},
+    util::round_to_device_pixel,
 };
 use collections::{FxHashMap, FxHashSet};
 use std::{fmt::Debug, ops::Range};
@@ -662,6 +662,8 @@ impl TaffyLayoutEngine {
     //     includes borders, padding, gaps, and explicit sizes.
     //     Custom-measured leaf nodes have their measured sizes rounded up
     //     to integer device-pixel lengths.
+    //     (mirin: not done. Lengths and measured sizes reach taffy
+    //     unrounded, as on mirin's default build; only phase 2 rounds.)
     //
     //  2. Post-layout edge snapping. After Taffy resolves the tree, layout
     //     relationships such as flex shares, grid tracks, percentages, and
@@ -714,12 +716,28 @@ impl TaffyLayoutEngine {
     /// overflows them visibly, then a scroll container's end padding), as
     /// taffy measured it from the padding box, and the borders around it.
     /// A scroll view scrolls by this less its size.
+    ///
+    /// Rounded as the node's own size is (`layout_bounds`): the difference
+    /// of its rounded absolute edges, in device pixels. mirin's default
+    /// build takes it from taffy 0.9's rounded layout, so a view's end is a
+    /// whole device pixel from its start there; unrounded, with lengths that
+    /// are fractions of a device pixel (a scale of 1.25), the end sat a
+    /// fraction short of it and a small step back from the end landed a
+    /// device pixel away from where the default build puts it.
     pub fn layout_scroll_extent(&self, id: LayoutId, scale_factor: f32) -> Size<Pixels> {
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
         let reach = layout.scrollable_overflow_rect;
+        let extent = crate::point(
+            layout.border.left + reach.right + layout.border.right,
+            layout.border.top + reach.bottom + layout.border.bottom,
+        );
+        let extent = match self.absolute_outer_origins.get(&id) {
+            Some(origin) => (*origin + extent).map(f32::round) - origin.map(f32::round),
+            None => extent,
+        };
         size(
-            Pixels((layout.border.left + reach.right + layout.border.right) / scale_factor),
-            Pixels((layout.border.top + reach.bottom + layout.border.bottom) / scale_factor),
+            Pixels(extent.x / scale_factor),
+            Pixels(extent.y / scale_factor),
         )
     }
 
@@ -814,11 +832,11 @@ fn border_widths_to_taffy(
     rem_size: Pixels,
     scale_factor: f32,
 ) -> TaffyRect<taffy::style::LengthPercentage> {
+    // mirin: as authored, not rounded to the device pixel (see
+    // `AbsoluteLength::to_taffy`): a 1 px border takes 1.5 device pixels of
+    // layout at 1.5, as on mirin's default build, and paints as one.
     let snap = |w: &AbsoluteLength| {
-        taffy::style::LengthPercentage::length(round_stroke_to_device_pixel(
-            w.to_pixels(rem_size).0,
-            scale_factor,
-        ))
+        taffy::style::LengthPercentage::length(w.to_pixels(rem_size).0.max(0.0) * scale_factor)
     };
     TaffyRect {
         top: snap(&widths.top),
@@ -927,7 +945,7 @@ impl ToTaffy<taffy::style::Style> for Style {
     }
 }
 
-// mirin: explicit grid tracks; lengths in device pixels, rounded as every length is.
+// mirin: explicit grid tracks; lengths in device pixels, unrounded as every length is.
 fn to_grid_tracks<T: taffy::style::CheapCloneStr>(
     tracks: &[crate::GridTrack],
     scale_factor: f32,
@@ -938,14 +956,14 @@ fn to_grid_tracks<T: taffy::style::CheapCloneStr>(
         .iter()
         .map(|track| {
             let min = match track.min {
-                TrackBreadth::Pixels(px) => Min::length(round_to_device_pixel(px, scale_factor)),
+                TrackBreadth::Pixels(px) => Min::length(px * scale_factor),
                 TrackBreadth::Percent(fraction) => Min::percent(fraction),
                 TrackBreadth::MinContent => Min::min_content(),
                 TrackBreadth::MaxContent => Min::max_content(),
                 TrackBreadth::Auto | TrackBreadth::Fr(_) => Min::auto(),
             };
             let max = match track.max {
-                TrackBreadth::Pixels(px) => Max::length(round_to_device_pixel(px, scale_factor)),
+                TrackBreadth::Pixels(px) => Max::length(px * scale_factor),
                 TrackBreadth::Percent(fraction) => Max::percent(fraction),
                 TrackBreadth::Fr(fr) => Max::fr(fr),
                 TrackBreadth::MinContent => Max::min_content(),
@@ -958,8 +976,15 @@ fn to_grid_tracks<T: taffy::style::CheapCloneStr>(
 }
 
 impl ToTaffy<f32> for AbsoluteLength {
+    // mirin: an authored length goes to taffy as authored, in device pixels
+    // but not rounded to one. Upstream rounds every length before layout
+    // (phase 1 of "Pixel snapping" above), which at 1.25 or 1.5 makes a
+    // 7 px gap 9 device pixels where mirin's default build, which Dashi's
+    // apps are laid out against, keeps 8.75 and rounds only the edges that
+    // result (`layout_bounds`). At a scale of 1 a whole-pixel length is the
+    // same either way.
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
-        round_to_device_pixel(self.to_pixels(rem_size).0, scale_factor)
+        self.to_pixels(rem_size).0 * scale_factor
     }
 }
 

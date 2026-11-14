@@ -639,6 +639,10 @@ mod tab_tests;
 #[cfg(test)]
 mod scroll_tests;
 
+// Lengths that are fractions of a device pixel, laid out by GPUI on its test platform.
+#[cfg(test)]
+mod scale_tests;
+
 /// A text cut to one line (`numberOfLines={1}`): as wide as its box, the
 /// rest of the line given to an ellipsis.
 pub(crate) fn one_line<E: Styled>(element: E) -> E {
