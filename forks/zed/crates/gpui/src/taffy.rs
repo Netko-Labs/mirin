@@ -131,7 +131,25 @@ impl TaffyLayoutEngine {
     /// mirin: nodes made from now until `end_owned` belong to a retained
     /// subtree and are kept across frames.
     pub(crate) fn begin_owned(&mut self) {
+        self.free_released();
         self.owning.push(Vec::new());
+    }
+
+    /// mirin: free the nodes retained subtrees have let go of so far,
+    /// children before their parents, so the nodes made next take their
+    /// places. A subtree made anew lets its old nodes go once the new ones
+    /// are made; left until the frame's end, a frame that makes every
+    /// subtree anew (a window's second frame at a scale factor other than
+    /// the one it opened with, a theme change) held the whole tree twice,
+    /// and taffy's node storage, which never shrinks, stayed twice as large
+    /// (22 MB more for 17,600 nodes). No element of this frame holds them:
+    /// a state lets go of its nodes when it is dropped.
+    fn free_released(&mut self) {
+        let released = std::mem::take(&mut *self.released.borrow_mut());
+        self.owned_count = self.owned_count.saturating_sub(released.len());
+        for id in &released {
+            let _ = self.taffy.remove(id.0);
+        }
     }
 
     /// mirin: the nodes made since `begin_owned`, in the order they were made.
