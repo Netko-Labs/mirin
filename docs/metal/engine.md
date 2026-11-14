@@ -167,6 +167,22 @@ the fork already won:
 | stress app RSS at idle | 202 MB | 195 MB | 195 MB |
 | counter: RSS, GPU memory, first frame | 59 MB, 14 MB, 33 ms | 68 MB, 32 MB, 40 ms (round 5) | 59 MB, 14 MB, 33 ms |
 
+Step 1's footprint lane (`sumi-footprint`, `gpui-next.md`, "sumi step 1: a
+small app's footprint, and other scale factors") measured the footprint
+rows again on the hosts at step 1's base, and the one the table lacked, the
+stress app at 1.5:
+
+| Measure | default build (`host-main`) | upstream at the base (`host-next-main`) | upstream after the lane | Budget |
+| --- | --- | --- | --- | --- |
+| counter RSS | 59.7 MB | 67.3 MB | 64.9 MB | 59 MB |
+| counter GPU memory | 13.8 MB | 31.8 MB | 16.2 MB | 14 MB |
+| counter first frame | 30–34 ms | 35–40 ms | 30–33 ms | 33 ms |
+| stress app RSS at idle, at 1 | 197 MB | 188–192 MB | 185–187 MB | 195 MB |
+| stress app RSS at idle, at 1.5 | 211–213 MB | 228–233 MB | 196–202 MB | 215 MB |
+
+The counter's RSS is the one still over by more than noise: the binary's
+size and 1.7 MB of heap.
+
 Grow in a scroll view and scroll across are measured on both hosts at the
 start of step 1 and join the table then. Step 1 is done when the upstream
 host meets every budget within noise (0.2 ms, 3 MB). Later steps lower
