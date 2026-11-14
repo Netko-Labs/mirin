@@ -7,7 +7,31 @@ use gpui::{
     Point, ScrollHandle, ShapedLine, Size, Subscription, Window, WindowKind, WindowOptions,
 };
 
+#[cfg(target_os = "linux")]
 pub(crate) use gpui::layer_shell::{KeyboardInteractivity, Layer};
+
+/// A layer surface's layer. Layer surfaces are Wayland's: elsewhere the
+/// options parse (the protocol is the same on every platform) and the
+/// window opens as a normal one ([`with_surface`]).
+#[cfg(not(target_os = "linux"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layer {
+    Background,
+    Bottom,
+    Top,
+    #[default]
+    Overlay,
+}
+
+/// How a layer surface takes the keyboard; see [`Layer`].
+#[cfg(not(target_os = "linux"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyboardInteractivity {
+    None,
+    Exclusive,
+    #[default]
+    OnDemand,
+}
 pub(crate) use gpui::ScrollEvent as ScrollWheelEvent;
 
 /// The application, on the platform GPUI picks, with GPUI's own AccessKit
@@ -122,6 +146,8 @@ pub struct LayerMargin {
 
 /// The fork's layer-shell options, made upstream's `WindowKind::LayerShell`
 /// by [`with_surface`].
+// Off Linux nothing reads them: there is no layer surface to open.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LayerShellOptions {
     pub namespace: String,
@@ -135,6 +161,7 @@ pub struct LayerShellOptions {
     pub output: Option<String>,
 }
 
+#[cfg(target_os = "linux")]
 impl LayerShellOptions {
     fn window_kind(&self) -> WindowKind {
         use gpui::layer_shell::Anchor;
@@ -162,7 +189,7 @@ impl LayerShellOptions {
 
 /// The window's surface role: a layer surface or the lock screen; neither, a
 /// toplevel. A layer surface that names its screen opens on the display of
-/// that name.
+/// that name. Off Linux there is neither role: the window is a toplevel.
 pub(crate) fn with_surface(
     options: WindowOptions,
     layer: Option<&LayerShellOptions>,
@@ -177,10 +204,16 @@ pub(crate) fn with_surface(
                 .find(|display| display.name().as_deref() == Some(name))
         })
         .map(|display| display.id());
+    #[cfg(target_os = "linux")]
     let kind = if lock {
         WindowKind::SessionLock
     } else {
         layer.map_or(WindowKind::Normal, LayerShellOptions::window_kind)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let kind = {
+        let _ = lock;
+        WindowKind::Normal
     };
     WindowOptions {
         kind,
