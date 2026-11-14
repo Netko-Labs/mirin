@@ -209,7 +209,125 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
     parse_line(line).map(HostLine::Window)
 }
 
-/// The modifiers held during a press or a right-click, named as `keydown` names them.
+/// One interaction event as the line the driver reads.
+fn event_line(event: &NativeUiEvent) -> serde_json::Value {
+    let mut line = serde_json::json!({ "type": event.kind.name(), "nodeId": event.node_id });
+    if let Some(value) = event.kind.value() {
+        line["value"] = serde_json::Value::String(value.to_string());
+    }
+    if let EventKind::Selection {
+        start,
+        end,
+        text_hash,
+    } = &event.kind
+    {
+        line["start"] = serde_json::json!(start);
+        line["end"] = serde_json::json!(end);
+        line["textHash"] = serde_json::json!(text_hash);
+    }
+    if let EventKind::Hover { hovered } = &event.kind {
+        line["hovered"] = serde_json::Value::Bool(*hovered);
+    }
+    if let EventKind::Pointer {
+        phase,
+        x,
+        y,
+        modifiers,
+        ..
+    } = &event.kind
+    {
+        line["phase"] = serde_json::json!(phase.name());
+        line["x"] = serde_json::json!(x);
+        line["y"] = serde_json::json!(y);
+        write_modifiers(&mut line, modifiers);
+    }
+    if let Some(bounds) = &event.bounds {
+        line["bounds"] = serde_json::json!({
+            "x": bounds.x, "y": bounds.y,
+            "width": bounds.width, "height": bounds.height,
+        });
+    }
+    if let EventKind::ContextMenu { x, y, modifiers } = &event.kind {
+        line["x"] = serde_json::json!(x);
+        line["y"] = serde_json::json!(y);
+        write_modifiers(&mut line, modifiers);
+    }
+    if let EventKind::Press(modifiers) = &event.kind {
+        write_modifiers(&mut line, modifiers);
+    }
+    if let EventKind::RunPress {
+        run,
+        offset,
+        modifiers,
+    } = &event.kind
+    {
+        line["run"] = serde_json::json!(run);
+        line["offset"] = serde_json::json!(offset);
+        write_modifiers(&mut line, modifiers);
+    }
+    if let EventKind::KeyDown(key) | EventKind::WindowKey { key, .. } = &event.kind {
+        line["key"] = serde_json::json!(key.key);
+        if let Some(text) = &key.text {
+            line["text"] = serde_json::json!(text);
+        }
+        line["ctrl"] = serde_json::json!(key.ctrl);
+        line["alt"] = serde_json::json!(key.alt);
+        line["shift"] = serde_json::json!(key.shift);
+        line["meta"] = serde_json::json!(key.platform);
+        line["repeat"] = serde_json::json!(key.repeat);
+    }
+    if let EventKind::WindowKey {
+        pasted: Some(pasted),
+        ..
+    } = &event.kind
+    {
+        line["pasted"] = serde_json::json!(pasted);
+    }
+    if let EventKind::Visibility { visible } = &event.kind {
+        line["visible"] = serde_json::json!(visible);
+    }
+    if let EventKind::Typing { typing } = &event.kind {
+        line["typing"] = serde_json::json!(typing);
+    }
+    if let EventKind::Drop(drop) = &event.kind {
+        line["phase"] = serde_json::json!(drop.phase.name());
+        line["x"] = serde_json::json!(drop.x);
+        line["y"] = serde_json::json!(drop.y);
+        line["paths"] = serde_json::json!(drop.paths);
+        line["ctrl"] = serde_json::json!(drop.ctrl);
+        line["alt"] = serde_json::json!(drop.alt);
+        line["shift"] = serde_json::json!(drop.shift);
+    }
+    if let EventKind::Wheel { dx, dy } = &event.kind {
+        line["dx"] = serde_json::json!(dx);
+        line["dy"] = serde_json::json!(dy);
+    }
+    if let EventKind::Chrome(chrome) = &event.kind {
+        line["titleBar"] = serde_json::json!(chrome.title_bar.name());
+        line["controls"] = match &chrome.controls {
+            Some(c) => serde_json::json!({
+                "x": c.x, "y": c.y, "width": c.width, "height": c.height,
+            }),
+            None => serde_json::Value::Null,
+        };
+    }
+    if let EventKind::Layout { nodes } = &event.kind {
+        line["nodes"] = serde_json::Value::Array(
+            nodes
+                .iter()
+                .map(|node| {
+                    serde_json::json!({
+                        "id": node.id, "x": node.x, "y": node.y,
+                        "width": node.width, "height": node.height,
+                    })
+                })
+                .collect(),
+        );
+    }
+    line
+}
+
+/// The modifiers held during a press, a right-click or a pointer phase, named as `keydown` names them.
 fn write_modifiers(line: &mut serde_json::Value, modifiers: &mirin_metal::Modifiers) {
     line["shift"] = serde_json::json!(modifiers.shift);
     line["ctrl"] = serde_json::json!(modifiers.ctrl);
@@ -450,112 +568,7 @@ fn main() {
     // interaction events → stdout.
     std::thread::spawn(move || {
         while let Ok(event) = event_rx.recv() {
-            let mut line =
-                serde_json::json!({ "type": event.kind.name(), "nodeId": event.node_id });
-            if let Some(value) = event.kind.value() {
-                line["value"] = serde_json::Value::String(value.to_string());
-            }
-            if let EventKind::Selection {
-                start,
-                end,
-                text_hash,
-            } = &event.kind
-            {
-                line["start"] = serde_json::json!(start);
-                line["end"] = serde_json::json!(end);
-                line["textHash"] = serde_json::json!(text_hash);
-            }
-            if let EventKind::Hover { hovered } = &event.kind {
-                line["hovered"] = serde_json::Value::Bool(*hovered);
-            }
-            if let EventKind::Pointer { phase, x, y, .. } = &event.kind {
-                line["phase"] = serde_json::json!(phase.name());
-                line["x"] = serde_json::json!(x);
-                line["y"] = serde_json::json!(y);
-            }
-            if let Some(bounds) = &event.bounds {
-                line["bounds"] = serde_json::json!({
-                    "x": bounds.x, "y": bounds.y,
-                    "width": bounds.width, "height": bounds.height,
-                });
-            }
-            if let EventKind::ContextMenu { x, y, modifiers } = &event.kind {
-                line["x"] = serde_json::json!(x);
-                line["y"] = serde_json::json!(y);
-                write_modifiers(&mut line, modifiers);
-            }
-            if let EventKind::Press(modifiers) = &event.kind {
-                write_modifiers(&mut line, modifiers);
-            }
-            if let EventKind::RunPress {
-                run,
-                offset,
-                modifiers,
-            } = &event.kind
-            {
-                line["run"] = serde_json::json!(run);
-                line["offset"] = serde_json::json!(offset);
-                write_modifiers(&mut line, modifiers);
-            }
-            if let EventKind::KeyDown(key) | EventKind::WindowKey { key, .. } = &event.kind {
-                line["key"] = serde_json::json!(key.key);
-                if let Some(text) = &key.text {
-                    line["text"] = serde_json::json!(text);
-                }
-                line["ctrl"] = serde_json::json!(key.ctrl);
-                line["alt"] = serde_json::json!(key.alt);
-                line["shift"] = serde_json::json!(key.shift);
-                line["meta"] = serde_json::json!(key.platform);
-                line["repeat"] = serde_json::json!(key.repeat);
-            }
-            if let EventKind::WindowKey {
-                pasted: Some(pasted),
-                ..
-            } = &event.kind
-            {
-                line["pasted"] = serde_json::json!(pasted);
-            }
-            if let EventKind::Visibility { visible } = &event.kind {
-                line["visible"] = serde_json::json!(visible);
-            }
-            if let EventKind::Typing { typing } = &event.kind {
-                line["typing"] = serde_json::json!(typing);
-            }
-            if let EventKind::Drop(drop) = &event.kind {
-                line["phase"] = serde_json::json!(drop.phase.name());
-                line["x"] = serde_json::json!(drop.x);
-                line["y"] = serde_json::json!(drop.y);
-                line["paths"] = serde_json::json!(drop.paths);
-                line["ctrl"] = serde_json::json!(drop.ctrl);
-                line["alt"] = serde_json::json!(drop.alt);
-                line["shift"] = serde_json::json!(drop.shift);
-            }
-            if let EventKind::Wheel { dx, dy } = &event.kind {
-                line["dx"] = serde_json::json!(dx);
-                line["dy"] = serde_json::json!(dy);
-            }
-            if let EventKind::Chrome(chrome) = &event.kind {
-                line["titleBar"] = serde_json::json!(chrome.title_bar.name());
-                line["controls"] = match &chrome.controls {
-                    Some(c) => serde_json::json!({
-                        "x": c.x, "y": c.y, "width": c.width, "height": c.height,
-                    }),
-                    None => serde_json::Value::Null,
-                };
-            }
-            if let EventKind::Layout { nodes } = &event.kind {
-                line["nodes"] = serde_json::Value::Array(
-                    nodes
-                        .iter()
-                        .map(|node| {
-                            serde_json::json!({
-                                "id": node.id, "x": node.x, "y": node.y,
-                                "width": node.width, "height": node.height,
-                            })
-                        })
-                        .collect(),
-                );
-            }
+            let line = event_line(&event);
             if !write_line(&line) {
                 break;
             }
@@ -792,5 +805,38 @@ mod window_size_tests {
         assert_eq!((options.width, options.height), (200.0, 100.0));
         let options = window_options("t".into(), None, Some((0.0, 186.0)), None, None).unwrap();
         assert_eq!((options.width, options.height), (800.0, 600.0));
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::event_line;
+    use mirin_metal::{EventKind, Modifiers, NativeUiEvent, PointerPhase};
+
+    #[test]
+    fn a_pointer_phase_says_the_modifiers_held() {
+        let line = event_line(&NativeUiEvent {
+            node_id: "listing".into(),
+            kind: EventKind::Pointer {
+                phase: PointerPhase::Move,
+                x: 12.0,
+                y: 30.0,
+                bounds: None,
+                modifiers: Modifiers {
+                    shift: true,
+                    platform: true,
+                    ..Modifiers::default()
+                },
+            },
+            bounds: None,
+        });
+        // Named as a press and `keydown` name them: Super is `meta`.
+        assert_eq!(
+            line,
+            serde_json::json!({
+                "type": "pointer", "nodeId": "listing", "phase": "move", "x": 12.0, "y": 30.0,
+                "shift": true, "ctrl": false, "alt": false, "meta": true,
+            })
+        );
     }
 }

@@ -7,6 +7,7 @@ import type {
   Modifiers,
   NativeEvent,
   NativeTransport,
+  PointerInfo,
   PressInfo,
   WindowKeyInfo,
 } from "../src/types.ts";
@@ -100,6 +101,24 @@ describe("focus props", () => {
     transport.emit({ type: "press", nodeId, modifiers: shifted });
     transport.emit({ type: "press", nodeId });
     expect(presses.map((press) => press.modifiers)).toEqual([shifted, NONE]);
+  });
+
+  test("a pointer phase carries the modifiers held, and says nothing from an older host", async () => {
+    const transport = fakeTransport();
+    const phases: PointerInfo[] = [];
+    render(
+      createElement(View, { onPointer: (event: PointerInfo) => phases.push(event) }),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "{}") as Node;
+    const nodeId = String(tree.props.id);
+    const shifted: Modifiers = { ...NONE, shift: true };
+    transport.emit({ type: "pointer", nodeId, phase: "down", x: 1, y: 2, modifiers: shifted });
+    // ⇧ let go with the pointer still: the host sends a move where it is.
+    transport.emit({ type: "pointer", nodeId, phase: "move", x: 1, y: 2, modifiers: NONE });
+    transport.emit({ type: "pointer", nodeId, phase: "up", x: 1, y: 2 });
+    expect(phases.map((phase) => phase.modifiers)).toEqual([shifted, NONE, undefined]);
   });
 });
 

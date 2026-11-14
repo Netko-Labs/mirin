@@ -5,30 +5,52 @@
 //! the pointer to the surface it was pressed on, so the listeners are
 //! window-wide, not tied to the root's hitbox (which stops at the window's
 //! edge, and left a drag that ended outside it stuck).
+//!
+//! Every phase says the modifiers held, as a press does. A modifier pressed
+//! or let go while the button is down and the pointer still sends a move
+//! where the pointer is, so a drag's rule (⇧ adds, ❖ toggles) changes at
+//! once and not at the next move.
 
 use gpui::{
     canvas, div, prelude::*, AnyElement, Context, DispatchPhase, DragMoveEvent, ExternalPaths,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Window,
 };
 
 use crate::events::PointerPhase;
 use crate::window::RootView;
 
 impl RootView {
-    /// Report a pointer phase for `node_id` with its last painted bounds.
-    pub(crate) fn emit_pointer(&self, node_id: &str, phase: &str, position: Point<Pixels>) {
-        let phase = match phase {
-            "down" => PointerPhase::Down,
-            "move" => PointerPhase::Move,
-            _ => PointerPhase::Up,
-        };
+    /// Report a pointer phase for `node_id` with its last painted bounds and
+    /// the modifiers held.
+    pub(crate) fn emit_pointer(
+        &self,
+        node_id: &str,
+        phase: PointerPhase,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+    ) {
         self.events.pointer(
             node_id,
             phase,
             f32::from(position.x),
             f32::from(position.y),
             self.layout.node(node_id),
+            modifiers.into(),
         );
+    }
+
+    /// A modifier went down or up. During a capture that is a move where the
+    /// pointer already is, with the new modifiers.
+    pub(crate) fn modifiers_changed(&self, event: &ModifiersChangedEvent, window: &Window) {
+        if let Some(id) = self.dragging.as_deref() {
+            self.emit_pointer(
+                id,
+                PointerPhase::Move,
+                window.mouse_position(),
+                event.modifiers,
+            );
+        }
     }
 }
 
@@ -70,7 +92,7 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
                 }
                 let _ = moves.update(cx, |view, _| {
                     if let Some(id) = view.dragging.clone() {
-                        view.emit_pointer(&id, "move", event.position);
+                        view.emit_pointer(&id, PointerPhase::Move, event.position, event.modifiers);
                     }
                     view.drag_moved(
                         event.position,
@@ -87,7 +109,7 @@ pub(crate) fn capture_root(content: AnyElement, cx: &mut Context<RootView>) -> A
                 let _ = releases.update(cx, |view, _| {
                     view.drag_released();
                     if let Some(id) = view.dragging.take() {
-                        view.emit_pointer(&id, "up", event.position);
+                        view.emit_pointer(&id, PointerPhase::Up, event.position, event.modifiers);
                     }
                 });
             });

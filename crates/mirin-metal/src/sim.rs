@@ -287,9 +287,10 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
         }
         SimAction::Layout(nodes) => events.layout(nodes),
         SimAction::Drag(id, bounds, [(x0, y0), (x1, y1)]) => {
-            events.pointer(&id, PointerPhase::Down, x0, y0, Some(bounds.clone()));
-            events.pointer(&id, PointerPhase::Move, x1, y1, Some(bounds.clone()));
-            events.pointer(&id, PointerPhase::Up, x1, y1, Some(bounds));
+            let none = Held::default();
+            events.pointer(&id, PointerPhase::Down, x0, y0, Some(bounds.clone()), none);
+            events.pointer(&id, PointerPhase::Move, x1, y1, Some(bounds.clone()), none);
+            events.pointer(&id, PointerPhase::Up, x1, y1, Some(bounds), none);
         }
         SimAction::ContextMenu(id, x, y) => events.context_menu(&id, x, y, Held::default()),
         SimAction::Hover(id, hovered) => events.hover(&id, hovered),
