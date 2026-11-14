@@ -195,7 +195,24 @@ impl WgpuAtlasTextures {
             height: DevicePixels(max_texture_size),
         };
 
-        let size = min_size.min(&max_atlas_size).max(&DEFAULT_ATLAS_SIZE);
+        // mirin: the first texture of colors is a quarter of the others. An
+        // atlas of colors (subpixel text, emoji, images) is four bytes a
+        // pixel, so its first 1024² texture is 4 MiB where the default
+        // build's first glyph atlas (one byte a pixel) is 1 MiB, and a small
+        // app's text fills a corner of it. Every texture after it is full
+        // size, so an app with much text has one small texture more.
+        const FIRST_COLOR_ATLAS_SIZE: Size<DevicePixels> = Size {
+            width: DevicePixels(512),
+            height: DevicePixels(512),
+        };
+        let is_first_of_colors = kind != AtlasTextureKind::Monochrome
+            && self.storage[kind].textures.iter().all(Option::is_none);
+        let default_size = if is_first_of_colors {
+            FIRST_COLOR_ATLAS_SIZE
+        } else {
+            DEFAULT_ATLAS_SIZE
+        };
+        let size = min_size.min(&max_atlas_size).max(&default_size);
         let format = match kind {
             AtlasTextureKind::Monochrome => wgpu::TextureFormat::R8Unorm,
             AtlasTextureKind::Subpixel | AtlasTextureKind::Polychrome => self.color_texture_format,
