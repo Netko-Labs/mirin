@@ -1641,6 +1641,64 @@ still blocks the switch:
 - accessibility's two trees (step 6);
 - step 7's checks of Dashi's apps at other scale factors.
 
+**sumi step 1, frame time (`sumi-frame`, 2026-11-14).** The frame-time
+blockers above are closed at a scale factor of 1; scroll at 1.5 is not.
+
+- **Select in a scroll view was not the scroll view.** Run alone
+  (`stress.tsx --only=select/sc`) it cost what a plain select does, on both
+  builds; it cost 3.1–3.5 ms only after the bench's scroll. A subtree that
+  can't be copied is built again from prepaint, while the subtree around it
+  is watched for the entities it reads, and mirin-metal's build reads the
+  root view: the one around then counted as notified on every frame and was
+  never left out again. Every row that scrolled out of view after a card in
+  it had been built so stayed in the frame, copied unseen (56 subtrees
+  copied a select where 40 show, more with every row scrolled past). What a
+  build reads now counts for the frame alone (`App::unattributed_accesses`).
+- **A frame that copies most of a window copied too much.** Profiles of a
+  keystroke, a select and a scroll put most of the frame in copying last
+  frame's drawing: every record inside a copied subtree gone over twice a
+  frame (now told only when next looked at), each primitive copied five
+  times (two), dispatch nodes pushed and popped through three stacks (one
+  pass), a line layout's key hashed twice a frame (kept), and, after the
+  frame, every entity the window read removed and inserted again (only
+  what changed). `forks/zed/MIRIN.md` has a row each.
+- **Measured** (`stress.tsx --visible`, release hosts, a quiet machine,
+  two interleaved runs each, medians; frame ms):
+
+  | scale 1 | `sumi-frame` | `host-next-main` | `host-main` |
+  | --- | --- | --- | --- |
+  | select / type / hover | 1.6 / 1.0 / 1.75 | 1.9 / 1.4 / 2.15 | 1.85 / 1.0 / 1.95 |
+  | grow / scroll / resize | 1.45 / 2.65 / 1.8 | 1.95 / 3.05 / 2.0 | 3.3 / 2.55 / 2.3 |
+  | select / grow in a scroll view | 1.65 / 1.7 | 3.1 / 2.95 | 2.2 / 3.55 |
+  | scroll across | 2.35 | 2.9 | 2.4 |
+  | RSS idle / at the end | 194 / 282 MB | 193 / 280 MB | 203 / 312 MB |
+
+  | at 1.5 | `sumi-frame` | `host-next-main` (one run) | `host-main` |
+  | --- | --- | --- | --- |
+  | select / type / hover | 1.75 / 1.05 / 1.85 | 2.0 / 1.4 / 2.2 | 1.9 / 1.0 / 2.0 |
+  | grow / scroll / resize | 1.7 / 2.9 / 2.2 | 1.8 / 3.0 / 2.2 | 6.55 / 2.5 / 2.45 |
+  | select / grow in a scroll view | 1.95 / 1.85 | 3.3 / 3.1 | 2.2 / 7.0 |
+  | scroll across | 2.35 | 2.7 | 2.45 |
+
+  Instructions the window's thread runs per frame (a host built with
+  `--features profiling` counts them; load does not move them), millions,
+  before these changes, after, and the default build: select 9.45 / 7.17 /
+  8.69, a keystroke 5.74 / 4.08 / 5.72, scroll 16.23 / 10.41 / 15.40,
+  select in a scroll view 15.47 / 8.21 / 9.33.
+- **Left.** Scroll at 1.5 is 0.4 ms over the default build (2.9 against
+  2.5), as before; at 1 it is at the default build's (2.65 against 2.55).
+  A scroll frame builds the grid again onto its nodes and moves every row
+  in view, with the row under the pointer and its card drawn again, and on
+  the way down the row coming into view is shaped for the first time (21 of
+  the bench's 48 frames). What is left of it is the copy itself (scene
+  operations, dispatch nodes, hitboxes), which the retained frame
+  (`engine.md`, step 4) removes; at 1.5 a drawing with masks pushed inside
+  still does not move. Correctness: `layout-check` against
+  `host-next-main` with `--scene` (`grid`, `browser`, `scroll`,
+  `scroll-fractional`) and against itself with `MIRIN_METAL_RETAIN=0` (those
+  and `across`, at 1 and at 1.5): identical at every step; against
+  `host-main`, the known differences only.
+
 ## How this was measured
 
 - Hosts: `/tmp/claude-1000/host-r1` (round 1, `5fbcfb7`) and

@@ -972,7 +972,12 @@ splits each click into driver, transport, and frame stages from the host's
 `--features profiling` and set `MIRIN_METAL_PROFILE=<path>` (folded stacks;
 `MIRIN_METAL_PROFILE_SECS` long, after `MIRIN_METAL_PROFILE_AFTER` seconds,
 to leave the first frames out; `bench/stress.tsx --only=scroll` runs one
-scenario).
+scenario). A host built so also traces, with each frame, the instructions
+and CPU cycles the window's thread ran in user space (`src/counters.rs`,
+the kernel's `perf_event_open`; Linux on x86-64): a frame's time moves by
+0.3 ms between two runs of one host while the machine builds something
+else, its instructions do not, and `bench/stress.tsx --low` prints their
+medians beside each scenario's tenth-percentile frame.
 
 Findings and fixes (2026-10-29, release host, 866-node tree, medians):
 

@@ -164,10 +164,31 @@ the fork already won:
 | select, type, hover (ms) | 2.05, 1.05, 2.1 | 2.05, 1.55, 2.25 | 2.05, 1.05, 2.1 |
 | grow, scroll, resize (ms) | 3.2, 2.3, 2.45 | 1.75, 2.8, 2.2 | 1.75, 2.3, 2.2 |
 | select in a scroll view (ms) | 2.55 (host-r5) | 3.35 | 2.55 |
+| grow in a scroll view (ms) | 3.55 (`host-main`) | 2.95 (`host-next-main`) | 2.95 |
+| scroll across (ms) | 2.4 (`host-main`) | 2.9 (`host-next-main`) | 2.4 |
 | stress app RSS at idle | 202 MB | 195 MB | 195 MB |
 | counter: RSS, GPU memory, first frame | 59 MB, 14 MB, 33 ms | 68 MB, 32 MB, 40 ms (round 5) | 59 MB, 14 MB, 33 ms |
 
-Grow in a scroll view and scroll across are measured on both hosts at the
-start of step 1 and join the table then. Step 1 is done when the upstream
-host meets every budget within noise (0.2 ms, 3 MB). Later steps lower
-them; when a step does, the table moves with it.
+Grow in a scroll view and scroll across were measured at the start of step
+1 on the hosts built at its base (`host-main`, the default build, and
+`host-next-main`, the upstream one; medians of two runs, 2026-11-14) and
+joined the table then. Step 1 is done when the upstream host meets every
+budget within noise (0.2 ms, 3 MB). Later steps lower them; when a step
+does, the table moves with it.
+
+**Step 1, frame time (`sumi-frame`).** The upstream host with the frame
+lane's changes (`gpui-next.md`, "State, what is left, and the default"),
+beside the two hosts at the base, the same day on a quiet machine, medians
+of two interleaved runs:
+
+| Frame (ms) | `sumi-frame` | `host-next-main` | `host-main` |
+| --- | --- | --- | --- |
+| select, type, hover | 1.6, 1.0, 1.75 | 1.9, 1.4, 2.15 | 1.85, 1.0, 1.95 |
+| grow, scroll, resize | 1.45, 2.65, 1.8 | 1.95, 3.05, 2.0 | 3.3, 2.55, 2.3 |
+| select in a scroll view | 1.65 | 3.1 | 2.2 |
+| grow in a scroll view, scroll across | 1.7, 2.35 | 2.95, 2.9 | 3.55, 2.4 |
+| stress RSS at idle, at the end | 194, 282 MB | 193, 280 MB | 203, 312 MB |
+
+It meets every frame budget but scroll, which is at the default build's
+that day (2.65 against 2.55, within noise) and 0.35 ms over the 2.3 the
+table took from an earlier session.
