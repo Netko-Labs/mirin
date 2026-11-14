@@ -2809,6 +2809,12 @@ pub struct WindowParams {
 
     pub window_min_size: Option<Size<Pixels>>,
 
+    // mirin: whether the window is transparent once it is open (client-side
+    // decorations, or a background that isn't opaque), so that a Wayland
+    // window's renderer starts as it will be used.
+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
+    pub transparent: bool,
+
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
 
