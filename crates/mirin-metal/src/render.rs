@@ -3,7 +3,7 @@
 //! React Native's shadow tree → native views step. The one renderer-owned piece
 //! of state is the editing buffer of `input` nodes (`window::InputState`).
 
-use std::sync::OnceLock;
+use std::sync::{mpsc, Mutex, OnceLock};
 
 use gpui::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
@@ -676,18 +676,16 @@ pub(crate) fn sans_family() -> SharedString {
 /// and the first text shaped in a weight has the text system look at every
 /// installed face (2 ms and more): both ran inside the first frame, on the
 /// main thread, which until then waits for the GPU. Asked for here, they are
-/// there when the first frame wants them; `mono_family` too, which the first
-/// monospace text otherwise waits for mid-frame.
+/// there when the first frame wants them: the family at once, then the
+/// weights of the first window's tree (`warm_weights`), then `mono_family`,
+/// which the first monospace text otherwise waits for mid-frame.
 pub(crate) fn warm_fonts(cx: &gpui::App) {
     let text_system = cx.text_system().clone();
+    let (weights, first_tree) = mpsc::channel::<Vec<FontWeight>>();
     let warm = move || {
         let family = sans_family();
-        for weight in [
-            FontWeight::NORMAL,
-            FontWeight::MEDIUM,
-            FontWeight::SEMIBOLD,
-            FontWeight::BOLD,
-        ] {
+        // The first window's weights; none when the host ends without one.
+        for weight in first_tree.recv().unwrap_or_default() {
             let mut font = gpui::font(family.clone());
             font.weight = weight;
             // One at a time: the first frame waits for at most one of them.
@@ -696,9 +694,64 @@ pub(crate) fn warm_fonts(cx: &gpui::App) {
         mono_family();
     };
     // Without the thread the first frame finds them itself, as before.
-    let _ = std::thread::Builder::new()
+    let started = std::thread::Builder::new()
         .name("FontWarm".to_owned())
         .spawn(warm);
+    if started.is_ok() {
+        *WARMING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(weights);
+    }
+}
+
+/// Where the first window says which weights its tree draws text in.
+static WARMING: Mutex<Option<mpsc::Sender<Vec<FontWeight>>>> = Mutex::new(None);
+
+/// Tell the warming thread the weights `tree` draws its texts in (the first
+/// window's tree; later calls do nothing).
+pub(crate) fn warm_weights(tree: &NodeSpec) {
+    let waiting = WARMING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    if let Some(waiting) = waiting {
+        let mut weights = Vec::new();
+        text_weights(tree, &mut weights);
+        // The thread is gone only if it panicked: nothing to warm then.
+        let _ = waiting.send(weights);
+    }
+}
+
+/// The weights the texts and fields of `node` are drawn in, each once.
+fn text_weights(node: &NodeSpec, found: &mut Vec<FontWeight>) {
+    let mut note = |weight: Weight| {
+        let weight = match weight {
+            Weight::Normal => FontWeight::NORMAL,
+            Weight::Medium => FontWeight::MEDIUM,
+            Weight::Semibold => FontWeight::SEMIBOLD,
+            Weight::Bold => FontWeight::BOLD,
+        };
+        if !found.contains(&weight) {
+            found.push(weight);
+        }
+    };
+    match node {
+        NodeSpec::View { children, .. } => {
+            for child in children {
+                text_weights(child, found);
+            }
+        }
+        NodeSpec::Text { props, .. } => note(props.weight),
+        NodeSpec::Input { props } => {
+            note(Weight::Normal);
+            props
+                .runs
+                .iter()
+                .filter_map(|run| run.weight)
+                .for_each(note);
+        }
+        NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
+    }
 }
 
 fn fontconfig_family(pattern: &str) -> Option<SharedString> {

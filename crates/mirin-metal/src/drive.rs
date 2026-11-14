@@ -271,6 +271,8 @@ fn open_window(
     events: mpsc::Sender<NativeUiEvent>,
     access: UnboundedSender<SimCommand>,
 ) -> Option<WindowHandle<RootView>> {
+    // Before the window: opening it waits for the GPU, and the fonts warm meanwhile.
+    crate::render::warm_weights(tree.tree());
     let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
     // Desktop surfaces (layers, a lock screen) draw over what the
     // compositor shows behind them; their tree paints its own background.
