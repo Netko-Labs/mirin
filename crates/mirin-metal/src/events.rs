@@ -51,12 +51,15 @@ pub enum EventKind {
     Hover { hovered: bool },
     /// Pointer down on a `view` with `onPointer`, then every move and the
     /// release until the button goes up. Window coordinates plus the node's
-    /// painted bounds, so the driver can compute relative positions.
+    /// painted bounds, so the driver can compute relative positions, and the
+    /// modifiers held: a modifier that changes while the button is down
+    /// sends a move where the pointer is (`pointer.rs`).
     Pointer {
         phase: PointerPhase,
         x: f32,
         y: f32,
         bounds: Option<LayoutNode>,
+        modifiers: Modifiers,
     },
     /// Right-click on a `view` with `onContextMenu`, in window coordinates,
     /// with the modifiers held.
@@ -350,6 +353,7 @@ impl EventSender {
         x: f32,
         y: f32,
         bounds: Option<LayoutNode>,
+        modifiers: Modifiers,
     ) {
         self.send(
             node_id,
@@ -358,6 +362,7 @@ impl EventSender {
                 x,
                 y,
                 bounds,
+                modifiers,
             },
         );
     }
