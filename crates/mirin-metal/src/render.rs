@@ -671,6 +671,36 @@ pub(crate) fn sans_family() -> SharedString {
         .clone()
 }
 
+/// Find the UI fonts and warm the text system for them on a thread, as the
+/// host starts. `sans_family` asks fontconfig by running `fc-match` (7–8 ms),
+/// and the first text shaped in a weight has the text system look at every
+/// installed face (2 ms and more): both ran inside the first frame, on the
+/// main thread, which until then waits for the GPU. Asked for here, they are
+/// there when the first frame wants them; `mono_family` too, which the first
+/// monospace text otherwise waits for mid-frame.
+pub(crate) fn warm_fonts(cx: &gpui::App) {
+    let text_system = cx.text_system().clone();
+    let warm = move || {
+        let family = sans_family();
+        for weight in [
+            FontWeight::NORMAL,
+            FontWeight::MEDIUM,
+            FontWeight::SEMIBOLD,
+            FontWeight::BOLD,
+        ] {
+            let mut font = gpui::font(family.clone());
+            font.weight = weight;
+            // One at a time: the first frame waits for at most one of them.
+            crate::gpui_api::prewarm_fonts(&text_system, &[font]);
+        }
+        mono_family();
+    };
+    // Without the thread the first frame finds them itself, as before.
+    let _ = std::thread::Builder::new()
+        .name("FontWarm".to_owned())
+        .spawn(warm);
+}
+
 fn fontconfig_family(pattern: &str) -> Option<SharedString> {
     std::process::Command::new("fc-match")
         .args(["-f", "%{family}", pattern])

@@ -71,6 +71,7 @@ pub fn run(
     crate::gpui_api::application()
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
+            crate::render::warm_fonts(cx);
             let (access, asked) = futures::channel::mpsc::unbounded();
             let mut messages = bridge(updates, HostMessage::Driver);
             cx.spawn(async move |cx| {

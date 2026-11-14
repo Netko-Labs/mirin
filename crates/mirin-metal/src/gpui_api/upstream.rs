@@ -218,3 +218,9 @@ pub(crate) fn draw(window: &mut Window, cx: &mut App) {
 pub(crate) fn stretchable(retained: gpui::Retained, stretchable: bool) -> gpui::Retained {
     retained.stretchable(stretchable)
 }
+
+/// Fill the text system's caches for `fonts` (which faces match each, in
+/// order), from any thread, so the first text shaped in one doesn't.
+pub(crate) fn prewarm_fonts(text_system: &gpui::TextSystem, fonts: &[gpui::Font]) {
+    text_system.prewarm_fonts(fonts);
+}
