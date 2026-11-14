@@ -1,10 +1,19 @@
-# Metal's engine: from a patched GPUI to our own
+# sumi: Metal's own engine
 
-Status: **proposal** (2026-11-13). Nothing here is built yet. It answers
-three questions: what of our GPUI work is worth offering to Zed, what we
-should take from upstream, and how to restructure the fork into an engine
-of our own for Dashi, multiplatform apps, native components, and later iOS
-and Android.
+Status: **decided, under way** (2026-11-13). Metal stops being "GPUI plus
+patches" and grows its own engine, **sumi** (墨, the ink that goes on
+washi). This doc is its direction and roadmap. `gpui-next.md` keeps the
+history of how Metal got onto upstream GPUI.
+
+## Decisions
+
+| Question | Decision |
+| --- | --- |
+| Track upstream GPUI or own the code? | **Own it.** One last sync with Zed, then a hard fork. Fixes from upstream are picked by hand, not merged. |
+| Upstream PRs to Zed | **None.** Nothing in the roadmap waits on Zed. |
+| Platforms | **Linux (Wayland, Dashi first), macOS, Windows.** iOS, Android and the web are out. |
+| Native components | **Later, macOS only**, on NativeGPUI's model (section 5), after the core is ours. On Dashi and Windows the drawn `@mirinjs/metal-ui` components are the native ones. |
+| Shape of the engine | **Minimal and retained.** It keeps only what Metal calls, and the frame is built around what changed (section 3). |
 
 ## 1. Where we are
 
@@ -12,193 +21,153 @@ Metal draws with two builds of the same `crates/mirin-metal/src`:
 
 | Build | Base | Our changes | State |
 | --- | --- | --- | --- |
-| default | `forks/gpui` (gpui 0.2.2 from crates.io, one crate, blade renderer), `forks/taffy` 0.9, `forks/blade-graphics` | 8,500 lines in 49 files | ships in Dashi 0.9 |
-| upstream | `forks/zed` (Zed's GPUI at `f8cfc7ed`, 2026-11-10; 49 commits behind `main` on 2026-11-13), `forks/taffy-next` 0.15 | 7,700 lines in 41 files | at parity or faster on most of the stress bench; 4–7 days from being the default (`gpui-next.md`) |
+| default | `forks/gpui` (gpui 0.2.2, one crate, blade renderer), `forks/taffy` 0.9, `forks/blade-graphics` | 8,500 lines in 49 files | ships in Dashi 0.9 |
+| upstream | `forks/zed` (Zed's GPUI at `f8cfc7ed`, 2026-11-10), `forks/taffy-next` 0.15 | 7,700 lines in 41 files | at parity or faster on the stress bench, but select in a scroll view |
 
 `src/gpui_api/{fork,upstream}.rs` (360 lines) hides the differences.
 
-What the two bases offer:
+gpui 0.2.2 is a dead end: one crate with every platform inside, a renderer
+upstream dropped, no releases since. Upstream is split the way an engine
+should be: a core with no platform code, one crate per platform, shared
+renderers (`gpui_wgpu` for Linux, `gpui_apple`'s Metal renderer for macOS).
+sumi starts from upstream.
 
-- **gpui 0.2.2** is one crate with every platform inside it and a renderer
-  (blade) upstream has dropped. It has no iOS, no web, and no releases
-  since. It is a dead end.
-- **Upstream** is split: `gpui` (98k lines, no platform code),
-  `gpui_linux` (18k), `gpui_macos` (10k), `gpui_windows` (13k), `gpui_ios`
-  (3.6k), `gpui_apple` (5k: the Metal renderer and text system macOS and
-  iOS share), `gpui_web` (7k), `gpui_wgpu` (7k: the renderer Linux and web
-  use), and `gpui_platform`, which picks one. There is no Android crate.
+## 2. What sumi is
 
-mirin-metal uses a small part of GPUI: elements, styles, text, lists,
-scroll handles, focus, windows. It uses none of the action and keymap
-system, the inspector, or `http_client`.
+**A retained, GPU-drawn UI engine for one client: mirin Metal's host.**
+Not a general GPUI. Its users are the patch protocol and `@mirinjs/metal`,
+not Rust app authors, so its API can change whenever the host changes.
 
-## 2. What to offer upstream
+Principles:
 
-These rows of `forks/zed/MIRIN.md` are small, general, and already marked
-upstreamable. Each would be one PR to `zed-industries/zed`:
-
-| Area | Change |
-| --- | --- |
-| Layout | explicit grid track lists; `justify_items` / `justify_self`; a text's min-content width is its widest word |
-| Text | a line cut narrower than its ellipsis draws nothing; a wrapped line aligns by where its ink ends |
-| Scrolling | the wheel scrolls the innermost view that can still move; a list's scroll bar range counts its padding; a continuous scroll source moves as far as it says |
-| Wayland | `set_min_size` after open; a display's name; a layer surface anchored to opposite edges stretches; a resize asked while maximized; the compose table read at the first key press; one system bus connection |
-| wgpu | no indirect-call validation; 4 MiB memory blocks; path textures only while paths are on screen; pipelines built on first use and shared; a font face loaded when first picked |
-
-Not for upstream:
-
-- **Retained subtrees** (the mask map, the device grid, element state
-  scopes, the persistent layout tree): about 5,000 lines that change how a
-  frame is built. Zed caches views its own way and would not take it.
-- **Dashi's protocols** (the unified title bar), the four-thread cap, the
-  `mirin::startup` log, and layout rounding that matches taffy 0.9.
-
-Opening PRs on Zed's repository is outward-facing and the owner's call.
-Whatever lands there is one less thing to carry, but nothing below depends
-on it.
-
-## 3. What to take from upstream
-
-- **The platform split.** It is the reason to base the engine on upstream:
-  a platform is a crate that implements `Platform` and `PlatformWindow`,
-  so Dashi's Wayland code, macOS, Windows and iOS do not share a file.
-- **`gpui_wgpu`** on Linux, and `gpui_apple`'s Metal renderer on Apple
-  platforms.
-- **`gpui_ios`**, as a starting point. It is young (3.6k lines).
-- Upstream's own answers to twelve of our 0.2.2 changes (layer shell,
-  idle windows, `QuitMode::Explicit`, UAX #14 line breaking, and others
-  listed at the end of `forks/zed/MIRIN.md`).
-
-## 4. The proposal: a hard fork with a seam for platforms
-
-Today the fork is "upstream plus patches": a clean import on the
-`forks-upstream` branch, our changes merged on top, every change a row in
-`MIRIN.md`. That keeps re-syncing cheap and keeps our design constrained
-to what merges. Retained subtrees already strain it: they reach into
-`window.rs`, `taffy.rs`, `scene.rs` and `bounds_tree.rs`.
-
-The proposal is to stop tracking and own the code:
-
-1. **Finish the migration to upstream** and make it the default. Delete
-   `forks/gpui`, `forks/taffy`, `forks/blade-graphics` and
-   `src/gpui_api/`. One base instead of two.
-2. **Re-sync once more** to a recent Zed `main`, as the last merge.
-3. **Rename and move** the crates out of `forks/zed` into our own
-   (working names below). From then on we take upstream changes by
-   picking the ones we want, not by merging. `MIRIN.md` becomes a
-   changelog of picks.
-4. **Restructure** the core around what Metal needs.
+1. **Retained by default.** A frame redraws and relays out only what
+   changed. Today retention is patches in upstream's immediate-mode frame
+   (the mask map, the device grid, element state scopes, the persistent
+   layout tree, about 5,000 lines in `window.rs`, `taffy.rs`, `scene.rs`
+   and `bounds_tree.rs`). In sumi it is the frame.
+2. **Only what Metal calls.** Metal uses elements, styles, text, lists,
+   scroll handles, focus and windows. It uses none of actions and keymaps,
+   the inspector, `http_client`, hot reload, the profiler UI, screen
+   capture or `gpui_tokio`. What it doesn't call goes, measured (binary
+   size, RSS, first frame) before and after.
+3. **Budgets, not hopes.** Every change that touches the frame runs the
+   stress bench and the counter footprint against the last release host.
+   The budgets in section 6 are the bar. A change that breaks one doesn't
+   land.
+4. **Dashi is the first platform, not the only one.** Dashi's Wayland
+   protocols (the unified title bar, layer surfaces, session lock, file
+   drag) sit in one `dashi` module behind a `dashi` feature, so a plain
+   Linux, macOS or Windows app builds without them.
+5. **Platform crates stay boring.** We barely change macOS and Windows.
+   They stay close to upstream so picking its fixes stays cheap.
 
 ### Crates
 
-| Crate (working name) | From | What changes |
+| Crate | From | What changes |
 | --- | --- | --- |
-| `metal-engine` | `gpui` | Retention, the mask map, the device grid and the layout map become modules of the frame, not patches in `window.rs`. The persistent layout tree is the only layout tree. What Metal never calls is removed after measuring what it costs: actions and keymaps, the inspector, `http_client`. |
-| `metal-render-wgpu` | `gpui_wgpu` | Vulkan on Linux and Android. |
-| `metal-render-apple` | `gpui_apple` | Metal on macOS and iOS. |
-| `metal-linux` | `gpui_linux` | Wayland first. Dashi's protocols (title bar, layer surfaces, session lock, file drag) sit behind one `dashi` module and feature, so a plain Linux app builds without them. |
-| `metal-macos`, `metal-windows` | `gpui_macos`, `gpui_windows` | Kept close to upstream at first: we have changed little there, and picking fixes stays cheap. |
-| `metal-ios` | `gpui_ios` | Later (section 6). |
-| `metal-android` | new | Later (section 6). Upstream has none. |
-| `metal-native` | new | Native components (section 5). |
+| `sumi` | `gpui`, `gpui_macros`, `gpui_util`, `gpui_shared_string`, `refineable`, `sum_tree`, `collections`, `scheduler` | Retention becomes the frame. The persistent layout tree is the only layout tree. Actions, keymaps, the inspector and `http_client` go. |
+| `sumi-wgpu` | `gpui_wgpu` | Vulkan on Linux. Our memory and startup work (4 MiB blocks, path textures only while on screen, pipelines on first use, no indirect validation) is already in it. |
+| `sumi-apple` | `gpui_apple` | The Metal renderer and CoreText, for macOS. |
+| `sumi-linux` | `gpui_linux` | Wayland first, X11 behind its feature. `dashi` module and feature. |
+| `sumi-macos`, `sumi-windows` | `gpui_macos`, `gpui_windows` | Close to upstream. |
+| `sumi-platform` | `gpui_platform` | Picks one of the three. |
 
-`forks/taffy-next` and the three AccessKit forks stay forks: they are
-small, their upstreams are libraries with releases, and several of our
-taffy changes are upstreamable too.
+Out: `gpui_ios`, `gpui_web`, `gpui_tokio`, `http_client`, `bench_metrics`,
+`ztracing` (replaced by the `mirin::startup` log and `log`).
 
-### What this costs
+`forks/taffy-next` and the three AccessKit forks stay forks of their
+libraries: they are small and have releases.
 
-- **Upstream fixes stop arriving for free.** Zed's `gpui` crate took 28
-  commits in the first 13 days of November. After the fork, someone reads
-  that log, about monthly, and picks. Platform crates we barely touch are
-  where most of the value is, which is why they stay close.
-- **The rename is a large, mechanical diff** that makes every later pick a
-  hand-port in the core. That is the point of no return; steps 1 and 2 are
-  worth doing either way and decide nothing.
+Every sumi crate keeps Zed's Apache-2.0 license and notice; our code in
+them is under the same terms.
 
-### What it buys
+### Taking from upstream after the fork
 
-- The frame can be designed around retention instead of around upstream's
-  immediate-mode frame with our reuse added on. Select inside a scroll
-  view, the one bench still behind, is that kind of problem.
-- One build, one set of tests, no `GAP` shims.
-- A place for native components and mobile that upstream has no seat for.
+About monthly, someone reads Zed's log for the crates sumi came from and
+picks what fixes a bug we can hit or a platform change (a new macOS, a
+Windows API, a Wayland protocol). Most of the value is in the platform
+crates, which is why they stay close. Each pick is a row in
+`forks/sumi/PICKS.md`: upstream commit, what it fixes, where it landed.
 
-## 5. Native components
+## 3. Restructuring the frame
 
-[NativeGPUI](https://github.com/Cafekery/NativeGPUI) (MIT, macOS 26 only)
-shows the model: **GPUI owns layout; the OS owns the pixels.**
+What sumi's frame does, in order:
 
-- A native element takes a slot in the layout like any other element.
-- A host (`bridge/host.rs`) keeps an `NSView` per slot, placed above or
-  below GPUI's view at the slot's bounds each frame, and carries values
-  and events across (`NativeValue`, `NativeHandler`).
-- It needs seven patches to `gpui_macos` (frames that follow input, the
-  first drawable, a deferred first show, an idle display link, launch
-  order). Those are the patches we would take into `metal-macos`.
+1. **Apply patches** from the protocol to the element tree. Each touched
+   node marks itself and its ancestors dirty, with what kind of change
+   (paint, layout, children).
+2. **Lay out** dirty subtrees on the persistent taffy tree. Clean
+   subtrees keep their nodes and answers; a moved subtree moves.
+3. **Paint** dirty subtrees into their own scene ranges. Clean subtrees
+   keep their primitives; a moved subtree's are offset, a hidden one's
+   parked.
+4. **Hit-test and access** from the same retained tree: the bounds tree,
+   the mask map and the `access/` tree update for dirty subtrees only.
+5. **Submit** the scene. The renderer uploads only changed ranges.
 
-For Metal:
+Upstream's element `request_layout` / `prepaint` / `paint` stays as the
+way a node draws itself; what changes is that the window owns a retained
+tree and calls it for dirty nodes, instead of rebuilding the tree each
+frame and asking caches whether to skip.
 
-- **Engine:** a `NativeSlot` element in `metal-engine`, and a
-  `PlatformWindow::native_host()` each platform may implement. The slot
-  reports its bounds, clip and visibility; the host places a view.
-- **Platforms:** AppKit first, by depending on or porting NativeGPUI.
-  UIKit and Android views later use the same slot. Windows has no single
-  native toolkit to match, and Linux has none: **on Dashi the native
-  components are Metal's own**, drawn by `@mirinjs/metal-ui`.
-- **React:** a `native` node kind in the patch protocol, and components
-  such as `<NativeButton>` in `@mirinjs/metal` that fall back to the drawn
-  metal-ui component where the platform has no host. An app written once
-  gets AppKit controls on macOS and Dashi's on Dashi.
-- **Limits to design for:** a native view above GPUI's view is not clipped
-  or overlapped by drawn content, so popovers and scroll clipping need the
-  host's care; a retained subtree that moves must move its native views
-  too; accessibility comes from the native view, not from our `access/`
-  tree.
+What it should fix: select in a scroll view (the one bench still behind),
+the last tenths of a millisecond on a keystroke, and the two trees
+accessibility keeps today.
 
-Public API (`<NativeButton>` and friends) needs the owner's sign-off
-(`docs/api-design.md`).
+## 4. Order of work
 
-## 6. iOS and Android
+| Step | What | Effort |
+| --- | --- | --- |
+| 1 | **Switch the default to upstream.** Close select in a scroll view, the footprint at 1.5, layouts at other scales. Then switch, and delete `forks/gpui`, `forks/taffy`, `forks/blade-graphics` and `src/gpui_api/`. | 4–7 days |
+| 2 | **Last sync** to Zed `main`. | 1–2 days |
+| 3 | **Become sumi.** Move the crates to `forks/sumi/`, rename, drop the crates and modules listed above, put Dashi's protocols behind `dashi`. Measure size, RSS and first frame before and after. | 2–3 days |
+| 4 | **The retained frame** (section 3). | 1–2 weeks |
+| 5 | **Native slots** (section 5): the engine's `NativeSlot`, the protocol's `native` node, drawn fallbacks everywhere. | about a week |
+| 6 | **AppKit host.** | 1–2 weeks, needs a Mac |
 
-Two separate problems. The renderer is the smaller one.
+Steps 1 to 4 are verifiable here on Linux. Dashi 0.9 ships the default
+build as it is today; the switch reaches Dashi in the release after it.
 
-- **The driver.** A Metal app is a Bun process that sends patches to
-  `mirin-metal-host` over a pipe. Bun does not run on iOS or Android, and
-  iOS does not let an app start another process. Mobile needs the React
-  driver in-process on another JavaScript engine (JavaScriptCore on iOS;
-  Hermes or QuickJS on Android), with the patch protocol over a channel
-  instead of a pipe, and whatever of Bun's APIs apps use replaced. This
-  decides whether mobile is months or a year, and should be spiked first.
-- **The engine.**
-  - iOS: `gpui_ios` and `gpui_apple`'s renderer exist; touch, the software
-    keyboard, safe areas and scroll physics need work.
-  - Android: a new platform crate (an activity, a Vulkan surface through
-    wgpu, input, the keyboard). Nothing upstream to start from.
-  - Accessibility: AccessKit has an Android adapter; iOS needs checking.
+## 5. Native components (macOS, later)
 
-## 7. Order of work
+[NativeGPUI](https://github.com/Cafekery/NativeGPUI) (MIT, macOS 26)
+shows the model: **the engine owns layout; the OS owns the pixels.**
 
-| Step | What | Effort | Verifiable here |
+- **Engine:** a `NativeSlot` element takes a place in layout like any
+  other and reports its bounds, clip and visibility each frame.
+  `PlatformWindow::native_host()` is optional; only `sumi-macos` has one.
+- **macOS:** a host keeps an `NSView` per slot above or below the GPU
+  view and carries values and events across. We port NativeGPUI's
+  approach, not depend on it: it targets GPUI's API and macOS 26 only,
+  and its seven `gpui_macos` patches are ones `sumi-macos` takes as its
+  own.
+- **React:** a `native` node kind in the patch protocol. Components such
+  as `<NativeButton>` in `@mirinjs/metal` fall back to the drawn
+  metal-ui component wherever there is no host, so the same app gets
+  AppKit controls on macOS and Dashi's on Dashi. The API needs the
+  owner's sign-off (`docs/api-design.md`) before step 5.
+- **Limits:** a native view above the GPU view isn't clipped by drawn
+  content, so scroll clipping and popovers need the host's care; a
+  retained subtree that moves moves its native views; a native view
+  brings its own accessibility.
+
+## 6. Budgets
+
+Measured with `runbench.sh` (stress bench, frame medians of two runs at
+scale 1) and `footprint.tsx` (counter app). Each budget is the better of
+the two hosts built for Dashi 0.9 (`host-09`, the default build, and
+`host-next-09`, the upstream one), so moving to upstream may not cost what
+the fork already won:
+
+| Measure | host-09 | host-next-09 | Budget |
 | --- | --- | --- | --- |
-| 1 | Finish the upstream migration; switch the default; delete the 0.2.2 forks and `gpui_api` | 4–7 days | yes (Linux benches and checks) |
-| 2 | Last re-sync to Zed `main` | 1–2 days | yes |
-| 3 | Rename and move into `metal-*` crates; Dashi protocols behind a feature | 2–3 days | yes |
-| 4 | Restructure the frame around retention; remove what Metal never calls, measured | 1–2 weeks | yes |
-| 5 | `NativeSlot` and the protocol's `native` node, with a drawn fallback | about a week | Linux fallback only |
-| 6 | AppKit host on NativeGPUI's model | 1–2 weeks | no: needs a Mac (CI builds macOS, nobody looks at it) |
-| 7 | Spike: the React driver on JavaScriptCore, in-process | about a week | partly |
-| 8 | iOS, then Android | after 7 | no: needs devices |
+| select, type, hover (ms) | 2.05, 1.05, 2.1 | 2.05, 1.55, 2.25 | 2.05, 1.05, 2.1 |
+| grow, scroll, resize (ms) | 3.2, 2.3, 2.45 | 1.75, 2.8, 2.2 | 1.75, 2.3, 2.2 |
+| select in a scroll view (ms) | 2.55 (host-r5) | 3.35 | 2.55 |
+| stress app RSS at idle | 202 MB | 195 MB | 195 MB |
+| counter: RSS, GPU memory, first frame | 59 MB, 14 MB, 33 ms | 68 MB, 32 MB, 40 ms (round 5) | 59 MB, 14 MB, 33 ms |
 
-Steps 1 and 2 are right whatever is decided about the rest.
-
-## 8. Decisions for the owner
-
-1. **Hard fork (steps 3–4), or keep tracking upstream?** Recommended: hard
-   fork the core, keep the platform crates close.
-2. **Names** for the engine crates.
-3. **Upstream PRs to Zed:** whether to send the rows in section 2.
-4. **Native components' public API**, and whether to depend on NativeGPUI
-   or port its approach.
-5. **Mobile:** whether to spend the driver spike (step 7) now or after
-   macOS.
+Grow in a scroll view and scroll across are measured on both hosts at the
+start of step 1 and join the table then. Step 1 is done when the upstream
+host meets every budget within noise (0.2 ms, 3 MB). Later steps lower
+them; when a step does, the table moves with it.
