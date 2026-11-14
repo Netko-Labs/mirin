@@ -41,11 +41,20 @@ fn lengths_of_a_fraction_of_a_device_pixel_are_laid_out_as_authored(cx: &mut Tes
     let rows = rows.borrow();
     let places: Vec<(f32, f32, f32)> = rows
         .iter()
-        .map(|row| (f32::from(row.origin.x), f32::from(row.origin.y), f32::from(row.size.height)))
+        .map(|row| {
+            (
+                f32::from(row.origin.x),
+                f32::from(row.origin.y),
+                f32::from(row.size.height),
+            )
+        })
         .collect();
     // In device pixels the padding is 2.5 and the rows start at 2.5, 29 and
     // 55.5, each 20 tall: their edges round (halves away from zero) to 3,
     // 29 and 56. Rounding the padding and the gap first (to 2 and 6, as
     // upstream GPUI does) puts them at 2, 28 and 54: 1, 14 and 27 px.
-    assert_eq!(places, [(1.5, 1.5, 10.0), (1.5, 14.5, 10.0), (1.5, 28.0, 10.0)]);
+    assert_eq!(
+        places,
+        [(1.5, 1.5, 10.0), (1.5, 14.5, 10.0), (1.5, 28.0, 10.0)]
+    );
 }
