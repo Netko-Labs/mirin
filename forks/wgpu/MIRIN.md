@@ -23,3 +23,9 @@ replace `forks/wgpu/Cargo.toml`, the licenses and `forks/wgpu/wgpu-hal` with
 the repository's at that commit (without `wgpu-hal/examples`), merge, and
 reconcile the changes above; the commit in `Cargo.toml`'s git dependencies and
 in `crates/mirin-metal/next/Cargo.toml`'s patch moves with it.
+
+Checks: wgpu-hal's own tests do not run from here (the root manifest names
+workspace members that are not imported, as `../zed`'s does); the upstream
+build's `cargo build`, `cargo test --lib` and `cargo clippy --all-targets --
+-D warnings` in `crates/mirin-metal/next` build it, and the benches run on
+it.
