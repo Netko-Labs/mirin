@@ -66,6 +66,7 @@ interface InputNodeProps {
   flex?: number;
   autofocus?: boolean;
   revision?: number;
+  baseHash?: number;
   onChange?: boolean;
   onSubmit?: boolean;
   focusNextOnSubmit?: boolean;
@@ -283,6 +284,7 @@ function inputProps(instance: InputInstance): InputNodeProps {
   if (input.secureTextEntry) props.secure = true;
   if (input.autoFocus) props.autofocus = true;
   if (input.valueRevision !== undefined) props.revision = input.valueRevision;
+  if (instance.base !== undefined) props.baseHash = instance.base;
   if (style.fontFamily === "monospace") props.mono = true;
   if (style.fontSize !== undefined) props.size = style.fontSize;
   if (style.color) props.color = style.color;

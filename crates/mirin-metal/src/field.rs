@@ -19,6 +19,7 @@
 mod document;
 mod keys;
 mod press;
+mod rebase;
 #[cfg(test)]
 mod tests;
 mod words;
@@ -27,6 +28,7 @@ use std::ops::Range;
 
 pub(crate) use keys::{Clipboard, KeyEnv, Lines, Vertical};
 pub(crate) use press::Press;
+pub(crate) use rebase::rebase;
 
 /// What a secure field draws for each character.
 const BULLET: char = '\u{2022}';
@@ -156,6 +158,17 @@ impl Field {
     pub(crate) fn reset(&mut self, value: &str) {
         self.buffer = value.to_owned();
         self.cursor = value.chars().count();
+        self.anchor = None;
+    }
+
+    /// The driver's value replaces a text the field has edited since the
+    /// driver last heard of it (`known`): the edit is done again to the
+    /// driver's text (`rebase.rs`), the caret stays with it, and nothing is
+    /// selected. A composition stays, as in a reset.
+    pub(crate) fn rebase(&mut self, known: &str, value: &str) {
+        let rebased = rebase(known, &self.buffer, self.cursor, value);
+        self.buffer = rebased.text;
+        self.cursor = rebased.cursor;
         self.anchor = None;
     }
 

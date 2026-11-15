@@ -170,6 +170,49 @@ patches change it in place, in order (section "Patches").
   semantics), and so does a new `revision`: the caret goes to the end, or to
   `selection` when the tree has one. Enter submits a single-line input;
   multiline inserts a newline and Ctrl/Cmd+Enter submits.
+  Two writers (`src/value.rs`, `src/field/rebase.rs`): a field's text is
+  typed in the renderer and set by the app, and the two cross (a keypad
+  writes "7" into a calculator's line while "*6=" is typed into it: the keys
+  reach the field before the tree with the 7 does). Each side says which
+  text its change was made on, by that text's hash (`textHash`, below; a
+  hash and not a counter, see the end of this paragraph). A `change` is
+  `{"type":"change","nodeId","value","baseHash","textHash"}`: `textHash` is
+  `value`'s and `baseHash` that of the text the edit was made on (left out
+  when the field cannot say: it reported no changes until now). An `input`
+  takes `baseHash` too: the hash of the text the field held, as far as the
+  driver knew, when its app set this `value`. Equal to `value`'s own hash,
+  the value is the field's text coming back, and nothing is reset, whatever
+  the field has typed since. Any other, the app wrote the value over that
+  text: when the field still holds it, the value replaces it (a reset, the
+  caret at its end); when the field has typed into it meanwhile and reports
+  changes (`onChange`), the typing is done again to the value (a rebase),
+  the caret stays with what was typed, and the result is reported as a
+  `change` whose `baseHash` is the value's. A rebase reads each side's
+  change as one splice of the text both knew; the typing keeps its place
+  before what the app replaced, moves with the text after it, and goes
+  right after the app's own text where it began inside what the app
+  replaced or at the very point it wrote ("7", then "*6=": `7*6=`). The
+  host finds the text a `baseHash` names among the value before this one
+  and the texts it reported since (64 at most); one it no longer keeps is a
+  reset. The driver's half is to drop a `change` whose `baseHash` is not
+  the text its app last set or heard: the field held that text only until
+  the app's value arrived, and reports the typing again on it. So the two
+  end with the same text and no key lost, in either order
+  (`value::tests`, 300 seeded crossings; `bench/field-crossing.tsx` in
+  `@mirinjs/metal` against a real window). Without `baseHash` on the node
+  (a driver from before it) the host does as it did: a value it reported
+  itself is a late echo, any other resets and drops what was typed. A host
+  that does all this says `"rebase":true` in its `protocol` line (and
+  names `MIRIN_METAL_REBASE`, `REBASE_MARKER`); one from before refuses a
+  tree with `baseHash`, so a driver sends it only to a host that said so.
+  Not covered: a `submit` carries the field's text as it was when Enter
+  was pressed, crossing or not. Why a hash: it names the text itself,
+  which is all an edit depends on (the same text is the same base, however
+  it came about, so a value written twice is no trap), it needs no count
+  kept in step on both sides across whole-tree resyncs, hidden resident
+  hosts and re-made nodes, and the selection already carried it. React
+  Native's `eventCount` / `mostRecentEventCount` is the counter's answer,
+  and it can only drop the app's write when the two cross.
   Caret and selection (`src/field.rs`, `src/field/{keys,press,words}.rs`,
   `src/selection.rs`, `src/caret.rs`): a click puts the caret at the
   character under it (past a glyph's middle is after it), a drag selects
@@ -270,7 +313,9 @@ patches change it in place, in order (section "Patches").
 - Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
 - Events: `{"type":"press","nodeId","shift","ctrl","alt","meta"}` (the
   modifiers held, Super as `meta`; all false for Space or Enter on a focused
-  view; `contextmenu` carries them too), `{"type":"change","nodeId","value"}`,
+  view; `contextmenu` carries them too), `{"type":"change","nodeId","value",
+  "baseHash","textHash"}` (the text it was typed on and its own, "Two
+  writers" above),
   `{"type":"submit","nodeId","value"}`, `{"type":"selection","nodeId","start",
   "end","textHash"}`, `{"type":"runpress","nodeId","run","offset","shift","ctrl","alt",
   "meta"}` (styled runs, above), `{"type":"layout","nodeId":"root",
@@ -437,7 +482,12 @@ in a text the app has since replaced, which arrives late, is not passed on:
 `lib/field-texts.ts` follows what each field holds, from its `change` events
 and the values the app sets, and checks the event's `textHash` against it;
 the exported `textHash(text)` hashes as the host does, for a stand-in host in
-an app's checks) and
+an app's checks), `onChangeText` (never called with a text typed on a value the
+app has since replaced: `lib/field-texts.ts` drops a `change` whose `baseHash`
+is not the text the field holds as far as the driver knows, and every field's
+node says which text its `value` was set over, to a host that said `rebase`;
+an app that wants to merge by hand hears every `change`, with both hashes, on
+`transport.onEvent`) and
 `selectionColor` on it,
 `runs` (`TextRun`: `start`, `end`, `color`, `backgroundColor`, `fontWeight`,
 `fontStyle`, `textDecorationLine`, `fontSize`, `press`) and `onRunPress`
@@ -468,7 +518,8 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
 - **Negotiation.** A host that takes patches says so on stdout as it starts,
   before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
   (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
-  says `"settle":true` too, for the `settle` simulation). A driver
+  says `"settle":true` too, for the `settle` simulation, and `"rebase":true`
+  for a field's `baseHash`). A driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now

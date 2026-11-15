@@ -23,9 +23,7 @@ use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
 use crate::titlebar::TitleBar;
 use crate::tree::{collect_inputs, collect_key_ids, collect_scroll_ids, NodeSpec};
-
-/// Unechoed `change` values kept per input (see `InputState::echoes`).
-const MAX_ECHOES: usize = 64;
+use crate::value::sync_input;
 
 /// Options for the alpha native-UI window. All fields have sensible defaults.
 #[derive(Debug, Clone)]
@@ -97,26 +95,6 @@ pub enum DriverMessage {
     MinSize(f32, f32),
 }
 
-/// Whether a new driver `value` resets the buffer. A value the renderer sent
-/// itself (a late echo, possibly skipping older ones) does not; anything else
-/// does, and forgets the pending echoes.
-pub(crate) fn driver_resets<T, V>(echoes: &mut VecDeque<T>, value: &V) -> bool
-where
-    T: PartialEq<V>,
-    V: ?Sized,
-{
-    match echoes.iter().position(|sent| sent == value) {
-        Some(echoed) => {
-            echoes.drain(..=echoed);
-            false
-        }
-        None => {
-            echoes.clear();
-            true
-        }
-    }
-}
-
 /// Renderer-owned editing state of one `input` node.
 pub(crate) struct InputState {
     pub(crate) focus: FocusHandle,
@@ -132,6 +110,10 @@ pub(crate) struct InputState {
     pub(crate) echoes: VecDeque<String>,
     /// The driver's `revision` the buffer was last reset at.
     pub(crate) revision: u64,
+    /// The hash of the text the driver last heard of or set (`value.rs`):
+    /// what the next `change` says it was typed on. `None` while the field
+    /// reports no changes.
+    pub(crate) text_hash: Option<u32>,
     /// Set by the tree sync when the node is new and asked for `autofocus`.
     pub(crate) wants_focus: bool,
     /// Where the caret was last told to an input method (`ime.rs`).
@@ -352,20 +334,6 @@ impl RootView {
                 });
         }
         self.key_targets.retain(|id, _| ids.contains(id));
-    }
-
-    /// Tell the driver a field's text changed (`change`), and expect it back.
-    pub(crate) fn report_change(&mut self, id: &str) {
-        let Some(state) = self.inputs.get_mut(id) else {
-            return;
-        };
-        self.events.change(id, &state.field.buffer);
-        // Expect it back; a driver that never echoes (or transforms the
-        // text) only ever keeps a few.
-        if state.echoes.len() >= MAX_ECHOES {
-            state.echoes.pop_front();
-        }
-        state.echoes.push_back(state.field.buffer.clone());
     }
 
     /// Move focus from the field `from` to the next (`+1`) or previous
@@ -614,83 +582,5 @@ fn dump_scene(path: &std::path::Path, digest: u64, drawn: &[String]) {
         .open(path);
     if let Ok(mut file) = file {
         let _ = writeln!(file, "frame {digest:016x}\n{}", drawn.join("\n"));
-    }
-}
-
-/// Create the editing state of a field new to the tree, or bring an existing
-/// one in line with its props: a new `value` (not an echo) or `revision`
-/// resets the buffer, a new `selection` selects.
-fn sync_input(
-    inputs: &mut HashMap<String, InputState>,
-    events: &EventSender,
-    spec: &crate::tree::InputProps,
-    cx: &mut App,
-) {
-    match inputs.get_mut(&spec.id) {
-        Some(state) => {
-            let mut reset = false;
-            if state.revision != spec.revision {
-                state.revision = spec.revision;
-                state.field.reset(&spec.value);
-                state.synced_value = spec.value.clone();
-                state.echoes.clear();
-                reset = true;
-            } else if state.synced_value != spec.value {
-                if driver_resets(&mut state.echoes, spec.value.as_str()) {
-                    state.field.reset(&spec.value);
-                    reset = true;
-                }
-                state.synced_value = spec.value.clone();
-            }
-            let field = &mut state.field;
-            state.selection.sync(field, spec, reset, events);
-        }
-        None => {
-            let mut field = Field::new(&spec.value);
-            let selection = SelectionState::new(&mut field, spec);
-            inputs.insert(
-                spec.id.clone(),
-                InputState {
-                    focus: cx.focus_handle(),
-                    field,
-                    synced_value: spec.value.clone(),
-                    echoes: VecDeque::new(),
-                    revision: spec.revision,
-                    wants_focus: spec.autofocus,
-                    caret_reported: CaretReported::default(),
-                    selection,
-                    scroll: Rc::default(),
-                },
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::driver_resets;
-    use std::collections::VecDeque;
-
-    fn sent(values: &[&str]) -> VecDeque<String> {
-        values.iter().map(|value| value.to_string()).collect()
-    }
-
-    #[test]
-    fn late_echoes_never_reset_the_buffer() {
-        // Typed "abc" faster than the driver answers; its "a" arrives last.
-        let mut echoes = sent(&["a", "ab", "abc"]);
-        assert!(!driver_resets(&mut echoes, "a"));
-        assert_eq!(echoes, sent(&["ab", "abc"]));
-        // A driver that batches may skip straight to the newest.
-        assert!(!driver_resets(&mut echoes, "abc"));
-        assert!(echoes.is_empty());
-    }
-
-    #[test]
-    fn a_new_value_from_the_driver_wins() {
-        let mut echoes = sent(&["pass"]);
-        assert!(driver_resets(&mut echoes, ""));
-        assert!(echoes.is_empty());
-        assert!(driver_resets(&mut echoes, "ABC"));
     }
 }
