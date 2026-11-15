@@ -31,8 +31,6 @@
 //! elements when you need to take manual control of the layout and painting process, such as when using
 //! your own custom layout algorithm or rendering a code editor.
 
-#[cfg(any(feature = "inspector", debug_assertions))]
-use crate::InspectorElementPath;
 use crate::{
     A11ySubtreeBuilder, App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId,
     FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
@@ -373,17 +371,6 @@ impl<E: Element> Drawable<E> {
                     .map(|element_id| prepare_element_id(element_id, window));
 
                 let inspector_id;
-                #[cfg(any(feature = "inspector", debug_assertions))]
-                {
-                    inspector_id = if window.inspector_enabled() {
-                        self.element
-                            .source_location()
-                            .map(|source| prepare_inspector_id(source, window))
-                    } else {
-                        None
-                    };
-                }
-                #[cfg(not(any(feature = "inspector", debug_assertions)))]
                 {
                     inspector_id = None;
                 }
@@ -854,19 +841,6 @@ impl Element for Empty {
 fn prepare_element_id(element_id: ElementId, window: &mut Window) -> GlobalElementId {
     window.element_id_stack.push(element_id);
     window.element_id_stack.global_id()
-}
-
-#[cfg(any(feature = "inspector", debug_assertions))]
-#[inline(never)]
-fn prepare_inspector_id(
-    source: &'static panic::Location<'static>,
-    window: &mut Window,
-) -> InspectorElementId {
-    let path = InspectorElementPath {
-        global_id: window.element_id_stack.global_id(),
-        source_location: source,
-    };
-    window.build_inspector_element_id(path)
 }
 
 #[cfg(test)]

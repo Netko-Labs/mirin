@@ -47,11 +47,6 @@ x11 = [
     "xim",
     "filedescriptor",
     "open",
-    "scap?/x11",
-]
-screen-capture = [
-    "sumi/screen-capture",
-    "scap",
 ]
 
 
@@ -82,9 +77,6 @@ ashpd = { workspace = true, optional = true }
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.2.0", optional = true }
 xkbcommon = { workspace = true, optional = true }
-
-# Screen capture
-scap = { workspace = true, optional = true }
 
 # Wayland
 calloop-wayland-source = { version = "0.4.1", optional = true }
@@ -135,5 +127,3 @@ xim = { git = "https://github.com/zed-industries/xim-rs.git", rev = "16f35a2c881
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
 sumi = { workspace = true, features = ["test-support"] }
 
-[package.metadata.cargo-shear]
-ignored = ["scap"]

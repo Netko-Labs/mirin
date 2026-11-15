@@ -142,7 +142,6 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 ] }
 objc2-core-foundation = { version = "=0.3.2", default-features = false }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["CGDirectDisplay"] }
-objc2-core-media = { version = "=0.3.2", default-features = false, features = ["CMSampleBuffer", "objc2-core-video"] }
 objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor"] }
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBuffer", "CVImageBuffer"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
@@ -171,15 +170,6 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
 ] }
 objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
 objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalDisplayLink", "CAMetalLayer", "objc2-metal"] }
-objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
-    "block2",
-    "dispatch2",
-    "objc2-core-graphics",
-    "objc2-core-media",
-    "SCShareableContent",
-    "SCStream",
-    "std"
-] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTCoreTypes", "UTType"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = [
     "std",
@@ -211,7 +201,6 @@ resvg = { version = "0.46.0", default-features = false, features = [
     "raster-images",
 ] }
 rustc-hash = "2.1.0"
-scap = { git = "https://github.com/zed-industries/scap", rev = "b5c86ec58dd4b6b7732bf6ac8be03d6b1f190a82", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", default-features = false, features = ["std", "indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0", features = ["rc"] }

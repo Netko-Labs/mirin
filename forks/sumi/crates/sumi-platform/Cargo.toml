@@ -14,9 +14,7 @@ doctest = false
 
 [features]
 font-kit = ["sumi-macos/font-kit"]
-inspector = ["sumi/inspector"]
 test-support = ["sumi/test-support", "sumi-macos/test-support", "sumi-windows/test-support", "sumi-wgpu/test-support"]
-screen-capture = ["sumi/screen-capture", "sumi-macos/screen-capture", "sumi-windows/screen-capture", "sumi-linux/screen-capture"]
 runtime_shaders = ["sumi-macos/runtime_shaders"]
 wayland = ["sumi-linux/wayland"]
 x11 = ["sumi-linux/x11"]

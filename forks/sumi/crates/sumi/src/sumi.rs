@@ -5,9 +5,6 @@
 pub extern crate accesskit;
 #[cfg(any(test, feature = "test-support"))]
 pub extern crate proptest;
-/// Subsecond entry points for hot-patching callbacks outside GPUI's render boundaries.
-#[cfg(all(feature = "hot-reload", any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-pub extern crate subsecond;
 
 extern crate self as sumi;
 
@@ -56,8 +53,6 @@ mod debug_overlay;
 #[cfg(feature = "profiler")]
 pub use debug_overlay::*;
 
-#[cfg(gpui_hot_reload)]
-mod hot_reload;
 #[cfg(any(test, target_os = "windows", target_os = "linux", feature = "test-support"))]
 pub mod queue;
 

@@ -27,28 +27,15 @@ test-support = [
     "dep:futures-concurrency",
     "dep:postage",
 ]
-inspector = ["sumi-macros/inspector"]
 # Tracks every entity handle so tests can assert nothing leaked. Also enabled
 # by setting `GPUI_LEAK_DETECTION` when building; see `build.rs`.
 leak-detection = []
 font-kit = []
 wayland = []
-x11 = [
-    "scap?/x11",
-]
-screen-capture = [
-    "scap",
-]
+x11 = []
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
 stacker = ["dep:stacksafe"]
-hot-reload = [
-    "dep:async-tungstenite",
-    "dep:dioxus-cli-config",
-    "dep:dioxus-devtools-types",
-    "dep:smol",
-    "dep:subsecond",
-]
 
 [lib]
 path = "src/sumi.rs"
@@ -119,21 +106,11 @@ heapless.workspace = true
 async-channel = { workspace = true, features = ["std"] }
 pollster.workspace = true
 
-[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
-async-tungstenite = { workspace = true, optional = true }
-dioxus-cli-config = { version = "=0.7.10", optional = true }
-dioxus-devtools-types = { version = "=0.7.10", optional = true }
-smol = { workspace = true, optional = true }
-subsecond = { version = "=0.7.10", optional = true }
-
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation.workspace = true
 objc2-core-video = { workspace = true, features = ["CVPixelBuffer"] }
 objc2 = { workspace = true, optional = true }
 objc2-metal = { version = "0.3", optional = true }
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
-scap = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 libc.workspace = true

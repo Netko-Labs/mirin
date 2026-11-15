@@ -34,8 +34,6 @@ pub use test_context::*;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test_context::*;
 
-#[cfg(any(feature = "inspector", debug_assertions))]
-use crate::InspectorElementRegistry;
 use crate::asset_cache::CachedLoad;
 use crate::subscription::SingleSubscriberSet;
 use crate::{
@@ -299,8 +297,6 @@ impl Application {
             let cx = &mut *this.borrow_mut();
             // Some platforms only connect to their display server in `run`.
             cx.displays_changed();
-            #[cfg(gpui_hot_reload)]
-            crate::hot_reload::init(cx);
             on_finish_launching(cx);
         }));
     }
@@ -324,8 +320,6 @@ impl Application {
             let cx = &mut *this.borrow_mut();
             // Some platforms only connect to their display server in `run`.
             cx.displays_changed();
-            #[cfg(gpui_hot_reload)]
-            crate::hot_reload::init(cx);
             on_finish_launching(cx);
         }));
         ApplicationHandle { app: self.0 }
@@ -939,10 +933,6 @@ pub struct App {
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     pub(crate) current_window_by_entity: FxHashMap<EntityId, WindowId>,
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) inspector_renderer: Option<crate::InspectorRenderer>,
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
@@ -1060,10 +1050,6 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
-                #[cfg(any(feature = "inspector", debug_assertions))]
-                inspector_renderer: None,
-                #[cfg(any(feature = "inspector", debug_assertions))]
-                inspector_element_registry: InspectorElementRegistry::default(),
                 quit_mode: QuitMode::default(),
                 quitting: false,
                 cursor_hide_mode: CursorHideMode::default(),
@@ -3317,23 +3303,6 @@ impl App {
         if let Some(window) = current_window {
             _ = window.drop_image(image);
         }
-    }
-
-    /// Sets the renderer for the inspector.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn set_inspector_renderer(&mut self, f: crate::InspectorRenderer) {
-        self.inspector_renderer = Some(f);
-    }
-
-    /// Registers a renderer specific to an inspector state.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn register_inspector_element<T: 'static, R: crate::IntoElement, F>(
-        &mut self,
-        factory: impl 'static + Fn(&mut Window, &mut App) -> F,
-    ) where
-        F: 'static + FnMut(crate::InspectorElementId, &T, &mut Window, &mut App) -> R,
-    {
-        self.inspector_element_registry.register(factory);
     }
 
     /// Initializes gpui's default colors for the application.

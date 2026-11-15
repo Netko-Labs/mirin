@@ -792,18 +792,6 @@ impl Platform for LinuxPlatform {
         self.with_common(|common| common.callbacks.displays_changed = Some(callback));
     }
 
-    #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool {
-        self.connection.borrow().is_screen_capture_supported()
-    }
-
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn sumi::ScreenCaptureSource>>>> {
-        self.connection.borrow().screen_capture_sources()
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.connection.borrow().active_window()
     }

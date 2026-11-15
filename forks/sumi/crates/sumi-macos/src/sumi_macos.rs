@@ -11,9 +11,6 @@ mod keyboard;
 mod pasteboard;
 mod system_notifications;
 
-#[cfg(feature = "screen-capture")]
-mod screen_capture;
-
 use sumi_apple::metal_renderer as renderer;
 
 pub mod metal_renderer {

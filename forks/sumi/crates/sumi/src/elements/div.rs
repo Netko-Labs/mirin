@@ -90,33 +90,14 @@ impl<T: 'static> DragMoveEvent<T> {
 }
 
 impl Interactivity {
-    /// Create an `Interactivity`, capturing the caller location in debug mode.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    #[track_caller]
-    pub fn new() -> Interactivity {
-        Interactivity {
-            source_location: Some(core::panic::Location::caller()),
-            ..Default::default()
-        }
-    }
-
-    /// Create an `Interactivity`, capturing the caller location in debug mode.
-    #[cfg(not(any(feature = "inspector", debug_assertions)))]
+    /// Create an `Interactivity`.
     pub fn new() -> Interactivity {
         Interactivity::default()
     }
 
-    /// Gets the source location of construction. Returns `None` when not in debug mode.
+    /// Where it was made: `None`, always (the inspector, which asked, is gone).
     pub fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            self.source_location
-        }
-
-        #[cfg(not(any(feature = "inspector", debug_assertions)))]
-        {
-            None
-        }
+        None
     }
 
     /// Bind the given callback to the mouse down event for the given mouse button, during the bubble phase.
@@ -1844,10 +1825,6 @@ pub(crate) type ActionListener =
 pub fn div() -> Div {
     #[allow(unused_mut)]
     let mut interactivity = InteractivityBox::new();
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    {
-        interactivity.source_location = Some(core::panic::Location::caller());
-    }
     Div {
         interactivity,
         children: SmallVec::default(),
@@ -1956,20 +1933,6 @@ pub struct DivFrameState {
     child_layout_ids: SmallVec<[LayoutId; 2]>,
     // mirin: the div's own node, whose content size a scroll view scrolls by.
     layout_id: LayoutId,
-}
-
-/// Interactivity state displayed an manipulated in the inspector.
-#[derive(Clone)]
-pub struct DivInspectorState {
-    /// The inspected element's base style. This is used for both inspecting and modifying the
-    /// state. In the future it will make sense to separate the read and write, possibly tracking
-    /// the modifications.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub base_style: Box<StyleRefinement>,
-    /// Inspects the bounds of the element.
-    pub bounds: Bounds<Pixels>,
-    /// Size of the children of the element, or `bounds.size` if it has no children.
-    pub content_size: Size<Pixels>,
 }
 
 /// mirin: where a wheel turn of `delta` moves a view scrolled to `offset`
@@ -2354,9 +2317,6 @@ pub struct Interactivity {
     pub(crate) override_role: Option<accesskit::Role>,
     pub(crate) aria: AriaProperties,
 
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
-
     #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
     pub(crate) debug_selector: Option<String>,
 }
@@ -2371,22 +2331,6 @@ impl Interactivity {
         cx: &mut App,
         f: impl FnOnce(Style, &mut Window, &mut App) -> LayoutId,
     ) -> LayoutId {
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        window.with_inspector_state(
-            _inspector_id,
-            cx,
-            |inspector_state: &mut Option<DivInspectorState>, _window| {
-                if let Some(inspector_state) = inspector_state {
-                    self.base_style = inspector_state.base_style.clone();
-                } else {
-                    *inspector_state = Some(DivInspectorState {
-                        base_style: self.base_style.clone(),
-                        bounds: Default::default(),
-                        content_size: Default::default(),
-                    })
-                }
-            },
-        );
 
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -2467,18 +2411,6 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
     ) -> R {
         self.content_size = content_size;
-
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        window.with_inspector_state(
-            _inspector_id,
-            cx,
-            |inspector_state: &mut Option<DivInspectorState>, _window| {
-                if let Some(inspector_state) = inspector_state {
-                    inspector_state.bounds = bounds;
-                    inspector_state.content_size = content_size;
-                }
-            },
-        );
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
@@ -2774,12 +2706,6 @@ impl Interactivity {
                                         f(&style, window, cx);
 
                                         if let Some(_hitbox) = hitbox {
-                                            #[cfg(any(feature = "inspector", debug_assertions))]
-                                            window.insert_inspector_hitbox(
-                                                _hitbox.id,
-                                                _inspector_id,
-                                                cx,
-                                            );
 
                                             if let Some(group) = self.group.as_ref() {
                                                 GroupHitboxes::pop(group, cx);
@@ -2806,7 +2732,7 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
-        use crate::{BorderStyle, TextAlign};
+        use crate::TextAlign;
 
         if let Some(global_id) = global_id
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
@@ -2832,73 +2758,6 @@ impl Interactivity {
                     text.paint(hitbox.origin, FONT_SIZE, TextAlign::Left, None, window, cx)
                         .ok();
 
-                    let text_bounds = crate::Bounds {
-                        origin: hitbox.origin,
-                        size: text.size(FONT_SIZE),
-                    };
-                    if let Some(source_location) = self.source_location
-                        && text_bounds.contains(&window.mouse_position())
-                        && window.modifiers().secondary(cx)
-                    {
-                        let secondary_held = window.modifiers().secondary(cx);
-                        window.on_key_event({
-                            move |e: &crate::ModifiersChangedEvent, _phase, window, cx| {
-                                if e.modifiers.secondary(cx) != secondary_held
-                                    && text_bounds.contains(&window.mouse_position())
-                                {
-                                    window.refresh();
-                                }
-                            }
-                        });
-
-                        let was_hovered = hitbox.is_hovered(window);
-                        let current_view = window.current_view();
-                        window.on_mouse_event({
-                            let hitbox = hitbox.clone();
-                            move |_: &MouseMoveEvent, phase, window, cx| {
-                                if phase == DispatchPhase::Capture {
-                                    let hovered = hitbox.is_hovered(window);
-                                    if hovered != was_hovered {
-                                        cx.notify(current_view)
-                                    }
-                                }
-                            }
-                        });
-
-                        window.on_mouse_event({
-                            let hitbox = hitbox.clone();
-                            move |e: &crate::MouseDownEvent, phase, window, cx| {
-                                if text_bounds.contains(&e.position)
-                                    && phase.capture()
-                                    && hitbox.is_hovered(window)
-                                {
-                                    cx.stop_propagation();
-                                    let Ok(dir) = std::env::current_dir() else {
-                                        return;
-                                    };
-
-                                    eprintln!(
-                                        "This element was created at:\n{}:{}:{}",
-                                        dir.join(source_location.file()).to_string_lossy(),
-                                        source_location.line(),
-                                        source_location.column()
-                                    );
-                                }
-                            }
-                        });
-                        window.paint_quad(crate::outline(
-                            crate::Bounds {
-                                origin: hitbox.origin
-                                    + crate::point(crate::px(0.), FONT_SIZE - px(2.)),
-                                size: crate::Size {
-                                    width: text_bounds.size.width,
-                                    height: crate::px(1.),
-                                },
-                            },
-                            crate::red(),
-                            BorderStyle::default(),
-                        ))
-                    }
                 }
             };
 

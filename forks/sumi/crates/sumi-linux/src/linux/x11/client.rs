@@ -1669,20 +1669,6 @@ impl X11Client {
         .map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
-    #[cfg(feature = "screen-capture")]
-    pub(crate) fn is_screen_capture_supported(&self) -> bool {
-        true
-    }
-
-    #[cfg(feature = "screen-capture")]
-    pub(crate) fn screen_capture_sources(
-        &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn sumi::ScreenCaptureSource>>>>
-    {
-        let foreground_executor = self.0.borrow().common.borrow().foreground_executor.clone();
-        sumi::scap_screen_capture::scap_screen_sources(&foreground_executor)
-    }
-
     pub(crate) fn open_window(
         &self,
         handle: AnyWindowHandle,

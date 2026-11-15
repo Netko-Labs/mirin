@@ -720,23 +720,6 @@ impl Platform for MacPlatform {
         self.0.lock().on_displays_changed = Some(callback);
     }
 
-    #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool {
-        let min_version = objc2_foundation::NSOperatingSystemVersion {
-            majorVersion: 12,
-            minorVersion: 3,
-            patchVersion: 0,
-        };
-        NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(min_version)
-    }
-
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn sumi::ScreenCaptureSource>>>> {
-        crate::screen_capture::get_sources(self.1)
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         MacWindow::active_window()
     }
