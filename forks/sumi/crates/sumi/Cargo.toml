@@ -81,7 +81,6 @@ chrono = { workspace = true, default-features = true }
 profiling.workspace = true
 rand = { workspace = true, features = ["small_rng", "thread_rng"] }
 raw-window-handle.workspace = true
-regex = { workspace = true, default-features = true }
 refineable.workspace = true
 scheduler.workspace = true
 resvg.workspace = true
