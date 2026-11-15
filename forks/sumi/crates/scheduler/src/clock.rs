@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use std::time::Duration;
 
+// mirin: std's clock; upstream's `web_time` was for the web, which sumi
+// does not build for.
 pub use std::time::Instant;
 
 pub trait Clock {
