@@ -509,9 +509,21 @@ patches change it in place, in order (section "Patches").
     painted, so one that came with the turn's tree is shown once a frame
     has drawn it (two frames at most are waited for), and it is looked at
     again until a look moves nothing (six frames at most). Both lines are
-    applied after the trees and patches sent before them. A window opened
-    again (a resident host) starts every view at its start and tells
-    nothing: the app that hid it knows. A host that does this says
+    applied after the trees and patches sent before them, and neither is
+    lost for coming before the view is drawn (2026-11-15): an app scrolls a
+    view in an effect of the commit that mounts it (a calendar's hours, at
+    the morning), so the line arrives right behind the patch. A scroll
+    view's state was made as it was first drawn, and a `scrollTo` for one
+    not drawn yet was refused (`no scroll view with id`): the state is now
+    made by the line, and the view's first frame is drawn at the offset,
+    kept in its range. A long list has no length before a frame has laid
+    it out, so its offset is kept and it is put there in the frame after
+    (the newest offset asked, when several were). Lines sent while no
+    window is shown (a deferred host before its `open`, a resident one
+    while hidden; the newest 64) are kept and done as the window opens:
+    it opens scrolled. A window opened again without them starts every
+    view at its start and tells nothing: the app that hid it knows. A host
+    that does this says
     `"scroll":true` in its `protocol` line (and names `MIRIN_METAL_SCROLL`,
     `SCROLL_MARKER`); one from before refuses a tree with `onScroll` and
     both lines, so a driver sends them only to a host that said so.

@@ -520,6 +520,10 @@ struct Turn {
     unlock: bool,
 }
 
+/// How many scroll commands are kept for a window that is not shown: an
+/// app that scrolls a hidden view for hours leaves the newest.
+const HELD_SCROLLS: usize = 64;
+
 /// The window (when one is shown) and what the driver sent while none was.
 struct Drive {
     window: Option<WindowHandle<RootView>>,
@@ -528,6 +532,9 @@ struct Drive {
     resident: Option<Resident>,
     /// The newest tree while no window is shown, drawn by the next open.
     held: Option<Document>,
+    /// What the driver asked of scroll views while no window is shown, in
+    /// order: the next open scrolls its window so (`HELD_SCROLLS` at most).
+    held_scrolls: Vec<ScrollCommand>,
     /// A patch failed and the driver was asked for the whole tree: patches
     /// are dropped until it comes (they would apply to a tree it doesn't
     /// have).
@@ -664,6 +671,7 @@ impl Drive {
             events,
             resident,
             held: None,
+            held_scrolls: Vec::new(),
             desynced: false,
             pending: VecDeque::new(),
             access,
@@ -811,8 +819,10 @@ impl Drive {
         turn.title = None;
         turn.size = None;
         turn.min_size = None;
-        // A window opens at its content's start.
-        turn.scrolls.clear();
+        // For the window the next open makes: it opens scrolled as asked.
+        self.held_scrolls.append(&mut turn.scrolls);
+        let over = self.held_scrolls.len().saturating_sub(HELD_SCROLLS);
+        self.held_scrolls.drain(..over);
         if !self.pending.is_empty() {
             eprintln!("[mirin-metal-host] dropped simulated input: no window is shown");
             self.drop_pending();
@@ -1022,6 +1032,15 @@ impl Drive {
         match opened {
             Some(window) => {
                 self.window = Some(window);
+                // What was asked of its scroll views before it was there.
+                let scrolls = std::mem::take(&mut self.held_scrolls);
+                if !scrolls.is_empty() {
+                    let _ = window.update(cx, |view, _window, cx| {
+                        for command in scrolls {
+                            view.scroll(command, cx);
+                        }
+                    });
+                }
                 true
             }
             None => {

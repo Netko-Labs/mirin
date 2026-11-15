@@ -90,9 +90,11 @@ fn count_new(state: &ListState, counted: &Cell<Option<(f32, f32)>>) {
 
 impl VirtualList {
     /// Count the rows not laid out yet (`estimate_rows`), from here on.
-    pub(crate) fn estimate(&mut self) {
+    /// False while they cannot be: no frame has laid the list out yet.
+    pub(crate) fn estimate(&mut self) -> bool {
         self.estimates = true;
         estimate_rows(&self.state, &self.counted);
+        self.counted.get().is_some()
     }
 
     /// The row node `id` is, or is in.

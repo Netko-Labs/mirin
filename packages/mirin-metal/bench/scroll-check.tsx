@@ -18,7 +18,11 @@
  *   selection anchored to the content needs (Dashi's Files);
  * - rows whose props change (a selection) between and with the scrolls move
  *   nothing: a long list that forgot a changed row's height once told 0
- *   after Select All at 1200, and landed at 722 when sent to 98.
+ *   after Select All at 1200, and landed at 722 when sent to 98;
+ * - a view scrolled in an effect of the commit that mounts it opens there
+ *   (a calendar's hours at the morning): in the app's first commit, in a
+ *   subtree mounted later, a long list, a row asked into view, and on a
+ *   host kept warm, asked before its window is opened.
  *
  * Exits non-zero on any difference. A host from before it (no
  * `"scroll":true` in its `protocol` line) fails every step.
@@ -29,10 +33,12 @@
  * with a `DASHI_COMP_SOCKET` of its own.
  */
 
-import { createRef, type RefObject, useState } from "react";
+import { createRef, type RefObject, useLayoutEffect, useState } from "react";
 import {
   type LayoutNode,
   type NativeEvent,
+  type NativeHostTransport,
+  type NativeRoot,
   render,
   type ScrollInfo,
   ScrollView,
@@ -60,18 +66,39 @@ interface Listing {
   told: number;
   /** Select rows `from` up to `to`: their props change, as a file list's do. */
   select: (from: number, to: number) => void;
+  /** What it does in an effect of the commit that mounts it. */
+  atMount?: (of: Listing) => void;
 }
 
-function listing(name: string, rows: number): Listing {
+function listing(name: string, rows: number, atMount?: (of: Listing) => void): Listing {
   const row = Array.from({ length: rows }, () => createRef<ViewHandle>());
-  return { name, rows, view: createRef<ViewHandle>(), row, at: null, told: 0, select: () => {} };
+  const view = createRef<ViewHandle>();
+  return { name, rows, view, row, at: null, told: 0, select: () => {}, atMount };
 }
+
+/** Scroll to row `index` as the listing mounts. */
+const toRow = (index: number) => (of: Listing) => of.view.current?.scrollTo({ y: index * ROW });
 
 const listings = [listing("short", 40), listing("long", 400)];
+/** In the app's first commit, each scrolled in an effect of it. */
+const first = [listing("first", 40, toRow(5)), listing("first-long", 400, toRow(105))];
+/** In a subtree mounted later, each scrolled (or a row asked into view) in an effect of that commit. */
+const late = [
+  listing("late", 40, toRow(7)),
+  listing("late-long", 400, toRow(107)),
+  listing("late-into", 400, (of) => of.row[300]?.current?.scrollIntoView()),
+];
+/** On a host kept warm, scrolled before its window is opened. */
+const warm = [listing("warm", 40, toRow(9)), listing("warm-long", 400, toRow(109))];
 
 function Rows({ of }: { of: Listing }) {
   const [lit, setLit] = useState<[number, number]>([0, 0]);
   of.select = (from, to) => setLit([from, to]);
+  // Once, as it mounts, in the tick of the commit: the line that scrolls it
+  // goes out right behind the patch that brings it, so the host has both
+  // before it has drawn the view.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the listing is the same object for good
+  useLayoutEffect(() => of.atMount?.(of), []);
   const color = (index: number): string => {
     if (index >= lit[0] && index < lit[1]) return "#1e3a8a";
     return index % 2 ? "#3f3f46" : "#52525b";
@@ -99,32 +126,59 @@ function Rows({ of }: { of: Listing }) {
   );
 }
 
-const transport = spawnNativeHost(binary, {
-  title: "scroll check",
-  width: 460,
-  height: 300,
-  env: { MIRIN_METAL_CHECK: "1" },
-});
 let gone = false;
-transport.onClose(() => {
-  gone = true;
-});
+/** The check is closing its host itself. */
+let closing = false;
 let scrolls = false;
 const settles: Array<() => void> = [];
 const layouts: Array<(nodes: LayoutNode[]) => void> = [];
-transport.onEvent((event: NativeEvent) => {
-  if (event.type === "protocol") scrolls = event.scroll === true;
-  if (event.type === "settled") settles.shift()?.();
-  if (event.type === "layout") layouts.shift()?.(event.nodes);
-});
-const root = render(
-  <View style={{ flex: 1, flexDirection: "row", padding: 20, gap: 20, backgroundColor: "#18181b" }}>
-    {listings.map((each) => (
-      <Rows key={each.name} of={each} />
-    ))}
-  </View>,
-  transport,
-);
+const WINDOW = { title: "scroll check", width: 1580, height: 300 };
+
+/** A host under a check, its answers to `settle` and `layout` heard. */
+function host(deferred: boolean): NativeHostTransport {
+  const spawned = spawnNativeHost(binary as string, {
+    ...WINDOW,
+    deferred,
+    env: { MIRIN_METAL_CHECK: "1" },
+  });
+  spawned.onClose(() => {
+    // Its own doing when the check closes it; anything else is the host leaving.
+    if (!closing) gone = true;
+  });
+  spawned.onEvent((event: NativeEvent) => {
+    if (event.type === "protocol") scrolls = event.scroll === true;
+    if (event.type === "settled") settles.shift()?.();
+    if (event.type === "layout") layouts.shift()?.(event.nodes);
+  });
+  return spawned;
+}
+
+/** Mounts the `late` listings when asked. */
+let showLate = (): void => {};
+
+function App({ of }: { of: Listing[] }) {
+  const [shown, setShown] = useState(false);
+  showLate = () => setShown(true);
+  return (
+    <View
+      style={{ flex: 1, flexDirection: "row", padding: 20, gap: 20, backgroundColor: "#18181b" }}
+    >
+      {of.map((each) => (
+        <Rows key={each.name} of={each} />
+      ))}
+      {shown ? (
+        <View style={{ flexDirection: "row", gap: 20 }}>
+          {late.map((each) => (
+            <Rows key={each.name} of={each} />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+let transport = host(false);
+let root: NativeRoot = render(<App of={[...listings, ...first]} />, transport);
 
 async function settled(): Promise<void> {
   for (let round = 0; round < 3 && !gone; round += 1) {
@@ -227,9 +281,48 @@ async function check(of: Listing): Promise<void> {
   expect(`${name}: content size after`, of.at?.contentSize.height, of.rows * ROW);
 }
 
+/** The listing stands at row `index`, scrolled there as it mounted. */
+async function opened(of: Listing, index: number, row = 0): Promise<void> {
+  expect(`${of.name}: scrolled as it mounted`, await standing(of, index), { y: index * ROW, row });
+}
+
 await settled();
+// Scrolled in an effect of the app's first commit: the window opens there.
+await opened(first[0] as Listing, 5);
+await opened(first[1] as Listing, 105);
 for (const each of listings) if (!gone) await check(each);
+// A subtree mounted later, its views scrolled in an effect of that commit.
+showLate();
+// The commit and its effects go before the check asks the host anything
+// (a `settle` between them would draw the views first).
+await Bun.sleep(100);
+await opened(late[0] as Listing, 7);
+await opened(late[1] as Listing, 107);
+// Row 300 came from below: it is at the view's bottom edge.
+const into = late[2] as Listing;
+expect(`${into.name}: a row asked into view as it mounted`, await standing(into, 300), {
+  y: 301 * ROW - VIEW,
+  row: VIEW - ROW,
+});
+closing = true;
 root.unmount();
+
+// A host kept warm: the views are scrolled as they mount, and the window
+// is opened after. It opens scrolled.
+if (!gone) {
+  // The first host's end is heard before the next one is listened to.
+  await Bun.sleep(200);
+  closing = false;
+  transport = host(true);
+  root = render(<App of={warm} />, transport);
+  // The first commit goes once the host has said its word, and its effects with it.
+  await Bun.sleep(400);
+  transport.open(WINDOW);
+  await opened(warm[0] as Listing, 9);
+  await opened(warm[1] as Listing, 109);
+  closing = true;
+  root.unmount();
+}
 
 for (const failure of failures) console.log(failure);
 console.log(
