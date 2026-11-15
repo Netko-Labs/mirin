@@ -300,9 +300,10 @@ impl RootView {
     /// (a partial frame), when it can, and everything from the root when it
     /// can't.
     pub(crate) fn notify_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let changed = std::mem::take(&mut self.changed);
+        let mut changed = std::mem::take(&mut self.changed);
         for (entity, version) in &changed.retained {
-            window.set_retained_version(*entity, *version);
+            // One the window never laid out is drawn from the root.
+            changed.spine |= !window.set_retained_version(*entity, *version);
         }
         // Nothing heard (a subtree the window never drew is not listened
         // to): the view is drawn, which draws whatever changed.

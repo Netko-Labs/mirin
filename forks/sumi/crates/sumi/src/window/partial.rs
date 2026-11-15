@@ -109,14 +109,20 @@ impl Window {
         self.partial_hook = hook.map(|hook| Rc::new(hook) as PartialHook);
     }
 
-    /// The retained subtree notified by `view` is at `version` once it is
-    /// drawn: a partial frame, which makes no element for it, takes its
-    /// version from here, so the next element made for it with that version
-    /// finds it unchanged.
-    pub fn set_retained_version(&mut self, view: EntityId, version: u64) {
-        if let Some(entry) = self.retained_views.get_mut(&view) {
-            entry.version = Some(version);
-        }
+    /// The content of the retained subtree notified by `view` changed, to
+    /// `version`: it is drawn in the next frame, whether or not the window
+    /// heard its entity notified, and a partial frame, which makes no
+    /// element for it, takes its version from here, so the next element
+    /// made for it with that version finds it unchanged. `false`: the
+    /// window knows no such retained subtree (it was never laid out), and
+    /// nothing was marked.
+    pub fn set_retained_version(&mut self, view: EntityId, version: u64) -> bool {
+        let Some(entry) = self.retained_views.get_mut(&view) else {
+            return false;
+        };
+        entry.version = Some(version);
+        self.invalidator.mark_view(view);
+        true
     }
 
     /// A retained subtree is being laid out: notified by `view`, its state

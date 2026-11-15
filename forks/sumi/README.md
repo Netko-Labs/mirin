@@ -34,6 +34,33 @@ text.
 Not here, by decision: iOS, the web, `http_client`, `bench_metrics`,
 `ztracing`, the inspector, hot reload and screen capture.
 
+## The frame
+
+A window keeps the frame it drew last: the scene (paint operations, and
+the sorted list of each kind the renderer draws from), hitboxes, content
+masks, dispatch nodes, listeners and text layouts, each retained subtree
+(`elements/retained.rs`) knowing the ranges it filled of them. A frame is
+then one of two (`docs/metal/engine.md`, section 3):
+
+- **A full frame** walks the tree from the root and builds the next frame
+  beside the last, copying the drawings of retained subtrees that did not
+  change (`retained/plan.rs`: where they were, moved, or left out).
+- **A partial frame** (`window/partial.rs`, `retained/in_place.rs`) runs
+  when everything notified since the last frame is a retained subtree and
+  the host opted in (`Window::set_partial_frames`). Each such subtree is
+  built onto the layout nodes it kept (strictly: the same styles, and
+  measured leaves with the same key, `Window::request_keyed_measured_layout`)
+  and drawn over its own ranges of the kept frame (`window/frame_vec.rs`,
+  `DispatchTree::begin_patch`, `Scene::begin_patch` in `scene/patch.rs`).
+  Its drawing must have the shape of the one it replaces; otherwise the
+  partial frame is given up and a full frame follows, which needs nothing
+  put back.
+
+A renderer may ask a scene what changed since it drew it
+(`Scene::version`, `Scene::damage_since`) and write those instances alone;
+`sumi-wgpu` does (`wgpu_renderer/upload.rs`), `sumi-apple` and
+`sumi-windows` write everything.
+
 ## Building and testing
 
 sumi is built through its one client. The crates are a cargo workspace of
@@ -53,7 +80,8 @@ cargo test --locked --no-default-features  # for a plain Wayland or X11 desktop
 ```
 
 Its tests are the engine's tests: they lay out and draw through sumi's test
-platform (`render/`, `retain/gpui_tests.rs`, `retain/scene_tests.rs`). An
+platform (`render/`, `retain/gpui_tests.rs`, `retain/scene_tests.rs`,
+`retain/partial_tests.rs`). An
 engine change also passes the gates, which compare layouts and drawings
 with a host from before it:
 

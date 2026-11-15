@@ -203,6 +203,13 @@ impl WindowInvalidator {
         self.inner.borrow().dirty
     }
 
+    /// mirin: `entity` is to be drawn in the next frame, as if it had been
+    /// notified (`Window::set_retained_version`).
+    pub(crate) fn mark_view(&self, entity: EntityId) {
+        self.inner.borrow_mut().dirty_views.insert(entity);
+        self.set_dirty(true);
+    }
+
     pub fn set_dirty(&self, dirty: bool) {
         let mut inner = self.inner.borrow_mut();
         let became_dirty = dirty && !inner.dirty;
