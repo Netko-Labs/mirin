@@ -359,12 +359,12 @@ pub(crate) fn boundary(
     .skippable(traits.skippable);
     // Of its root alone: what is inside is laid out by taffy, which says
     // whether any of it changed.
-    let element =
-        crate::gpui_api::stretchable(element, crate::render::draws_nothing_of_its_size(props))
-            .on_prepaint(move |draw, bounds, _window, _cx| {
-                layout.touch_group(group, parent, bounds.origin, draw.drew());
-                counts::count(draw);
-            });
+    let element = element
+        .stretchable(crate::render::draws_nothing_of_its_size(props))
+        .on_prepaint(move |draw, bounds, _window, _cx| {
+            layout.touch_group(group, parent, bounds.origin, draw.drew());
+            counts::count(draw);
+        });
     Some(element.into_any_element())
 }
 

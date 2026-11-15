@@ -374,7 +374,7 @@ pub(crate) fn render_input(
         cx.listener(move |view, event: &MouseDownEvent, window, cx| {
             view.press_claimed = true;
             if let Some(state) = view.inputs.get(&focus_id) {
-                crate::gpui_api::focus(window, &state.focus, cx);
+                window.focus(&state.focus, cx);
             }
             view.press_field(&focus_id, event, &press);
             cx.notify();

@@ -340,7 +340,7 @@ fn open_at(cx: &mut TestAppContext, scene: Scene, retain: bool, scale: f32) -> O
 fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         window.refresh();
-        crate::gpui_api::draw(window, cx);
+        window.draw(cx).clear(cx);
     });
 }
 

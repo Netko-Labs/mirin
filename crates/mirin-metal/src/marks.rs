@@ -198,10 +198,11 @@ pub(crate) fn paint_line_numbers(
         let mut run = style.to_run(label.len());
         run.color = rgba(color).into();
         let shaped = window.text_system().shape_line(label, size, &[run], None);
-        let _ = crate::gpui_api::paint_line(
-            &shaped,
+        let _ = shaped.paint(
             point(right - shaped.width, y),
             line_height,
+            sumi::TextAlign::Left,
+            None,
             window,
             cx,
         );

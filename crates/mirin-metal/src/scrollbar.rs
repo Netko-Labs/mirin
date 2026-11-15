@@ -88,7 +88,7 @@ impl Scrolled {
                 across,
                 down,
             } => {
-                let max = crate::gpui_api::scroll_max(handle);
+                let max = handle.max_offset();
                 // GPUI's offsets are negative as the content moves up and left.
                 let offset = handle.offset();
                 // Content wider than a view that scrolls only down has no bar across.
@@ -96,8 +96,8 @@ impl Scrolled {
                 Geometry {
                     viewport: handle.bounds(),
                     overflow: (
-                        only(*across, f32::from(max.width)),
-                        only(*down, f32::from(max.height)),
+                        only(*across, f32::from(max.x)),
+                        only(*down, f32::from(max.y)),
                     ),
                     scrolled: (
                         only(*across, -f32::from(offset.x)),
@@ -107,10 +107,7 @@ impl Scrolled {
             }
             Scrolled::List(state) => Geometry {
                 viewport: state.viewport_bounds(),
-                overflow: (
-                    0.0,
-                    f32::from(crate::gpui_api::list_scroll_max(state).height),
-                ),
+                overflow: (0.0, f32::from(state.max_offset_for_scrollbar().y)),
                 scrolled: (0.0, -f32::from(state.scroll_px_offset_for_scrollbar().y)),
             },
         }

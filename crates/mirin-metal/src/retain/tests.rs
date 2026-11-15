@@ -82,7 +82,7 @@ fn open(cx: &mut TestAppContext, tree: NodeSpec) -> (Entity<RootView>, &mut Visu
 fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         window.refresh();
-        crate::gpui_api::draw(window, cx);
+        window.draw(cx).clear(cx);
     });
 }
 

@@ -12,7 +12,6 @@ use sumi::{
 };
 
 use crate::edges::{apply_box_edges, shadow_preset};
-use crate::gpui_api::ScrollWheelEvent;
 use crate::input::render_input;
 use crate::media::{render_image, render_svg};
 use crate::tree::{
@@ -344,7 +343,7 @@ fn render_view_content(
                 .on_mouse_down(
                     MouseButton::Left,
                     move |_event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
-                        crate::gpui_api::focus(window, &press_focus, cx);
+                        window.focus(&press_focus, cx);
                     },
                 )
                 .on_key_down(
@@ -370,9 +369,8 @@ fn render_view_content(
     if props.on_wheel {
         let wheel_id = id.to_string();
         let events = view.events.clone();
-        element = crate::gpui_api::on_wheel(
-            element,
-            move |event: &ScrollWheelEvent, window: &mut Window, _cx: &mut App| {
+        element = element.on_scroll(
+            move |event: &sumi::ScrollEvent, window: &mut Window, _cx: &mut App| {
                 let (dx, dy) = match event.delta {
                     ScrollDelta::Lines(lines) => (lines.x, lines.y),
                     ScrollDelta::Pixels(pixels) => {
@@ -689,7 +687,7 @@ pub(crate) fn warm_fonts(cx: &sumi::App) {
             let mut font = sumi::font(family.clone());
             font.weight = weight;
             // One at a time: the first frame waits for at most one of them.
-            crate::gpui_api::prewarm_fonts(&text_system, &[font]);
+            text_system.prewarm_fonts(&[font]);
         }
         mono_family();
     };

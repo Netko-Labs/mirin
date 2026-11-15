@@ -9,8 +9,8 @@ use sumi::{
     ScrollDelta, ScrollHandle, Stateful, TestAppContext, VisualTestContext, Window,
 };
 
-use crate::gpui_api::ScrollWheelEvent;
 use crate::scrollbar::{bars_for, thumb_span, Activity, Scrolled};
+use sumi::ScrollEvent as ScrollWheelEvent;
 
 /// What a test page holds: a column that scrolls, as `render.rs` draws a
 /// `ScrollView` (its bars last), filling the window.
@@ -158,7 +158,7 @@ fn open(
 fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         window.refresh();
-        crate::gpui_api::draw(window, cx);
+        window.draw(cx).clear(cx);
     });
 }
 
@@ -170,7 +170,7 @@ fn resize(cx: &mut VisualTestContext, width: f32, height: f32) {
 }
 
 fn max(handle: &ScrollHandle) -> f32 {
-    f32::from(crate::gpui_api::scroll_max(handle).height)
+    f32::from(handle.max_offset().y)
 }
 
 fn scrolled(handle: &ScrollHandle) -> f32 {
@@ -263,7 +263,6 @@ fn a_view_scrolled_between_pixels_paints_on_them_and_keeps_its_offset(cx: &mut T
         ..Spec::default()
     };
     let (_, outer, inner, cx) = open(cx, spec, 400.0, 300.0);
-    cx.update(|window, _| crate::gpui_api::set_scroll_snap(window, true));
     let at = point(px(100.0), px(20.0));
     let painted = |inner: &ScrollHandle| f32::from(inner.bounds().top());
     let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
@@ -513,10 +512,7 @@ fn content_wider_than_a_view_that_scrolls_down_has_no_bar_across(cx: &mut TestAp
         move |_, _| Wide(handle)
     });
     resize(cx, 400.0, 300.0);
-    assert!(
-        f32::from(crate::gpui_api::scroll_max(&handle).width) > 0.0,
-        "GPUI measures it"
-    );
+    assert!(f32::from(handle.max_offset().x) > 0.0, "GPUI measures it");
     let geometry = down(&handle).geometry();
     assert_eq!(geometry.overflow, (0.0, 600.0));
     assert_eq!(crate::scrollbar::bars(&geometry).len(), 1);

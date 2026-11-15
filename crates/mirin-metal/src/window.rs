@@ -447,7 +447,7 @@ impl RootView {
         for target in self.key_targets.values_mut() {
             if target.wants_focus {
                 target.wants_focus = false;
-                crate::gpui_api::focus(window, &target.focus, cx);
+                window.focus(&target.focus, cx);
             }
         }
         // Several new fields asking at once: one wins, the same one every time (focus/order.rs).
@@ -462,7 +462,7 @@ impl RootView {
             state.wants_focus = false;
         }
         if let Some(state) = chosen.and_then(|id| self.inputs.get(&id)) {
-            crate::gpui_api::focus(window, &state.focus, cx);
+            window.focus(&state.focus, cx);
         }
         self.settle_focus(window, cx);
     }
