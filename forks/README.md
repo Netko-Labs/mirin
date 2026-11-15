@@ -18,6 +18,14 @@ lists every change and why; changed code carries a `// mirin:` comment.
 
 `sumi/` is not in the table: it is no longer a fork that syncs (below).
 
+Every fork carries its upstream's license text beside its `MIRIN.md`
+(`LICENSE`, or `LICENSE-APACHE` and `LICENSE-MIT`; AccessKit's `AUTHORS`, and
+`LICENSE.chromium` where files derive from Chromium), taken from the
+upstream repository when the crates.io package has none, and its `MIRIN.md`
+says where the code came from and that it is changed: what MIT and
+Apache-2.0 ask of a modified copy, and what a packager needs to carry them
+into a binary's license file. A new fork gets both in its first commit.
+
 `crates/mirin-metal/Cargo.toml` depends on `sumi`'s crates by path and
 points `[patch.crates-io]` at the rest (`taffy` to `taffy-next`, the three
 AccessKit crates, `gpu-allocator`, and `wgpu-hal` of the wgpu repository to
@@ -64,7 +72,10 @@ merge: the crates were then moved here, renamed (`gpui` is `sumi`,
 - **The license stays Zed's.** Every crate is `Apache-2.0` in its manifest,
   its `LICENSE-APACHE` a link to `sumi/LICENSE-APACHE`; none of zed's GPL
   crates was ever imported. The code derives from Zed's GPUI and is
-  modified, which `sumi/README.md` states as Apache-2.0 asks.
+  modified, which `sumi/README.md` and `sumi/NOTICE` state as Apache-2.0
+  asks. Zed's repository has no `NOTICE` of its own to carry (looked for at
+  `703b5ac3`: `LICENSE-APACHE`, `LICENSE-GPL` and `legal/` only); sumi's is
+  ours, and a binary built from sumi carries it with the license text.
 
 `sumi/` keeps the shape a cargo workspace needs: the root `Cargo.toml` (the
 crates inherit their edition, dependencies and lints from it; it was zed's

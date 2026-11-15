@@ -6,6 +6,11 @@ announces a window that has the keyboard as it appears, and sends bounds
 changes only to a bus where something listens for them. Every change is
 marked with a `// mirin:` comment in the source.
 
+**License.** `LICENSE-APACHE`, `LICENSE-MIT` and `AUTHORS` here are
+AccessKit's, from its repository (https://github.com/AccessKit/accesskit) at
+the tag `accesskit_unix-v0.24.1`: the crates.io package carries none. This
+copy is modified (the table below); mirin's changes are under the same terms.
+
 | Change | Files | Why |
 | --- | --- | --- |
 | The application's name (`set_app_name`) | `src/context.rs`, `src/lib.rs` | The AT-SPI application object was named after the executable's file, so Orca called every Metal app and every Dashi surface "mirin-metal-host". A program may now name itself before its first window's tree reaches the bus; otherwise the file name, as before. Upstreamable. |

@@ -6,6 +6,11 @@
 Every change is marked with a `// mirin:` comment. Rows that port a change of
 that fork say which (its `MIRIN.md`, in history).
 
+**License.** `LICENSE` here is taffy's (MIT), from its repository
+(https://github.com/DioxusLabs/taffy) at the tag `v0.15.0`: the crates.io
+package carries none. This copy is modified (the table below); mirin's
+changes are under the same terms.
+
 | Change | Files | Why |
 | --- | --- | --- |
 | A flex container whose width its `min-width` or `max-width` set (not its content) lays its children out again at that width | `src/compute/flexbox.rs` (`compute_flexbox_layout`) | Port of `../taffy`'s row; 0.15 still lays the children out once, for the content's width. Upstreamable. |
