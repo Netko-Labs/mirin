@@ -605,8 +605,9 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
   (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
   says `"settle":true` too, for the `settle` simulation, `"rebase":true` for
-  a field's `baseHash`, `"scroll":true` for a scroll view's offset, and
-  `"imageError":true` for an image's `onError`). A driver
+  a field's `baseHash`, `"scroll":true` for a scroll view's offset,
+  `"imageError":true` for an image's `onError`, and `"textAntialiasing":true`
+  for the line of that name, section 4). A driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now
@@ -954,6 +955,40 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   starts (`sumi-wgpu`'s `wgpu_prepare.rs`); a host drawing in grays never
   uses them, and their module was 1 MB each held for as long as it lived
   (`docs/metal/engine.md`, section 7).
+- **A driver changes it while the host runs** (2026-11-15). The variable
+  is what a host starts with (`NativeHostOptions.textAntialiasing` sets it
+  for a spawn); a `{"textAntialiasing":"subpixel"}` line
+  (`setTextAntialiasing()` on the transport; `"grayscale"`, or `"default"`
+  for what the host started with) changes it from there on, so a setting
+  the person changes needs no new host. A shown window is drawn again
+  once, whole; a line sent while no window is shown (a deferred host
+  before its `open`, a resident one while hidden) is how the next one
+  opens. It works because the engine decides each glyph's antialiasing as
+  it paints it (`Window::should_use_subpixel_rendering` reads the mode
+  then) and keys the two kinds apart in its glyph atlas, so nothing is
+  thrown away: the host sets the mode and bumps a number that is part of
+  every retained subtree's version (`RootView::text_changed`,
+  `retain.rs`), without which a kept drawing would go on showing glyphs of
+  the other kind. What it costs, on a window of 30 lines of text in ten
+  sizes and two weights (900 × 700, scale 1.75; three runs under the bench
+  lock): the first change to a kind draws one frame that rasterizes every
+  glyph again, 45 to 133 ms beside other work (28 ms on a quiet machine)
+  where a frame of that window takes about 2, and the host's anonymous
+  memory grows 1.6 MB (13.4 to 15.1 MB: the subpixel atlas, four bytes a
+  pixel where the gray one has one); changing back, or again, draws one
+  ordinary whole frame (1.4 to 7.8 ms) and grows nothing, since both
+  kinds stay in the atlas. The engine keeps one mode for the process (its
+  windows share it), which for a host is one window at a time; a mode for
+  each of several windows in one process would need the engine's window
+  to own it (`forks/sumi/crates/sumi/src/window.rs`), and was left alone.
+  A host that takes the line says `"textAntialiasing":true` in its
+  `protocol` line (and names `MIRIN_METAL_TEXT_ANTIALIASING`); one from
+  before refuses the line on stderr, and the transport sends it none. The
+  default is unchanged: grays on Linux. A host that started in grays has
+  not parsed the subpixel shaders ahead (the bullet above): the window's
+  renderer builds a pipeline when it first draws with it, so the first
+  change to subpixel also parses them, in that one slow frame, and from
+  then on the host holds their module as one started in subpixel does.
 - **Emoji are drawn** (2026-11-15). Noto Color Emoji as Fedora ships it
   (`Noto-COLRv1.ttf`) holds COLRv1 glyphs: paint graphs of gradients,
   transforms, clips and composited layers. swash draws colour bitmaps and
@@ -2896,6 +2931,10 @@ A `{"minSize":{"width":W,"height":H}}` line changes the least size afterwards
 (Calculator's tape beside its keypad). It doesn't resize the window; send a
 size too (the host applies the least size first). A host from before either
 refuses the line on stderr and ignores the variable.
+`MIRIN_METAL_TEXT=subpixel` (`textAntialiasing`) is how text is antialiased
+from the start, and a `{"textAntialiasing":"subpixel"}` line
+(`setTextAntialiasing()` on the transport) changes it afterwards (section 4,
+"Text on Linux").
 `MIRIN_METAL_CLOSE=ask` (`askToClose`) lets the app answer a close from outside
 itself: when the compositor asks the window to close (`xdg_toplevel.close`: its
 close control, a shell's close, quit, or logout), the window stays and the host

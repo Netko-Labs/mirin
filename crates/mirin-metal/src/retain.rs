@@ -338,7 +338,8 @@ pub(crate) fn boundary(
     // Whether it keeps its length in a scroll view is the one thing its
     // parent decides about how it renders (render.rs); it is part of its version.
     let keeps_length = std::mem::take(&mut view.keeps_length);
-    let version = boundary.version * 2 + u64::from(keeps_length);
+    // And so is the kind of antialiasing its glyphs were painted in.
+    let version = (boundary.version * 2 + u64::from(keeps_length)) ^ (view.text_epoch << 40);
     let (group, parent) = (boundary.group, view.group);
     let traits = boundary.traits;
     let notified: EntityId = boundary.entity.entity_id();

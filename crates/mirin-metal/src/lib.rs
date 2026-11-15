@@ -64,6 +64,7 @@ pub use patch::{parse_patch, PatchOp, PATCH_MARKER, PATCH_PROTOCOL};
 pub use scroll::{ScrollCommand, ScrollPosition, SCROLL_MARKER};
 pub use sim::{LayoutNode, SimCommand};
 pub use surface::{parse_surface, Surface};
+pub use text_mode::{Antialiasing, TEXT_ANTIALIASING_MARKER};
 pub use titlebar::{Chrome, Controls, TitleBar};
 pub use tree::{
     parse_tree, Align, Direction, InputProps, InputRun, Justify, NodeSpec, SelectionRange,

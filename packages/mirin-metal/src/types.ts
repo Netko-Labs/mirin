@@ -725,8 +725,9 @@ export type NativeEvent =
    * `rebase` from one that takes a field's `baseHash` (the text its `value`
    * was set over) and carries what was typed meanwhile onto the value,
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
-   * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), and `imageError`
-   * from one that says when an image cannot be drawn (`onError`).
+   * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), `imageError` from
+   * one that says when an image cannot be drawn (`onError`), and
+   * `textAntialiasing` from one that takes `setTextAntialiasing`.
    */
   | {
       type: "protocol";
@@ -736,6 +737,7 @@ export type NativeEvent =
       rebase?: boolean;
       scroll?: boolean;
       imageError?: boolean;
+      textAntialiasing?: boolean;
     }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),
@@ -859,6 +861,19 @@ export interface NativeHostTransport extends NativeTransport {
    */
   setMinSize(width: number, height: number): void;
   /**
+   * Antialias the window's text in grays (`"grayscale"`) or by the panel's
+   * subpixels (`"subpixel"`: sharper on a panel of horizontal red, green,
+   * blue stripes; colour fringes on any other, and in a screenshot), from
+   * here on; `"default"` goes back to what the host started with
+   * (`NativeHostOptions.textAntialiasing`, else grays on Linux). A shown
+   * window is drawn again once, whole; a window opened later opens so, so a
+   * deferred host is told before `open()`. A window that is not opaque (a
+   * layer surface) always draws grays. Layout does not change. Only a host
+   * whose `protocol` event says `textAntialiasing` takes it; for an older
+   * one this does nothing (and returns false).
+   */
+  setTextAntialiasing(mode: TextAntialiasing): boolean;
+  /**
    * Open the window of a host spawned with `deferred: true`: once, or again
    * after `hide()` on a host that names `MIRIN_METAL_RESIDENT` (an open while
    * the window is shown is refused by the host).
@@ -872,6 +887,9 @@ export interface NativeHostTransport extends NativeTransport {
    */
   hide(): void;
 }
+
+/** How text is antialiased (`setTextAntialiasing`); `"default"` is what the host started with. */
+export type TextAntialiasing = "grayscale" | "subpixel" | "default";
 
 /** What a window is: what `open()` takes for a host spawned deferred. */
 export interface NativeWindowOptions {

@@ -36,6 +36,7 @@ export type {
   ScrollInfo,
   SimCommand,
   SvgProps,
+  TextAntialiasing,
   TextHighlight,
   TextInputDefaultProps,
   TextInputProps,

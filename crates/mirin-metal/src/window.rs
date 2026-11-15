@@ -22,6 +22,7 @@ use crate::scroll::ScrollCommand;
 use crate::selection::SelectionState;
 use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
+use crate::text_mode::Antialiasing;
 use crate::titlebar::TitleBar;
 use crate::tree::{collect_inputs, collect_key_ids, collect_scroll_ids, NodeSpec};
 use crate::value::sync_input;
@@ -97,6 +98,10 @@ pub enum DriverMessage {
     /// Scroll a view to an offset, or a node into view (`{"scrollTo": …}`,
     /// `{"scrollIntoView": …}`; `scroll.rs`), after the trees sent before it.
     Scroll(ScrollCommand),
+    /// Antialias text in grays or by subpixels from here on
+    /// (`{"textAntialiasing": …}`, `text_mode.rs`): a shown window is drawn
+    /// again whole, and the next one opens so.
+    TextAntialiasing(Antialiasing),
 }
 
 /// Renderer-owned editing state of one `input` node.
@@ -159,6 +164,10 @@ pub(crate) struct RootView {
     pub(crate) drawn_generation: u64,
     /// The images the driver was told could not be drawn (`media.rs`).
     pub(crate) image_errors: crate::media::ImageErrors,
+    /// How often the text's antialiasing changed under this window: part of
+    /// every retained subtree's version, so each is drawn anew after a
+    /// change instead of keeping glyphs of the other kind (`retain.rs`).
+    pub(crate) text_epoch: u64,
     /// Set while rendering a child of a view that scrolls along its
     /// direction: the child keeps its length there (render.rs).
     pub(crate) keeps_length: bool,
@@ -221,6 +230,7 @@ impl RootView {
             reveals: Vec::new(),
             drawn_generation: u64::MAX,
             image_errors: crate::media::ImageErrors::default(),
+            text_epoch: 0,
             keeps_length: false,
             lists: HashMap::new(),
             key_targets: HashMap::new(),
@@ -323,6 +333,14 @@ impl RootView {
             self.scroll_activity.retain(|id, _| ids.contains(id));
             self.scroll_reports.retain(|id, _| ids.contains(id));
         }
+    }
+
+    /// The text's antialiasing changed: everything is drawn again, the
+    /// subtrees kept across frames included.
+    pub(crate) fn text_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.text_epoch += 1;
+        window.refresh();
+        cx.notify();
     }
 
     /// Create state for new inputs, reset buffers whose driver value changed,

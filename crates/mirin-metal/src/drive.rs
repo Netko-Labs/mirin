@@ -755,6 +755,13 @@ impl Drive {
                     turn.min_size = Some((width, height));
                 }
                 HostMessage::Driver(DriverMessage::Scroll(command)) => turn.scrolls.push(command),
+                HostMessage::Driver(DriverMessage::TextAntialiasing(antialiasing)) => {
+                    // With or without a window: the next one opens so.
+                    let changed = cx.update(|cx| antialiasing.apply(cx));
+                    if let (true, Some(window)) = (changed, self.window) {
+                        let _ = window.update(cx, |view, window, cx| view.text_changed(window, cx));
+                    }
+                }
                 HostMessage::Open(options) => {
                     // What came before the open is what it shows.
                     self.hold(&mut turn);
