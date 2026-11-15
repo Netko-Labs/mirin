@@ -811,7 +811,11 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   draws grays either way, since the fringes need a known background.
   `MIRIN_METAL_TEXT=grayscale` asks for grays on macOS and Windows, where
   the host otherwise leaves the platform's default. Layout does not depend
-  on it: only glyph pixels differ.
+  on it: only glyph pixels differ. The engine reads the variable too: only
+  a host that asked for subpixel has the subpixel shaders parsed while it
+  starts (`sumi-wgpu`'s `wgpu_prepare.rs`); a host drawing in grays never
+  uses them, and their module was 1 MB each held for as long as it lived
+  (`docs/metal/engine.md`, section 7).
 - **Emoji are drawn** (2026-11-15). Noto Color Emoji as Fedora ships it
   (`Noto-COLRv1.ttf`) holds COLRv1 glyphs: paint graphs of gradients,
   transforms, clips and composited layers. swash draws colour bitmaps and
