@@ -330,7 +330,15 @@ patches change it in place, in order (section "Patches").
   what the platform delivers (the person's pointer crossing the window,
   their keyboard) is dropped in the GPUI fork, and the pointer is at the
   origin until a simulated move, and again after a resize, as it is for a
-  window no pointer entered. Animations (a scroll bar's fade,
+  window no pointer entered. Whether the window is the active one and
+  whether the pointer is over it are the platform's word too and are not
+  heard: the window counts as active, with no pointer over it, for as long
+  as the check lasts (a focus ring shows, as in a window a person is
+  using). A compositor gives and takes the keyboard when it likes, for one
+  when a second window opens beside the first, and each such change drew
+  the window again: `scene browser @1.25` then found one frame more in one
+  host than in the other, 4 runs of 6 in Dashi's VM, with the frame each
+  settled into the same every time. Animations (a scroll bar's fade,
   `heightTransitionMs`) read a clock that only `settle` moves, 250 ms for
   every frame an animation asked for, so they run through their frames at
   once (a scroll bar: shown three frames, part faded, gone) and end the

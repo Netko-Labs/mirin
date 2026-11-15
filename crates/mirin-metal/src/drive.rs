@@ -1204,6 +1204,52 @@ mod tests {
         assert!(!cx.update(|window, _| window.frame_pending()));
     }
 
+    #[sumi::test]
+    fn a_window_under_a_check_draws_nothing_for_the_platform(cx: &mut sumi::TestAppContext) {
+        let drawn = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = drawn.clone();
+        let (_view, cx) = cx.add_window_view(|_, _| Fades {
+            left: 0,
+            drawn: counted,
+        });
+        // The frames drawn since the last look (the test platform draws a
+        // dirty window itself).
+        let frames = |cx: &mut sumi::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                if window.is_dirty() {
+                    window.draw(cx).clear(cx);
+                }
+            });
+            drawn.replace(0)
+        };
+        cx.update(|window, _| window.activate_window());
+        frames(cx);
+        assert!(cx.update(|window, _| window.is_window_active()));
+
+        // A window a person uses is drawn again when the compositor takes
+        // the keyboard from it, and when the pointer comes over it.
+        cx.deactivate_window();
+        assert!(!cx.update(|window, _| window.is_window_active()));
+        assert_eq!(frames(cx), 1);
+        cx.simulate_window_hover(true);
+        assert_eq!(frames(cx), 1);
+
+        // Under a check it is active whatever the compositor says, and
+        // neither draws a frame: the frames are the check's alone.
+        cx.update(|window, _| window.set_platform_input_ignored(true));
+        assert!(cx.update(|window, _| window.is_window_active()));
+        assert_eq!(frames(cx), 1, "it is drawn again, active");
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        cx.deactivate_window();
+        cx.simulate_window_hover(false);
+        cx.simulate_window_hover(true);
+        assert!(cx.update(|window, _| window.is_window_active()));
+        assert!(!cx.update(|window, _| window.is_window_hovered()));
+        assert_eq!(frames(cx), 0);
+    }
+
     fn patch(json: &str) -> HostMessage {
         HostMessage::Driver(DriverMessage::Patch(
             crate::patch::parse_patch(json).expect("test patch parses"),
