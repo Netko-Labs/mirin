@@ -38,7 +38,10 @@
  *
  * `--scene` also compares what each host drew after every step: a digest of
  * the frame's primitives and hitboxes, which a host traces with
- * `MIRIN_METAL_TRACE_SCENE=1` (hosts from before that have none). With
+ * `MIRIN_METAL_TRACE_SCENE=1` (hosts from before that have none): of the
+ * frame the step settled into (`(drew)`), and from a host that settles of
+ * every frame it drew on the way there, in order (`(frames)`: the frame
+ * with the step in it, the driver's answer, an animation's). With
  * `--env-b=MIRIN_METAL_RETAIN=0` and the same host twice, that checks
  * retained subtrees draw what drawing everything does; add
  * `--env-a=MIRIN_METAL_TRACE_SCENE_GLYPHS=1 --env-b=MIRIN_METAL_TRACE_SCENE_GLYPHS=1`
@@ -62,6 +65,7 @@
  * that way, to compare the two ways on one host.
  */
 
+import { join } from "node:path";
 import {
   type NativeEvent,
   render,
@@ -368,6 +372,12 @@ const steps: Step[] =
             name: "accordion",
             command: (id) => ({ kind: "click", id: id("example:accordion-demo") }),
           },
+          // The pointer rests on an item while the list scrolls under it:
+          // the item's highlight moves with the list, and another takes it.
+          {
+            name: "rest on item",
+            command: (id) => ({ kind: "move", id: id("example:badge-demo") }),
+          },
           {
             name: "scroll list",
             command: (id) => ({ kind: "scroll", id: id("example-list"), dy: 300 }),
@@ -496,8 +506,10 @@ function Settles({ idle, children }: { idle: Idle; children: ReactNode }) {
 
 async function run(binary: string): Promise<Array<{ name: string; layout: Snapshot }>> {
   // What the last frame drew (`--scene`): from the host's `settled` event,
-  // or for a host without it from its trace.
+  // or for a host without it from its trace. And what every frame since
+  // the last snapshot drew: a host that settles says for each round.
   let drew = "";
+  let frames: string[] = [];
   const transport = spawnNativeHost(binary, {
     title: "layout check",
     width: 1280,
@@ -526,6 +538,7 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
   const send = transport.send.bind(transport);
   transport.send = (line) => {
     exchanged += 1;
+    if (process.env.LAYOUT_CHECK_TRACE) console.error(`layout-check: sent ${line.length} bytes`);
     send(line);
   };
   type Answer = Extract<NativeEvent, { type: "protocol" | "settled" | "layout" }>;
@@ -557,9 +570,19 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
       return;
     }
     exchanged += 1;
+    if (process.env.LAYOUT_CHECK_TRACE) console.error(`layout-check: heard ${event.type}`);
     if (event.type === "press") heard.push(`press ${event.nodeId}`);
     if (event.type === "hover") heard.push(`hover ${event.nodeId} ${event.hovered}`);
   });
+  // The example browser imports an example when it is first shown, from
+  // an effect: read from disk, that ends whenever it ends. Imported before,
+  // it is there within the step that shows it.
+  if (app === "browser") {
+    const shown = ["button-demo", "badge-demo", "card-demo", "accordion-demo"];
+    await Promise.all(
+      shown.map((name) => import(join(import.meta.dir, "../demo/examples", `${name}.tsx`))),
+    );
+  }
   const idle = new Idle();
   const root = render(
     <Settles idle={idle}>
@@ -602,6 +625,7 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
       const event = await waiting;
       if (!event.quiet) throw new Error(`${binary} did not settle`);
       if (event.scene !== undefined) drew = event.scene;
+      if (event.frames !== undefined && event.frames !== "0") frames.push(event.frames);
       await within(idle.idle(), "idle app");
       if (exchanged === before) return;
     }
@@ -618,10 +642,17 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
     );
     snapshot.set("(heard)", heard.join(", "));
     heard = [];
-    if (scene) snapshot.set("(drew)", drew);
+    if (scene) {
+      snapshot.set("(drew)", drew);
+      snapshot.set("(frames)", frames.join(" "));
+      frames = [];
+    }
     return snapshot;
   };
   await settled(3000);
+  // How many frames a window opens with depends on when its driver's first
+  // lines reach it: only what it settles into is compared there.
+  frames = [];
   const out = [{ name: "initial", layout: await snapshot() }];
   for (const step of driven) {
     const laid = out.at(-1)?.layout;
@@ -629,6 +660,7 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
       const [x = 0, y = 0] = (laid?.get(nodeId(testId)) ?? "").split(/[, ]/).map(Number);
       return { x: x + 2, y: y + 2 };
     };
+    if (process.env.LAYOUT_CHECK_TRACE) console.error(`layout-check: step ${step.name}`);
     if (step.width !== undefined) transport.setSize(step.width, 800);
     else if (step.command) transport.simulate(step.command(nodeId, at));
     // Without `settle`, several frames: the driver's answer, then whatever
@@ -705,7 +737,7 @@ for (const [index, stepA] of a.entries()) {
     }
   }
   console.log(
-    `${stepA.name.padEnd(14)} ${stepA.layout.size - 1 - Number(scene)} nodes, ${differ} differ`,
+    `${stepA.name.padEnd(14)} ${stepA.layout.size - 1 - 2 * Number(scene)} nodes, ${differ} differ`,
   );
   differences += differ;
 }

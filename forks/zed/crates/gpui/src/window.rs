@@ -1358,6 +1358,8 @@ pub struct Window {
     pub(crate) dirty_views: FxHashSet<EntityId>,
     /// mirin: input from the platform is dropped (`set_platform_input_ignored`).
     platform_input_ignored: bool,
+    /// mirin: the platform's frame requests draw nothing (`set_frames_held`).
+    frames_held: bool,
     focus_listeners: SingleSubscriberSet<AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SingleSubscriberSet<AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
@@ -2120,6 +2122,24 @@ impl Window {
                     })
                     .log_err();
 
+                // mirin: a window whose frames are held is drawn only by its
+                // holder; the platform's requests show the last frame drawn.
+                let held = handle
+                    .update(&mut cx, |_, window, _| {
+                        if !window.frames_held {
+                            return false;
+                        }
+                        if window.needs_present.get() || request_frame_options.require_presentation
+                        {
+                            window.present();
+                        }
+                        true
+                    })
+                    .unwrap_or(false);
+                if held {
+                    return;
+                }
+
                 // Keep presenting briefly after high-rate input to prevent display
                 // underclocking, but subject to the same power limits as redraws.
                 let high_rate_input = input_rate_tracker.borrow_mut().is_high_rate();
@@ -2593,6 +2613,7 @@ impl Window {
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
             platform_input_ignored: false,
+            frames_held: false,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
@@ -3215,6 +3236,17 @@ impl Window {
             callback(self, cx);
         }
         count
+    }
+
+    /// mirin: hold the window's frames, or let them go: while held, a
+    /// frame request from the platform draws nothing and runs no callback
+    /// that waits for the next frame; it only shows the last frame drawn.
+    /// Whoever holds them draws with [`Self::run_next_frame_callbacks`] and
+    /// [`Self::draw`], so every frame of the window is one it asked for (a
+    /// check that compares what each frame drew). Hold them only once the
+    /// window has drawn its first frame, which the platform must ask for.
+    pub fn set_frames_held(&mut self, held: bool) {
+        self.frames_held = held;
     }
 
     /// mirin: drop every input event the platform delivers (the pointer,

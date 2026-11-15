@@ -306,13 +306,16 @@ patches change it in place, in order (section "Patches").
   the window waits for no other (no view is dirty, no animation asked for a
   frame). `quiet` is false when it still waited after 20 s, or after a
   minute of animation under a check, and when there is no window to settle
-  (hidden; the simulations queued are dropped). With
-  `MIRIN_METAL_TRACE_SCENE` the event also carries `scene`, the digest of
-  the last frame drawn. A host that takes it says `"settle":true` in its
+  (hidden; the simulations queued are dropped). A `settle` is about what
+  was sent before it: every line after it (a patch, a size, a simulation)
+  waits, in order, until it is answered. With `MIRIN_METAL_TRACE_SCENE` the
+  event also carries `scene`, the digest of the last frame drawn, and under
+  a check `frames`, a digest of every frame drawn to settle, in order
+  (`"0"`: none). A host that takes it says `"settle":true` in its
   `protocol` line (and its binary names `MIRIN_METAL_SETTLE`); one from
   before refuses the line. What the app does in answer to the events before
-  `settled` (a press that sets state) reaches the host after it: a check
-  asks again once its driver is done, until a round brings nothing new
+  `settled` (a press that sets state) is applied after it: a check asks
+  again once its driver is done, until a round brings nothing new
   (`bench/layout-check.tsx`).
 - Check mode: `MIRIN_METAL_CHECK=1` in the host's environment, for a window
   a check drives (`src/check.rs`). The window hears only simulated input:
@@ -323,13 +326,17 @@ patches change it in place, in order (section "Patches").
   `heightTransitionMs`) read a clock that only `settle` moves, 250 ms for
   every frame an animation asked for, so they run through their frames at
   once (a scroll bar: shown three frames, part faded, gone) and end the
-  same on every run. And `settle` draws the frames the window waits for
-  itself instead of waiting for the compositor to ask for each (a nested
-  compositor asks about once a second); the compositor is shown the last
-  one when it next asks. With `MIRIN_METAL_TRACE_SCENE=1` the per-frame
-  `scene` trace line is left out (a `settled` event has the digest;
-  describing a scene costs more than drawing it). Without check mode
-  `settle` answers as well, at the pace frames come.
+  same on every run. And from its first `settle` on the window is drawn
+  only by `settle`, which draws the frames it waits for itself instead of
+  waiting for the compositor to ask for each (a nested compositor asks
+  about once a second); a frame request from the compositor only shows the
+  last one drawn. With what follows a `settle` held until its answer, the
+  frames a window draws are then the same on every run, however busy the
+  machine and however fast its driver answers, so a check can compare all
+  of them (`frames`), not only the one it settles into. With
+  `MIRIN_METAL_TRACE_SCENE=1` the per-frame `scene` trace line is left out
+  (the `settled` event has the digests). Without check mode `settle`
+  answers as well, at the pace frames come.
 - Grid: `grid` lays children out as a CSS grid (taffy) with `gridColumns` /
   `gridRows` track lists (a number is px; `"1fr"`, `"25%"`, `"auto"`,
   `"min-content"`, `"max-content"`; `{"min","max"}` is `minmax`), item
@@ -2702,13 +2709,15 @@ whose name has the text, `--logs=<dir>` keeps their output. Without
 The checks wait for nothing but the host: `layout-check.tsx` gives its
 hosts `MIRIN_METAL_CHECK=1` and after each step sends `settle`, lets React
 finish what the host's events started, and asks again until a round
-exchanges nothing (section 2, "Simulation" and "Check mode"). So the set
-takes about a minute where it took 55 with fixed waits (1.5 s a step, 3.5 s
-with `--scene`, one check at a time under a lock), gives the same answer
-beside a build or with the pointer over a check's window, and leaves no
-file behind. Three sets at once beside a `cargo build`: every check passed
-in each. A host with a moved drawing's quads left behind (`Primitive::move_by`)
-fails 12 of the 15 scene checks.
+exchanges nothing (section 2, "Simulation" and "Check mode"). With
+`--scene` it compares the frame each step settles into and, new with
+`settle`, every frame drawn on the way there. So the set takes under a
+minute where it took 55 with fixed waits (1.5 s a step, 3.5 s with
+`--scene`, one check at a time under a lock), gives the same answer beside
+a build or with the pointer over a check's window, and leaves no file
+behind. A host with a moved drawing's quads left behind
+(`Primitive::move_by`) fails 12 of the 15 scene checks, the ones the fixed
+waits fail it on.
 
 The reference has to take `settle` too (any host built from this point
 on). One from before is driven with the fixed waits, and its window hears

@@ -548,15 +548,44 @@ struct Drive {
     /// This loop has stood aside for the window's own tasks since it last
     /// did anything to the window (`apply`): a `settle` looks only then.
     stood_aside: bool,
+    /// What came after a `settle` that is still waiting, in order: a
+    /// `settle` is about what was sent before it, so the rest waits for its
+    /// answer. The frames drawn to settle are then the same however fast
+    /// the driver answers the events of the first of them.
+    after_settle: Vec<HostMessage>,
 }
 
-/// A `settle` waiting for the window: since when, and the frames it drew.
+/// A `settle` waiting for the window: since when, the frames it drew, and
+/// a digest of what each drew, in order (`MIRIN_METAL_TRACE_SCENE`).
 struct Settling {
     since: std::time::Instant,
     frames: u32,
+    drew: u64,
 }
 
 impl Settling {
+    fn start() -> Self {
+        Self {
+            since: std::time::Instant::now(),
+            frames: 0,
+            drew: 0,
+        }
+    }
+
+    /// Take a frame's scene digest into the digest of all of them (FNV-1a
+    /// over the digests' bytes: the same in every build of the host).
+    fn drew(&mut self, scene: u64) {
+        let mut digest = if self.drew == 0 {
+            0xcbf2_9ce4_8422_2325
+        } else {
+            self.drew
+        };
+        for byte in scene.to_le_bytes() {
+            digest = (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.drew = digest;
+    }
+
     /// Whether it has waited long enough to answer that nothing settled.
     fn is_overdue(&self) -> bool {
         self.since.elapsed() > SETTLE_LIMIT || self.frames > SETTLE_FRAMES
@@ -564,15 +593,25 @@ impl Settling {
 }
 
 /// Answer a `settle`: the window settled (`quiet`), or did not in time, or
-/// there is none to settle. `scene` is what its last frame drew, when the
-/// host traces that.
-fn tell_settled(events: &mpsc::Sender<NativeUiEvent>, quiet: bool, scene: Option<String>) {
+/// there is none to settle. `scene` is what its last frame drew and
+/// `frames` what all the frames drawn to settle did, when the host traces
+/// that.
+fn tell_settled(
+    events: &mpsc::Sender<NativeUiEvent>,
+    quiet: bool,
+    scene: Option<String>,
+    frames: Option<String>,
+) {
     if !quiet {
         eprintln!("[mirin-metal-host] settle: the window did not settle");
     }
     let _ = events.send(NativeUiEvent {
         node_id: "root".into(),
-        kind: crate::events::EventKind::Settled { quiet, scene },
+        kind: crate::events::EventKind::Settled {
+            quiet,
+            scene,
+            frames,
+        },
         bounds: None,
     });
 }
@@ -635,6 +674,7 @@ impl Drive {
             access,
             settling: None,
             stood_aside: false,
+            after_settle: Vec::new(),
         }
     }
 
@@ -650,7 +690,10 @@ impl Drive {
     ) {
         loop {
             let mut batch = Vec::new();
-            if self.pending.is_empty() {
+            if !self.settle_waits() && !self.after_settle.is_empty() {
+                // The settle is answered: what waited behind it, first.
+                batch = std::mem::take(&mut self.after_settle);
+            } else if self.pending.is_empty() {
                 let next = futures::future::select(messages.next(), asked.next()).await;
                 let message = match next {
                     futures::future::Either::Left((message, _)) => message,
@@ -700,6 +743,10 @@ impl Drive {
     async fn turn(&mut self, batch: Vec<HostMessage>, cx: &mut AsyncApp) -> bool {
         let mut turn = Turn::default();
         for message in batch {
+            if self.settle_waits() {
+                self.after_settle.push(message);
+                continue;
+            }
             match message {
                 HostMessage::Driver(DriverMessage::Tree(tree)) => turn.trees.whole(*tree),
                 HostMessage::Driver(DriverMessage::Patch(ops)) => turn.trees.patch(ops),
@@ -855,6 +902,13 @@ impl Drive {
         dispatched.is_ok()
     }
 
+    /// Whether a `settle` is waiting for the window.
+    fn settle_waits(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|command| matches!(command, SimCommand::Settle))
+    }
+
     /// Drop the simulations that wait; a `settle` among them is answered
     /// (nothing settled), so its driver is not left waiting.
     fn drop_pending(&mut self) {
@@ -865,7 +919,7 @@ impl Drive {
             .count();
         self.settling = None;
         for _ in 0..settles {
-            tell_settled(&self.events, false, None);
+            tell_settled(&self.events, false, None, None);
         }
     }
 
@@ -881,22 +935,33 @@ impl Drive {
         let Ok(painted) = window.update(cx, |view, _window, _cx| view.has_painted()) else {
             return false;
         };
-        let settling = self.settling.get_or_insert_with(|| Settling {
-            since: std::time::Instant::now(),
-            frames: 0,
-        });
+        let settling = self.settling.get_or_insert_with(Settling::start);
         let any_window: gpui::AnyWindowHandle = window.into();
+        let traced = crate::window::scene_traced().is_some();
         let waits = if !painted {
             Ok(true)
         } else if crate::check::enabled() {
-            // The animations notify their views; the frame is drawn once
+            // From here on the window draws only here: every frame is one
+            // a `settle` asked for, the same ones on every run. Then the
+            // animations notify their views, and the frame is drawn once
             // that has taken effect, which is when the update ends.
             any_window
-                .update(cx, |_root, window, cx| run_animations(window, cx))
+                .update(cx, |_root, window, cx| {
+                    window.set_frames_held(true);
+                    run_animations(window, cx)
+                })
                 .and_then(|animating| {
                     any_window
-                        .update(cx, |_root, window, cx| draw_if_dirty(window, cx))
-                        .map(|drew| drew || animating)
+                        .update(cx, |_root, window, cx| {
+                            let drew = draw_if_dirty(window, cx);
+                            (drew, (drew && traced).then(|| window.last_scene_digest()))
+                        })
+                        .map(|(drew, scene)| {
+                            if let Some(scene) = scene {
+                                settling.drew(scene);
+                            }
+                            drew || animating
+                        })
                 })
         } else {
             any_window.update(cx, |_root, window, _cx| window.frame_pending())
@@ -910,18 +975,20 @@ impl Drive {
                 return true;
             }
         }
+        // What the frames drawn to settle drew, and the settled one, whole,
+        // for a check of two hosts' drawing (`MIRIN_METAL_TRACE_SCENE`).
+        let frames = (traced && crate::check::enabled()).then(|| format!("{:x}", settling.drew));
         self.settling = None;
         self.pending.pop_front();
-        // What the settled frame drew, whole, for a check of two hosts'
-        // drawing (`MIRIN_METAL_TRACE_SCENE`).
-        let scene = crate::window::scene_traced()
-            .and_then(|_| {
+        let scene = traced
+            .then(|| {
                 any_window
                     .update(cx, |_root, window, _cx| window.last_scene_digest())
                     .ok()
             })
+            .flatten()
             .map(|digest| format!("{digest:016x}"));
-        tell_settled(&self.events, !waits, scene);
+        tell_settled(&self.events, !waits, scene, frames);
         true
     }
 
@@ -1063,22 +1130,40 @@ mod tests {
         use super::{Settling, SETTLE_FRAMES, SETTLE_LIMIT};
         let now = std::time::Instant::now();
         let fresh = Settling {
-            since: now,
             frames: SETTLE_FRAMES,
+            ..Settling::start()
         };
         assert!(!fresh.is_overdue());
         let animating = Settling {
-            since: now,
             frames: SETTLE_FRAMES + 1,
+            ..Settling::start()
         };
         assert!(animating.is_overdue());
         if let Some(long_ago) = now.checked_sub(SETTLE_LIMIT + std::time::Duration::from_secs(1)) {
             let unseen = Settling {
                 since: long_ago,
-                frames: 0,
+                ..Settling::start()
             };
             assert!(unseen.is_overdue());
         }
+    }
+
+    #[test]
+    fn the_frames_drawn_to_settle_are_told_apart_by_what_and_in_which_order() {
+        use super::Settling;
+        let drew = |scenes: &[u64]| {
+            let mut settling = Settling::start();
+            for scene in scenes {
+                settling.drew(*scene);
+            }
+            settling.drew
+        };
+        assert_eq!(drew(&[]), 0, "no frame");
+        assert_ne!(drew(&[7]), 0);
+        assert_eq!(drew(&[7, 9]), drew(&[7, 9]));
+        assert_ne!(drew(&[7, 9]), drew(&[9, 7]));
+        assert_ne!(drew(&[7, 9]), drew(&[7]));
+        assert_ne!(drew(&[7, 7]), drew(&[7]), "a frame drawn twice is two");
     }
 
     /// A view that asks for the next frame on each of its first frames.

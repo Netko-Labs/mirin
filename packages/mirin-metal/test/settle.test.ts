@@ -33,12 +33,12 @@ async function exchange(
 test("a host that settles says so, and its answer says what it drew", async () => {
   const { line, events } = await exchange(
     '{"type":"protocol","nodeId":"root","patches":1,"settle":true}',
-    '{"type":"settled","nodeId":"root","quiet":true,"scene":"00000000000000ff"}',
+    '{"type":"settled","nodeId":"root","quiet":true,"scene":"00000000000000ff","frames":"1f"}',
   );
   expect(line).toEqual({ sim: { kind: "settle" } });
   expect(events).toEqual([
     { type: "protocol", nodeId: "root", patches: 1, settle: true },
-    { type: "settled", nodeId: "root", quiet: true, scene: "00000000000000ff" },
+    { type: "settled", nodeId: "root", quiet: true, scene: "00000000000000ff", frames: "1f" },
   ]);
 });
 

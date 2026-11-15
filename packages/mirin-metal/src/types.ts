@@ -626,10 +626,12 @@ export type NativeEvent =
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),
    * or still waited for a frame when the host gave up (20 s, or a minute of
-   * animation under `MIRIN_METAL_CHECK=1`). `scene` is the digest of the
-   * last frame drawn, from a host that traces it (`MIRIN_METAL_TRACE_SCENE`).
+   * animation under `MIRIN_METAL_CHECK=1`). From a host that traces scenes
+   * (`MIRIN_METAL_TRACE_SCENE`), `scene` is the digest of the last frame
+   * drawn, and under `MIRIN_METAL_CHECK=1` `frames` is a digest of every
+   * frame drawn to settle, in order (`"0"` when none was).
    */
-  | { type: "settled"; nodeId: "root"; quiet: boolean; scene?: string }
+  | { type: "settled"; nodeId: "root"; quiet: boolean; scene?: string; frames?: string }
   /** A patch didn't apply (`reason`): the host wants the whole tree, and drops patches until it comes. */
   | { type: "resync"; nodeId: "root"; reason: string }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
@@ -674,15 +676,17 @@ export type SimCommand =
    * Ask for a `settled` event once the window has settled: everything sent
    * before this (trees, patches, sizes, simulations) is applied, a frame
    * with it is drawn, and the window waits for no other (no view is dirty,
-   * no animation asked for a frame). What the app does in answer to the
-   * events before `settled` comes after it, so a check that presses
+   * no animation asked for a frame). Lines sent after it wait for its
+   * answer, and what the app does in answer to the events before
+   * `settled` is applied after it, so a check that presses
    * something sends `settle` again once its driver has answered, until a
    * round brings nothing new (`bench/layout-check.tsx` in
    * `@mirinjs/metal-ui`). Only a host whose `protocol` event says
    * `settle: true` takes it; one from before refuses the line. With
    * `MIRIN_METAL_CHECK=1` in the host's environment the window hears no
    * input but simulated input, animations run to their end at once, and
-   * frames are drawn without waiting for the compositor.
+   * from its first `settle` on the window draws only to settle, without
+   * waiting for the compositor.
    */
   | { kind: "settle" }
   | { kind: "window"; action: "zoom" | "minimize" };

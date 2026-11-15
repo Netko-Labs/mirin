@@ -74,6 +74,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             nodeId: "root",
             quiet: record.quiet,
             ...(typeof record.scene === "string" ? { scene: record.scene } : {}),
+            ...(typeof record.frames === "string" ? { frames: record.frames } : {}),
           }
         : null;
     case "resync":

@@ -546,10 +546,18 @@ fn main() {
                     None => serde_json::Value::Null,
                 };
             }
-            if let EventKind::Settled { quiet, scene } = &event.kind {
+            if let EventKind::Settled {
+                quiet,
+                scene,
+                frames,
+            } = &event.kind
+            {
                 line["quiet"] = serde_json::json!(quiet);
                 if let Some(scene) = scene {
                     line["scene"] = serde_json::json!(scene);
+                }
+                if let Some(frames) = frames {
+                    line["frames"] = serde_json::json!(frames);
                 }
             }
             if let EventKind::Layout { nodes } = &event.kind {
