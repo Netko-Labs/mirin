@@ -195,6 +195,15 @@ pub(crate) struct RootView {
     pub(crate) boundaries: crate::retain::Boundaries,
     /// While a retained subtree is built: its group (`sim::LayoutMap`).
     pub(crate) group: Option<u64>,
+    /// What the updates applied since the view was last told to draw
+    /// changed (`notify_changed`).
+    changed: crate::retain::Synced,
+    /// A partial frame being drawn (`partial_frame`): when it began, and
+    /// what the window's thread had run by then.
+    partial: Option<(std::time::Instant, Option<crate::counters::Counted>)>,
+    /// How many partial frames were drawn.
+    #[cfg(test)]
+    pub(crate) partial_frames: u32,
 }
 
 /// A view with `onKeyDown`: its focus, and whether it still has to take it.
@@ -237,6 +246,10 @@ impl RootView {
             focus: crate::focus::FocusState::new(cx),
             boundaries: crate::retain::Boundaries::default(),
             group: None,
+            changed: crate::retain::Synced::default(),
+            partial: None,
+            #[cfg(test)]
+            partial_frames: 0,
         };
         view.boundaries.sync(None, &view.tree, false, cx);
         view.focus.sync(&view.tree, cx);
@@ -261,6 +274,7 @@ impl RootView {
         self.boundaries.sync(Some(&old), &self.tree, false, cx);
         drop(old);
         self.placeholder = false;
+        self.changed = crate::retain::Synced::everything();
         self.tree_changed(&Applied::everything(), cx);
     }
 
@@ -274,13 +288,121 @@ impl RootView {
     ) -> Result<(), PatchError> {
         let applied = self.tree.apply(ops);
         // A patch: the generations say which retained subtrees changed (retain.rs).
-        self.boundaries.sync(None, &self.tree, applied.is_ok(), cx);
+        let mut synced = self.boundaries.sync(None, &self.tree, applied.is_ok(), cx);
+        // What the renderer keeps state for (a field, the Tab order, a
+        // scroll view) is drawn from the root.
+        synced.spine |= self.placeholder
+            || applied.as_ref().map_or(true, |applied| {
+                applied.touched != Touched::NONE || !applied.fields.is_empty()
+            });
+        // The retained subtrees whose content changed are dirty from here
+        // on, whoever draws the next frame: the engine builds them, and the
+        // ones around them, though no version but theirs moved.
+        for (entity, _) in &synced.retained {
+            cx.notify(*entity);
+        }
+        self.changed.and(synced);
         self.placeholder = false;
         match &applied {
             Ok(applied) => self.tree_changed(applied, cx),
             Err(_) => self.tree_changed(&Applied::everything(), cx),
         }
         applied.map(|_| ())
+    }
+
+    /// The updates applied since this was last called are to be drawn. The
+    /// retained subtrees whose content changed were notified as each was
+    /// applied (`apply_patch`); the engine is told the version each is at,
+    /// and the view itself is notified only when something outside them
+    /// changed. Then the engine draws those subtrees alone, where they are
+    /// (a partial frame), when it can, and everything from the root when it
+    /// can't.
+    pub(crate) fn notify_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let changed = std::mem::take(&mut self.changed);
+        for (entity, version) in &changed.retained {
+            window.set_retained_version(*entity, *version);
+        }
+        // Nothing heard (a subtree the window never drew is not listened
+        // to): the view is drawn, which draws whatever changed.
+        if changed.spine || !window.is_dirty() {
+            cx.notify();
+        }
+    }
+
+    /// The engine tries, or is done with, a partial frame
+    /// (`sumi::PartialFrame`): the retained subtrees whose content changed
+    /// drawn again where they are, with no `render`. What `render` and the
+    /// canvases it ends with do for a frame is done here for these: the
+    /// layout map hears of the groups drawn, the accessibility tree of what
+    /// they changed, the trace of the frame.
+    pub(crate) fn partial_frame(
+        &mut self,
+        frame: sumi::PartialFrame,
+        window: &mut Window,
+        cx: &App,
+    ) {
+        match frame {
+            sumi::PartialFrame::Begin => {
+                self.partial = Some((std::time::Instant::now(), crate::counters::read()));
+                self.layout.begin_partial();
+                crate::retain::Boundaries::forget_counts();
+            }
+            sumi::PartialFrame::End { drawn: false } => {
+                self.partial = None;
+                self.layout.abandon_partial();
+                crate::retain::Boundaries::forget_counts();
+            }
+            sumi::PartialFrame::End { drawn: true } => {
+                #[cfg(test)]
+                {
+                    self.partial_frames += 1;
+                }
+                self.layout.end_partial();
+                // The frame the trace times ends here, as a whole frame's
+                // does before the accessibility tree is brought up to date.
+                let timed = self.partial.take().map(|(started, counted)| {
+                    (started.elapsed(), counted, crate::counters::read())
+                });
+                self.idle.frame_drawn(cx);
+                self.refresh_access(window);
+                let Some((elapsed, counted, counted_now)) = timed else {
+                    return;
+                };
+                if !crate::trace::enabled() {
+                    return;
+                }
+                let traced =
+                    scene_traced().filter(|dump| dump.is_some() || !crate::check::enabled());
+                if let Some(dump) = traced {
+                    let digest = window.last_scene_digest();
+                    crate::trace::log(format_args!("scene {digest:016x}"));
+                    if let Some(path) = dump {
+                        dump_scene(path, digest, &window.last_scene_drawn());
+                    }
+                }
+                let drawn = crate::retain::take_counts();
+                let ran = counted_now
+                    .zip(counted)
+                    .map(|(now, before)| now.since(before))
+                    .unwrap_or_default();
+                let size = window.viewport_size();
+                // As a frame's line, for whoever reads the trace: nothing
+                // was rendered, and the frame is the partial one.
+                crate::trace::log(format_args!(
+                    "render {:.0}x{:.0} took 0.00ms, frame {:.2}ms, \
+                     retained subtrees {} built, {} redrawn (0 apart), {} reused, {} moved, \
+                     {} skipped{ran}, in place",
+                    f32::from(size.width),
+                    f32::from(size.height),
+                    elapsed.as_secs_f64() * 1000.0,
+                    drawn.built,
+                    drawn.redrawn,
+                    drawn.reused,
+                    drawn.moved,
+                    drawn.skipped,
+                ));
+            }
+        }
     }
 
     /// Bring the renderer's own state (focus, fields, key views, lists,

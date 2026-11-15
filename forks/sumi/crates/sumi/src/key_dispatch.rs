@@ -72,7 +72,13 @@ pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
     view_stack: Vec<EntityId>,
-    nodes: Vec<DispatchNode>,
+    // mirin: a partial frame writes a retained subtree's nodes over the
+    // ones it made before (`window::FrameVec`, `begin_patch`).
+    nodes: crate::window::FrameVec<DispatchNode>,
+    /// mirin: a partial frame is drawing into this tree, and found
+    /// something it can't draw (what takes keys or focus).
+    partial: bool,
+    partial_failed: bool,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
     keymap: Rc<RefCell<Keymap>>,
@@ -142,7 +148,9 @@ impl DispatchTree {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
             view_stack: Vec::new(),
-            nodes: Vec::new(),
+            nodes: Default::default(),
+            partial: false,
+            partial_failed: false,
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
             keymap,
@@ -159,8 +167,66 @@ impl DispatchTree {
         self.view_node_ids.clear();
     }
 
+    /// mirin: where the next node goes: at the end, or where a partial
+    /// frame is (`begin_patch`).
     pub fn len(&self) -> usize {
+        self.nodes.end()
+    }
+
+    /// mirin: how many nodes the tree has (`len` is where the next goes).
+    pub(crate) fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// mirin: write the nodes pushed from here on over the ones in `range`
+    /// (a retained subtree's, drawn again in the frame it was drawn in:
+    /// `window/partial.rs`), under the node the first of them is under.
+    /// `false`: not a range of this tree.
+    pub(crate) fn begin_patch(&mut self, range: Range<usize>) -> bool {
+        let parent = self.nodes.get(range.start).and_then(|node| node.parent);
+        if !self.nodes.begin_patch(range.clone()) {
+            return false;
+        }
+        self.partial = true;
+        self.node_stack.clear();
+        self.context_stack.clear();
+        self.view_stack.clear();
+        if let Some(parent) = parent.filter(|_| !range.is_empty()) {
+            self.set_active_node(parent);
+        }
+        true
+    }
+
+    /// mirin: the node a retained subtree's are under becomes the active
+    /// one again, for its paint in a partial frame (each element then makes
+    /// its own active, as in any paint).
+    pub(crate) fn activate_parent_of(&mut self, first: usize) {
+        self.node_stack.clear();
+        self.context_stack.clear();
+        self.view_stack.clear();
+        if let Some(parent) = self.nodes.get(first).and_then(|node| node.parent) {
+            self.set_active_node(parent);
+        }
+    }
+
+    /// mirin: the patch is over; whether it wrote over exactly its range.
+    pub(crate) fn end_patch(&mut self) -> bool {
+        self.nodes.end_patch()
+    }
+
+    /// mirin: a partial frame is over: nothing is being built. Whether
+    /// nothing in it asked for what it can't draw.
+    pub(crate) fn end_partial(&mut self) -> bool {
+        let held = !std::mem::take(&mut self.partial_failed);
+        self.partial = false;
+        self.end_partial_stacks();
+        held
+    }
+
+    fn end_partial_stacks(&mut self) {
+        self.node_stack.clear();
+        self.context_stack.clear();
+        self.view_stack.clear();
     }
 
     /// mirin: take the nodes in `range` out (their listeners; what else they
@@ -216,7 +282,8 @@ impl DispatchTree {
 
     pub fn push_node(&mut self) -> DispatchNodeId {
         let parent = self.node_stack.last().copied();
-        let node_id = DispatchNodeId(self.nodes.len());
+        // mirin: where it is written (`FrameVec::end`).
+        let node_id = DispatchNodeId(self.nodes.end());
 
         self.nodes.push(DispatchNode {
             parent,
@@ -264,17 +331,30 @@ impl DispatchTree {
     }
 
     pub fn set_key_context(&mut self, context: KeyContext) {
+        // mirin: what takes keys is not drawn in a partial frame.
+        if self.partial {
+            self.partial_failed = true;
+            return;
+        }
         self.active_node().context = Some(context.clone());
         self.context_stack.push(context);
     }
 
     pub fn set_focus_id(&mut self, focus_id: FocusId) {
+        if self.partial {
+            self.partial_failed = true;
+            return;
+        }
         let node_id = *self.node_stack.last().unwrap();
         self.nodes[node_id.0].focus_id = Some(focus_id);
         self.focusable_node_ids.insert(focus_id, node_id);
     }
 
     pub fn set_view_id(&mut self, view_id: EntityId) {
+        // mirin: in a partial frame the views are on the nodes they were.
+        if self.partial {
+            return;
+        }
         if self.view_stack.last().copied() != Some(view_id) {
             let node_id = *self.node_stack.last().unwrap();
             self.nodes[node_id.0].view_id = Some(view_id);
@@ -301,6 +381,16 @@ impl DispatchTree {
         source: &mut Self,
         focus: Option<FocusId>,
     ) -> ReusedSubtree {
+        // mirin: in a partial frame what is reused is this tree's own, where
+        // it is.
+        if self.nodes.patching() {
+            self.nodes.step_over(old_range.clone());
+            return ReusedSubtree {
+                new_range: old_range.clone(),
+                old_range,
+                contains_focus: false,
+            };
+        }
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
 
         // mirin: the nodes are copied in one pass. Upstream pushed and
@@ -377,6 +467,11 @@ impl DispatchTree {
     }
 
     pub fn truncate(&mut self, index: usize) {
+        // mirin: a partial frame takes nothing back.
+        if self.partial {
+            self.partial_failed = true;
+            return;
+        }
         for node in &self.nodes[index..] {
             if let Some(focus_id) = node.focus_id {
                 self.focusable_node_ids.remove(&focus_id);

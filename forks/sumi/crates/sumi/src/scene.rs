@@ -15,6 +15,11 @@ use std::{
     time::Duration,
 };
 
+// mirin: a finished scene painted over in place (`docs/metal/engine.md`,
+// section 3).
+mod patch;
+pub use patch::{SceneList, SceneVersion};
+
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
 
@@ -71,6 +76,9 @@ pub struct Scene {
     /// mirin: which primitives of a drawing being copied as one show
     /// (`replay_as_one`), kept between copies for its room.
     replay_shown: Vec<bool>,
+    /// mirin: where the sort put each paint operation's primitive, and the
+    /// patch being painted over them, if one is (`patch`).
+    slots: patch::Slots,
 }
 
 /// mirin: what a retained subtree being drawn anew put in the scene: every
@@ -260,6 +268,7 @@ impl Scene {
         self.polychrome_sprites.clear();
         self.surfaces.clear();
         self.animations.clear();
+        self.slots.clear();
     }
 
     /// Inserts a sprite that [`Self::advance_animations`] keeps moving. The
@@ -282,6 +291,11 @@ impl Scene {
         mask_id: MaskId,
         replayed: bool,
     ) {
+        // mirin: an animation is the scene's: not painted in a patch.
+        if self.patching() {
+            self.fail_patch();
+            return;
+        }
         sprite.animation = SpriteAnimationId(self.animations.len() as u32);
         animation.base_color = sprite.color;
         let index = self.paint_operations.len();
@@ -322,11 +336,18 @@ impl Scene {
         }
     }
 
+    /// mirin: where the next paint operation goes: at the end, or where a
+    /// patch is (`patch`).
     pub fn len(&self) -> usize {
-        self.paint_operations.len()
+        self.patch_cursor().unwrap_or(self.paint_operations.len())
     }
 
     pub fn push_layer(&mut self) {
+        // mirin: in a patch, a layer starts where one did.
+        if self.patching() {
+            self.patch_layer(true);
+            return;
+        }
         self.layer_stack.push(self.layers.len());
         self.layers.push_back(Layer {
             primitives: SmallVec::new(),
@@ -338,6 +359,10 @@ impl Scene {
     }
 
     pub fn pop_layer(&mut self) {
+        if self.patching() {
+            self.patch_layer(false);
+            return;
+        }
         self.layer_stack.pop();
         if self.layer_stack.is_empty() {
             while let Some(layer) = self.layers.pop_front() {
@@ -419,8 +444,12 @@ impl Scene {
             reach.take_in(&primitive, strip.as_ref(), !replayed);
             if clipped_bounds.is_empty() {
                 if replayed || reach.keeps(&primitive, strip.as_ref()) {
-                    self.paint_operations
-                        .push(PaintOperation::of(primitive, strip, mask_id));
+                    if self.patching() {
+                        self.patch_operation(primitive, strip, mask_id);
+                    } else {
+                        self.paint_operations
+                            .push(PaintOperation::of(primitive, strip, mask_id));
+                    }
                 }
                 return false;
             }
@@ -428,10 +457,21 @@ impl Scene {
 
         if clipped_bounds.is_empty() {
             if replayed {
-                self.paint_operations
-                    .push(PaintOperation::of(primitive, strip, mask_id));
+                if self.patching() {
+                    self.patch_operation(primitive, strip, mask_id);
+                } else {
+                    self.paint_operations
+                        .push(PaintOperation::of(primitive, strip, mask_id));
+                }
             }
             return false;
+        }
+
+        // mirin: in a patch it goes where the one it replaces is, with its
+        // draw order.
+        if self.patching() {
+            self.patch_operation(primitive, strip, mask_id);
+            return true;
         }
 
         let kind = primitive.kind();
@@ -468,6 +508,9 @@ impl Scene {
         let Some(primitive) = self.paint_operations[index].primitive() else {
             return;
         };
+        // mirin: and the list keeps which operation each came from, for
+        // the slots `finish` hands out (`patch`).
+        self.slots.pushed(primitive.kind(), index);
         match primitive {
             Primitive::Shadow(shadow) => self.shadows.push(*shadow),
             Primitive::Quad(quad) => self.quads.push(*quad),
@@ -677,6 +720,7 @@ impl Scene {
                         nested.push((open.last().copied().unwrap_or(0), index));
                         continue;
                     }
+                    self.slots.pushed(primitive.kind(), index);
                     match primitive {
                         Primitive::Shadow(shadow) => self.shadows.push(*shadow),
                         Primitive::Quad(quad) => self.quads.push(*quad),
@@ -785,19 +829,46 @@ impl Scene {
     pub fn finish(&mut self) {
         debug_assert!(self.layer_stack.is_empty(), "unbalanced scene layers");
         let keys = &mut Vec::new();
-        sort_in_place(&mut self.shadows, keys, |shadow| (shadow.order, 0));
-        sort_in_place(&mut self.quads, keys, |quad| (quad.order, 0));
+        // mirin: each paint operation is told where the sort leaves its
+        // primitive (`patch`).
+        let slots = &mut self.slots;
+        slots.begin_finish(self.paint_operations.len());
+        use PrimitiveKind as Kind;
+        sort_in_place(&mut self.shadows, keys, slots, Kind::Shadow, |shadow| {
+            (shadow.order, 0)
+        });
+        sort_in_place(&mut self.quads, keys, slots, Kind::Quad, |quad| {
+            (quad.order, 0)
+        });
         self.paths.sort_by_key(|path| path.order);
-        sort_in_place(&mut self.underlines, keys, |underline| (underline.order, 0));
-        sort_in_place(&mut self.monochrome_sprites, keys, |sprite| {
-            (sprite.order, sprite.tile.texture_id.index)
-        });
-        sort_in_place(&mut self.subpixel_sprites, keys, |sprite| {
-            (sprite.order, sprite.tile.texture_id.index)
-        });
-        sort_in_place(&mut self.polychrome_sprites, keys, |sprite| {
-            (sprite.order, sprite.tile.texture_id.index)
-        });
+        sort_in_place(
+            &mut self.underlines,
+            keys,
+            slots,
+            Kind::Underline,
+            |underline| (underline.order, 0),
+        );
+        sort_in_place(
+            &mut self.monochrome_sprites,
+            keys,
+            slots,
+            Kind::MonochromeSprite,
+            |sprite| (sprite.order, sprite.tile.texture_id.index),
+        );
+        sort_in_place(
+            &mut self.subpixel_sprites,
+            keys,
+            slots,
+            Kind::SubpixelSprite,
+            |sprite| (sprite.order, sprite.tile.texture_id.index),
+        );
+        sort_in_place(
+            &mut self.polychrome_sprites,
+            keys,
+            slots,
+            Kind::PolychromeSprite,
+            |sprite| (sprite.order, sprite.tile.texture_id.index),
+        );
         self.surfaces.sort_by_key(|surface| surface.order);
 
         // Sorting moved the sprites, so animations learn where theirs ended up.
@@ -843,12 +914,17 @@ impl Scene {
 /// primitive into place once. Primitives are large, so a comparison sort that shuffles them
 /// directly spends most of its time copying. Ties keep insertion order, as `sort_by_key`
 /// does, because the index is part of what is sorted.
+///
+/// mirin: and `slots` is told where each ended up (`patch::Slots::sorted`).
 fn sort_in_place<T: Copy>(
     primitives: &mut [T],
     keys: &mut Vec<(u64, u32)>,
+    slots: &mut patch::Slots,
+    kind: PrimitiveKind,
     key: impl Fn(&T) -> (u32, u32),
 ) {
     if primitives.is_sorted_by_key(&key) {
+        slots.sorted(kind, primitives.len(), |target| target);
         return;
     }
     keys.clear();
@@ -857,6 +933,7 @@ fn sort_in_place<T: Copy>(
         ((major as u64) << 32 | minor as u64, index as u32)
     }));
     keys.sort_unstable();
+    slots.sorted(kind, primitives.len(), |target| keys[target].1 as usize);
 
     // `keys[target].1` is the source index for `target`. Follow each cycle of that
     // permutation, marking visited slots by pointing them at themselves.
@@ -986,6 +1063,14 @@ impl PaintOperation {
         }
     }
 
+    /// mirin: the mask it was drawn under (`MaskNode`).
+    pub(crate) fn mask_id(&self) -> Option<MaskId> {
+        match self {
+            Self::Primitive(_, mask_id) | Self::Strip(_, _, mask_id) => Some(*mask_id),
+            Self::StartLayer | Self::EndLayer => None,
+        }
+    }
+
     /// mirin: the mask it was drawn under (`MaskNode`), to renumber.
     pub(crate) fn mask_id_mut(&mut self) -> Option<&mut MaskId> {
         match self {
@@ -1028,7 +1113,7 @@ impl PaintOperation {
 
 /// mirin: a strip of a border drawn in strips: the strip, and the content
 /// mask the border was drawn under (the strip's own is both, intersected).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Strip {
     bounds: Bounds<ScaledPixels>,
     mask: ContentMask<ScaledPixels>,

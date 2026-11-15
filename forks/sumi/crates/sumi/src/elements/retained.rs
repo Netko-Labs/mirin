@@ -77,6 +77,7 @@ use crate::{
 };
 
 mod grid;
+mod in_place;
 mod masks;
 mod parked;
 mod plan;
@@ -84,6 +85,7 @@ mod recording;
 mod steady;
 
 pub(crate) use grid::Grid;
+pub(crate) use in_place::draw_in_place;
 pub(crate) use masks::MaskMap;
 pub(crate) use parked::Parking;
 pub(crate) use plan::Drawn;
@@ -92,7 +94,9 @@ pub(crate) use recording::{Recorded, Recording};
 pub(crate) use steady::{Steadiness, is_exact};
 
 type Build = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
-type OnPrepaint = Box<dyn FnOnce(RetainedDraw, Bounds<Pixels>, &mut Window, &mut App)>;
+// mirin: called again each time the subtree is drawn, also in a partial
+// frame, where no element is made for it (`in_place`): kept with its state.
+type OnPrepaint = Rc<dyn Fn(RetainedDraw, Bounds<Pixels>, &mut Window, &mut App)>;
 
 thread_local! {
     static APART: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -166,9 +170,9 @@ impl Retained {
     /// runs, with how it is drawn this frame and where.
     pub fn on_prepaint(
         mut self,
-        callback: impl FnOnce(RetainedDraw, Bounds<Pixels>, &mut Window, &mut App) + 'static,
+        callback: impl Fn(RetainedDraw, Bounds<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_prepaint = Some(Box::new(callback));
+        self.on_prepaint = Some(Rc::new(callback));
         self
     }
 
@@ -263,6 +267,27 @@ fn each_told<F: FnMut(&mut Drawn)>(drawn: &mut Drawn, f: &mut F) {
 }
 
 struct RetainedState {
+    /// The entity it is notified by, how it is built and what hears of its
+    /// drawing: as its element said when it was last laid out. A partial
+    /// frame draws it from these, without its element (`in_place`).
+    view: EntityId,
+    build: Build,
+    on_prepaint: Option<OnPrepaint>,
+    /// The text styles around it when its elements were last built: what
+    /// `statics.text_style` is the sum of.
+    text_styles: Vec<crate::TextStyleRefinement>,
+    /// An image cache was around it then (it can't be drawn without it).
+    image_cached: bool,
+    /// Where the window hears that it is gone (`Window::retained_views`),
+    /// unless another state took its place.
+    gone: Rc<RefCell<Vec<EntityId>>>,
+    replaced: bool,
+    /// How many of the next partial frames are not to try it, and how many
+    /// it was last told to wait: one whose drawing changes shape whenever
+    /// it changes (a hover that adds a border) is found out only once it is
+    /// painted, and the frame is then drawn twice (`in_place`).
+    in_place_wait: u8,
+    in_place_waited: u8,
     version: u64,
     /// Its taffy subtree's root, kept across frames.
     root: LayoutId,
@@ -299,6 +324,9 @@ impl Drop for RetainedState {
     fn drop(&mut self) {
         // No longer drawn: its nodes go at the end of the frame.
         self.released.borrow_mut().append(&mut self.owned);
+        if !self.replaced {
+            self.gone.borrow_mut().push(self.view);
+        }
     }
 }
 
@@ -402,9 +430,15 @@ impl Element for Retained {
         let binding = window.retained_binding > 0 && window.retained_detached == 0;
         let (view, version) = (self.view, self.version);
         let build = self.build.clone();
+        let on_prepaint = self.on_prepaint.clone();
+        // mirin: the window knows it by its entity, and which retained
+        // subtree it is in (`Window::retained_views`).
+        window.register_retained(view, global_id);
         window.with_element_state::<RetainedState, _>(global_id, |mut state, window| {
             if let Some(state) = &mut state {
                 state.settle_states();
+                state.build = build.clone();
+                state.on_prepaint = on_prepaint.clone();
             }
             let statics = Statics::of(window);
             let unchanged = state.as_ref().is_some_and(|state| {
@@ -442,6 +476,8 @@ impl Element for Retained {
                     });
                     state.drawing = Some(drawing);
                     state.statics = statics;
+                    state.text_styles.clone_from(&window.text_style_stack);
+                    state.image_cached = !window.image_cache_stack.is_empty();
                     let layout = RetainedLayout {
                         element: Some(element),
                         root,
@@ -463,8 +499,23 @@ impl Element for Retained {
                         .as_ref()
                         .map_or_else(Record::default, |state| state.drawn.clone());
                     // The state before goes, and its nodes with it (`Drop`).
+                    let in_place = state
+                        .as_ref()
+                        .map_or((0, 0), |state| (state.in_place_wait, state.in_place_waited));
+                    if let Some(state) = &mut state {
+                        state.replaced = true;
+                    }
                     drop(state);
                     let state = RetainedState {
+                        view,
+                        build: build.clone(),
+                        on_prepaint: on_prepaint.clone(),
+                        text_styles: window.text_style_stack.clone(),
+                        image_cached: !window.image_cache_stack.is_empty(),
+                        gone: window.retained_gone.clone(),
+                        replaced: false,
+                        in_place_wait: in_place.0,
+                        in_place_waited: in_place.1,
                         version,
                         root,
                         owned,
@@ -506,7 +557,7 @@ impl Element for Retained {
         let movable = self.movable;
         let skippable = self.skippable;
         let stretchable = self.stretchable;
-        let on_prepaint = self.on_prepaint.take();
+        let on_prepaint = self.on_prepaint.clone();
         window.with_rendered_view(view, |window| {
             window.with_element_state::<RetainedState, _>(global_id, |state, window| {
                 let mut state =
@@ -616,28 +667,8 @@ impl Element for Retained {
                                 element
                             }
                         };
-                        let start = window.prepaint_index();
-                        window.retained_nested.push(Vec::new());
-                        window.begin_recording(None);
-                        let drawing = state.drawing.take().unwrap_or_default();
-                        let ((_, accessed), drawing) = with_scope(drawing, window, |window| {
-                            cx.detect_accessed_entities(|cx| element.prepaint(window, cx))
-                        });
-                        state.drawing = Some(drawing);
-                        let recorded = window.end_recording();
-                        let nested = window.retained_nested.pop().unwrap_or_default();
-                        state.accessed_entities = accessed;
-                        let end = window.prepaint_index();
-                        let mut drawn = state.drawn.borrow_mut();
-                        drawn.nested = nested;
-                        drawn.prepaint = Some(start..end);
-                        drawn.bounds = bounds;
-                        drawn.mask = Some(mask);
-                        drawn.place = place;
-                        drawn.epoch = window.layout_engine_mut().epoch();
-                        // Known once it is painted.
-                        drawn.recorded = None;
-                        drop(drawn);
+                        let recorded =
+                            state.prepaint_anew(&mut element, bounds, mask, place, window, cx);
                         RetainedPrepaint::Drawn(element, recorded)
                     }
                 };
@@ -675,16 +706,7 @@ impl Element for Retained {
                 let start = window.paint_index();
                 match prepaint {
                     RetainedPrepaint::Drawn(element, recorded) => {
-                        window.begin_recording(Some(*recorded));
-                        let drawing = state.drawing.take().unwrap_or_default();
-                        let (((), accessed), drawing) = with_scope(drawing, window, |window| {
-                            cx.detect_accessed_entities(|cx| element.paint(window, cx))
-                        });
-                        // What it no longer uses goes (`drawing.prev`).
-                        state.states = drawing.next;
-                        let recorded = window.end_recording();
-                        state.accessed_entities.extend(accessed);
-                        state.drawn.borrow_mut().recorded = Some(recorded);
+                        state.paint_anew(element, *recorded, window, cx);
                     }
                     RetainedPrepaint::Reused => state.copy_paint(None, window),
                     RetainedPrepaint::Moved { by, .. } => state.copy_paint(Some(*by), window),
@@ -722,6 +744,63 @@ impl Element for Retained {
 }
 
 impl RetainedState {
+    /// Prepaint its elements (built this frame, or again for the layout it
+    /// kept) at `bounds`, under `mask`, laid out at `place`: its record is
+    /// of this drawing from here on. What the prepaint recorded.
+    fn prepaint_anew(
+        &mut self,
+        element: &mut AnyElement,
+        bounds: Bounds<Pixels>,
+        mask: ContentMask<Pixels>,
+        place: Option<Place>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Recorded {
+        let start = window.prepaint_index();
+        window.retained_nested.push(Vec::new());
+        window.begin_recording(None);
+        let drawing = self.drawing.take().unwrap_or_default();
+        let ((_, accessed), drawing) = with_scope(drawing, window, |window| {
+            cx.detect_accessed_entities(|cx| element.prepaint(window, cx))
+        });
+        self.drawing = Some(drawing);
+        let recorded = window.end_recording();
+        let nested = window.retained_nested.pop().unwrap_or_default();
+        self.accessed_entities = accessed;
+        let end = window.prepaint_index();
+        let mut drawn = self.drawn.borrow_mut();
+        drawn.nested = nested;
+        drawn.prepaint = Some(start..end);
+        drawn.bounds = bounds;
+        drawn.mask = Some(mask);
+        drawn.place = place;
+        drawn.epoch = window.layout_engine_mut().epoch();
+        // Known once it is painted.
+        drawn.recorded = None;
+        recorded
+    }
+
+    /// Paint its elements, prepainted by `prepaint_anew` (which recorded
+    /// `recorded`): its record knows what its drawing is.
+    fn paint_anew(
+        &mut self,
+        element: &mut AnyElement,
+        recorded: Recorded,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.begin_recording(Some(recorded));
+        let drawing = self.drawing.take().unwrap_or_default();
+        let (((), accessed), drawing) = with_scope(drawing, window, |window| {
+            cx.detect_accessed_entities(|cx| element.paint(window, cx))
+        });
+        // What it no longer uses goes (`drawing.prev`).
+        self.states = drawing.next;
+        let recorded = window.end_recording();
+        self.accessed_entities.extend(accessed);
+        self.drawn.borrow_mut().recorded = Some(recorded);
+    }
+
     /// Its element states back in one map, should a drawing begun last
     /// frame not have been painted.
     fn settle_states(&mut self) {
@@ -784,6 +863,10 @@ impl RetainedState {
     /// back at the end of last frame's lists, with its record as it was
     /// drawn; whether it did.
     fn unpark(&mut self, window: &mut Window) -> bool {
+        // mirin: a partial frame draws into the frame the drawing left.
+        if window.drawing_partial() {
+            return false;
+        }
         let parked = {
             let mut drawn = self.drawn.borrow_mut();
             if drawn.prepaint.is_some() {
@@ -836,7 +919,7 @@ impl RetainedState {
             // out, so later frames can build onto its nodes again.
             self.remake = true;
         } else {
-            engine.begin_bind(self.owned.clone());
+            engine.begin_bind(self.owned.clone(), false);
             window.retained_binding += 1;
             let (element, root) = window.with_rendered_view(view, |window| {
                 let mut element = build(window, cx);

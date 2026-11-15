@@ -553,8 +553,10 @@ struct LineLayoutCacheState {
 struct FrameCache {
     lines: FxHashMap<Arc<CacheKey>, Arc<LineLayout>>,
     wrapped_lines: FxHashMap<Arc<CacheKey>, Arc<WrappedLineLayout>>,
-    used_lines: Vec<Arc<CacheKey>>,
-    used_wrapped_lines: Vec<Arc<CacheKey>>,
+    // mirin: a partial frame writes a retained subtree's layouts over the
+    // ones it used before (`window::FrameVec`).
+    used_lines: crate::window::FrameVec<Arc<CacheKey>>,
+    used_wrapped_lines: crate::window::FrameVec<Arc<CacheKey>>,
 }
 
 #[derive(Clone, Default, PartialEq)] // mirin: `PartialEq`, as `PrepaintStateIndex`.
@@ -638,6 +640,74 @@ impl LineLayoutCache {
         start..index(previous)
     }
 
+    /// mirin: a partial frame begins (or ends): the frame drawn last is the
+    /// one being drawn, so what it laid out is found where anything laid
+    /// out this frame is, and what the partial frame lays out joins it.
+    pub(crate) fn swap_frames(&self) {
+        let _font_generation = self.clear_if_font_generation_changed();
+        let LineLayoutCacheState {
+            previous_frame,
+            current_frame,
+        } = &mut *self.state.borrow_mut();
+        std::mem::swap(previous_frame, current_frame);
+    }
+
+    /// mirin: in a partial frame, the layouts used from here on go over the
+    /// ones in `range`. `false`: not a range of the frame (the fonts
+    /// changed since).
+    pub(crate) fn begin_patch(&self, range: Range<LineLayoutIndex>) -> bool {
+        let font_generation = self.clear_if_font_generation_changed();
+        if range.start.font_generation != font_generation
+            || range.end.font_generation != font_generation
+        {
+            return false;
+        }
+        let mut state = self.state.borrow_mut();
+        let frame = &mut state.current_frame;
+        frame
+            .used_lines
+            .begin_patch(range.start.lines_index..range.end.lines_index)
+            && frame
+                .used_wrapped_lines
+                .begin_patch(range.start.wrapped_lines_index..range.end.wrapped_lines_index)
+    }
+
+    /// mirin: the patch is over; whether it wrote over exactly its range.
+    pub(crate) fn end_patch(&self) -> bool {
+        let mut state = self.state.borrow_mut();
+        let frame = &mut state.current_frame;
+        let lines = frame.used_lines.end_patch();
+        let wrapped_lines = frame.used_wrapped_lines.end_patch();
+        lines && wrapped_lines
+    }
+
+    /// mirin: take back what was used past `index` (what building a
+    /// retained subtree's elements for a partial frame measured: its
+    /// elements hold those layouts, and no range names them).
+    pub(crate) fn truncate_used(&self, index: &LineLayoutIndex) {
+        let mut state = self.state.borrow_mut();
+        let frame = &mut state.current_frame;
+        if frame.used_lines.patching() || frame.used_wrapped_lines.patching() {
+            return;
+        }
+        frame.used_lines.truncate(index.lines_index);
+        frame.used_wrapped_lines.truncate(index.wrapped_lines_index);
+    }
+
+    /// mirin: whether `range` names layouts of the frame being drawn (a
+    /// partial frame's: `swap_frames`).
+    pub(crate) fn range_valid_now(&self, range: &Range<LineLayoutIndex>) -> bool {
+        let font_generation = self.clear_if_font_generation_changed();
+        let state = self.state.borrow();
+        let frame = &state.current_frame;
+        range.start.font_generation == font_generation
+            && range.end.font_generation == font_generation
+            && range.start.lines_index <= range.end.lines_index
+            && range.end.lines_index <= frame.used_lines.len()
+            && range.start.wrapped_lines_index <= range.end.wrapped_lines_index
+            && range.end.wrapped_lines_index <= frame.used_wrapped_lines.len()
+    }
+
     /// mirin: whether `range` names layouts of last frame (with today's fonts).
     pub(crate) fn range_valid(&self, range: &Range<LineLayoutIndex>) -> bool {
         let font_generation = self.clear_if_font_generation_changed();
@@ -669,10 +739,11 @@ impl LineLayoutCache {
         let font_generation = self.clear_if_font_generation_changed();
         let state = self.state.borrow();
         let frame = &state.current_frame;
+        // mirin: where each list writes next (`FrameVec::end`).
         LineLayoutIndex {
             font_generation,
-            lines_index: frame.used_lines.len(),
-            wrapped_lines_index: frame.used_wrapped_lines.len(),
+            lines_index: frame.used_lines.end(),
+            wrapped_lines_index: frame.used_wrapped_lines.end(),
         }
     }
 
@@ -688,6 +759,18 @@ impl LineLayoutCache {
             previous_frame,
             current_frame,
         } = &mut *state;
+
+        // mirin: in a partial frame what is reused is the frame's own,
+        // where it is.
+        if current_frame.used_lines.patching() || current_frame.used_wrapped_lines.patching() {
+            current_frame
+                .used_lines
+                .step_over(range.start.lines_index..range.end.lines_index);
+            current_frame
+                .used_wrapped_lines
+                .step_over(range.start.wrapped_lines_index..range.end.wrapped_lines_index);
+            return;
+        }
 
         for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
             if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
@@ -713,6 +796,11 @@ impl LineLayoutCache {
         }
         let mut state = self.state.borrow_mut();
         let current_frame = &mut state.current_frame;
+        // mirin: a partial frame takes nothing back.
+        if current_frame.used_lines.patching() || current_frame.used_wrapped_lines.patching() {
+            current_frame.used_lines.fail_patch();
+            return;
+        }
         current_frame.used_lines.truncate(index.lines_index);
         current_frame
             .used_wrapped_lines

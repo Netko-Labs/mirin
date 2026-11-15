@@ -682,6 +682,31 @@ impl WindowTextSystem {
         self.line_layout_cache.truncate_layouts(index)
     }
 
+    /// mirin: a partial frame begins or ends (`LineLayoutCache::swap_frames`).
+    pub(crate) fn swap_layout_frames(&self) {
+        self.line_layout_cache.swap_frames()
+    }
+
+    /// mirin: see `LineLayoutCache::begin_patch`.
+    pub(crate) fn begin_layouts_patch(&self, range: Range<LineLayoutIndex>) -> bool {
+        self.line_layout_cache.begin_patch(range)
+    }
+
+    /// mirin: see `LineLayoutCache::end_patch`.
+    pub(crate) fn end_layouts_patch(&self) -> bool {
+        self.line_layout_cache.end_patch()
+    }
+
+    /// mirin: see `LineLayoutCache::truncate_used`.
+    pub(crate) fn truncate_used_layouts(&self, index: &LineLayoutIndex) {
+        self.line_layout_cache.truncate_used(index)
+    }
+
+    /// mirin: see `LineLayoutCache::range_valid_now`.
+    pub(crate) fn layouts_range_valid_now(&self, range: &Range<LineLayoutIndex>) -> bool {
+        self.line_layout_cache.range_valid_now(range)
+    }
+
     /// Shape the given line, at the given font_size, for painting to the screen.
     /// Subsets of the line can be styled independently with the `runs` parameter.
     ///

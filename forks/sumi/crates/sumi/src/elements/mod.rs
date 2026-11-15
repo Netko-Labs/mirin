@@ -24,7 +24,9 @@ pub use image_cache::*;
 pub use img::*;
 pub use list::*;
 pub use retained::*;
-pub(crate) use retained::{Drawn, Grid, MaskMap, Parking, Recording, Steadiness, is_exact};
+pub(crate) use retained::{
+    Drawn, Grid, MaskMap, Parking, Recording, Steadiness, draw_in_place, is_exact,
+};
 pub use surface::*;
 pub use svg::*;
 pub use text::*;

@@ -857,7 +857,38 @@ impl TextLayout {
             let font_id = window.text_system().resolve_font(&font);
             window.text_system().baseline_offset(font_id, size, height)
         };
-        let layout_id = window.request_measured_layout(Default::default(), {
+        // mirin: what the measure below answers from, hashed: a text built
+        // again with the same key (recolored, say) measures the same, so a
+        // retained subtree drawn again in a partial frame keeps its layout
+        // (`Window::request_keyed_measured_layout`).
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = collections::FxHasher::default();
+            text.hash(&mut hasher);
+            font_size.0.to_bits().hash(&mut hasher);
+            line_height.0.to_bits().hash(&mut hasher);
+            for run in &runs {
+                run.len.hash(&mut hasher);
+                run.font.hash(&mut hasher);
+            }
+            (text_style.white_space == WhiteSpace::Normal).hash(&mut hasher);
+            match &text_style.text_overflow {
+                None => 0u8.hash(&mut hasher),
+                Some(TextOverflow::Truncate(affix)) => (1u8, affix).hash(&mut hasher),
+                Some(TextOverflow::TruncateStart(affix)) => (2u8, affix).hash(&mut hasher),
+                Some(TextOverflow::TruncateMiddle(affix)) => (3u8, affix).hash(&mut hasher),
+            }
+            text_style.line_clamp.hash(&mut hasher);
+            if let Some(sizes) = &paragraph_sizes {
+                for size in sizes {
+                    size.map(|size| size.0.to_bits()).hash(&mut hasher);
+                }
+            }
+            tab_size.hash(&mut hasher);
+            window.rem_size().0.to_bits().hash(&mut hasher);
+            hasher.finish()
+        };
+        let layout_id = window.request_keyed_measured_layout(Default::default(), Some(key), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {

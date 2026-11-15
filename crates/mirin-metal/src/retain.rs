@@ -51,6 +51,9 @@ struct Boundary {
     path: Vec<u32>,
     /// The sync that last found it (`Boundaries::syncs`), and only once.
     seen: u64,
+    /// Whether it kept its length in a scroll view when its element was
+    /// last made (`boundary`): half of the version the engine knows it by.
+    keeps_length: bool,
     traits: Traits,
 }
 
@@ -95,6 +98,17 @@ pub(crate) struct Boundaries {
     /// How many retained subtrees were left the last time the ones a patch
     /// removed from the tree went (`prune_removed`).
     kept: usize,
+    /// The retained subtrees whose own content the sync under way found
+    /// changed (`Synced::retained`).
+    dirty: Vec<(EntityId, u64)>,
+}
+
+/// After a patch: whether anything in a view's subtree changed, and whether
+/// the node itself did (`Document::subtree_generation`, `own_generation`).
+#[derive(Clone, Copy)]
+struct Changed<'a> {
+    subtree: &'a dyn Fn(&str) -> bool,
+    own: &'a dyn Fn(&str) -> bool,
 }
 
 /// The fewest walks kept before any that left the tree are looked for.
@@ -106,6 +120,38 @@ struct Walk {
     nodes: usize,
     /// Equal to the subtree it was paired with in the previous tree.
     same: bool,
+    /// After a patch: a node in it changed that no retained subtree in it
+    /// is around (its own props, its children coming or going), or a
+    /// retained subtree in it came, went or is kept differently: whatever
+    /// is around it is to be built again.
+    loose: bool,
+}
+
+/// What an update changed, as far as drawing it goes (`Boundaries::sync`).
+#[derive(Default, Debug)]
+pub(crate) struct Synced {
+    /// Something changed outside every retained subtree, or the retained
+    /// subtrees are not the ones they were: the root view is to be drawn.
+    pub(crate) spine: bool,
+    /// The retained subtrees whose own content changed (not that of one
+    /// inside them): the entity each is notified by, and its new version.
+    pub(crate) retained: Vec<(EntityId, u64)>,
+}
+
+impl Synced {
+    /// Anything may have changed.
+    pub(crate) fn everything() -> Self {
+        Self {
+            spine: true,
+            retained: Vec::new(),
+        }
+    }
+
+    /// Both this and `other` changed.
+    pub(crate) fn and(&mut self, other: Synced) {
+        self.spine |= other.spine;
+        self.retained.extend(other.retained);
+    }
 }
 
 impl Boundaries {
@@ -115,26 +161,37 @@ impl Boundaries {
     /// After a patch (`by_generation`) a subtree changed when its subtree
     /// generation is newer than the last sync; after a whole tree it is
     /// compared with the one it replaced (`old`; none: all changed).
+    ///
+    /// After a patch a retained subtree gets a new version only when its
+    /// own content changed, not when that of one inside it did: the answer
+    /// names those, and the engine draws the ones around them when it
+    /// draws the whole frame (a notified retained subtree marks them), and
+    /// leaves them alone when it draws only what changed (a partial frame).
     pub(crate) fn sync(
         &mut self,
         old: Option<&NodeSpec>,
         doc: &Document,
         by_generation: bool,
         cx: &mut App,
-    ) {
+    ) -> Synced {
         if !enabled() {
-            return;
+            return Synced::everything();
         }
         self.syncs += 1;
+        self.dirty.clear();
         let mut path = Vec::new();
         let mut duplicates = Vec::new();
         let synced = self.synced;
         let changed = |id: &str| doc.subtree_generation(id) > synced;
-        let changed: Option<&dyn Fn(&str) -> bool> = by_generation.then_some(&changed);
+        let own = |id: &str| doc.own_generation(id) > synced;
+        let changed: Option<Changed<'_>> = by_generation.then_some(Changed {
+            subtree: &changed,
+            own: &own,
+        });
         if !by_generation {
             self.walks.clear();
         }
-        self.walk(doc, old, changed, &mut path, &mut duplicates, cx);
+        let walked = self.walk(doc, old, changed, &mut path, &mut duplicates, cx);
         self.synced = doc.generation();
         if by_generation {
             // After a patch, a subtree that didn't change was not walked:
@@ -148,8 +205,13 @@ impl Boundaries {
             self.map.retain(|_, boundary| boundary.seen == syncs);
             self.kept = self.map.len();
         }
+        let spine = !by_generation || walked.loose || !duplicates.is_empty();
         for id in duplicates {
             self.map.remove(&id);
+        }
+        Synced {
+            spine,
+            retained: std::mem::take(&mut self.dirty),
         }
     }
 
@@ -184,7 +246,7 @@ impl Boundaries {
         &mut self,
         node: &NodeSpec,
         old: Option<&NodeSpec>,
-        changed: Option<&dyn Fn(&str) -> bool>,
+        changed: Option<Changed<'_>>,
         path: &mut Vec<u32>,
         duplicates: &mut Vec<String>,
         cx: &mut App,
@@ -198,6 +260,10 @@ impl Boundaries {
                 },
                 nodes: 1,
                 same: old == Some(node),
+                // A leaf a patch changed says so by its id; one without an
+                // id changes only with the view it is in.
+                loose: changed
+                    .is_some_and(|changed| node.key().is_some_and(|id| (changed.own)(id))),
             };
         };
         let old_view = match old {
@@ -220,13 +286,14 @@ impl Boundaries {
         };
         let id = props.id.as_deref();
         if let Some((id, changed)) = id.zip(changed) {
-            if !changed(id) {
+            if !(changed.subtree)(id) {
                 if let Some(&(traits, nodes)) = self.walks.get(id) {
                     // Unchanged since the last sync: as it was then.
                     return Walk {
                         traits,
                         nodes,
                         same: true,
+                        loose: false,
                     };
                 }
             }
@@ -239,6 +306,9 @@ impl Boundaries {
             },
             nodes: 1,
             same: by_index && old_view.is_some_and(|(old_props, _)| old_props == props),
+            // A view without an id is walked whenever what it is in is:
+            // whether it changed is not known, so it is taken to have.
+            loose: changed.is_some_and(|changed| id.is_none_or(|id| (changed.own)(id))),
         };
         for (index, child) in children.iter().enumerate() {
             let paired = match old_view {
@@ -252,6 +322,7 @@ impl Boundaries {
             walk.traits = walk.traits.and(child_walk.traits);
             walk.nodes += child_walk.nodes;
             walk.same &= child_walk.same;
+            walk.loose |= child_walk.loose;
         }
         if let Some(id) = id {
             match self.walks.get_mut(id) {
@@ -263,8 +334,15 @@ impl Boundaries {
         }
         match id {
             Some(id) if walk.traits.pure && walk.nodes >= MIN_NODES => {
-                let same = changed.map_or(walk.same, |changed| !changed(id));
-                self.keep(id, same, walk.traits, path, duplicates, cx);
+                // After a patch, its own content changed when something in
+                // it did that no retained subtree inside it is around.
+                let same = match changed {
+                    Some(_) => !walk.loose,
+                    None => walk.same,
+                };
+                // What changed in it is its own to draw; that it is newly
+                // kept, or kept differently, is for what is around it.
+                walk.loose = self.keep(id, same, walk.traits, path, duplicates, cx);
             }
             // Walked and not kept (it changed into something that is not
             // kept): what was kept for it before goes. One found twice in
@@ -273,6 +351,7 @@ impl Boundaries {
                 let syncs = self.syncs;
                 if self.map.get(id).is_some_and(|kept| kept.seen != syncs) {
                     self.map.remove(id);
+                    walk.loose = true;
                 }
             }
             None => {}
@@ -280,6 +359,10 @@ impl Boundaries {
         walk
     }
 
+    /// Keep the view `id` as a retained subtree, at a new version unless
+    /// its content is the `same`. Whether it is newly kept, or may be drawn
+    /// differently from before (`Traits`): what is around it makes its
+    /// element and is to be built again.
     fn keep(
         &mut self,
         id: &str,
@@ -288,21 +371,26 @@ impl Boundaries {
         path: &[u32],
         duplicates: &mut Vec<String>,
         cx: &mut App,
-    ) {
+    ) -> bool {
         if let Some(boundary) = self.map.get_mut(id) {
             if boundary.seen == self.syncs {
                 // Two nodes with one id: neither can be found by it.
                 duplicates.push(id.to_owned());
-                return;
+                return true;
             }
             boundary.seen = self.syncs;
+            let kept_differently = boundary.traits != traits;
             boundary.traits = traits;
             path.clone_into(&mut boundary.path);
             if !same {
                 self.next += 1;
                 boundary.version = self.next;
+                self.dirty.push((
+                    boundary.entity.entity_id(),
+                    boundary.version * 2 + u64::from(boundary.keeps_length),
+                ));
             }
-            return;
+            return kept_differently;
         }
         self.next += 1;
         let boundary = Boundary {
@@ -311,13 +399,20 @@ impl Boundaries {
             entity: cx.new(|_| Notified),
             path: path.to_vec(),
             seen: self.syncs,
+            keeps_length: false,
             traits,
         };
         self.map.insert(id.to_owned(), boundary);
+        true
     }
 
     fn get(&self, id: &str) -> Option<&Boundary> {
         self.map.get(id)
+    }
+
+    /// Start counting what a frame draws (`counts`) from nothing.
+    pub(crate) fn forget_counts() {
+        counts::take_counts();
     }
 
     /// The layout group of the retained subtree view `id` is the root of,
@@ -329,7 +424,7 @@ impl Boundaries {
 
 /// Whether subtrees are kept (`MIRIN_METAL_RETAIN=0` draws every frame
 /// whole, as before: for comparing the two).
-fn enabled() -> bool {
+pub(crate) fn enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("MIRIN_METAL_RETAIN").map_or(true, |value| value != "0"))
 }
@@ -368,10 +463,11 @@ pub(crate) fn boundary(
     cx: &mut Context<RootView>,
 ) -> Option<AnyElement> {
     let id = props.id.as_deref()?;
-    let boundary = view.boundaries.get(id)?;
+    let boundary = view.boundaries.map.get_mut(id)?;
     // Whether it keeps its length in a scroll view is the one thing its
     // parent decides about how it renders (render.rs); it is part of its version.
     let keeps_length = std::mem::take(&mut view.keeps_length);
+    boundary.keeps_length = keeps_length;
     let version = boundary.version * 2 + u64::from(keeps_length);
     let (group, parent) = (boundary.group, view.group);
     let traits = boundary.traits;
@@ -433,6 +529,8 @@ fn build(
 
 #[cfg(test)]
 mod gpui_tests;
+#[cfg(test)]
+mod partial_tests;
 #[cfg(test)]
 mod scene_tests;
 #[cfg(test)]

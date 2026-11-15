@@ -31,6 +31,10 @@ struct NodeContext {
     // mirin: how far under its top its first baseline is, in device pixels
     // (`TaffyLayoutEngine::set_first_baseline`).
     first_baseline: Option<f32>,
+    // mirin: what it measures, when its element says (a text: its string,
+    // fonts and wrapping, hashed): two leaves with one key answer every
+    // question alike (`Bind::strict`).
+    key: Option<u64>,
 }
 
 /// mirin: a retained subtree's elements built again onto the nodes it kept
@@ -42,6 +46,12 @@ struct Bind {
     failed: bool,
     /// The measured leaves bound, whose new functions are asked at the end.
     measured: Vec<LayoutId>,
+    /// mirin: the elements bound may differ from the ones the nodes were
+    /// made for (a partial frame builds a subtree whose content changed):
+    /// each must ask for the style its node has, and a measured leaf must
+    /// measure what its node's did (`NodeContext::key`), or the bind fails.
+    /// Then the layout the nodes hold is the one these elements would get.
+    strict: bool,
 }
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
@@ -204,13 +214,37 @@ impl TaffyLayoutEngine {
     /// mirin: build a retained subtree's elements again onto `nodes`, the
     /// ones it made (in that order) and kept: until `end_bind`, each layout
     /// requested is answered with the next of them instead of a new node.
-    pub(crate) fn begin_bind(&mut self, nodes: Vec<LayoutId>) {
+    pub(crate) fn begin_bind(&mut self, nodes: Vec<LayoutId>, strict: bool) {
         self.bind = Some(Bind {
             nodes,
             next: 0,
             failed: false,
             measured: Vec::new(),
+            strict,
         });
+    }
+
+    /// mirin: whether the subtree being bound must ask for what its nodes
+    /// hold (`Bind::strict`).
+    fn binds_strictly(&self) -> bool {
+        self.bind.as_ref().is_some_and(|bind| bind.strict)
+    }
+
+    /// mirin: a retained subtree is about to be drawn again where it is,
+    /// without the nodes around it being laid out (a partial frame): its
+    /// root is where it was last frame, `origin` unrounded and `rounded`
+    /// (device pixels), with `bounds` (before any element offset), so the
+    /// nodes below it are placed and rounded from there as they were.
+    pub(crate) fn seed_bounds(
+        &mut self,
+        root: LayoutId,
+        origin: Point<f32>,
+        rounded: Point<f32>,
+        bounds: Bounds<Pixels>,
+    ) {
+        self.absolute_outer_origins.insert(root, origin);
+        self.rounded_origins.insert(root, rounded);
+        self.absolute_layout_bounds.insert(root, bounds);
     }
 
     /// mirin: give up on the subtree being bound, if one is (something in
@@ -371,10 +405,22 @@ impl TaffyLayoutEngine {
         children: &[LayoutId],
     ) -> LayoutId {
         // mirin: a retained subtree built again onto its kept nodes.
-        if let Some(id) = self.bound(Some(children)) {
-            return id;
-        }
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
+        let taffy_style = match self.bound(Some(children)) {
+            Some(id) if !self.binds_strictly() => return id,
+            Some(id) => {
+                let taffy_style = style.to_taffy(rem_size, scale_factor);
+                if self
+                    .taffy
+                    .style(id.0)
+                    .is_ok_and(|kept| *kept == taffy_style)
+                {
+                    return id;
+                }
+                self.fail_bind();
+                taffy_style
+            }
+            None => style.to_taffy(rem_size, scale_factor),
+        };
 
         let id = if children.is_empty() {
             self.taffy
@@ -397,6 +443,8 @@ impl TaffyLayoutEngine {
         style: Style,
         rem_size: Pixels,
         scale_factor: f32,
+        // mirin: what it measures (`NodeContext::key`), if it can say.
+        key: Option<u64>,
         measure: impl FnMut(
             Size<Option<Pixels>>,
             Size<AvailableSpace>,
@@ -410,16 +458,37 @@ impl TaffyLayoutEngine {
         let measure = StackSafe::new(measure);
         // mirin: a retained subtree built again onto its kept nodes: the
         // node takes the new element's function (asked at `end_bind`).
+        let mut bound_style = None;
         if let Some(id) = self.bound(None) {
-            if let Some(context) = self.taffy.get_node_context_mut(id.0) {
-                context.measure = measure;
+            let same = !self.binds_strictly() || {
+                let taffy_style = style.to_taffy(rem_size, scale_factor);
+                let same = key.is_some()
+                    && self
+                        .taffy
+                        .get_node_context(id.0)
+                        .is_some_and(|context| context.key == key)
+                    && self
+                        .taffy
+                        .style(id.0)
+                        .is_ok_and(|kept| *kept == taffy_style);
+                bound_style = Some(taffy_style);
+                same
+            };
+            if same {
+                if let Some(context) = self.taffy.get_node_context_mut(id.0) {
+                    context.measure = measure;
+                }
+                if let Some(bind) = &mut self.bind {
+                    bind.measured.push(id);
+                }
+                return id;
             }
-            if let Some(bind) = &mut self.bind {
-                bind.measured.push(id);
-            }
-            return id;
+            self.fail_bind();
         }
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
+        let taffy_style = match bound_style {
+            Some(taffy_style) => taffy_style,
+            None => style.to_taffy(rem_size, scale_factor),
+        };
 
         let id = self
             .taffy
@@ -430,6 +499,7 @@ impl TaffyLayoutEngine {
                     last: None,
                     asked: 0,
                     first_baseline: None,
+                    key,
                 },
             )
             .expect(EXPECT_MESSAGE)

@@ -13,8 +13,11 @@ impl LayoutState {
         }
         self.ended = self.frame;
         let frame = self.frame;
-        let top = std::mem::take(&mut self.top);
-        self.top = self.leave(top, None);
+        // A partial frame draws nothing outside every group: all of that stays.
+        if !self.partial {
+            let top = std::mem::take(&mut self.top);
+            self.top = self.leave(top, None);
+        }
         for group in std::mem::take(&mut self.built) {
             let Some(info) = self
                 .groups

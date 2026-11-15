@@ -361,6 +361,19 @@ fn open_window(
         window.set_window_title(&title);
         view.access = tree_access;
         view.apply_pending_focus(window, cx);
+        // A frame in which only retained subtrees changed draws those where
+        // they are (`RootView::partial_frame`). With nothing retained
+        // (`MIRIN_METAL_RETAIN=0`) every frame is drawn from the root.
+        if crate::retain::enabled() {
+            let root = cx.weak_entity();
+            window.set_partial_frames(Some(
+                move |frame, window: &mut sumi::Window, cx: &mut sumi::App| {
+                    if let Some(root) = root.upgrade() {
+                        root.update(cx, |view, cx| view.partial_frame(frame, window, cx));
+                    }
+                },
+            ));
+        }
     });
     // Report the chrome whenever the compositor shows, moves or drops
     // its window controls (on Dashi, as the window opens; elsewhere never,
@@ -870,7 +883,7 @@ impl Drive {
                     ask_resync(&view.events.sender(), error.to_string());
                 }
                 view.apply_pending_focus(window, cx);
-                cx.notify();
+                view.notify_changed(window, cx);
             }
             let actions: Vec<_> = sims
                 .iter()

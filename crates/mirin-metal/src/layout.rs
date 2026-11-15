@@ -87,6 +87,25 @@ impl LayoutMap {
         self.0.borrow_mut().end_frame();
     }
 
+    /// Start a partial frame (`sumi::PartialFrame`): only some groups are
+    /// drawn anew, where they are; nothing else is visited or said again,
+    /// and all of it stays.
+    pub(crate) fn begin_partial(&self) {
+        self.0.borrow_mut().begin_partial();
+    }
+
+    /// The partial frame is drawn: what the groups drawn anew did not say
+    /// again has left.
+    pub(crate) fn end_partial(&self) {
+        self.0.borrow_mut().end_partial();
+    }
+
+    /// The partial frame was given up: a whole frame follows, which draws
+    /// those groups anew.
+    pub(crate) fn abandon_partial(&self) {
+        self.0.borrow_mut().abandon_partial();
+    }
+
     /// Changes whenever a node's place in its group or a group's place in
     /// the one around it does, or either comes or goes: what the
     /// accessibility tree checks before it looks at anything.

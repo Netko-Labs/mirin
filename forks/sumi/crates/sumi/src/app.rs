@@ -1441,6 +1441,28 @@ impl App {
         result
     }
 
+    /// mirin: `window_handle` read `entities` too, beside the ones it
+    /// already hears of: a partial frame, which draws a few retained
+    /// subtrees again and leaves what the rest of the window read as it is.
+    pub(crate) fn track_entities_accessed(
+        &mut self,
+        window_handle: AnyWindowHandle,
+        invalidator: WindowInvalidator,
+        entities: &[EntityId],
+    ) {
+        let tracked_entities = self.tracked_entities.entry(window_handle.id).or_default();
+        for entity in entities {
+            if tracked_entities.insert(*entity) {
+                self.window_invalidators_by_entity
+                    .entry(*entity)
+                    .or_default()
+                    .insert(window_handle.id, invalidator.clone());
+                self.current_window_by_entity
+                    .insert(*entity, window_handle.id);
+            }
+        }
+    }
+
     pub(crate) fn record_entities_accessed(
         &mut self,
         window_handle: AnyWindowHandle,

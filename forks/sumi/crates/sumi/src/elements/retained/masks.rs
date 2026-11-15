@@ -91,7 +91,9 @@ impl Window {
         self.next_frame
             .content_masks
             .push(MaskNode { given, parent });
-        let id = self.next_frame.content_masks.len() as MaskId;
+        // mirin: where it was written (`FrameVec::end`): the list's end, or
+        // in a partial frame the place of the mask it replaces.
+        let id = self.next_frame.content_masks.end() as MaskId;
         // What the masks pushed inside the retained subtree being drawn
         // anew let through, without the one around it.
         let free = self

@@ -140,6 +140,10 @@ impl Window {
     /// may be parked at all.
     pub(crate) fn park(&mut self, record: &Record, drawn: &Drawn) -> Option<Box<Parked>> {
         let (prepaint, paint) = (drawn.prepaint.clone()?, drawn.paint.clone()?);
+        // mirin: a partial frame takes nothing out of the frame it draws in.
+        if self.fail_partial() {
+            return None;
+        }
         if !self.prepaint_range_valid(&prepaint) || !self.paint_range_valid(&paint) {
             return None;
         }

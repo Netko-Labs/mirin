@@ -30,6 +30,9 @@ pub(super) struct LayoutState {
     pub(super) revision: u64,
     /// What changed since it was last taken, while someone takes it.
     pub(super) changes: Option<Changes>,
+    /// The frame under way is a partial one (`begin_partial`): what is not
+    /// drawn in it stays as it is.
+    pub(super) partial: bool,
 }
 
 impl Default for LayoutState {
@@ -44,6 +47,7 @@ impl Default for LayoutState {
             built: Vec::new(),
             revision: 0,
             changes: None,
+            partial: false,
         }
     }
 }
@@ -138,8 +142,32 @@ impl Group {
 }
 
 impl LayoutState {
+    /// A partial frame: a frame of its own for the groups drawn in it
+    /// (they say again what is in them), in which nothing else is visited.
+    pub(super) fn begin_partial(&mut self) {
+        self.end_frame();
+        self.frame += 1;
+        self.partial = true;
+    }
+
+    /// The partial frame is over: the groups drawn anew are swept, what is
+    /// outside every group is not (it was not said again).
+    pub(super) fn end_partial(&mut self) {
+        self.end_frame();
+        self.partial = false;
+    }
+
+    /// The partial frame was given up, with some of its groups half said:
+    /// nothing is swept, and the whole frame that follows says them again.
+    pub(super) fn abandon_partial(&mut self) {
+        self.ended = self.frame;
+        self.built.clear();
+        self.partial = false;
+    }
+
     pub(super) fn begin_frame(&mut self) {
         self.end_frame();
+        self.partial = false;
         self.frame += 1;
         if self.frame.is_multiple_of(PRUNE_EVERY) {
             self.nodes.retain(|_, entry| !entry.dead);
@@ -250,6 +278,8 @@ impl LayoutState {
         }
         match group.and_then(|group| self.groups.get_mut(&group)) {
             Some(info) => info.drawn.nodes_said(info.built == frame).push(key),
+            // A partial frame draws nothing outside every group.
+            None if self.partial => {}
             None => self.top.now_nodes.push(key),
         }
         !repainted
@@ -293,8 +323,13 @@ impl LayoutState {
             info.drawn.now_groups.clear();
             self.built.push(group);
         }
+        // In a partial frame what is around a group drawn anew is not
+        // drawn, and lists the group already.
+        let partial = self.partial;
         match parent.and_then(|parent| self.groups.get_mut(&parent)) {
+            Some(info) if partial && info.built != frame => {}
             Some(info) => info.drawn.groups_said(info.built == frame).push(group),
+            None if partial => {}
             None => self.top.now_groups.push(group),
         }
         if !in_place {

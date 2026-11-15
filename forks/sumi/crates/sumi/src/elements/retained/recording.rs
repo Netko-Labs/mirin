@@ -68,6 +68,29 @@ fn union(into: &mut Option<Bounds<Pixels>>, bounds: Bounds<Pixels>) {
 }
 
 impl Recorded {
+    /// Whether whoever took this in (`absorb`) has taken in `other` with
+    /// it, where `other` is of a drawing of the same shape, laid out and
+    /// placed the same (a subtree drawn again in a partial frame: every
+    /// primitive and mask where one was): it reaches no further, and leaves
+    /// out and pins nothing more. The subtrees around it took this in when
+    /// they were drawn, and are not drawn now.
+    ///
+    /// What the two round is not compared. It follows from where things
+    /// are, which is the same; and the two say it differently for a drawing
+    /// that moved since it was made (its record was moved with it, the
+    /// edges of the mask around it included, which did not move), each as
+    /// good as the other for a later move.
+    pub(crate) fn covers(&self, other: &Recorded) -> bool {
+        let within = |inner: Option<Bounds<Pixels>>, outer: Option<Bounds<Pixels>>| match inner {
+            None => true,
+            Some(inner) => outer.is_some_and(|outer| outer.union(&inner) == outer),
+        };
+        within(other.extent, self.extent)
+            && within(other.left_out, self.left_out)
+            && (self.pinned || !other.pinned)
+            && (self.masks || !other.masks)
+    }
+
     fn reach(&mut self, bounds: Bounds<Pixels>) {
         union(&mut self.extent, bounds);
     }

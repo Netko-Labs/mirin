@@ -66,7 +66,14 @@ use sumi_util::{ResultExt, measure};
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+// mirin: the retained frame (`docs/metal/engine.md`, section 3).
+mod frame_vec;
+mod partial;
 mod prompts;
+
+pub(crate) use frame_vec::FrameVec;
+pub(crate) use partial::InPlace;
+pub use partial::PartialFrame;
 
 pub use a11y::A11ySubtreeBuilder;
 
@@ -1048,24 +1055,26 @@ pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    pub(crate) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
-    pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
+    // mirin: the lists a retained subtree keeps ranges of are `FrameVec`s:
+    // a partial frame writes into them at a range (`frame_vec`, `partial`).
+    pub(crate) accessed_element_states: FrameVec<(GlobalElementId, TypeId)>,
+    pub(crate) mouse_listeners: FrameVec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) hitboxes: FrameVec<Hitbox>,
     // mirin: the content masks pushed this frame as given, and the one each
     // hitbox was inserted under (`MaskNode`).
-    pub(crate) content_masks: Vec<MaskNode>,
-    pub(crate) hitbox_masks: Vec<MaskId>,
+    pub(crate) content_masks: FrameVec<MaskNode>,
+    pub(crate) hitbox_masks: FrameVec<MaskId>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
-    pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
-    pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
-    pub(crate) cursor_styles: Vec<CursorStyleRequest>,
+    pub(crate) input_handlers: FrameVec<Option<PlatformInputHandler>>,
+    pub(crate) tooltip_requests: FrameVec<Option<TooltipRequest>>,
+    pub(crate) cursor_styles: FrameVec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    pub(crate) debug_bounds_records: FrameVec<(String, Bounds<Pixels>)>,
     pub(crate) tab_stops: TabStopMap,
 }
 
@@ -1194,23 +1203,23 @@ impl Frame {
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
-            accessed_element_states: Vec::new(),
-            mouse_listeners: Vec::new(),
+            accessed_element_states: FrameVec::default(),
+            mouse_listeners: FrameVec::default(),
             dispatch_tree,
             scene: Scene::default(),
-            hitboxes: Vec::new(),
-            content_masks: Vec::new(),
-            hitbox_masks: Vec::new(),
+            hitboxes: FrameVec::default(),
+            content_masks: FrameVec::default(),
+            hitbox_masks: FrameVec::default(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
-            input_handlers: Vec::new(),
-            tooltip_requests: Vec::new(),
-            cursor_styles: Vec::new(),
+            input_handlers: FrameVec::default(),
+            tooltip_requests: FrameVec::default(),
+            cursor_styles: FrameVec::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
             #[cfg(any(test, feature = "test-support"))]
-            debug_bounds_records: Vec::new(),
+            debug_bounds_records: FrameVec::default(),
 
             tab_stops: TabStopMap::default(),
         }
@@ -1424,6 +1433,14 @@ pub struct Window {
     // masks pushed inside it let through, not clipped by the one around it.
     pub(crate) mask_ids: Vec<MaskId>,
     pub(crate) mask_free: Vec<Option<Bounds<Pixels>>>,
+    // mirin: partial frames (`partial`): the host's ear for them (none:
+    // every frame is drawn in full), the one being drawn, and the retained
+    // subtrees by the entity each is notified by, with where a state that
+    // goes says so.
+    partial_hook: Option<partial::PartialHook>,
+    pub(crate) partial: Option<partial::Partial>,
+    pub(crate) retained_views: partial::RetainedViews,
+    pub(crate) retained_gone: Rc<RefCell<Vec<EntityId>>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2637,6 +2654,10 @@ impl Window {
             retained_nested: Vec::new(),
             retained_recordings: Vec::new(),
             retained_paint_steadiness: Cell::new(None),
+            partial_hook: None,
+            partial: None,
+            retained_views: Default::default(),
+            retained_gone: Default::default(),
             element_state_scopes: Vec::new(),
             mask_ids: Vec::new(),
             mask_free: Vec::new(),
@@ -4177,10 +4198,28 @@ impl Window {
         if self.platform_window.prepare_frame() {
             self.refresh();
         }
-        self.invalidate_entities();
-        cx.entities.clear_accessed();
+        self.forget_gone_retained();
+        let notified = self.invalidate_entities();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
+        // mirin: when all that changed is the content of retained subtrees,
+        // those are drawn again in the frame drawn last and nothing else
+        // runs (`partial`). Otherwise, or when one of them can't be, the
+        // frame is drawn in full as if that had not been tried.
+        if self.draw_partial(&notified, cx) {
+            self.dirty_views.clear();
+            self.reset_cursor_style(cx);
+            self.needs_present.set(true);
+            #[cfg(feature = "profiler")]
+            {
+                let draw_duration = self
+                    .window_profiler
+                    .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+                self.debug_frame_overlay.record_frame(draw_duration);
+            }
+            return arena_scope.exit(&cx.element_arena);
+        }
+        cx.entities.clear_accessed();
         self.requested_autoscroll = None;
 
         // Restore the previously-used input handler.
@@ -4334,12 +4373,16 @@ impl Window {
         cx.entities.restore_accessed(entities);
     }
 
-    fn invalidate_entities(&mut self) {
+    /// mirin: the views notified since the last frame, which it answers.
+    fn invalidate_entities(&mut self) -> SmallVec<[EntityId; 8]> {
         let mut views = self.invalidator.take_views();
+        let notified = views.iter().copied().collect();
         for entity in views.drain() {
             self.mark_view_dirty(entity);
+            self.mark_retained_around_dirty(entity);
         }
         self.invalidator.replace_views(views);
+        notified
     }
 
     #[profiling::function]
@@ -4714,13 +4757,15 @@ impl Window {
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
+        // mirin: where each list writes next (`FrameVec::end`): its end, or
+        // where a partial frame is in it.
         PrepaintStateIndex {
-            hitboxes_index: self.next_frame.hitboxes.len(),
-            content_masks_index: self.next_frame.content_masks.len(),
-            tooltips_index: self.next_frame.tooltip_requests.len(),
+            hitboxes_index: self.next_frame.hitboxes.end(),
+            content_masks_index: self.next_frame.content_masks.end(),
+            tooltips_index: self.next_frame.tooltip_requests.end(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
-            accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            accessed_element_states_index: self.next_frame.accessed_element_states.end(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -4821,6 +4866,10 @@ impl Window {
     /// mirin: whether `range` names a stretch of last frame's prepaint lists
     /// (`elements::retained` keeps ranges across frames).
     pub(crate) fn prepaint_range_valid(&self, range: &Range<PrepaintStateIndex>) -> bool {
+        // mirin: in a partial frame, of the frame being drawn, which is it.
+        if self.drawing_partial() {
+            return self.prepaint_range_valid_now(range);
+        }
         let (start, end, frame) = (&range.start, &range.end, &self.rendered_frame);
         start.hitboxes_index <= end.hitboxes_index
             && end.hitboxes_index <= frame.hitboxes.len()
@@ -4841,6 +4890,9 @@ impl Window {
 
     /// mirin: whether `range` names a stretch of last frame's paint lists.
     pub(crate) fn paint_range_valid(&self, range: &Range<PaintIndex>) -> bool {
+        if self.drawing_partial() {
+            return self.paint_range_valid_now(range);
+        }
         let (start, end, frame) = (&range.start, &range.end, &self.rendered_frame);
         start.scene_index <= end.scene_index
             && end.scene_index <= frame.scene.len()
@@ -4870,6 +4922,15 @@ impl Window {
     /// hitbox is moved on the device grid, as laying it out there does, and
     /// clipped by its mask as that clips here.
     fn reuse_prepaint_placed(&mut self, range: Range<PrepaintStateIndex>, by: Option<Point<f32>>) {
+        // mirin: in a partial frame what is reused is the frame's own,
+        // where it is; one that moved is a full frame's to copy.
+        if self.drawing_partial() {
+            match by {
+                Some(_) => drop(self.fail_partial()),
+                None => self.step_over_prepaint(&range),
+            }
+            return;
+        }
         let map = self.copy_masks(
             range.start.content_masks_index..range.end.content_masks_index,
             by,
@@ -4945,13 +5006,13 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
-            content_masks_index: self.next_frame.content_masks.len(),
+            content_masks_index: self.next_frame.content_masks.end(),
             #[cfg(any(test, feature = "test-support"))]
-            debug_bounds_index: self.next_frame.debug_bounds_records.len(),
-            mouse_listeners_index: self.next_frame.mouse_listeners.len(),
-            input_handlers_index: self.next_frame.input_handlers.len(),
-            cursor_styles_index: self.next_frame.cursor_styles.len(),
-            accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            debug_bounds_index: self.next_frame.debug_bounds_records.end(),
+            mouse_listeners_index: self.next_frame.mouse_listeners.end(),
+            input_handlers_index: self.next_frame.input_handlers.end(),
+            cursor_styles_index: self.next_frame.cursor_styles.end(),
+            accessed_element_states_index: self.next_frame.accessed_element_states.end(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
@@ -4989,6 +5050,14 @@ impl Window {
         as_one: bool,
         absorbed: bool,
     ) {
+        // mirin: as `reuse_prepaint_placed`.
+        if self.drawing_partial() {
+            match moved {
+                Some(_) => drop(self.fail_partial()),
+                None => self.step_over_paint(&range, absorbed),
+            }
+            return;
+        }
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
@@ -5189,6 +5258,10 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
         let result = f(self);
+        // mirin: a partial frame takes nothing back.
+        if result.is_err() && self.fail_partial() {
+            return result;
+        }
         if result.is_err() {
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             // mirin: what the try pushed.
@@ -5442,6 +5515,10 @@ impl Window {
     #[inline]
     pub fn with_tab_group<R>(&mut self, index: Option<isize>, f: impl FnOnce(&mut Self) -> R) -> R {
         if let Some(index) = index {
+            // mirin: tab stops are the whole frame's.
+            if self.fail_partial() {
+                return f(self);
+            }
             self.next_frame.tab_stops.begin_group(index);
             let result = f(self);
             self.next_frame.tab_stops.end_group();
@@ -5468,8 +5545,12 @@ impl Window {
     ) {
         self.invalidator.debug_assert_prepaint();
         // mirin: what is drawn later is not part of a retained subtree's
-        // drawing: one with a deferred draw is never moved.
+        // drawing: one with a deferred draw is never moved, nor drawn in a
+        // partial frame.
         self.pin_recordings();
+        if self.fail_partial() {
+            return;
+        }
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
@@ -6370,6 +6451,24 @@ impl Window {
         F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     {
+        self.request_keyed_measured_layout(style, None, measure)
+    }
+
+    /// mirin: `request_measured_layout` for an element that can say what it
+    /// measures: two with one `key` answer every question alike, so a
+    /// retained subtree whose content changed can keep its layout where the
+    /// keys did not (a text recolored: `elements::retained`, a partial
+    /// frame). A key is a hash of everything the answer depends on.
+    pub fn request_keyed_measured_layout<F>(
+        &mut self,
+        style: Style,
+        key: Option<u64>,
+        measure: F,
+    ) -> LayoutId
+    where
+        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+            + 'static,
+    {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
@@ -6377,7 +6476,7 @@ impl Window {
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(style, rem_size, scale_factor, key, measure)
     }
 
     /// mirin: says how far under its top a measured element's first baseline
@@ -6501,6 +6600,9 @@ impl Window {
         self.invalidator.debug_assert_paint();
         // mirin: kept apart from a retained subtree's drawing.
         self.pin_recordings();
+        if self.fail_partial() {
+            return;
+        }
         self.next_frame.window_control_hitboxes.push((area, hitbox));
     }
 
