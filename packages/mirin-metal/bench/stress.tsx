@@ -7,7 +7,7 @@
  *
  *   bun bench/stress.tsx [host-binary] [--rows=100] [--cols=25] [--visible] [--json] [--trace=<path>]
  *     [--only=scroll,grow] [--step=40] [--scroll-steps=24] [--shadow] [--memo]
- *     [--low] [--start=scroll] [--selects=20] [--types=20] [--grows=12] [--sc-grows=12] [--sc-selects=12] (how many of each: more for a profile)
+ *     [--low] [--start=scroll] [--selects=20] [--types=20] [--hovers=20] [--grows=12] [--sc-grows=12] [--sc-selects=12] (how many of each: more for a profile)
  *
  * Scenarios, each timed from the driver's action to the host's next painted
  * frame (`MIRIN_METAL_TRACE` log). `parse` is the host reading the line
@@ -316,8 +316,9 @@ await scenario("type", types, async () => {
 });
 
 const hover: Sample[] = [];
-await scenario("hover", 20, async () => {
-  for (let index = 0; index < 20; index += 1) {
+const hovers = option("hovers", 20);
+await scenario("hover", hovers, async () => {
+  for (let index = 0; index < hovers; index += 1) {
     const id = cardId((index * 53) % visible);
     const on = index % 2 === 0;
     // A real pointer move (sim `move`): onto the card, then off the grid.

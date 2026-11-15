@@ -134,6 +134,157 @@ What it should fix: select in a scroll view (the one bench still behind),
 the last tenths of a millisecond on a keystroke, and the two trees
 accessibility keeps today.
 
+### 3a. What a frame costs before step 4 (2026-11-15)
+
+Measured on the host at `a3778f2` (`ref/host-sumi3`; the same with
+`--features profiling` for instructions and profiles), stress app, 1280 by
+800, scale 1: 100 rows of 25 cards, 16 rows (400 cards, about 4,400
+primitives and 400 hitboxes) in view, 84 left out.
+
+| Scenario | Frame, median / tenth percentile (ms) | Instructions (M) | Retained subtrees in the frame |
+| --- | --- | --- | --- |
+| hover | 2.1 / 1.77 | 7.17 | 3 built (grid, row, card), 39 reused, 84 skipped |
+| select | 2.2 / 1.60 | 7.08 | the same |
+| type | 1.5 / 0.85 | 3.99 | 1 reused (the grid, as one) |
+| grow | 2.0 / 1.34 | 7.43 | 1 redrawn (the grid), 16 moved, 84 skipped |
+| scroll | 2.8 / 2.26 | 12.99 | the scroll view's content redrawn, rows moved |
+| resize | 2.4 / 1.81 | 8.82 | rows stretched, cards kept |
+
+`frame` is the bench's: from the root view's render to the last paint.
+Outside it, per update: the patch's apply (0.6 to 0.8 ms), the frame's end
+(the scene's sort, the frame's lists cleared and swapped) and the renderer
+(the whole scene written to the GPU's instance buffer, one pass encoded,
+submitted and presented).
+
+Where a frame's samples go (pprof at 1 kHz over 300 updates of each
+scenario; percent of all the host's samples, innermost matching row;
+`out/sumi4/prof-base-*.folded`, `tools/table.py`):
+
+| Where | hover | select | type | grow | scroll | resize |
+| --- | --- | --- | --- | --- | --- | --- |
+| The renderer: acquire, write instances, encode, submit, present | 18 | 16 | 19 | 13 | 12 | 12 |
+| Apply: `Boundaries::sync` going over every retained subtree | | 9 | 14 | 9 | | |
+| Copies: primitives into the scene (`replay_placed`) | 10 | 10 | 11 | 10 | 9 | 5 |
+| Copies: dispatch nodes, hitboxes, masks, text layouts | 5 | 4 | 3 | 4 | 4 | 2 |
+| Retained subtrees: planning each one, its records | 10 | 10 | <1 | 11 | 9 | 8 |
+| Layout: taffy over the spine and the changed row | 11 | 8 | 7 | 2 | 5 | 5 |
+| Layout: bounds and rounding | 3 | 3 | 1 | 3 | 2 | 1 |
+| Text shaped or measured again | 3 | 3 | 6 | 1 | 6 | 1 |
+| Elements built (the host's render) and walked (div, text) | 11 | 12 | 8 | 12 | 14 | 20 |
+| Entities read, noted per reused subtree | 7 | 4 | 3 | 4 | 3 | 2 |
+| The frame's end: lists cleared, dropped, swapped; the sort | 6 | 6 | 6 | 6 | 6 | 5 |
+| The host's layout map, accessibility refresh, trace line | 9 | 11 | 8 | 10 | 9 | 10 |
+| Fresh primitives into the scene | 2 | 2 | 2 | 3 | 4 | 1 |
+
+What it says:
+
+- **A change in one card is paid for along its whole path.** A hover or a
+  select builds the grid's elements (a hundred retained rows asked whether
+  they changed), the row's (twenty-five cards) and the card's, lays the
+  spine, the grid and the row out again through taffy (cache hits for 99
+  rows and 24 cards, but the flex algorithm runs over each list several
+  times), and plans, records and copies every row in view and every card
+  of the changed row. Copying primitives is a tenth of the samples; the
+  walk that decides to copy them is three times that.
+- **A copy is not a memcpy.** A kept row's primitives are cloned, placed
+  under their masks, given draw orders again and pushed into the list of
+  their kind; its dispatch nodes are rebuilt one by one; its text layouts
+  moved from one hash map to another.
+- **A keystroke is the copy.** With the grid kept as one, type is the
+  spine, two texts shaped, and one copy of 4,400 primitives and 400
+  hitboxes and dispatch nodes: a third of its frame.
+- **The apply walks everything.** `Boundaries::sync` ends with a pass over
+  every retained subtree (2,601 here) per patch: most of the 0.6 ms.
+- **The renderer costs what the window holds, every frame**, and is not in
+  `frame`: it writes every instance again, makes seven bind groups, and
+  submits and presents a whole pass.
+
+### 3b. The design: the frame the window keeps, and partial frames
+
+**The retained tree is the retained subtrees** (`elements::retained`,
+`crates/mirin-metal/src/retain.rs`): the views a host says draw from their
+content alone. **The retained scene is the last frame**: its primitives,
+the lists of each kind the renderer draws from, its hitboxes, masks,
+dispatch nodes, listeners and text layouts, each retained subtree knowing
+its ranges in them. Until step 4 that frame was only ever read: the next
+one was built beside it from the root, kept drawings copied across.
+
+**A partial frame** edits the kept frame instead. When everything that
+changed since the last frame is the content of retained subtrees, the
+window draws only those, in place, and nothing else runs: not the root
+view's render, not the spine's layout, not the walk over the rows, not a
+copy, not the sort.
+
+- **Dirty** is a retained subtree whose own content changed: the host
+  notifies its entity (a hover style does already; after a patch the host
+  now notifies the innermost retained subtree around each changed node,
+  and the root view only when a node outside every retained subtree
+  changed, or the set of retained subtrees did). It spreads upward only to
+  decide which frame to draw: a full frame builds every retained subtree
+  around a dirty one, as before (through a registry of retained subtrees
+  and their parents, so one that is out of the frame is found too); a
+  partial frame builds the dirty ones alone. Anything else that asks for a
+  frame (a refresh, a resize, a scale change, focus, a view that is not a
+  retained subtree, a prompt, a drag, a tooltip showing) is a full frame.
+- **Layout.** The dirty subtree's elements are built onto the taffy nodes
+  it kept (`begin_bind`, as a subtree redrawn for its kept layout is
+  today), now checked: every node's style must be the one it has, and
+  every measured leaf must say it measures what it did (a text: the same
+  text, font and wrapping). Then its layout is what it was, to the bit,
+  and nothing is laid out. A change that does not pass (a text's content,
+  a size, a child added) is a full frame.
+- **Prepaint and paint.** The subtree is drawn where its record says it
+  is (bounds, content mask, element offset, text style, opacity, the
+  dispatch node and masks around it: kept with its record, moved along
+  when its drawing is), with every list of the frame writing at the
+  subtree's range instead of at its end. What it writes must have **the
+  shape of what it replaces**: as many hitboxes, masks, dispatch nodes,
+  listeners, text layouts and primitives, each primitive of the kind,
+  bounds, mask and atlas texture of the one before it (its color, its
+  glyph, its corner radii may differ). A retained subtree inside it that
+  is clean is where it was, and its range is stepped over. If the shape
+  differs, what was overwritten is put back (each list keeps what a
+  partial frame replaces until it ends) and the frame is drawn in full.
+- **The scene.** A primitive of a partial frame takes the draw order of
+  the one it replaces (same kind, bounds and mask: the bounds tree would
+  give the same) and its slot in the sorted list of its kind, which every
+  paint operation now knows (`Scene::finish` notes where the sort put
+  each). Nothing is sorted and nothing else is touched.
+- **The renderer** is told which slots of which lists changed since the
+  scene it last drew (`Scene::damage`): `sumi-wgpu` writes those ranges of
+  its instance buffer and keeps its bind groups. A renderer that does not
+  ask (`sumi-apple`, `sumi-windows`) writes everything, as before.
+- **Hit-testing, dispatch, accessibility.** The hitboxes and dispatch
+  nodes of the kept frame are the ones events use; a partial frame
+  replaces the dirty subtree's and looks up what is under the pointer
+  again. The host's layout map and accessibility tree hear of a partial
+  frame through a hook and update the dirty subtree's group alone.
+
+**A move** stays what it is in this step: a drawing copied by whole device
+pixels in a full frame (`plan`, `masks`, `grid`, `steady`). Grow, scroll
+and resize are full frames, and the copy is what is left of them; the
+profile's next step for them is the same idea one level up (a clean
+subtree found where it was in the frame's lists is not copied: the full
+frame writes in place as well), then a move as a transform of kept
+primitives. Neither is promised by this step; section 3c records what
+landed.
+
+**What of today's machinery stays, changes, goes.**
+
+| | |
+| --- | --- |
+| Recordings, the mask map, the device grid, steadiness, parked drawings | Stay: they are what makes a copied or left-out drawing exact in a full frame. A partial frame records the subtree again and must find what it found (how far it reaches, what it pins), or it is a full frame. |
+| A retained subtree's record (`Drawn`) | Grows: the content mask ids around it and what else it is drawn under, so it can be drawn without its parents. |
+| The frame's lists | Change: each can write at a range (`FrameVec`), and gives back what it overwrote. |
+| The scene | Changes: paint operations know their slots; a patch session; damage for the renderer. |
+| The layout map (`crates/mirin-metal/src/layout`) | Stays, with a partial frame that sweeps only the groups drawn. |
+| `Boundaries::sync` | Changes: no pass over every retained subtree; it says which retained subtrees' own content changed. |
+| Upstream's view cache (`AnyView::cached`) | Goes, if nothing of Metal reaches it. |
+
+**`MIRIN_METAL_RETAIN=0`** keeps nothing, so nothing is retained and every
+frame is the immediate one, from the root: the oracle the gates compare a
+partial frame's drawing with.
+
 ## 4. Order of work
 
 | Step | What | Effort |
