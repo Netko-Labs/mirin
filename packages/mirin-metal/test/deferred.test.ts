@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { spawnNativeHost } from "../src/host.ts";
+import { parseNativeEvent, type SurfaceOptions, spawnNativeHost } from "../src/host.ts";
 
 // A stand-in host that keeps what it is told: its environment and first line.
 test("a deferred host is started without a window and opened on demand", async () => {
@@ -43,4 +43,29 @@ test("a resident host hides its window and opens it again", async () => {
     { hide: true },
     { open: { title: "Launcher" } },
   ]);
+});
+
+// An opaque surface is said as the app says it, at spawn and at open.
+test("a surface says it is opaque in the host's environment and in an open", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mirin-opaque-"));
+  const standIn = join(dir, "host");
+  writeFileSync(
+    standIn,
+    `#!/bin/sh\nprintf '%s' "$MIRIN_METAL_SURFACE" > "${dir}/env"\nhead -n 1 > "${dir}/line"\n`,
+  );
+  chmodSync(standIn, 0o755);
+  const bar: SurfaceOptions = { anchor: ["top", "left", "right"], exclusiveZone: 28, opaque: true };
+  const host = spawnNativeHost(standIn, { deferred: true, surface: bar });
+  host.open({ title: "Lock", surface: { role: "lock", opaque: true } });
+  await new Promise<void>((resolve) => host.onClose(resolve));
+  expect(JSON.parse(await Bun.file(join(dir, "env")).text())).toEqual(bar);
+  expect(JSON.parse(await Bun.file(join(dir, "line")).text())).toEqual({
+    open: { title: "Lock", surface: { role: "lock", opaque: true } },
+  });
+});
+
+test("a host that opens a surface opaque says so", () => {
+  expect(
+    parseNativeEvent('{"type":"protocol","nodeId":"root","patches":1,"opaqueSurface":true}'),
+  ).toEqual({ type: "protocol", nodeId: "root", patches: 1, opaqueSurface: true });
 });

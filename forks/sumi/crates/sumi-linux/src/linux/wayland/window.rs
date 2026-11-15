@@ -751,8 +751,19 @@ impl WaylandWindowState {
     }
 
     pub fn is_transparent(&self) -> bool {
-        self.decorations == WindowDecorations::Client
-            || self.background_appearance != WindowBackgroundAppearance::Opaque
+        self.draws_decorations() || self.background_appearance != WindowBackgroundAppearance::Opaque
+    }
+
+    // mirin: an opaque layer or lock surface.
+    /// Whether the client draws decorations around its content (shadows,
+    /// antialiased corners), which need the surface's alpha. Only a
+    /// toplevel can: a layer or a lock surface has no decorations, and its
+    /// `decorations` is `Client` only because no compositor decorates it.
+    /// So one whose background is opaque is opaque, as a server-decorated
+    /// window is: the compositor is told so and need not blend it, and
+    /// text on it may be antialiased by subpixels.
+    fn draws_decorations(&self) -> bool {
+        self.decorations == WindowDecorations::Client && self.surface_state.toplevel().is_some()
     }
 
     fn update_subpixel_layout(&mut self) {
@@ -2660,8 +2671,9 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
 
     // Client decorations include transparent shadows and antialiased corners,
     // so don't promise the compositor an opaque region.
+    // mirin: a layer or lock surface draws none (`draws_decorations`).
     if state.background_appearance == WindowBackgroundAppearance::Opaque
-        && state.decorations == WindowDecorations::Server
+        && !state.draws_decorations()
     {
         region.add(
             area.origin.x,

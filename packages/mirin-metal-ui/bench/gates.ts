@@ -17,6 +17,9 @@
  * - A scroll view and a long list on `<host>` tell their offset and take
  *   one, their rows changing meanwhile (`@mirinjs/metal`'s
  *   `bench/scroll-check.tsx`).
+ * - A window and an opaque layer surface on `<host>` draw their text by
+ *   subpixels when asked, and any other surface in grays
+ *   (`surface-text.ts`).
  *
  * Prints a line per check and a summary, and exits non-zero when any check
  * found a difference or did not finish. `--only` runs the checks whose name
@@ -147,7 +150,12 @@ function gateSet(host: string, reference: string | undefined): Check[] {
     args: [host],
     script: "scroll-check.ts",
   };
-  return [...against, ...retained, reopen, hideRace, scroll];
+  const surfaceText: Check = {
+    name: "text by subpixels on an opaque surface only",
+    args: [host],
+    script: "surface-text.ts",
+  };
+  return [...against, ...retained, reopen, hideRace, scroll, surfaceText];
 }
 
 /** Run the checks, `jobs` at a time; the results in the checks' order. */

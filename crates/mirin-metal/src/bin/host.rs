@@ -12,8 +12,8 @@ use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, Antialiasing, DriverMessage,
     EventKind, HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface,
-    TitleBar, ACTIVATION_MARKER, IMAGE_ERROR_MARKER, OPEN_MIN_SIZE_MARKER, PATCH_MARKER,
-    PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
+    TitleBar, ACTIVATION_MARKER, IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER, OPEN_MIN_SIZE_MARKER,
+    PATCH_MARKER, PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
     TEXT_ANTIALIASING_MARKER,
 };
 
@@ -602,6 +602,9 @@ fn main() {
     mirin_metal::trace::log(format_args!(
         "{TEXT_ANTIALIASING_MARKER}: text in grays or by subpixels, as the driver says"
     ));
+    mirin_metal::trace::log(format_args!(
+        "{OPAQUE_SURFACE_MARKER}: a surface opened opaque when the driver says it is"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
@@ -620,6 +623,9 @@ fn main() {
         "imageError": true,
         // This host takes a `textAntialiasing` line (`text_mode.rs`).
         "textAntialiasing": true,
+        // This host opens a surface that says `"opaque":true` opaque
+        // (`surface.rs`); one from before refuses that surface.
+        "opaqueSurface": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
@@ -649,7 +655,7 @@ fn main() {
     // A lock surface whose driver goes away exits at once, still locked: the
     // session must never unlock because a lock screen crashed.
     let lock_surface = std::env::var("MIRIN_METAL_SURFACE")
-        .is_ok_and(|json| matches!(parse_surface(&json, ""), Ok(Surface::Lock)));
+        .is_ok_and(|json| matches!(parse_surface(&json, ""), Ok(Surface::Lock { .. })));
 
     // stdin → tree updates. EOF means the driver went away; the window simply
     // stops updating (closing it quits the process).

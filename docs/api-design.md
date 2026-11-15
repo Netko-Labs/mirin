@@ -93,10 +93,14 @@ export default defineConfig({
   takes one name, and a surface on every screen is one host per screen; the
   manifest's `output: "all"` will do that for an app). Layer surfaces also take `margin` (px, or per edge) and
   `namespace` (the surface's purpose for the compositor; defaults to the
-  title). The alpha host already opens layer surfaces through
+  title). `opaque: true` (a layer or a lock surface) says the app paints
+  every pixel of the surface with no alpha: it is opened opaque, as a window
+  is, so its text can be subpixel and the compositor need not blend it;
+  what is left unpainted is black. Default false: transparent where the
+  tree is, text in grays (docs/metal.md §4). The alpha host already opens layer surfaces through
   `spawnNativeHost(binary, { surface })` (docs/metal.md §6). A `lock` surface
   locks the session (ext-session-lock-v1) on the first output and takes no
-  other options; it unlocks only when the driver calls `unlock()` on the host
+  other options but `opaque`; it unlocks only when the driver calls `unlock()` on the host
   transport (the host line `{"unlock": true}`). If the host exits or is killed
   first, the session stays locked, so a crashing lock screen never unlocks.
 - `windows.*.titleBar` is Metal-only: `"standard"` (default) or `"unified"`. A

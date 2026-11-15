@@ -283,6 +283,7 @@ fn open_window(
     let bounds = Bounds::centered(None, size(px(options.width), px(options.height)), cx);
     // Desktop surfaces (layers, a lock screen) draw over what the
     // compositor shows behind them; their tree paints its own background.
+    // (`is_layer`: neither is a window, with a title bar or a least size.)
     let is_layer = options.surface.is_some();
     let unified = !is_layer && options.title_bar == TitleBar::Unified;
     let window_options = WindowOptions {
@@ -294,10 +295,11 @@ fn open_window(
             appears_transparent: unified,
             ..Default::default()
         }),
-        window_background: if is_layer {
-            WindowBackgroundAppearance::Transparent
-        } else {
-            WindowBackgroundAppearance::Opaque
+        // A surface the driver says it paints whole is opaque, as a window
+        // is (`Surface::is_opaque`).
+        window_background: match &options.surface {
+            Some(surface) if !surface.is_opaque() => WindowBackgroundAppearance::Transparent,
+            _ => WindowBackgroundAppearance::Opaque,
         },
         app_id: options.app_id.clone(),
         // The app's own floor (`MIRIN_METAL_MIN_SIZE`): the compositor keeps

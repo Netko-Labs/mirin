@@ -65,6 +65,8 @@ pub struct LayerSurface {
     /// The screen by its output name (the engine's `PlatformDisplay::name`);
     /// the compositor picks when unset or when no screen has that name.
     pub output: Option<String>,
+    /// The app paints every pixel of it, opaque (`Surface::is_opaque`).
+    pub opaque: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -115,7 +117,7 @@ pub(crate) fn with_role(
     .map(|display| display.id());
     #[cfg(target_os = "linux")]
     let kind = match surface {
-        Some(Surface::Lock) => sumi::WindowKind::SessionLock,
+        Some(Surface::Lock { .. }) => sumi::WindowKind::SessionLock,
         Some(Surface::Layer(layer)) => layer.window_kind(),
         None => sumi::WindowKind::Normal,
     };
@@ -155,6 +157,8 @@ struct SurfaceSpec {
     namespace: Option<String>,
     #[serde(default)]
     output: Option<String>,
+    #[serde(default)]
+    opaque: bool,
 }
 
 #[derive(Deserialize)]
@@ -178,9 +182,33 @@ enum MarginSpec {
 pub enum Surface {
     Layer(LayerSurface),
     /// Locks the session; it unlocks only on `{"unlock": true}` from the
-    /// driver, never because the process went away.
-    Lock,
+    /// driver, never because the process went away. `opaque` as a layer
+    /// surface's (`Surface::is_opaque`).
+    Lock {
+        opaque: bool,
+    },
 }
+
+impl Surface {
+    /// The driver said the surface is opaque (`"opaque": true`): its tree
+    /// paints every pixel, with no alpha. It is then opened opaque, as a
+    /// window is: the compositor is told so and need not blend it over
+    /// what is behind, and its text may be antialiased by subpixels, which
+    /// needs the colour behind each glyph to be the surface's own
+    /// (`text_mode.rs`). Whatever the tree leaves unpainted is black, and
+    /// what it paints translucent is over black. Without it a surface is
+    /// transparent where its tree is, and its text is in grays.
+    pub fn is_opaque(&self) -> bool {
+        match self {
+            Self::Layer(layer) => layer.opaque,
+            Self::Lock { opaque } => *opaque,
+        }
+    }
+}
+
+/// In the host binary while a surface can be opened opaque; its `protocol`
+/// line says `"opaqueSurface":true`.
+pub const OPAQUE_SURFACE_MARKER: &str = "MIRIN_METAL_OPAQUE_SURFACE";
 
 /// Parse a surface description; `namespace` defaults to `fallback_namespace`
 /// (the window title).
@@ -197,9 +225,11 @@ pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, St
                 || spec.margin.is_some()
                 || spec.namespace.is_some();
             if layered || spec.output.is_some() {
-                return Err("a lock surface takes no other options".into());
+                return Err("a lock surface takes no other options but opaque".into());
             }
-            return Ok(Surface::Lock);
+            return Ok(Surface::Lock {
+                opaque: spec.opaque,
+            });
         }
         Some("popup") => return Err("surface role \"popup\" is not supported yet".into()),
         Some(role) => return Err(format!("unknown surface role \"{role}\"")),
@@ -283,6 +313,7 @@ pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, St
         margin,
         keyboard_interactivity,
         output,
+        opaque: spec.opaque,
     }))
 }
 
@@ -293,7 +324,7 @@ mod tests {
     fn layer(json: &str, title: &str) -> LayerSurface {
         match parse_surface(json, title).unwrap() {
             Surface::Layer(options) => options,
-            Surface::Lock => panic!("{json} parsed as a lock surface"),
+            Surface::Lock { .. } => panic!("{json} parsed as a lock surface"),
         }
     }
 
@@ -362,10 +393,32 @@ mod tests {
     fn lock_surfaces_take_nothing_else() {
         assert!(matches!(
             parse_surface(r#"{"role":"lock"}"#, "x"),
-            Ok(Surface::Lock)
+            Ok(Surface::Lock { opaque: false })
         ));
         assert!(parse_surface(r#"{"role":"lock","layer":"overlay"}"#, "x").is_err());
         assert!(parse_surface(r#"{"role":"lock","namespace":"lock"}"#, "x").is_err());
+    }
+
+    #[test]
+    fn a_surface_is_opaque_only_when_it_says_so() {
+        // Transparent where its tree is, unless the driver says it paints it whole.
+        let bar = r#"{"anchor":["top","left","right"],"exclusiveZone":28}"#;
+        assert!(!parse_surface(bar, "x").unwrap().is_opaque());
+        assert!(!parse_surface(r#"{"opaque":false}"#, "x")
+            .unwrap()
+            .is_opaque());
+        assert!(parse_surface(r#"{"opaque":true}"#, "x")
+            .unwrap()
+            .is_opaque());
+        assert!(layer(r#"{"layer":"top","opaque":true}"#, "x").opaque);
+        // A lock screen too.
+        assert!(!parse_surface(r#"{"role":"lock"}"#, "x")
+            .unwrap()
+            .is_opaque());
+        let lock = parse_surface(r#"{"role":"lock","opaque":true}"#, "x").unwrap();
+        assert!(matches!(lock, Surface::Lock { opaque: true }));
+        assert!(lock.is_opaque());
+        assert!(parse_surface(r#"{"opaque":"yes"}"#, "x").is_err());
     }
 
     #[test]

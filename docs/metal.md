@@ -659,7 +659,8 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   says `"settle":true` too, for the `settle` simulation, `"rebase":true` for
   a field's `baseHash`, `"scroll":true` for a scroll view's offset,
   `"imageError":true` for an image's `onError`, and `"textAntialiasing":true`
-  for the line of that name, section 4). A driver
+  for the line of that name, section 4; `"opaqueSurface":true` too, for a
+  surface's `opaque`). A driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now
@@ -999,7 +1000,8 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   carries no colour fringes to another screen. `MIRIN_METAL_TEXT=subpixel`
   in the host's environment (`NativeHostOptions.env`, or the driver's own)
   asks for subpixel; a window that is not opaque (a panel over the desktop)
-  draws grays either way, since the fringes need a known background.
+  draws grays either way, since the fringes need a known background (the
+  next bullet but one: a surface that says it is opaque takes subpixel).
   `MIRIN_METAL_TEXT=grayscale` asks for grays on macOS and Windows, where
   the host otherwise leaves the platform's default. Layout does not depend
   on it: only glyph pixels differ. The engine reads the variable too: only
@@ -1041,6 +1043,42 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   renderer builds a pipeline when it first draws with it, so the first
   change to subpixel also parses them, in that one slow frame, and from
   then on the host holds their module as one started in subpixel does.
+- **A layer surface draws grays unless it says it is opaque** (2026-11-15).
+  Subpixel antialiasing blends a glyph into what is behind it a channel at
+  a time (red, green and blue each have their own coverage; the engine's
+  pipeline uses dual-source blending and writes no alpha), so the colour
+  behind has to be in the surface itself. The host opens every layer and
+  lock surface transparent (`drive.rs`: its tree paints its own
+  background, and the compositor blends it over the desktop), and the
+  engine draws no subpixel glyph in a window whose background is not
+  opaque (`Window::should_use_subpixel_rendering`). That is why Dashi's
+  bar, Dock, launcher, banners and login screen are in grays beside
+  subpixel windows. Forced onto a transparent surface (a host built for
+  the picture, `MIRIN_METAL_TEXT=subpixel` and the engine's check off,
+  over colour stripes): where the tree painted nothing, a glyph's colour
+  is added to what is behind with no alpha of its own, so light text
+  glows with fringes worked out against black and dark text is not there
+  at all; on a translucent background the text is as see-through as the
+  background. A surface that says `"opaque": true` (`surface.opaque`,
+  for a layer surface and a lock surface) is opened opaque instead, as a
+  window is: its text is subpixel when asked, the compositor is told the
+  surface is opaque (`wl_surface.set_opaque_region`, so it need not blend
+  it or draw what is under it), and its buffer has no alpha, so whatever
+  the tree leaves unpainted is black and a translucent color is over
+  black. It is for a bar with a solid background and a login or lock
+  screen; a Dock with rounded corners, a launcher with a shadow or a
+  banner are not opaque and stay in grays (subpixel there would need the
+  compositor to blend per channel, which no Wayland buffer format
+  carries). The engine's half is in `sumi-linux` (`wayland/window.rs`,
+  `draws_decorations`): a layer or lock surface has no decorations, and
+  was taken for a client-decorated window, which is always transparent.
+  Default unchanged: without `opaque` a surface is what it was, pixel for
+  pixel. `bench/surface-text.ts` in `@mirinjs/metal-ui` (one of the
+  gates) reads what the host drew for a window, a layer surface and an
+  opaque one. A host that takes it says `"opaqueSurface":true` in its
+  `protocol` line and names `MIRIN_METAL_OPAQUE_SURFACE`; one from before
+  refuses a surface with `opaque` (it does not start, or refuses the
+  `open`), so an app asks only a host that has it.
 - **Emoji are drawn** (2026-11-15). Noto Color Emoji as Fedora ships it
   (`Noto-COLRv1.ttf`) holds COLRv1 glyphs: paint graphs of gradients,
   transforms, clips and composited layers. swash draws colour bitmaps and
@@ -2956,8 +2994,10 @@ The host reads `MIRIN_METAL_TITLE` and `MIRIN_METAL_SIZE=1280x820`.
 `MIRIN_METAL_SURFACE=<json>` opens a Wayland layer-shell surface (a panel, a
 dock) instead of a window; the JSON is the `windows.*.surface` shape from
 `docs/api-design.md` §1a (`layer`, `anchor`, `exclusiveZone`, `keyboard`,
-`margin`, `namespace`; only the `layer` role so far), the surface is transparent
-where the tree is, and opening fails on compositors without wlr-layer-shell.
+`margin`, `namespace`, `opaque`; only the `layer` role so far), the surface is transparent
+where the tree is (opaque, black where the tree paints nothing, with
+`"opaque": true`: section 4, "A layer surface draws grays unless it says it
+is opaque"), and opening fails on compositors without wlr-layer-shell.
 `spawnNativeHost(binary, { surface })` sets it. `MIRIN_METAL_TITLEBAR=unified`
 (`titleBar`) puts the app's toolbar in the title bar on Dashi (section 4,
 "Unified title bar"). `MIRIN_METAL_APP_ID` (`appId`)

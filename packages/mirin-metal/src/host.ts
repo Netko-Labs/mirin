@@ -70,6 +70,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             ...(record.scroll === true ? { scroll: true } : {}),
             ...(record.imageError === true ? { imageError: true } : {}),
             ...(record.textAntialiasing === true ? { textAntialiasing: true } : {}),
+            ...(record.opaqueSurface === true ? { opaqueSurface: true } : {}),
           }
         : null;
     case "settled":
@@ -277,9 +278,15 @@ function parseLayoutNode(value: unknown): LayoutNode[] {
  * A Wayland layer-shell surface (a panel, a dock, a launcher) instead of a
  * window: the `windows.*.surface` shape from docs/api-design.md §1a. A
  * `{ role: "lock" }` surface locks the session (ext-session-lock) and takes
- * no other options; it unlocks only through `unlock()`.
+ * no other options but `opaque`; it unlocks only through `unlock()`.
  */
-export type SurfaceOptions = LayerSurfaceOptions | { role: "lock" };
+export type SurfaceOptions = LayerSurfaceOptions | LockSurfaceOptions;
+
+export interface LockSurfaceOptions {
+  role: "lock";
+  /** As a layer surface's (`LayerSurfaceOptions.opaque`). */
+  opaque?: boolean;
+}
 
 export interface LayerSurfaceOptions {
   role?: "layer";
@@ -301,6 +308,20 @@ export interface LayerSurfaceOptions {
    * surface on every screen, open one host per screen.
    */
   output?: string;
+  /**
+   * The app paints every pixel of the surface, with no alpha (a bar with a
+   * solid background, a login screen). It is then opened opaque, as a window
+   * is: the compositor need not blend it over what is behind, and its text
+   * can be antialiased by subpixels (`textAntialiasing: "subpixel"`), which
+   * needs the colour behind each glyph to be the surface's own. Whatever is
+   * left unpainted is black, and a translucent color is over black, so a
+   * surface with rounded corners, a shadow or a see-through background is
+   * not one. Default false: transparent where its tree is, text in grays.
+   * A host from before it (no `opaqueSurface` in its `protocol` event; the
+   * binary does not name `MIRIN_METAL_OPAQUE_SURFACE`) refuses a surface
+   * that says it, so a deferred host's is asked only after that event.
+   */
+  opaque?: boolean;
 }
 
 export interface NativeHostOptions {

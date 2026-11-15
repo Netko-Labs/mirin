@@ -70,7 +70,15 @@ Principles:
    or Windows app builds without it. Layer surfaces (wlr-layer-shell),
    session lock (ext-session-lock-v1) and file drags (wl_data_device) are
    not Dashi's: any compositor with those protocols serves them, and they
-   are unconditional.
+   are unconditional. A layer or lock surface whose background is opaque
+   is opaque (`sumi-linux`, `wayland/window.rs`, `draws_decorations`):
+   upstream takes any surface the compositor does not decorate for a
+   client-decorated window, whose shadows and corners need alpha, so such
+   a surface was always presented with alpha and never named an opaque
+   region, whatever its background. Only a toplevel draws decorations.
+   The host opens a surface so when its app says `opaque`, which is what
+   lets its text be subpixel (`docs/metal.md`, section 4); every other
+   surface is transparent as before.
 5. **Platform crates stay boring.** We barely change macOS and Windows.
    They stay close to upstream so picking its fixes stays cheap.
 

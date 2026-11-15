@@ -37,8 +37,9 @@ pub struct NativeUiOptions {
     pub width: f32,
     pub height: f32,
     /// Open as a layer-shell surface (a panel, a dock) or a session-lock
-    /// surface instead of a window; see `parse_surface`. A layer surface is
-    /// transparent where the tree is; a lock surface is opaque.
+    /// surface instead of a window; see `parse_surface`. Either is
+    /// transparent where the tree is, unless it says it is opaque
+    /// (`Surface::is_opaque`).
     pub surface: Option<Surface>,
     /// `Unified` runs the tree up to the window's top edge where the
     /// compositor supports it (see `titlebar.rs`); ignored for surfaces.
