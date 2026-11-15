@@ -772,6 +772,28 @@ Radeon 890M with Mesa RADV:
   they become dirty (`forks/gpui/MIRIN.md`). Measured in dashi-comp: an
   idle desktop draws nothing.
 
+### Text on Linux
+
+sumi's text system on Linux is cosmic-text (shaping and font fallback) and
+swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
+
+- **Variable fonts are drawn at the weight asked for.** Fedora ships Noto
+  Sans CJK, Arabic, Devanagari and most of Noto as variable fonts: one face
+  with a weight axis. A font id is a face at a weight: the text's own
+  family gets an id for each weight asked of it, and a fallback face is
+  drawn at the weight of the text it stands in for. Before 2026-11-15 a
+  variable face was always drawn at its default, which for Noto Sans CJK is
+  Thin (Chinese, Japanese and Korean came out hairline) and for the others
+  Regular (bold Arabic was not bold). Style and width need no such care:
+  cosmic-text sorts fallback faces by weight, then width, then style, and
+  those are separate faces, not axes sumi sets.
+- **Left as it is:** a fallback family of fixed weights that has none equal
+  to the text's (Medium text over a family with Regular and Bold only) is
+  passed over by cosmic-text, which then takes the nearest weight of any
+  family that has the character. It was so before sumi too.
+- Tests: `crates/mirin-metal/tests/text_weight.rs`, with two small fonts
+  cut from Noto Sans (`tests/fonts/`).
+
 ### Unified title bar (Dashi)
 
 Apps such as macOS Notes put their own toolbar in the title bar: the sidebar and

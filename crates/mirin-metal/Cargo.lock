@@ -2175,6 +2175,7 @@ dependencies = [
  "serde_json",
  "sumi",
  "sumi-platform",
+ "sumi-wgpu",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",

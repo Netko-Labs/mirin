@@ -50,6 +50,12 @@ sumi = { path = "../../forks/sumi/crates/sumi", default-features = false, featur
 # accessibility tests hand it every update as the adapter would.
 accesskit_consumer = "0.39"
 
+# sumi's text system on Linux as it is (cosmic-text and swash; already built
+# as the platform's), for the tests that shape and draw with real fonts
+# (tests/text_weight.rs).
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+sumi-wgpu = { path = "../../forks/sumi/crates/sumi-wgpu" }
+
 [features]
 default = ["dashi"]
 # Dashi's own Wayland protocols in the engine (the unified title bar,
