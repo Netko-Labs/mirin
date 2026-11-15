@@ -8,7 +8,6 @@ use crate::{
 use anyhow::Result;
 
 use futures::Future;
-use sumi_util::ResultExt;
 use image::{ImageError, ImageFormat};
 use scheduler::Instant;
 use std::{
@@ -19,6 +18,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use sumi_util::ResultExt;
 use thiserror::Error;
 
 use super::{Stateful, StatefulInteractiveElement};

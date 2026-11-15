@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use sumi_util::ResultExt;
 use itertools::Itertools;
+use sumi_util::ResultExt;
 use windows::Win32::{
     Foundation::HMODULE,
     Graphics::{

@@ -189,5 +189,4 @@ impl DisplayConnection {
     pub(crate) fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         dispatch!(self, connection => connection.read_from_clipboard(), headless => None)
     }
-
 }

@@ -1,12 +1,12 @@
 use anyhow::{Context as _, Result};
 use collections::{HashMap, TypeIdHashMap};
-pub use sumi_macros::Action;
 pub use no_action::{NoAction, Unbind, is_no_action, is_unbind};
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
     fmt::Display,
 };
+pub use sumi_macros::Action;
 
 /// Defines and registers unit structs that can be used as actions. For more complex data types, derive `Action`.
 ///

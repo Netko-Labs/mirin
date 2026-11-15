@@ -34,9 +34,9 @@ use std::{ffi::CStr, ops::Range};
 
 pub(crate) use display::*;
 pub(crate) use display_link::*;
-pub(crate) use sumi_apple::{AppleActivity, AppleDispatcher, main_thread_marker};
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
+pub(crate) use sumi_apple::{AppleActivity, AppleDispatcher, main_thread_marker};
 pub(crate) use window::*;
 
 pub use platform::MacPlatform;

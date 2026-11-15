@@ -305,8 +305,8 @@ impl UTType {
 
 #[cfg(test)]
 mod tests {
-    use sumi::{ClipboardEntry, ClipboardItem, ClipboardString, ImageFormat};
     use objc2::rc::autoreleasepool;
+    use sumi::{ClipboardEntry, ClipboardItem, ClipboardString, ImageFormat};
 
     use super::*;
 

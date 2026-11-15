@@ -27,7 +27,6 @@ use crate::{
     TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
-use sumi_util::ResultExt;
 use refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
@@ -41,6 +40,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use sumi_util::ResultExt;
 
 use super::ImageCacheProvider;
 
@@ -1957,7 +1957,10 @@ pub fn wheel_scroll(
             moved
         }
     }
-    point(axis(offset.x, delta.x, max.x), axis(offset.y, delta.y, max.y))
+    point(
+        axis(offset.x, delta.x, max.x),
+        axis(offset.y, delta.y, max.y),
+    )
 }
 
 impl Styled for Div {
@@ -2331,7 +2334,6 @@ impl Interactivity {
         cx: &mut App,
         f: impl FnOnce(Style, &mut Window, &mut App) -> LayoutId,
     ) -> LayoutId {
-
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
             |element_state, window| {
@@ -2559,11 +2561,10 @@ impl Interactivity {
             // high for the maximum scroll, we round the scroll max to 2 decimal
             // places here.
             let padded_content_size = self.content_size + padding_size;
-            let scroll_max = Point::from(
-                self.scroll_extent.unwrap_or(padded_content_size) - bounds.size,
-            )
-                .map(round_to_two_decimals)
-                .max(&Default::default());
+            let scroll_max =
+                Point::from(self.scroll_extent.unwrap_or(padded_content_size) - bounds.size)
+                    .map(round_to_two_decimals)
+                    .max(&Default::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -2706,7 +2707,6 @@ impl Interactivity {
                                         f(&style, window, cx);
 
                                         if let Some(_hitbox) = hitbox {
-
                                             if let Some(group) = self.group.as_ref() {
                                                 GroupHitboxes::pop(group, cx);
                                             }
@@ -2757,7 +2757,6 @@ impl Interactivity {
                 {
                     text.paint(hitbox.origin, FONT_SIZE, TextAlign::Left, None, window, cx)
                         .ok();
-
                 }
             };
 

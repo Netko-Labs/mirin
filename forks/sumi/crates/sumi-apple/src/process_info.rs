@@ -1,12 +1,12 @@
 use block2::RcBlock;
 use futures::{StreamExt, channel::mpsc};
-use sumi::{ForegroundExecutor, PowerMode, Task, ThermalState};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSNotificationName, NSObjectProtocol, NSProcessInfo,
     NSProcessInfoPowerStateDidChangeNotification, NSProcessInfoThermalState,
     NSProcessInfoThermalStateDidChangeNotification,
 };
+use sumi::{ForegroundExecutor, PowerMode, Task, ThermalState};
 
 pub fn thermal_state() -> ThermalState {
     match NSProcessInfo::processInfo().thermalState() {

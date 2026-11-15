@@ -1,11 +1,11 @@
 use crate::{ActivityGuard, App, PlatformDispatcher, PlatformScheduler};
 use futures::channel::mpsc;
 use futures::prelude::*;
-use sumi_util::{TryFutureExt, TryFutureExtBacktrace};
 use scheduler::Instant;
 use scheduler::Scheduler;
 use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc, time::Duration};
 use std::{mem, pin::Pin};
+use sumi_util::{TryFutureExt, TryFutureExtBacktrace};
 
 pub use scheduler::{
     DedicatedExecutor, FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task,

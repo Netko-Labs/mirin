@@ -23,10 +23,10 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
 pub use entity_map::*;
-use sumi_util::{ResultExt, debug_panic};
 #[cfg(any(test, feature = "test-support"))]
 pub use headless_app_context::*;
 use smallvec::SmallVec;
+use sumi_util::{ResultExt, debug_panic};
 #[cfg(any(test, feature = "test-support"))]
 pub use test_app::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -969,7 +969,7 @@ impl App {
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
-        ) -> Rc<AppCell> {
+    ) -> Rc<AppCell> {
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
         assert!(

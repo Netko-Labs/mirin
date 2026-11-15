@@ -17,10 +17,6 @@ use std::sync::mpsc::{Sender, channel};
 use block2::RcBlock;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
-use sumi::{
-    BackgroundExecutor, ForegroundExecutor, SharedString, SystemNotification,
-    SystemNotificationAction, SystemNotificationResponse, Task,
-};
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::{Bool, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, define_class, msg_send};
@@ -31,6 +27,10 @@ use objc2_user_notifications::{
     UNNotificationDefaultActionIdentifier, UNNotificationPresentationOptions,
     UNNotificationRequest, UNNotificationResponse, UNUserNotificationCenter,
     UNUserNotificationCenterDelegate,
+};
+use sumi::{
+    BackgroundExecutor, ForegroundExecutor, SharedString, SystemNotification,
+    SystemNotificationAction, SystemNotificationResponse, Task,
 };
 
 type ResponseCallback = Rc<RefCell<Option<Box<dyn FnMut(SystemNotificationResponse)>>>>;

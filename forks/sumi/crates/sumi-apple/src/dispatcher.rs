@@ -1,6 +1,4 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
-use sumi::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
-use sumi_util::ResultExt;
 use mach2::{
     kern_return::KERN_SUCCESS,
     mach_time::mach_timebase_info_data_t,
@@ -11,6 +9,8 @@ use mach2::{
         thread_precedence_policy_data_t, thread_time_constraint_policy_data_t,
     },
 };
+use sumi::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
+use sumi_util::ResultExt;
 
 use async_task::Runnable;
 use objc2::{rc::Retained, runtime::ProtocolObject};

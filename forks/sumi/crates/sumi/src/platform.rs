@@ -425,9 +425,7 @@ pub trait Platform: 'static {
     ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         let (sources_tx, sources_rx) = oneshot::channel();
         sources_tx
-            .send(Err(anyhow::anyhow!(
-                "sumi has no screen capture"
-            )))
+            .send(Err(anyhow::anyhow!("sumi has no screen capture")))
             .ok();
         sources_rx
     }

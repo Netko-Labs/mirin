@@ -1,10 +1,6 @@
 use crate::metal_atlas::MetalAtlas;
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
-use sumi::{
-    AtlasTextureId, Bounds, ContentMask, DevicePixels, PaintSurface, PaintedPath, PrimitiveBatch,
-    ScaledPixels, Scene, Size, quad_depth, quad_depth_scale, size,
-};
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
@@ -31,6 +27,10 @@ use objc2_metal::{
 use objc2_metal::{MTLBlitCommandEncoder, MTLOrigin, MTLRegion, MTLSize};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use parking_lot::Mutex;
+use sumi::{
+    AtlasTextureId, Bounds, ContentMask, DevicePixels, PaintSurface, PaintedPath, PrimitiveBatch,
+    ScaledPixels, Scene, Size, quad_depth, quad_depth_scale, size,
+};
 
 use std::{cell::Cell, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
 
@@ -1672,7 +1672,6 @@ impl sumi::PlatformHeadlessRenderer for MetalHeadlessRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sumi::Point;
     use objc2_core_foundation::{CFDictionary, CFType};
     use objc2_core_video::{
         CVPixelBufferCreate, CVPixelBufferGetBaseAddressOfPlane,
@@ -1680,6 +1679,7 @@ mod tests {
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
     use objc2_metal::MTLCommandBufferStatus;
+    use sumi::Point;
 
     #[test]
     fn render_to_image_rejects_zero_sized_layer() -> Result<()> {

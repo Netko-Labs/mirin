@@ -1,9 +1,9 @@
 use crate::{WgpuRenderer, WgpuSurfaceConfig};
 use anyhow::Context as _;
-use sumi_util::ResultExt;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use sumi_util::ResultExt;
 use wgpu::TextureFormat;
 
 #[derive(Clone)]

@@ -22,8 +22,8 @@ use core_text::{
     },
 };
 use font_kit::font::Font as FontKitFont;
-use sumi::{FontFallbacks, FontFeatures};
 use objc2_core_text::{kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue};
+use sumi::{FontFallbacks, FontFeatures};
 
 pub fn apply_features_and_fallbacks(
     font: &mut FontKitFont,

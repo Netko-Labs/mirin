@@ -342,8 +342,8 @@ fn etagere_point_to_device(value: etagere::Point) -> Point<DevicePixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sumi::{ImageId, RenderImageParams};
     use std::borrow::Cow;
+    use sumi::{ImageId, RenderImageParams};
     use windows::Win32::{
         Foundation::HMODULE,
         Graphics::{

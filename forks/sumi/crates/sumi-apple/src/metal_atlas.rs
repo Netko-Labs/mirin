@@ -1,9 +1,5 @@
 use anyhow::{Context as _, Result, ensure};
 use etagere::BucketedAtlasAllocator;
-use sumi::{
-    AtlasBackend, AtlasKey, AtlasState, AtlasTextureId, AtlasTextureKind, AtlasTextureList,
-    AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size,
-};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_metal::{
     MTLDevice, MTLOrigin, MTLPixelFormat, MTLRegion, MTLSize, MTLStorageMode, MTLTexture,
@@ -11,6 +7,10 @@ use objc2_metal::{
 };
 use parking_lot::Mutex;
 use std::{borrow::Cow, ptr::NonNull};
+use sumi::{
+    AtlasBackend, AtlasKey, AtlasState, AtlasTextureId, AtlasTextureKind, AtlasTextureList,
+    AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size,
+};
 
 pub struct MetalAtlas(Mutex<AtlasState<MetalAtlasTextures>>);
 
@@ -340,9 +340,9 @@ fn point_from_etagere(value: etagere::Point) -> Point<DevicePixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sumi::{PlatformAtlas, point, size};
     use objc2_metal::{MTLCreateSystemDefaultDevice, MTLGPUFamily};
     use std::borrow::Cow;
+    use sumi::{PlatformAtlas, point, size};
 
     #[test]
     fn test_remove_clears_stale_keys_from_tiles_by_key() {

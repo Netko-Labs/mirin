@@ -1,11 +1,11 @@
 use anyhow::{Context as _, Result};
 use etagere::{BucketedAtlasAllocator, size2};
+use parking_lot::Mutex;
+use std::{borrow::Cow, ops, sync::Arc};
 use sumi::{
     AtlasBackend, AtlasKey, AtlasState, AtlasTextureId, AtlasTextureKind, AtlasTextureList,
     AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size,
 };
-use parking_lot::Mutex;
-use std::{borrow::Cow, ops, sync::Arc};
 
 use crate::WgpuContext;
 
@@ -411,9 +411,9 @@ fn swizzle_upload_data(bytes: &[u8], format: wgpu::TextureFormat) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use sumi::block_on;
     use sumi::{ImageId, RenderImageParams};
-    use std::sync::Arc;
 
     fn test_device_and_queue() -> anyhow::Result<(Arc<wgpu::Device>, Arc<wgpu::Queue>)> {
         block_on(async {

@@ -12,9 +12,9 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot::{self, Receiver};
-use sumi_util::ResultExt;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
+use sumi_util::ResultExt;
 use windows::{
     Win32::{
         Foundation::*,
@@ -1688,8 +1688,8 @@ fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) {
 #[cfg(test)]
 mod tests {
     use super::ClickState;
-    use sumi::{DevicePixels, MouseButton, point};
     use std::time::Duration;
+    use sumi::{DevicePixels, MouseButton, point};
 
     #[test]
     fn test_double_click_interval() {

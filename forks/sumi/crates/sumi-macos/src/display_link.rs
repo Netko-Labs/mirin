@@ -60,9 +60,6 @@ use core_graphics::display::CGDirectDisplayID;
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
-use sumi::{FrameRequestSource, PlatformFrameSignal};
-use sumi_apple::display_link::MetalFrameSource;
-use sumi_util::ResultExt;
 use scheduler::Instant;
 use std::{
     cell::{Cell, RefCell},
@@ -71,6 +68,9 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::Duration,
 };
+use sumi::{FrameRequestSource, PlatformFrameSignal};
+use sumi_apple::display_link::MetalFrameSource;
+use sumi_util::ResultExt;
 
 static REGISTRY: Mutex<Registry> = Mutex::new(Registry::new());
 

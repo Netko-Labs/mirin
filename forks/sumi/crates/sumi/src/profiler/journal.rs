@@ -21,8 +21,8 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use sumi_util::ResultExt;
 use scheduler::Instant;
+use sumi_util::ResultExt;
 
 use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, ViewTiming};
 use crate::{App, WindowId, WindowVisibility};

@@ -1,11 +1,11 @@
 use collections::BTreeMap;
-use sumi_util::post_inc;
 use std::{
     cell::{Cell, RefCell},
     fmt::Debug,
     mem,
     rc::Rc,
 };
+use sumi_util::post_inc;
 
 /// Stores subscriptions for a single emitter.
 pub(crate) struct SingleSubscriberSet<Callback>(Rc<RefCell<SingleSubscriberSetState<Callback>>>);

@@ -6,9 +6,9 @@ use std::{
 
 use anyhow::{Context, Result};
 use collections::HashMap;
-use sumi_util::{ResultExt, maybe};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
+use sumi_util::{ResultExt, maybe};
 use windows::{
     Win32::{
         Foundation::*,
@@ -1800,8 +1800,8 @@ mod tests {
     use super::DirectWriteTextSystem;
     use crate::direct_write::ClusterAnalyzer;
     use anyhow::Result;
-    use sumi::{Font, FontWeight, PlatformTextSystem, TextRun, TextSystem, WindowTextSystem, px};
     use std::sync::Arc;
+    use sumi::{Font, FontWeight, PlatformTextSystem, TextRun, TextSystem, WindowTextSystem, px};
     use windows::Win32::Graphics::DirectWrite::{DWRITE_FONT_STRETCH_NORMAL, DWRITE_TEXT_METRICS};
 
     #[test]

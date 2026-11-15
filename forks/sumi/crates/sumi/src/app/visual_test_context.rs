@@ -71,7 +71,6 @@ impl VisualTestAppContext {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-
         let app = App::new_app(platform.clone(), asset_source);
         app.borrow_mut().mode = GpuiMode::test();
 

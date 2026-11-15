@@ -6,7 +6,6 @@ use crate::{
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
     WindowParams, WindowVisibility,
 };
-use sumi_util::ResultExt as _;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use parking_lot::Mutex;
@@ -17,6 +16,7 @@ use std::{
     rc::{Rc, Weak},
     sync::{self, Arc},
 };
+use sumi_util::ResultExt as _;
 
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,

@@ -7,6 +7,8 @@ use crate::{
 use anyhow::Result;
 use block2::RcBlock;
 use dispatch2::DispatchQueue;
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 use sumi::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
     ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
@@ -16,8 +18,6 @@ use sumi::{
     SharedString, Size, SystemWindowTab, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowKind, WindowParams, WindowVisibility, point, px, size,
 };
-#[cfg(any(test, feature = "test-support"))]
-use image::RgbaImage;
 
 use core_foundation::base::{CFRelease, CFTypeRef};
 use core_foundation_sys::base::CFEqual;
@@ -25,8 +25,6 @@ use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::CGDirectDisplayID;
 use ctor::ctor;
 use futures::channel::oneshot;
-use sumi_apple::display_link::MetalFrameSource;
-use sumi_util::ResultExt;
 use objc2::{
     AnyThread, MainThreadMarker, Message, class, msg_send,
     rc::{Retained, autoreleasepool},
@@ -72,6 +70,8 @@ use std::{
     },
     time::Duration,
 };
+use sumi_apple::display_link::MetalFrameSource;
+use sumi_util::ResultExt;
 
 const WINDOW_STATE_IVAR: &CStr = c"windowState";
 

@@ -72,9 +72,9 @@ pub fn current_headless_renderer() -> anyhow::Result<Option<Box<dyn sumi::Platfo
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
-    use sumi::{AppContext, Empty, VisualTestAppContext};
     use std::cell::RefCell;
     use std::time::Duration;
+    use sumi::{AppContext, Empty, VisualTestAppContext};
 
     // Note: All VisualTestAppContext tests are ignored by default because they require
     // the macOS main thread. Standard Rust tests run on worker threads, which causes

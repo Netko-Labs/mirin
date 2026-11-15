@@ -12,10 +12,10 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::Receiver;
-use sumi_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
+use sumi_util::{ResultExt, get_powershell, new_std_command};
 use windows::{
     UI::ViewManagement::UISettings,
     Win32::{

@@ -5,9 +5,6 @@ use calloop::{
 };
 use collections::HashMap;
 use core::str;
-use sumi::{Capslock, GraphicalEnvironment};
-use sumi_util::ResultExt as _;
-use url::Url;
 use log::Level;
 use smallvec::SmallVec;
 use std::{
@@ -18,6 +15,9 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
+use sumi::{Capslock, GraphicalEnvironment};
+use sumi_util::ResultExt as _;
+use url::Url;
 
 use x11rb::{
     connection::{Connection, RequestConnection},
@@ -1912,7 +1912,6 @@ impl X11Client {
 
         Some(handles)
     }
-
 }
 
 impl X11ClientState {

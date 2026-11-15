@@ -31,8 +31,6 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use sumi_util::post_inc;
-use sumi_util::{ResultExt, measure};
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 #[cfg(target_os = "macos")]
@@ -63,6 +61,8 @@ use std::{
     thread::AccessError,
     time::Duration,
 };
+use sumi_util::post_inc;
+use sumi_util::{ResultExt, measure};
 use uuid::Uuid;
 
 pub(crate) mod a11y;
@@ -1238,7 +1238,6 @@ impl Frame {
             self.debug_bounds.clear();
             self.debug_bounds_records.clear();
         }
-
     }
 
     pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
@@ -4391,11 +4390,7 @@ impl Window {
         }
 
         let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
-        let root_size = {
-            {
-                self.viewport_size
-            }
-        };
+        let root_size = { { self.viewport_size } };
 
         // Layout all root elements. Like the root element on the web, which
         // stretches to fill the viewport unless explicitly sized, window roots
@@ -11406,4 +11401,3 @@ mod tests {
         );
     }
 }
-

@@ -53,7 +53,12 @@ mod debug_overlay;
 #[cfg(feature = "profiler")]
 pub use debug_overlay::*;
 
-#[cfg(any(test, target_os = "windows", target_os = "linux", feature = "test-support"))]
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    feature = "test-support"
+))]
 pub mod queue;
 
 #[cfg(test)]
@@ -103,11 +108,6 @@ pub use executor::*;
 pub use geometry::*;
 pub use gestures::*;
 pub use global::*;
-pub use sumi_macros::{
-    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
-};
-pub use sumi_shared_string::*;
-pub use sumi_util::arc_cow::ArcCow;
 pub use input::*;
 pub use inspector::*;
 pub use interactive::*;
@@ -122,6 +122,11 @@ pub use spring::*;
 pub use style::*;
 pub use styled::*;
 pub use subscription::*;
+pub use sumi_macros::{
+    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
+};
+pub use sumi_shared_string::*;
+pub use sumi_util::arc_cow::ArcCow;
 pub use svg_renderer::*;
 pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;

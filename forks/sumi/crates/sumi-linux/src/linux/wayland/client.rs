@@ -19,9 +19,9 @@ use calloop::{
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
+use smallvec::SmallVec;
 use sumi_util::ResultExt as _;
 use url::Url;
-use smallvec::SmallVec;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::event_created_child;
@@ -1602,7 +1602,6 @@ impl WaylandConnection {
     pub(crate) fn compositor_name(&self) -> &'static str {
         "Wayland"
     }
-
 }
 
 struct DmabufProbeState {

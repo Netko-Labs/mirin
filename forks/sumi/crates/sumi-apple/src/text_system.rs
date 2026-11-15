@@ -32,12 +32,6 @@ use font_kit::{
     source::SystemSource,
     sources::mem::MemSource,
 };
-use sumi::{
-    Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams,
-    Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode,
-    point, px, size, swap_rgba_pa_to_bgra,
-};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
@@ -46,12 +40,18 @@ use pathfinder_geometry::{
 };
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, convert::TryFrom, sync::Arc};
+use sumi::{
+    Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
+    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams,
+    Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode,
+    point, px, size, swap_rgba_pa_to_bgra,
+};
 
 #[cfg(target_os = "macos")]
 use {
     core_foundation::base::CFType,
-    sumi::{Hsla, Rgba},
     std::sync::OnceLock,
+    sumi::{Hsla, Rgba},
 };
 
 use crate::open_type::apply_features_and_fallbacks;
@@ -782,10 +782,10 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::AppleTextSystem;
+    use std::sync::Arc;
     use sumi::{
         FontFallbacks, FontFeatures, FontId, FontRun, GlyphId, PlatformTextSystem, font, px,
     };
-    use std::sync::Arc;
 
     #[test]
     fn test_reload_family_with_features_and_fallbacks() {

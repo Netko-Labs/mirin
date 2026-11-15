@@ -7,7 +7,6 @@ use crate::{
     WrappedLineLayout, px, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
-use sumi_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
@@ -18,6 +17,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use sumi_util::ResultExt;
 
 /// An [`Element`] that renders text.
 ///

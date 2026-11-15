@@ -1,7 +1,7 @@
-use sumi::{Action, actions};
-use sumi_macros::register_action;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use sumi::{Action, actions};
+use sumi_macros::register_action;
 
 #[test]
 fn test_action_macros() {

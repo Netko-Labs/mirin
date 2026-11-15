@@ -1,8 +1,8 @@
 use crate::NSStringExt;
-use sumi::WindowAppearance;
 use objc2::{msg_send, rc::Retained, runtime::AnyObject};
 use objc2_app_kit::{NSAppearance, NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight};
 use objc2_foundation::NSString;
+use sumi::WindowAppearance;
 
 pub(crate) fn window_appearance_from_native(appearance: Option<&NSAppearance>) -> WindowAppearance {
     let Some(appearance) = appearance else {

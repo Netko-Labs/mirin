@@ -6,12 +6,7 @@ use std::{
     sync::Arc,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use std::{
-    ffi::OsString,
-    io::Read as _,
-    os::fd::AsRawFd,
-    time::Duration,
-};
+use std::{ffi::OsString, io::Read as _, os::fd::AsRawFd, time::Duration};
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use anyhow::ensure;

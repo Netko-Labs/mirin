@@ -13,8 +13,8 @@ use sumi::{
 use sumi_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
 use collections::FxHashSet;
-use sumi_util::{ResultExt, maybe};
 use raw_window_handle as rwh;
+use sumi_util::{ResultExt, maybe};
 use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},

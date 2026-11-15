@@ -14,8 +14,8 @@
 
 use crate::wgpu_pipelines::ParsedShaders;
 use crate::{CompositorGpuHint, WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
-use sumi_util::ResultExt as _;
 use std::cell::RefCell;
+use sumi_util::ResultExt as _;
 
 /// A Vulkan instance, its hardware adapters in upstream's order of
 /// preference, and a device made on the first of them.

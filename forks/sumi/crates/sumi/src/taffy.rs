@@ -1,7 +1,6 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
-    Style, Window, size,
-    util::round_to_device_pixel,
+    Style, Window, size, util::round_to_device_pixel,
 };
 use collections::{FxHashMap, FxHashSet};
 use std::{fmt::Debug, ops::Range};

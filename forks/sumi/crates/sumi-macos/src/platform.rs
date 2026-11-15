@@ -10,19 +10,6 @@ use core_foundation::{runloop::CFRunLoopRun, string::CFStringRef};
 use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
-use sumi::{
-    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
-    CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
-    OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, Result, SystemMenuType,
-    Task, ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
-    popup::PopupNotSupportedError,
-};
-use sumi_apple::{
-    keychain,
-    process_info::{self, ProcessInfoObserver},
-};
-use sumi_util::{ResultExt, new_std_command};
 use itertools::Itertools;
 use objc2::{
     Encode, MainThreadMarker, MainThreadOnly, class, msg_send,
@@ -58,6 +45,19 @@ use std::{
     },
 };
 use strum::IntoEnumIterator as _;
+use sumi::{
+    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
+    CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
+    OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, Result, SystemMenuType,
+    Task, ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+    popup::PopupNotSupportedError,
+};
+use sumi_apple::{
+    keychain,
+    process_info::{self, ProcessInfoObserver},
+};
+use sumi_util::{ResultExt, new_std_command};
 
 const MAC_PLATFORM_IVAR: &CStr = c"platform";
 static mut APP_CLASS: *const AnyClass = ptr::null();

@@ -47,8 +47,8 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-use sumi::{ClipboardItem, Image, ImageFormat, hash};
 use strum::IntoEnumIterator;
+use sumi::{ClipboardItem, Image, ImageFormat, hash};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 

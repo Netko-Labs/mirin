@@ -1780,9 +1780,9 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
 #[cfg(test)]
 mod test {
 
-    use sumi::{ScrollDelta, ScrollEvent};
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
+    use sumi::{ScrollDelta, ScrollEvent};
 
     use crate::{
         self as sumi, AnyElement, AppContext, Bounds, Context, Element, FollowMode,

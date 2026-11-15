@@ -5,11 +5,11 @@ use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{
     CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetActiveDisplayList,
 };
-use sumi::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, refresh_interval_from_hz, size};
 use objc2::{msg_send, rc::Retained, sel};
 use objc2_app_kit::NSScreen;
 use objc2_foundation::{NSObjectProtocol, ns_string};
 use std::time::Duration;
+use sumi::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, refresh_interval_from_hz, size};
 use uuid::Uuid;
 
 #[derive(Debug)]
