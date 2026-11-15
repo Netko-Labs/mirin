@@ -18,6 +18,7 @@ use crate::list::VirtualList;
 use crate::patch::{Applied, Document, PatchError, PatchOp, Touched};
 use crate::pointer::capture_root;
 use crate::render::{record_root_bounds, render_node};
+use crate::scroll::ScrollCommand;
 use crate::selection::SelectionState;
 use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
@@ -93,6 +94,9 @@ pub enum DriverMessage {
     /// an app that needs more room while it shows more (a sidebar). It does
     /// not resize the window; send a size too.
     MinSize(f32, f32),
+    /// Scroll a view to an offset, or a node into view (`{"scrollTo": …}`,
+    /// `{"scrollIntoView": …}`; `scroll.rs`), after the trees sent before it.
+    Scroll(ScrollCommand),
 }
 
 /// Renderer-owned editing state of one `input` node.
@@ -147,6 +151,12 @@ pub(crate) struct RootView {
     pub(crate) scrolls: HashMap<String, ScrollHandle>,
     /// When each scrollable node last scrolled, for its auto-hiding scroll bar (`scrollbar.rs`).
     pub(crate) scroll_activity: HashMap<String, crate::scrollbar::Activity>,
+    /// What the driver last heard of each scroll view with `onScroll` (`scroll.rs`).
+    pub(crate) scroll_reports: HashMap<String, crate::scroll::Reports>,
+    /// Nodes the driver asked into view, until a frame has drawn them (`scroll.rs`).
+    pub(crate) reveals: Vec<crate::scroll::Reveal>,
+    /// The tree's generation as the last frame rendered it.
+    pub(crate) drawn_generation: u64,
     /// Set while rendering a child of a view that scrolls along its
     /// direction: the child keeps its length there (render.rs).
     pub(crate) keeps_length: bool,
@@ -205,6 +215,9 @@ impl RootView {
             claims: crate::press::Claims::default(),
             scrolls: HashMap::new(),
             scroll_activity: HashMap::new(),
+            scroll_reports: HashMap::new(),
+            reveals: Vec::new(),
+            drawn_generation: u64::MAX,
             keeps_length: false,
             lists: HashMap::new(),
             key_targets: HashMap::new(),
@@ -304,6 +317,7 @@ impl RootView {
             collect_scroll_ids(&self.tree, &mut ids);
             self.scrolls.retain(|id, _| ids.contains(id));
             self.scroll_activity.retain(|id, _| ids.contains(id));
+            self.scroll_reports.retain(|id, _| ids.contains(id));
         }
     }
 
@@ -443,6 +457,8 @@ impl Render for RootView {
         let started = std::time::Instant::now();
         let counted = crate::counters::read();
         self.idle.frame_drawn(cx);
+        // By where the last frame painted them, before this one moves anything.
+        self.reveal_pending(window);
         self.layout.begin_frame();
         self.layout.set_scale(window.scale_factor());
         if self.drop_target.is_some() && !cx.has_active_drag() {

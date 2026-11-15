@@ -289,6 +289,7 @@ fn render_view_content(
             .entry(id.to_string())
             .or_default()
             .clone();
+        let reporter = crate::scroll::Reporter::of(id, props, view);
         // Last, so its hit area is over the content's.
         element = element.child(crate::scrollbar::bars_for(
             crate::scrollbar::Scrolled::View {
@@ -297,6 +298,7 @@ fn render_view_content(
                 down: props.scroll,
             },
             activity,
+            reporter,
         ));
     }
     if let Some(color) = props.hover_background.as_deref().and_then(parse_color) {

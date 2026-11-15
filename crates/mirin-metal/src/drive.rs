@@ -23,6 +23,7 @@ use crate::events::{EventSender, NativeUiEvent};
 use crate::focus::FOCUS_MARKER;
 use crate::media::MetalAssets;
 use crate::patch::{Document, PatchError, PatchOp};
+use crate::scroll::ScrollCommand;
 use crate::sim::{self, LayoutMap, SimCommand};
 use crate::titlebar::{Chrome, Controls, TitleBar};
 use crate::tree::NodeSpec;
@@ -514,6 +515,8 @@ struct Turn {
     title: Option<String>,
     size: Option<(f32, f32)>,
     min_size: Option<(f32, f32)>,
+    /// What the driver asked of scroll views, in order, after the turn's trees.
+    scrolls: Vec<ScrollCommand>,
     unlock: bool,
 }
 
@@ -751,6 +754,7 @@ impl Drive {
                 HostMessage::Driver(DriverMessage::MinSize(width, height)) => {
                     turn.min_size = Some((width, height));
                 }
+                HostMessage::Driver(DriverMessage::Scroll(command)) => turn.scrolls.push(command),
                 HostMessage::Open(options) => {
                     // What came before the open is what it shows.
                     self.hold(&mut turn);
@@ -800,6 +804,8 @@ impl Drive {
         turn.title = None;
         turn.size = None;
         turn.min_size = None;
+        // A window opens at its content's start.
+        turn.scrolls.clear();
         if !self.pending.is_empty() {
             eprintln!("[mirin-metal-host] dropped simulated input: no window is shown");
             self.drop_pending();
@@ -835,9 +841,9 @@ impl Drive {
             });
         }
         let (sims, settle) = take_due(&mut self.pending);
-        if !turn.trees.is_empty() || !sims.is_empty() {
+        if !turn.trees.is_empty() || !sims.is_empty() || !turn.scrolls.is_empty() {
             touched = true;
-            if !self.perform(window, turn.trees, sims, cx) {
+            if !self.perform(window, turn.trees, turn.scrolls, sims, cx) {
                 return false;
             }
         }
@@ -851,12 +857,13 @@ impl Drive {
         !settle || !self.stood_aside || self.settle(window, cx)
     }
 
-    /// Apply the turn's trees and perform its simulations. False when the
-    /// window is gone.
+    /// Apply the turn's trees, scroll as the driver asked, and perform its
+    /// simulations. False when the window is gone.
     fn perform(
         &mut self,
         window: WindowHandle<RootView>,
         trees: Trees,
+        scrolls: Vec<ScrollCommand>,
         sims: Vec<SimCommand>,
         cx: &mut AsyncApp,
     ) -> bool {
@@ -871,6 +878,9 @@ impl Drive {
                 }
                 view.apply_pending_focus(window, cx);
                 cx.notify();
+            }
+            for command in scrolls {
+                view.scroll(command, cx);
             }
             let actions: Vec<_> = sims
                 .iter()

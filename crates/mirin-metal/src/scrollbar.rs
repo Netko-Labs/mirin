@@ -21,6 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::scroll::Reporter;
 use sumi::{
     canvas, fill, point, px, rgba, size, AnyElement, App, Bounds, DispatchPhase, Hitbox,
     HitboxBehavior, IntoElement, ListState, MouseButton, MouseDownEvent, MouseExitEvent,
@@ -427,13 +428,22 @@ struct Prepainted {
 }
 
 /// The bars for a view scrolled as `scrolled` says, as a zero-size child to
-/// put last in the view (or beside a virtualized list).
-pub(crate) fn bars_for(scrolled: Scrolled, activity: Activity) -> AnyElement {
+/// put last in the view (or beside a virtualized list). It is where a view
+/// is seen to have scrolled, so a view whose driver listens (`reporter`)
+/// tells it from here (`scroll.rs`).
+pub(crate) fn bars_for(
+    scrolled: Scrolled,
+    activity: Activity,
+    reporter: Option<Reporter>,
+) -> AnyElement {
     let source = scrolled.clone();
     let state = activity.clone();
     canvas(
-        move |_, window, _cx| {
+        move |_, window, cx| {
             let geometry = source.geometry();
+            if let Some(reporter) = &reporter {
+                reporter.look(&geometry, &source, window, cx);
+            }
             let now = crate::check::now();
             let opacity = state.visibility(geometry.scrolled, now);
             let found = bars(&geometry);

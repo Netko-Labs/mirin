@@ -68,6 +68,9 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     onCommit() {
       sync.commit();
     },
+    scroll(id, line) {
+      sync.command(id, line);
+    },
   };
   // A host that says its protocol first gets the first tree once, after it has said it.
   const awaitHost = announces(transport);
@@ -166,6 +169,13 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       case "wheel":
         view(event.nodeId)?.onWheel?.({ dx: event.dx, dy: event.dy });
         break;
+      case "scroll":
+        view(event.nodeId)?.onScroll?.({
+          contentOffset: { x: event.x, y: event.y },
+          contentSize: { width: event.contentWidth, height: event.contentHeight },
+          layoutMeasurement: { width: event.width, height: event.height },
+        });
+        break;
       case "drop": {
         const { nodeId: _id, type: _type, ...info } = event;
         view(event.nodeId)?.onDrop?.(info);
@@ -176,7 +186,10 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "protocol":
         heard();
-        sync.hostPatches(event.patches, { rebase: event.rebase === true });
+        sync.hostPatches(event.patches, {
+          rebase: event.rebase === true,
+          scroll: event.scroll === true,
+        });
         break;
       case "resync":
         sync.resync();

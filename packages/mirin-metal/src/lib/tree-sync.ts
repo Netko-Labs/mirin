@@ -26,12 +26,24 @@ export const PATCH_PROTOCOL = 1;
 /** React's moves in one view, at most, sent as it made them (each is one move). */
 const FEWEST_FROM = 2;
 
+/** What a host's `protocol` line says it does, besides patches. */
+export interface HostSays {
+  /** It takes a field's `baseHash` and carries typing onto a value written meanwhile. */
+  rebase?: boolean;
+  /** It reports scroll offsets (`onScroll`) and takes `scrollTo` and `scrollIntoView`. */
+  scroll?: boolean;
+}
+
 export class TreeSync {
   /** What the host holds, by id: each node sent and not removed since. */
   private readonly nodes = new Map<string, HostNode>();
   private patching = false;
   /** The host takes a field's `baseHash` (its `protocol` line says `rebase`). */
   private stamps = false;
+  /** The host reports scroll offsets and takes scroll commands (its `protocol` line says `scroll`). */
+  private scrolls = false;
+  /** Scroll commands asked for while the first tree is held: they go after it. */
+  private held: string[] = [];
   /** The next send is the whole tree (the first, after a resync, a new root). */
   private wholeNext = true;
   private root: HostInstance | null = null;
@@ -55,13 +67,22 @@ export class TreeSync {
 
   /**
    * The host applies patches of `version`: send the whole tree with every id
-   * now, patches after. One that says `rebase` is told which text each
-   * field's value was set over, from the next value set.
+   * now, patches after. What else its `protocol` line says (`says`) decides
+   * what it is told: one that says `rebase`, which text each field's value
+   * was set over, from the next value set; one that says `scroll`, which
+   * views listen to their offset, and it takes scroll commands.
    */
-  hostPatches(version: number, says: { rebase?: boolean } = {}): void {
+  hostPatches(version: number, says: HostSays = {}): void {
     const waited = this.waiting;
     this.waiting = false;
     this.stamps = says.rebase === true;
+    if (this.scrolls !== (says.scroll === true)) {
+      this.scrolls = says.scroll === true;
+      // Heads written for a host that was not told of `onScroll` are not this one's.
+      const root = rootOf(this.container);
+      if (root) forgetHeads(root);
+      if (!waited && (version !== PATCH_PROTOCOL || this.patching)) this.resync();
+    }
     if (version !== PATCH_PROTOCOL || this.patching) {
       if (waited) this.resync();
       return;
@@ -75,6 +96,19 @@ export class TreeSync {
     if (!this.waiting) return;
     this.waiting = false;
     this.resync();
+  }
+
+  /**
+   * A line asking the host to scroll (`{"scrollTo":…}`, `{"scrollIntoView":…}`)
+   * for node `id`: after the tree that has the node, and only to a host
+   * that takes it. A node the host does not hold is not asked for.
+   */
+  command(id: string, line: string): void {
+    if (this.waiting) {
+      this.held.push(line);
+      return;
+    }
+    if (this.scrolls && this.nodes.has(id)) this.send(line);
   }
 
   /** Send the whole tree now (the host asked: a patch didn't apply). */
@@ -138,6 +172,10 @@ export class TreeSync {
     this.fields.keep(fields);
     this.last = json;
     this.send(json);
+    // What was asked of the tree before it could go.
+    const held = this.held;
+    this.held = [];
+    if (this.scrolls) for (const line of held) this.send(line);
   }
 
   /** A node and its subtree as JSON; with `fields`, also what the host now holds. */
@@ -160,7 +198,7 @@ export class TreeSync {
     const wire =
       fields && kept && kept.head !== undefined && kept.headProps === kept.props
         ? kept.head
-        : headJson(node, parent, { ids: this.patching, root });
+        : headJson(node, parent, { ids: this.patching, root, scrolls: this.scrolls });
     if (fields) {
       if (kept) {
         kept.head = wire;
@@ -311,7 +349,11 @@ export class TreeSync {
     if (!this.holds(node) || fresh.has(node)) return;
     const parent = node.parent && node.parent.kind !== "root" ? node.parent : null;
     if (node.kind === "input") this.followField(node);
-    const wire = headJson(node, parent, { ids: true, root: node === this.root });
+    const wire = headJson(node, parent, {
+      ids: true,
+      root: node === this.root,
+      scrolls: this.scrolls,
+    });
     if (wire === node.wire) return;
     node.wire = wire;
     ops.push(`{"op":"set","id":"${node.key}","node":${wire}}`);
@@ -321,7 +363,7 @@ export class TreeSync {
   private freshJson(node: HostNode, parent: HostInstance, fresh: Set<HostNode>): string {
     fresh.add(node);
     if (node.kind === "input") this.followField(node);
-    const wire = headJson(node, parent, { ids: true, root: false });
+    const wire = headJson(node, parent, { ids: true, root: false, scrolls: this.scrolls });
     node.wire = wire;
     this.nodes.set(node.key, node);
     if (node.kind !== "view") return wire;
@@ -347,6 +389,14 @@ export class TreeSync {
   private holds(node: HostNode): boolean {
     return this.nodes.get(node.key) === node;
   }
+}
+
+/** Drop the heads kept for a whole tree (`InstanceBase.head`) in a subtree. */
+function forgetHeads(node: HostNode): void {
+  if (node.kind === "raw") return;
+  node.head = undefined;
+  node.headProps = undefined;
+  for (const child of node.children) forgetHeads(child);
 }
 
 /** The mounted root: the container's first host instance. */

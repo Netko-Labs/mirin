@@ -201,6 +201,12 @@ pub struct ViewProps {
     pub on_key_down: bool,
     /// Emit `wheel` with the scroll delta, in lines (needs `id`).
     pub on_wheel: bool,
+    /// Emit `scroll` when this scroll view's offset changes, whoever moved
+    /// it (`scroll.rs`; needs `scroll` or `scrollX`).
+    pub on_scroll: bool,
+    /// At most one `scroll` every this many ms; the offset the view ends on
+    /// is told when the wait is over. Absent or 0: one a frame.
+    pub scroll_throttle: Option<f32>,
     /// Pressing here and moving drags these files out (`drag.rs`): to any
     /// app's window that takes files, this one's included (needs `id`).
     pub drag_files: Option<DragFiles>,

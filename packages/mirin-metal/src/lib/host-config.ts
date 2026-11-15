@@ -27,7 +27,7 @@ import type {
   HostParent,
   RawTextInstance,
 } from "./instances.ts";
-import { forgetHints, insertNodeBefore, ownText, removeNode } from "./instances.ts";
+import { forgetHints, insertNodeBefore, ownText, removeNode, ViewNode } from "./instances.ts";
 import { committed } from "./rest.ts";
 
 type HostType =
@@ -95,7 +95,7 @@ export const hostConfig: HostConfig = {
     };
     // Type-only narrowing: the reconciler types props as the union across host
     // types, but the element type discriminates which props these are.
-    if (type === VIEW_TYPE) return { kind: "view", props: props as ViewProps, ...base };
+    if (type === VIEW_TYPE) return new ViewNode(id, props as ViewProps);
     if (type === INPUT_TYPE) return { kind: "input", props: props as TextInputProps, ...base };
     if (type === SVG_TYPE) return { kind: "svg", props: props as SvgProps, ...base };
     if (type === IMAGE_TYPE) return { kind: "image", props: props as ImageProps, ...base };
@@ -107,7 +107,7 @@ export const hostConfig: HostConfig = {
     // An unknown host type (e.g. a library rendering "form" with React's own
     // JSX runtime): keep its children visible as a plain view.
     warnUnknownHost(type);
-    return { kind: "view", props: {} as ViewProps, ...base };
+    return new ViewNode(id, {} as ViewProps);
   },
   createTextInstance(text) {
     return { kind: "raw", text, key: `r${nextTextId++}`, parent: null, slot: -1 };
