@@ -1,0 +1,39 @@
+[package]
+name = "sumi-platform"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/sumi_platform.rs"
+doctest = false
+
+[features]
+font-kit = ["sumi-macos/font-kit"]
+test-support = ["sumi/test-support", "sumi-macos/test-support", "sumi-windows/test-support", "sumi-wgpu/test-support"]
+runtime_shaders = ["sumi-macos/runtime_shaders"]
+wayland = ["sumi-linux/wayland"]
+# mirin: Dashi's own Wayland protocols (sumi-linux's `dashi` module).
+dashi = ["sumi-linux/dashi"]
+x11 = ["sumi-linux/x11"]
+
+[dependencies]
+anyhow.workspace = true
+sumi.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+sumi-macos.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+sumi-windows.workspace = true
+sumi = { workspace = true, features = ["windows-manifest"] }
+
+[target.'cfg(all(any(target_os = "linux", target_os = "freebsd"), not(target_env = "ohos")))'.dependencies]
+sumi-linux.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sumi-wgpu = { workspace = true, optional = true }

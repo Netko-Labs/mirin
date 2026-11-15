@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use super::{Clipboard, Display, Edit, Field, KeyEnv, Lines, Vertical};
-use gpui::{Keystroke, Modifiers};
+use sumi::{Keystroke, Modifiers};
 
 mod selection;
 

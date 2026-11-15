@@ -18,7 +18,7 @@ mod order;
 
 use std::collections::HashMap;
 
-use gpui::{
+use sumi::{
     div, prelude::*, px, rgba, AnyElement, App, Context, Div, FocusHandle, KeyDownEvent, Stateful,
     Window,
 };
@@ -203,7 +203,7 @@ impl RootView {
             self.focus.last.insert(group, id.to_owned());
         }
         self.focus.visible = true;
-        crate::gpui_api::focus(window, &handle, cx);
+        window.focus(&handle, cx);
     }
 
     /// Tab (or Shift+Tab, `back`) from `from`, a field or a view; none: the window.
@@ -224,7 +224,7 @@ impl RootView {
     pub(crate) fn pointer_pressed(&mut self, window: &mut Window, cx: &mut App) {
         self.focus.visible = false;
         if self.focus.focused_view(window).is_some() {
-            crate::gpui_api::focus(window, &self.focus.root, cx);
+            window.focus(&self.focus.root, cx);
         }
     }
 
@@ -257,7 +257,7 @@ impl RootView {
     /// for it takes it after).
     pub(crate) fn focus_window_if_asked(&mut self, window: &mut Window, cx: &mut App) {
         if std::mem::take(&mut self.focus.wants_root) {
-            crate::gpui_api::focus(window, &self.focus.root, cx);
+            window.focus(&self.focus.root, cx);
         }
     }
 
@@ -269,7 +269,7 @@ impl RootView {
             None => !self.text_focused(window),
         };
         if lost {
-            crate::gpui_api::focus(window, &self.focus.root, cx);
+            window.focus(&self.focus.root, cx);
         }
     }
 

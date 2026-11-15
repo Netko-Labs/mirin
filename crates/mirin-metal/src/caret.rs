@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui::{fill, point, px, size, Bounds, Hsla, Pixels, Point, TextLayout, Window};
+use sumi::{fill, point, px, size, Bounds, Hsla, Pixels, Point, TextLayout, Window};
 
 #[cfg(test)]
 mod tests;

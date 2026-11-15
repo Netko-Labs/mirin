@@ -12,7 +12,7 @@
 
 use std::ops::Range;
 
-use gpui::{
+use sumi::{
     px, rgba, FontStyle, FontWeight, HighlightStyle, Hsla, Pixels, StrikethroughStyle,
     UnderlineStyle,
 };

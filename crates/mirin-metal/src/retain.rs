@@ -4,7 +4,7 @@
 //! a frame cost what the tree's size did whatever changed. A view whose
 //! subtree renders only from its own content (no renderer-side state such as
 //! a field's text, focus, or a scroll offset) becomes a retained subtree
-//! (`gpui::retained`, mirin's GPUI fork): it is built only when its content
+//! (`sumi::retained`, mirin's GPUI fork): it is built only when its content
 //! differs from the previous tree (its `version`) or GPUI notified it (a
 //! hover style changed), and otherwise keeps its layout and last frame's
 //! drawing. Trees are compared as they arrive (`Boundaries::sync`), which
@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{
+use sumi::{
     div, prelude::*, AnyElement, App, Context, ElementId, Entity, EntityId, SharedString, Window,
 };
 
@@ -345,7 +345,7 @@ pub(crate) fn boundary(
     let root = cx.entity();
     let node_id: SharedString = id.to_owned().into();
     let layout = view.layout.clone();
-    let element = gpui::retained(
+    let element = sumi::retained(
         ElementId::Name(node_id.clone()),
         notified,
         version,
@@ -359,12 +359,12 @@ pub(crate) fn boundary(
     .skippable(traits.skippable);
     // Of its root alone: what is inside is laid out by taffy, which says
     // whether any of it changed.
-    let element =
-        crate::gpui_api::stretchable(element, crate::render::draws_nothing_of_its_size(props))
-            .on_prepaint(move |draw, bounds, _window, _cx| {
-                layout.touch_group(group, parent, bounds.origin, draw.drew());
-                counts::count(draw);
-            });
+    let element = element
+        .stretchable(crate::render::draws_nothing_of_its_size(props))
+        .on_prepaint(move |draw, bounds, _window, _cx| {
+            layout.touch_group(group, parent, bounds.origin, draw.drew());
+            counts::count(draw);
+        });
     Some(element.into_any_element())
 }
 

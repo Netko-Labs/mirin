@@ -18,14 +18,17 @@ Windows has not been tried. Metal seeds from the earlier `mirin-native` spike (b
 `claude/mirin-native-gpu-validation-vumae7`), imported and renamed on
 2026-10-29.
 
-**The engine (2026-11-14).** Metal draws with a fork of Zed's GPUI
-(`forks/zed`, with `forks/taffy-next`), on its way to being Metal's own
-engine, sumi ([`docs/metal/engine.md`](metal/engine.md)). Until then it
-built on forks of the crates.io release gpui 0.2.2 (`forks/gpui`,
-`forks/taffy`, `forks/blade-graphics`), which are gone from the tree. This
-document's findings were written as the work happened: where one names
-those three paths, the code is in git history and what was carried over is
-in `forks/zed/MIRIN.md` and `forks/taffy-next/MIRIN.md`
+**The engine (2026-11-15).** Metal draws with sumi (`forks/sumi`, with
+`forks/taffy-next`), its own engine: Zed's GPUI, forked at Zed `703b5ac3`,
+renamed and cut to what Metal calls
+([`docs/metal/engine.md`](metal/engine.md)). Until 2026-11-14 it built on
+forks of the crates.io release gpui 0.2.2 (`forks/gpui`, `forks/taffy`,
+`forks/blade-graphics`), which are gone from the tree. This document's
+findings were written as the work happened: where one says GPUI, the GPUI
+fork, `forks/zed` or `gpui_linux`, read sumi (`forks/sumi`, `sumi-linux`);
+where one names those three older paths, the code is in git history and
+what was carried over is in `forks/sumi/MIRIN.md` and
+`forks/taffy-next/MIRIN.md`
 ([`docs/metal/gpui-next.md`](metal/gpui-next.md) has the move).
 
 ## 0. Relationship to mirin
@@ -385,8 +388,9 @@ patches change it in place, in order (section "Patches").
     whole device pixels (taffy lays out in them), and an offset at the very
     end is painted as it is. Content between pixels blurred, and no row
     landed a whole number of pixels from where it was, so every row in view
-    was drawn again each frame (section 5b). `MIRIN_METAL_SCROLL_SNAP=0`
-    paints at the offset itself, as before, for comparing the two. A
+    was drawn again each frame (section 5b). (`MIRIN_METAL_SCROLL_SNAP=0`
+    painted at the offset itself, for comparing the two, on the gpui 0.2.2
+    build; sumi always paints at whole device pixels and the switch is gone.) A
     whole-pixel scroll paints what it did. Nothing reports a scroll
     position to the app yet; when something does, it is the offset, not
     where it was painted.
@@ -2502,7 +2506,7 @@ more) are React on `@mirinjs/metal` and `@mirinjs/metal-ui`, each window drawn b
 a `mirin-metal-host` process its driver spawns (`spawnNativeHost`). Dashi
 depends on the packages by path (`"@mirinjs/metal": "file:../mirin/..."`, see
 section 6 on sharing one React) and builds the host from this crate. Most of
-the GPUI fork's changes (`forks/zed/MIRIN.md`) came from Dashi's needs:
+the engine's changes against Zed (`forks/sumi/MIRIN.md`) came from Dashi's needs:
 layer-shell and session-lock surfaces, the unified title bar on Dashi's
 compositor, idle windows that stop drawing, text input only while a field
 takes text, truncation and wrapping fixes, and scroll views that end where
@@ -2520,11 +2524,12 @@ cargo clippy --all-targets -- -D warnings
 cargo test                      # headless: GPUI's test platform, no display
 ```
 
-The forks live at the repository root (`forks/zed`, `forks/taffy-next`,
+The engine and the forks live at the repository root (`forks/sumi`, `forks/taffy-next`,
 `forks/wgpu`, `forks/gpu-allocator`, `forks/accesskit_unix`,
 `forks/accesskit_atspi_common`, `forks/accesskit_consumer`;
-`forks/README.md` explains the upstream branches). GPUI's own tests need
-zed's whole workspace and do not run from here; what mirin changed in it is
+`forks/README.md` explains the upstream branches and `forks/sumi/README.md`
+the engine). The unit tests inside sumi's crates were written against zed's
+whole workspace and do not run from here; what mirin changed in it is
 tested through this crate (`src/retain/gpui_tests.rs` and the render
 tests). The AccessKit adapter fork's tests build it alone with this crate's
 lockfile (`cd ../../forks/accesskit_unix`, `cp
@@ -2730,8 +2735,7 @@ but not against a pointer that stays. Timing benches (`bench/native.tsx`,
 For checks and benchmarks, not for an app to set: `MIRIN_METAL_CHECK=1`
 (check mode, section 2); `MIRIN_METAL_RETAIN=0`
 draws every frame whole (no retained subtrees, section 5b);
-`MIRIN_METAL_SCROLL_SNAP=0` paints scroll views at their offset itself,
-between device pixels (section 2); and `MIRIN_METAL_SCALE=<factor>` draws at
+and `MIRIN_METAL_SCALE=<factor>` draws at
 that scale factor whatever the compositor says (Wayland, in the GPUI fork: the
 surface is shown at its logical size through its viewport, so it is resampled,
 not sharp), which is how the layout check and the stress bench run at 1.25,

@@ -11,7 +11,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui::App;
+use sumi::App;
 
 /// How long after its last frame a window counts as quiet.
 const QUIET: Duration = Duration::from_secs(3);

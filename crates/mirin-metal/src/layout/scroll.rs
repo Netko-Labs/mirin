@@ -3,7 +3,7 @@
 //! content, and a scroll changes one place (the content's) instead of every
 //! node's.
 
-use gpui::{canvas, prelude::*, px, AnyElement};
+use sumi::{canvas, prelude::*, px, AnyElement};
 
 use crate::tree::ViewProps;
 use crate::window::RootView;

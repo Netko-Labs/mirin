@@ -1,4 +1,4 @@
-use gpui::{px, rgba, FontStyle, FontWeight, HighlightStyle, Hsla, Rgba, TextStyle};
+use sumi::{px, rgba, FontStyle, FontWeight, HighlightStyle, Hsla, Rgba, TextStyle};
 
 use super::{flatten, pressed, style, Units};
 use crate::tree::{InputRun, Weight};

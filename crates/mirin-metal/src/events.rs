@@ -135,8 +135,8 @@ pub struct Modifiers {
     pub platform: bool,
 }
 
-impl From<gpui::Modifiers> for Modifiers {
-    fn from(modifiers: gpui::Modifiers) -> Self {
+impl From<sumi::Modifiers> for Modifiers {
+    fn from(modifiers: sumi::Modifiers) -> Self {
         Self {
             shift: modifiers.shift,
             ctrl: modifiers.control,

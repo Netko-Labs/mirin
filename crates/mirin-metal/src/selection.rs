@@ -12,7 +12,7 @@
 
 use std::collections::VecDeque;
 
-use gpui::{
+use sumi::{
     DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     WeakEntity, Window,
 };

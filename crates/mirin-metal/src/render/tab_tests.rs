@@ -2,7 +2,7 @@
 //! next stop, and the caret, the selection, a click and the wrap follow. On
 //! GPUI's test platform every char is as wide as the font's `0`.
 
-use gpui::{
+use sumi::{
     apply_tab_stops, div, point, prelude::*, px, size, AvailableSpace, FontId, GlyphId, LineLayout,
     Pixels, ShapedGlyph, ShapedRun, StyledText, TestAppContext, TextLayout, TextStyle,
 };
@@ -81,7 +81,7 @@ fn places(layout: &LineLayout) -> Vec<f32> {
         .collect()
 }
 
-#[gpui::test]
+#[sumi::test]
 fn what_follows_a_tab_starts_at_the_next_stop_and_keeps_its_own_advances(cx: &mut TestAppContext) {
     let id = glyph(cx);
     // "ab\tc\td", every glyph 10 wide as shaped; stops every 40.
@@ -92,7 +92,7 @@ fn what_follows_a_tab_starts_at_the_next_stop_and_keeps_its_own_advances(cx: &mu
     assert_eq!(layout.width, px(90.0));
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_tab_on_a_stop_goes_to_the_next_one_and_a_hair_short_of_a_stop_is_on_it(
     cx: &mut TestAppContext,
 ) {
@@ -107,7 +107,7 @@ fn a_tab_on_a_stop_goes_to_the_next_one_and_a_hair_short_of_a_stop_is_on_it(
     assert_eq!(places(&layout)[5], 80.0);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_line_without_a_tab_or_set_right_to_left_is_left_as_shaped(cx: &mut TestAppContext) {
     let id = glyph(cx);
     let mut plain = shaped(id, "abc", &[0.0, 7.0, 19.0], 30.0);
@@ -119,7 +119,7 @@ fn a_line_without_a_tab_or_set_right_to_left_is_left_as_shaped(cx: &mut TestAppC
     assert_eq!(places(&rtl), [20.0, 10.0, 0.0]);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn columns_line_up_after_a_tab_every_four_chars_by_default(cx: &mut TestAppContext) {
     // Two lines whose first words differ in length: their second words start at one x.
     let layout = laid(cx, "ab\tAlex\nabc\tLisbon", None, 600.0);
@@ -129,7 +129,7 @@ fn columns_line_up_after_a_tab_every_four_chars_by_default(cx: &mut TestAppConte
     assert_eq!(x(&layout, 12), 4.0 * char);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_field_can_set_its_own_tab_size(cx: &mut TestAppContext) {
     let layout = laid(cx, "ab\tc", Some(8), 600.0);
     let char = x(&layout, 1);
@@ -139,7 +139,7 @@ fn a_field_can_set_its_own_tab_size(cx: &mut TestAppContext) {
     assert_eq!(x(&layout, 3), 4.0 * char);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn the_caret_the_selection_and_a_click_follow_the_tab(cx: &mut TestAppContext) {
     let text = "ab\tc";
     let layout = laid(cx, text, None, 600.0);
@@ -160,7 +160,7 @@ fn the_caret_the_selection_and_a_click_follow_the_tab(cx: &mut TestAppContext) {
     assert_eq!(layout.hit(point(at(4.5), line / 2.0)), 3);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_line_breaks_after_a_tab_as_after_a_space(cx: &mut TestAppContext) {
     // "abcde", a tab to the stop at 8, then a word that no longer fits in 9 chars.
     let probe = laid(cx, "ab", None, 600.0);

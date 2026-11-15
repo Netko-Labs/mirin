@@ -21,7 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{
+use sumi::{
     canvas, fill, point, px, rgba, size, AnyElement, App, Bounds, DispatchPhase, Hitbox,
     HitboxBehavior, IntoElement, ListState, MouseButton, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, Styled, Window,
@@ -88,7 +88,7 @@ impl Scrolled {
                 across,
                 down,
             } => {
-                let max = crate::gpui_api::scroll_max(handle);
+                let max = handle.max_offset();
                 // GPUI's offsets are negative as the content moves up and left.
                 let offset = handle.offset();
                 // Content wider than a view that scrolls only down has no bar across.
@@ -96,8 +96,8 @@ impl Scrolled {
                 Geometry {
                     viewport: handle.bounds(),
                     overflow: (
-                        only(*across, f32::from(max.width)),
-                        only(*down, f32::from(max.height)),
+                        only(*across, f32::from(max.x)),
+                        only(*down, f32::from(max.y)),
                     ),
                     scrolled: (
                         only(*across, -f32::from(offset.x)),
@@ -107,10 +107,7 @@ impl Scrolled {
             }
             Scrolled::List(state) => Geometry {
                 viewport: state.viewport_bounds(),
-                overflow: (
-                    0.0,
-                    f32::from(crate::gpui_api::list_scroll_max(state).height),
-                ),
+                overflow: (0.0, f32::from(state.max_offset_for_scrollbar().y)),
                 scrolled: (0.0, -f32::from(state.scroll_px_offset_for_scrollbar().y)),
             },
         }
@@ -496,7 +493,7 @@ pub(crate) fn bars_for(scrolled: Scrolled, activity: Activity) -> AnyElement {
     .into_any_element()
 }
 
-fn with_opacity(color: u32, opacity: f32) -> gpui::Rgba {
+fn with_opacity(color: u32, opacity: f32) -> sumi::Rgba {
     let alpha = ((color & 0xff) as f32 * opacity).round() as u32;
     rgba((color & !0xff) | alpha)
 }
@@ -607,8 +604,8 @@ fn listen(
 mod tests {
     use super::{bars, fade, paged, scrolled_at, thumb_span, Activity, Axis, Geometry, Press};
     use super::{BAND, FADE, SHOWN};
-    use gpui::{point, px, size, Bounds};
     use std::time::{Duration, Instant};
+    use sumi::{point, px, size, Bounds};
 
     #[test]
     fn the_bar_shows_while_scrolling_then_fades() {

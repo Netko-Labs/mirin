@@ -1,7 +1,7 @@
 //! The caret and the selection over a laid-out text: drawn beside the
 //! glyphs, never in them.
 
-use gpui::{point, px, size, Bounds, Pixels, Point};
+use sumi::{point, px, size, Bounds, Pixels, Point};
 
 use super::{caret_bar, caret_point, selection_rects, Laid};
 use crate::field::Field;

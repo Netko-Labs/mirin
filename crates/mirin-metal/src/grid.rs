@@ -6,8 +6,8 @@
 //! `"auto"`, `"min-content"`, `"max-content"`; `{"min": …, "max": …}` is
 //! `minmax(min, max)`. Anything else is rejected at parse time.
 
-use gpui::{px, Div, GridTrack as Track, Styled, TrackBreadth};
 use serde::Deserialize;
+use sumi::{px, Div, GridTrack as Track, Styled, TrackBreadth};
 
 use crate::tree::{Align, ViewProps};
 
@@ -86,13 +86,13 @@ impl TryFrom<TrackJson> for GridTrack {
     }
 }
 
-fn to_gpui(align: Align) -> gpui::AlignItems {
+fn to_gpui(align: Align) -> sumi::AlignItems {
     match align {
-        Align::Start => gpui::AlignItems::Start,
-        Align::Center => gpui::AlignItems::Center,
-        Align::End => gpui::AlignItems::End,
-        Align::Stretch => gpui::AlignItems::Stretch,
-        Align::Baseline => gpui::AlignItems::Baseline,
+        Align::Start => sumi::AlignItems::Start,
+        Align::Center => sumi::AlignItems::Center,
+        Align::End => sumi::AlignItems::End,
+        Align::Stretch => sumi::AlignItems::Stretch,
+        Align::Baseline => sumi::AlignItems::Baseline,
     }
 }
 
@@ -101,7 +101,7 @@ fn to_gpui(align: Align) -> gpui::AlignItems {
 pub(crate) fn apply_grid(element: &mut Div, props: &ViewProps) {
     let style = element.style();
     if props.grid {
-        style.display = Some(gpui::Display::Grid);
+        style.display = Some(sumi::Display::Grid);
         if let Some(tracks) = &props.grid_columns {
             style.grid_template_columns = Some(tracks.iter().map(|track| track.0).collect());
         }
@@ -136,22 +136,22 @@ pub(crate) fn apply_grid(element: &mut Div, props: &ViewProps) {
     }
     let location = style.grid_location_mut();
     if let Some(start) = props.col_start {
-        location.column.start = gpui::GridPlacement::Line(start);
+        location.column.start = sumi::GridPlacement::Line(start);
     }
     if let Some(end) = props.col_end {
-        location.column.end = gpui::GridPlacement::Line(end);
+        location.column.end = sumi::GridPlacement::Line(end);
     }
     if let Some(count) = props.col_span {
-        location.column.end = gpui::GridPlacement::Span(count);
+        location.column.end = sumi::GridPlacement::Span(count);
     }
     if let Some(start) = props.row_start {
-        location.row.start = gpui::GridPlacement::Line(start);
+        location.row.start = sumi::GridPlacement::Line(start);
     }
     if let Some(end) = props.row_end {
-        location.row.end = gpui::GridPlacement::Line(end);
+        location.row.end = sumi::GridPlacement::Line(end);
     }
     if let Some(count) = props.row_span {
-        location.row.end = gpui::GridPlacement::Span(count);
+        location.row.end = sumi::GridPlacement::Span(count);
     }
 }
 

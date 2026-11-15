@@ -137,7 +137,7 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-24.04
-            # GPUI's Linux platform: fontconfig and FreeType for text, xcb and
+            # sumi's Linux platform: fontconfig and FreeType for text, xcb and
             # xkbcommon for X11 and keyboards, Wayland's client library.
             install-build-tools: >-
               sudo apt-get update && sudo apt-get install -y
@@ -175,6 +175,14 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
+
+      # The host for a plain Wayland or X11 desktop: sumi without Dashi's own
+      # protocols (the `dashi` feature, on by default).
+      - name: Clippy and tests without Dashi's protocols
+        if: runner.os == 'Linux'
+        run: |
+          cargo clippy --locked --all-targets --no-default-features -- -D warnings
+          cargo test --locked --no-default-features
 
   security:
     name: Dependency security

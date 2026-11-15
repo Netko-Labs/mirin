@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use std::cell::RefCell;
 
-use gpui::{prelude::*, App, Context, FocusHandle, ScrollHandle, SharedString, Window};
+use sumi::{prelude::*, App, Context, FocusHandle, ScrollHandle, SharedString, Window};
 
 use crate::access::{Accessibility, Focused};
 use crate::events::EventSender;
@@ -174,7 +174,7 @@ pub(crate) struct RootView {
     pub(crate) key_targets: HashMap<String, KeyTarget>,
     /// A left press on a view with `dragFiles`, and where: moving far enough
     /// with the button held starts the drag (`drag.rs`).
-    pub(crate) drag_candidate: Option<(String, gpui::Point<gpui::Pixels>)>,
+    pub(crate) drag_candidate: Option<(String, sumi::Point<sumi::Pixels>)>,
     /// The `onDrop` view files are being dragged over.
     pub(crate) drop_target: Option<String>,
     /// Views with `heightTransitionMs`: the height each is painted at (`height.rs`).
@@ -422,12 +422,12 @@ impl RootView {
     /// Painted last, after everything else: the frame's bounds are all
     /// recorded, so the layout finds what the frame no longer draws, and the
     /// accessibility tree is published with them.
-    fn frame_end_canvas(&self, cx: &Context<Self>) -> gpui::AnyElement {
+    fn frame_end_canvas(&self, cx: &Context<Self>) -> sumi::AnyElement {
         // The view is read when the canvas paints: nothing of the tree is
         // held meanwhile (a share of it would make the next patch copy it).
         let view = cx.weak_entity();
         let layout = self.layout.clone();
-        gpui::canvas(
+        sumi::canvas(
             |_, _, _| {},
             move |_, (), window, cx| {
                 layout.end_frame();
@@ -447,7 +447,7 @@ impl RootView {
         for target in self.key_targets.values_mut() {
             if target.wants_focus {
                 target.wants_focus = false;
-                crate::gpui_api::focus(window, &target.focus, cx);
+                window.focus(&target.focus, cx);
             }
         }
         // Several new fields asking at once: one wins, the same one every time (focus/order.rs).
@@ -462,7 +462,7 @@ impl RootView {
             state.wants_focus = false;
         }
         if let Some(state) = chosen.and_then(|id| self.inputs.get(&id)) {
-            crate::gpui_api::focus(window, &state.focus, cx);
+            window.focus(&state.focus, cx);
         }
         self.settle_focus(window, cx);
     }
@@ -493,7 +493,7 @@ impl Render for RootView {
         self.content_painted |= first_content;
         let frame_end = self.frame_end_canvas(cx);
         if !first && !crate::trace::enabled() {
-            return gpui::div()
+            return sumi::div()
                 .size_full()
                 .child(root)
                 .child(frame_end)
@@ -505,7 +505,7 @@ impl Render for RootView {
         let size = window.viewport_size();
         let events = self.events.clone();
         let layout = self.layout.clone();
-        let marker = gpui::canvas(
+        let marker = sumi::canvas(
             |_, _, _| {},
             move |_, (), window, _| {
                 // Part of the frame the trace times (the canvas after this
@@ -556,7 +556,7 @@ impl Render for RootView {
                     started.elapsed().as_secs_f64() * 1000.0,
                     drawn.built,
                     drawn.redrawn,
-                    gpui::take_built_apart(),
+                    sumi::take_built_apart(),
                     drawn.reused,
                     drawn.moved,
                     drawn.skipped,
@@ -565,7 +565,7 @@ impl Render for RootView {
         )
         .absolute()
         .size_0();
-        gpui::div()
+        sumi::div()
             .size_full()
             .child(root)
             .child(marker)
@@ -597,7 +597,7 @@ pub(crate) fn scene_traced() -> Option<Option<&'static std::path::Path>> {
         .get_or_init(|| {
             let value = std::env::var("MIRIN_METAL_TRACE_SCENE").ok()?;
             if std::env::var("MIRIN_METAL_TRACE_SCENE_GLYPHS").is_ok_and(|glyphs| glyphs == "1") {
-                gpui::describe_glyph_variants(true);
+                sumi::describe_glyph_variants(true);
             }
             Some((value != "1").then(|| value.into()))
         })

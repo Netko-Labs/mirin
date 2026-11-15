@@ -5,14 +5,13 @@
 
 use std::sync::{mpsc, Mutex, OnceLock};
 
-use gpui::{
+use sumi::{
     div, prelude::*, px, relative, rgba, AlignItems, AnyElement, App, ClickEvent, Context, Div,
     ElementId, FontWeight, HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, ScrollDelta,
     SharedString, Stateful, StyledText, Window,
 };
 
 use crate::edges::{apply_box_edges, shadow_preset};
-use crate::gpui_api::ScrollWheelEvent;
 use crate::input::render_input;
 use crate::media::{render_image, render_svg};
 use crate::tree::{
@@ -344,7 +343,7 @@ fn render_view_content(
                 .on_mouse_down(
                     MouseButton::Left,
                     move |_event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
-                        crate::gpui_api::focus(window, &press_focus, cx);
+                        window.focus(&press_focus, cx);
                     },
                 )
                 .on_key_down(
@@ -370,9 +369,8 @@ fn render_view_content(
     if props.on_wheel {
         let wheel_id = id.to_string();
         let events = view.events.clone();
-        element = crate::gpui_api::on_wheel(
-            element,
-            move |event: &ScrollWheelEvent, window: &mut Window, _cx: &mut App| {
+        element = element.on_scroll(
+            move |event: &sumi::ScrollEvent, window: &mut Window, _cx: &mut App| {
                 let (dx, dy) = match event.delta {
                     ScrollDelta::Lines(lines) => (lines.x, lines.y),
                     ScrollDelta::Pixels(pixels) => {
@@ -469,7 +467,7 @@ fn interactive(props: &ViewProps) -> bool {
 /// Whether a view draws nothing from its own size: no fill, border, shadow
 /// or clip of its bounds, and no hitbox (it neither interacts, scrolls nor
 /// occludes). Resized with its children where they were (a row stretched to
-/// a window's new width), it draws what it drew (`gpui::Retained::stretchable`).
+/// a window's new width), it draws what it drew (`sumi::Retained::stretchable`).
 /// Its children's bounds, and its own (which its parent records), are what
 /// the layout says either way.
 pub(crate) fn draws_nothing_of_its_size(props: &ViewProps) -> bool {
@@ -530,7 +528,7 @@ pub(crate) fn record_child_bounds(
     events: &crate::events::EventSender,
     id: &str,
     watch: bool,
-    bounds: gpui::Bounds<gpui::Pixels>,
+    bounds: sumi::Bounds<sumi::Pixels>,
     group: Option<u64>,
 ) {
     if layout.record(id, bounds, group) && watch {
@@ -545,10 +543,10 @@ pub(crate) fn record_root_bounds(
     layout: &crate::sim::LayoutMap,
     events: &crate::events::EventSender,
     root: &NodeSpec,
-    size: gpui::Size<gpui::Pixels>,
+    size: sumi::Size<sumi::Pixels>,
 ) {
     if let Some(id) = node_id(root) {
-        let bounds = gpui::Bounds::new(gpui::Point::default(), size);
+        let bounds = sumi::Bounds::new(sumi::Point::default(), size);
         record_child_bounds(layout, events, &id, watches_layout(root), bounds, None);
     }
 }
@@ -679,17 +677,17 @@ pub(crate) fn sans_family() -> SharedString {
 /// there when the first frame wants them: the family at once, then the
 /// weights of the first window's tree (`warm_weights`), then `mono_family`,
 /// which the first monospace text otherwise waits for mid-frame.
-pub(crate) fn warm_fonts(cx: &gpui::App) {
+pub(crate) fn warm_fonts(cx: &sumi::App) {
     let text_system = cx.text_system().clone();
     let (weights, first_tree) = mpsc::channel::<Vec<FontWeight>>();
     let warm = move || {
         let family = sans_family();
         // The first window's weights; none when the host ends without one.
         for weight in first_tree.recv().unwrap_or_default() {
-            let mut font = gpui::font(family.clone());
+            let mut font = sumi::font(family.clone());
             font.weight = weight;
             // One at a time: the first frame waits for at most one of them.
-            crate::gpui_api::prewarm_fonts(&text_system, &[font]);
+            text_system.prewarm_fonts(&[font]);
         }
         mono_family();
     };
@@ -802,7 +800,7 @@ pub(crate) fn mono_family() -> SharedString {
 
 #[cfg(test)]
 mod tests {
-    use gpui::HitboxBehavior;
+    use sumi::HitboxBehavior;
 
     use super::hitbox_behavior;
     use crate::tree::ViewProps;
@@ -825,7 +823,7 @@ mod tests {
     use crate::events::{EventKind, EventSender};
     use crate::sim::LayoutMap;
     use crate::tree::parse_tree;
-    use gpui::{px, size};
+    use sumi::{px, size};
 
     #[test]
     fn a_root_that_watches_its_layout_hears_the_window_resized() {
@@ -879,14 +877,14 @@ mod tests {
         // "4,420 + 316" 10 px a glyph, wrapped before "+": the line ends after "0".
         let text = "4,420 + 316";
         let before = (0..6).rev().map(|index| (px(index as f32 * 10.0), index));
-        assert_eq!(gpui::ink_end_x(px(60.0), before, text), px(50.0));
+        assert_eq!(sumi::ink_end_x(px(60.0), before, text), px(50.0));
         // Two spaces, both dropped.
         let text = "ab  cd";
         let before = (0..4).rev().map(|index| (px(index as f32 * 10.0), index));
-        assert_eq!(gpui::ink_end_x(px(40.0), before, text), px(20.0));
+        assert_eq!(sumi::ink_end_x(px(40.0), before, text), px(20.0));
         // No space at the break: the line ends where the next starts.
         let text = "abcd";
         let before = (0..2).rev().map(|index| (px(index as f32 * 10.0), index));
-        assert_eq!(gpui::ink_end_x(px(20.0), before, text), px(20.0));
+        assert_eq!(sumi::ink_end_x(px(20.0), before, text), px(20.0));
     }
 }

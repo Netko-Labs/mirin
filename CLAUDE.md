@@ -12,7 +12,7 @@ the same change.
 - Runtime and package manager: Bun.
 - Native core: Rust (`crates/mirin-core`) compiled as `libmirin_core`.
 - Renderer/runtime: CEF, with a Bun Worker owning user main-process code.
-- Metal (alpha): the CEF-free flavor; React rendered as GPU UI through GPUI
+- Metal (alpha): the CEF-free flavor; React rendered as GPU UI through sumi
   (`crates/mirin-metal`, `@mirinjs/metal`, `@mirinjs/metal-ui`). See
   `docs/metal.md`.
 - CLI: `@mirinjs/cli` drives `mirin dev`, `mirin check`, `mirin doctor`,
@@ -50,7 +50,7 @@ the same change.
   own runtime code.
 - macOS and Linux render with CEF. Windows currently uses CEF and may grow a
   WebView2 backend behind an abstraction. Metal is a separate app flavor
-  (GPUI), never a mode of a CEF window, and may not break or shadow the shared
+  (sumi), never a mode of a CEF window, and may not break or shadow the shared
   `mirinjs` surface (`docs/metal.md` section 0).
 - All AppKit, Win32 UI, Xlib window, and CEF browser-process UI calls happen on
   the main/UI thread. Worker-originated commands post UI tasks through the Rust
@@ -65,7 +65,7 @@ the same change.
 
 - `crates/mirin-core` - Rust native core (`cdylib` plus test/smoke binaries).
 - `crates/mirin-helper` - CEF subprocess executable.
-- `crates/mirin-metal` - Metal renderer: GPUI-rendered native UI, no CEF (alpha;
+- `crates/mirin-metal` - Metal renderer: native UI drawn by sumi, no CEF (alpha;
   standalone, excluded from the Cargo workspace). See `docs/metal.md`.
 - `packages/mirin` - developer-facing runtime, RPC, client bridge, updater, and
   typed app APIs.

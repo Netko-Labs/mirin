@@ -1,10 +1,132 @@
 //! Window surface roles beyond ordinary toplevels: a `surface` description
-//! (the `windows.*.surface` shape in docs/api-design.md §1a) parsed into
-//! GPUI's layer-shell options, or a session-lock surface (`role: "lock"`,
-//! which takes no other options). `popup` is reserved.
+//! (the `windows.*.surface` shape in docs/api-design.md §1a) parsed into a
+//! layer surface, or a session-lock surface (`role: "lock"`, which takes no
+//! other options), and the window options that open it ([`with_role`]).
+//! `popup` is reserved.
 
-use crate::gpui_api::{KeyboardInteractivity, Layer, LayerAnchor, LayerMargin, LayerShellOptions};
 use serde::Deserialize;
+use sumi::{App, WindowOptions};
+
+#[cfg(target_os = "linux")]
+pub(crate) use sumi::layer_shell::{KeyboardInteractivity, Layer};
+
+/// A layer surface's layer. Layer surfaces are Wayland's: elsewhere the
+/// description parses (the protocol is the same on every platform) and the
+/// window opens as a normal one ([`with_role`]).
+#[cfg(not(target_os = "linux"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layer {
+    Background,
+    Bottom,
+    Top,
+    #[default]
+    Overlay,
+}
+
+/// How a layer surface takes the keyboard; see [`Layer`].
+#[cfg(not(target_os = "linux"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyboardInteractivity {
+    None,
+    Exclusive,
+    #[default]
+    OnDemand,
+}
+
+/// The screen edges a layer surface is anchored to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayerAnchor {
+    pub top: bool,
+    pub bottom: bool,
+    pub left: bool,
+    pub right: bool,
+}
+
+/// A layer surface's distance from the edges it is anchored to, in pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayerMargin {
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+    pub left: i32,
+}
+
+/// A layer surface as the driver describes it.
+// Off Linux nothing reads its fields: there is no layer surface to open.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LayerSurface {
+    pub namespace: String,
+    pub layer: Layer,
+    pub anchor: LayerAnchor,
+    pub exclusive_zone: i32,
+    pub margin: LayerMargin,
+    pub keyboard_interactivity: KeyboardInteractivity,
+    /// The screen by its output name (the engine's `PlatformDisplay::name`);
+    /// the compositor picks when unset or when no screen has that name.
+    pub output: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+impl LayerSurface {
+    /// The engine's window kind for it.
+    fn window_kind(&self) -> sumi::WindowKind {
+        use sumi::{layer_shell::Anchor, px};
+        let mut anchor = Anchor::empty();
+        anchor.set(Anchor::TOP, self.anchor.top);
+        anchor.set(Anchor::BOTTOM, self.anchor.bottom);
+        anchor.set(Anchor::LEFT, self.anchor.left);
+        anchor.set(Anchor::RIGHT, self.anchor.right);
+        sumi::WindowKind::LayerShell(sumi::layer_shell::LayerShellOptions {
+            namespace: self.namespace.clone(),
+            layer: self.layer,
+            anchor,
+            exclusive_zone: Some(px(self.exclusive_zone as f32)),
+            exclusive_edge: None,
+            margin: Some((
+                px(self.margin.top as f32),
+                px(self.margin.right as f32),
+                px(self.margin.bottom as f32),
+                px(self.margin.left as f32),
+            )),
+            keyboard_interactivity: self.keyboard_interactivity,
+        })
+    }
+}
+
+/// `options` for a window of that role: a layer surface or the lock screen;
+/// with none, a toplevel. A layer surface that names its screen opens on the
+/// display of that name. Off Linux there is neither role: the window is a
+/// toplevel.
+pub(crate) fn with_role(
+    options: WindowOptions,
+    surface: Option<&Surface>,
+    cx: &App,
+) -> WindowOptions {
+    let screen = match surface {
+        Some(Surface::Layer(layer)) => layer.output.as_deref(),
+        _ => None,
+    }
+    .and_then(|name| {
+        cx.displays()
+            .into_iter()
+            .find(|display| display.name().as_deref() == Some(name))
+    })
+    .map(|display| display.id());
+    #[cfg(target_os = "linux")]
+    let kind = match surface {
+        Some(Surface::Lock) => sumi::WindowKind::SessionLock,
+        Some(Surface::Layer(layer)) => layer.window_kind(),
+        None => sumi::WindowKind::Normal,
+    };
+    #[cfg(not(target_os = "linux"))]
+    let kind = sumi::WindowKind::Normal;
+    WindowOptions {
+        kind,
+        display_id: screen.or(options.display_id),
+        ..options
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -46,7 +168,7 @@ enum MarginSpec {
 /// What a window opens as.
 #[derive(Clone, Debug)]
 pub enum Surface {
-    Layer(LayerShellOptions),
+    Layer(LayerSurface),
     /// Locks the session; it unlocks only on `{"unlock": true}` from the
     /// driver, never because the process went away.
     Lock,
@@ -145,7 +267,7 @@ pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, St
         .namespace
         .filter(|namespace| !namespace.is_empty())
         .unwrap_or_else(|| fallback_namespace.to_string());
-    Ok(Surface::Layer(LayerShellOptions {
+    Ok(Surface::Layer(LayerSurface {
         namespace,
         layer,
         anchor,
@@ -160,7 +282,7 @@ pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, St
 mod tests {
     use super::*;
 
-    fn layer(json: &str, title: &str) -> LayerShellOptions {
+    fn layer(json: &str, title: &str) -> LayerSurface {
         match parse_surface(json, title).unwrap() {
             Surface::Layer(options) => options,
             Surface::Lock => panic!("{json} parsed as a lock surface"),

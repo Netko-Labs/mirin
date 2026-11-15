@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use accesskit::{Node, NodeId, Rect};
 use accesskit_consumer::{common_filter, NodeRef, Tree, TreeChangeHandler};
-use gpui::{point, px, size, Bounds, Pixels};
+use sumi::{point, px, size, Bounds, Pixels};
 
 use super::super::published::Published;
 use super::super::tree::{node_id, Facts, Targets};

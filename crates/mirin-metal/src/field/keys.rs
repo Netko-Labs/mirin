@@ -10,7 +10,7 @@
 
 use std::ops::Range;
 
-use gpui::Keystroke;
+use sumi::Keystroke;
 
 use super::words::{paragraph_at, word_end_after, word_start_before};
 use super::{Edit, Field};

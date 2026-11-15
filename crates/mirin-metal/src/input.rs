@@ -8,7 +8,7 @@
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui::{
+use sumi::{
     div, prelude::*, px, rgba, AnyElement, App, ClipboardItem, Context, ElementId, HighlightStyle,
     KeyDownEvent, MouseButton, MouseDownEvent, SharedString, StyledText, UnderlineStyle, Window,
 };
@@ -86,7 +86,7 @@ pub(crate) fn render_input(
         element = element.w(px(width));
     }
     if let Some(fraction) = props.width_percent {
-        element = element.w(gpui::relative(fraction));
+        element = element.w(sumi::relative(fraction));
     }
     if let Some(height) = props.height {
         element = element.h(px(height));
@@ -177,7 +177,7 @@ pub(crate) fn render_input(
     if !marked.is_empty() {
         let (layout, shown) = (layout.clone(), display.text.clone());
         element = element.child(
-            gpui::canvas(
+            sumi::canvas(
                 |_, _, _| {},
                 move |_, (), window, _| paint_highlights(&layout, &shown, &marked, window),
             )
@@ -188,7 +188,7 @@ pub(crate) fn render_input(
     if let Some((_, color)) = line_numbers {
         let (layout, shown) = (layout.clone(), display.text.clone());
         element = element.child(
-            gpui::canvas(
+            sumi::canvas(
                 |_, _, _| {},
                 move |_, (), window, cx| {
                     let inset = if showing_placeholder {
@@ -219,7 +219,7 @@ pub(crate) fn render_input(
             .unwrap_or(SELECTION_COLOR);
         let (layout, shown) = (layout.clone(), display.text.clone());
         element = element.child(
-            gpui::canvas(
+            sumi::canvas(
                 |_, _, _| {},
                 move |_, (), window, _| {
                     paint_selection(&layout, &shown, range, rgba(color).into(), window);
@@ -277,7 +277,7 @@ pub(crate) fn render_input(
     if let Some(index) = caret {
         let (layout, shown) = (layout.clone(), display.text.clone());
         element = element.child(
-            gpui::canvas(
+            sumi::canvas(
                 |_, _, _| {},
                 move |_, (), window, _| paint_caret(&layout, &shown, index, window),
             )
@@ -294,7 +294,7 @@ pub(crate) fn render_input(
         );
         let padding = props.padding;
         element = element.child(
-            gpui::canvas(
+            sumi::canvas(
                 |bounds, _, _| bounds,
                 move |_, field, window, _| {
                     crate::follow::follow_after_paint(
@@ -319,7 +319,7 @@ pub(crate) fn render_input(
     let cell = Rc::clone(&state.selection.drawn);
     let (view, id, multiline) = (cx.weak_entity(), props.id.clone(), props.multiline);
     element = element.child(
-        gpui::canvas(
+        sumi::canvas(
             |_, _, _| {},
             move |_, (), window, _| {
                 cell.replace(Some(drawn));
@@ -344,7 +344,7 @@ pub(crate) fn render_input(
         let focus = state.focus.clone();
         let reported = Rc::clone(&state.caret_reported);
         element = element.child(
-            gpui::canvas(
+            sumi::canvas(
                 |_, _, _| {},
                 move |_, (), window, cx| {
                     let at =
@@ -374,7 +374,7 @@ pub(crate) fn render_input(
         cx.listener(move |view, event: &MouseDownEvent, window, cx| {
             view.press_claimed = true;
             if let Some(state) = view.inputs.get(&focus_id) {
-                crate::gpui_api::focus(window, &state.focus, cx);
+                window.focus(&state.focus, cx);
             }
             view.press_field(&focus_id, event, &press);
             cx.notify();
@@ -493,7 +493,7 @@ impl Clipboard for SystemClipboard<'_> {
 
 /// Tell the input method where the caret is when it has moved (or the field
 /// just took the keyboard), for its candidates to go under it.
-fn tell_caret(reported: &CaretReported, at: Option<gpui::Bounds<gpui::Pixels>>, window: &Window) {
+fn tell_caret(reported: &CaretReported, at: Option<sumi::Bounds<sumi::Pixels>>, window: &Window) {
     if at.is_some() && reported.replace(at) != at {
         window.invalidate_character_coordinates();
     }

@@ -2,7 +2,7 @@
 //! frame that keeps most of the tree lays it out exactly as a frame that
 //! draws it all, and builds only what changed.
 
-use gpui::{px, size, Entity, TestAppContext, VisualTestContext};
+use sumi::{px, size, Entity, TestAppContext, VisualTestContext};
 
 use super::{take_counts, Boundaries};
 use crate::events::EventSender;
@@ -82,7 +82,7 @@ fn open(cx: &mut TestAppContext, tree: NodeSpec) -> (Entity<RootView>, &mut Visu
 fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         window.refresh();
-        crate::gpui_api::draw(window, cx);
+        window.draw(cx).clear(cx);
     });
 }
 
@@ -102,7 +102,7 @@ fn drawn_whole(cx: &mut TestAppContext, tree: NodeSpec) -> Vec<LayoutNode> {
     layout(&view, cx)
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_frame_that_keeps_the_tree_lays_it_out_as_one_that_draws_it(cx: &mut TestAppContext) {
     let (view, window) = open(cx, grid(8, 6, &[], &[]));
     let first = layout(&view, window);
@@ -142,7 +142,7 @@ fn a_frame_that_keeps_the_tree_lays_it_out_as_one_that_draws_it(cx: &mut TestApp
     assert_eq!(moved, whole);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn only_subtrees_that_render_from_their_content_alone_are_kept(cx: &mut TestAppContext) {
     let tree = |value: &str| {
         parse_tree(&format!(
@@ -178,7 +178,7 @@ fn only_subtrees_that_render_from_their_content_alone_are_kept(cx: &mut TestAppC
     });
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_subtree_whose_id_is_not_unique_is_not_kept(cx: &mut TestAppContext) {
     let card = r#"{"type":"view","props":{"id":"card"},"children":[
         {"type":"text","children":["a"]},{"type":"text","children":["b"]},
@@ -194,7 +194,7 @@ fn a_subtree_whose_id_is_not_unique_is_not_kept(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_patch_builds_only_the_subtrees_whose_generation_moved(cx: &mut TestAppContext) {
     let (view, window) = open(cx, grid(8, 6, &[], &[]));
     let patch = r##"{"patch":[{"op":"set","id":"card9","node":{"type":"view","props":{
@@ -213,7 +213,7 @@ fn a_patch_builds_only_the_subtrees_whose_generation_moved(cx: &mut TestAppConte
     assert_eq!(patched, drawn_whole(cx, grid(8, 6, &[], &[9])));
 }
 
-#[gpui::test]
+#[sumi::test]
 fn views_that_left_the_tree_are_not_remembered_for_good(cx: &mut TestAppContext) {
     let (view, window) = open(cx, grid(2, 6, &[], &[]));
     // Each patch swaps the last row for one of new views (as a list keyed

@@ -3,7 +3,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui::{div, point, prelude::*, px, size, AvailableSpace, Pixels, StyledText, TestAppContext};
+use sumi::{div, point, prelude::*, px, size, AvailableSpace, Pixels, StyledText, TestAppContext};
 
 use crate::tree::{parse_tree, Align, NodeSpec};
 
@@ -52,7 +52,7 @@ fn baselines(cx: &mut TestAppContext, on_baseline: bool) -> (Pixels, Pixels) {
     )
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_row_that_aligns_baselines_puts_small_text_on_the_larger_text_s_baseline(
     cx: &mut TestAppContext,
 ) {
@@ -63,7 +63,7 @@ fn a_row_that_aligns_baselines_puts_small_text_on_the_larger_text_s_baseline(
     );
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_centered_row_leaves_the_small_text_high(cx: &mut TestAppContext) {
     // What Dashi's rows did: the boxes are centered, so the smaller text's
     // baseline is above the larger one's.

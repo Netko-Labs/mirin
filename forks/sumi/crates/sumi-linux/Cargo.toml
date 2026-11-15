@@ -1,0 +1,128 @@
+[package]
+name = "sumi-linux"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/sumi_linux.rs"
+doctest = false
+
+[features]
+default = ["wayland", "x11"]
+test-support = ["sumi/test-support"]
+wayland = [
+    "sumi-wgpu",
+    "ashpd",
+
+    "calloop-wayland-source",
+    "wayland-backend",
+    "wayland-client",
+    "wayland-cursor",
+    "wayland-protocols",
+    "wayland-protocols-plasma",
+    "wayland-protocols-wlr",
+    "dep:image",
+    "dep:resvg",
+    "filedescriptor",
+    "xkbcommon/wayland",
+    "open",
+    "sumi/wayland",
+    "uuid/v5",
+]
+# mirin: Dashi's own Wayland protocols (src/linux/wayland/dashi.rs): the
+# unified title bar. Off, a window is what it is on any other compositor.
+dashi = ["wayland", "dep:wayland-scanner"]
+x11 = [
+    "sumi-wgpu",
+    "ashpd",
+
+    "as-raw-xcb-connection",
+    "x11rb",
+    "xkbcommon/x11",
+    "xim",
+    "filedescriptor",
+    "open",
+]
+
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+anyhow.workspace = true
+bytemuck.workspace = true
+collections.workspace = true
+futures.workspace = true
+sumi.workspace = true
+sumi-util.workspace = true
+sumi-wgpu = { workspace = true, optional = true, features = ["font-kit"] }
+libc.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+strum.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+calloop = "0.14.3"
+raw-window-handle.workspace = true
+
+# Used in both windowing options
+ashpd = { workspace = true, optional = true }
+filedescriptor = { version = "0.8.2", optional = true }
+open = { version = "5.2.0", optional = true }
+xkbcommon = { workspace = true, optional = true }
+
+# Wayland
+calloop-wayland-source = { version = "0.4.1", optional = true }
+wayland-backend = { version = "0.3.15", features = [
+    "client_system",
+    "dlopen",
+    "log",
+], optional = true }
+wayland-client = { version = "0.31.11", optional = true }
+wayland-cursor = { version = "0.31.11", optional = true }
+wayland-protocols = { version = "0.32.9", features = [
+    "client",
+    "staging",
+    "unstable",
+], optional = true }
+wayland-protocols-plasma = { version = "0.3.9", features = [
+    "client",
+], optional = true }
+wayland-protocols-wlr = { version = "0.3.9", features = [
+    "client",
+], optional = true }
+# mirin: generates the client side of Dashi's private dashi-chrome-v1 protocol
+# (protocols/dashi-chrome-v1.xml), for the `dashi` feature. Already in the
+# tree through wayland-protocols.
+wayland-scanner = { version = "0.31", optional = true }
+# mirin: a file drag's icon (`start_file_drag`), drawn from a PNG, JPEG or SVG
+# file as gpui draws images and icons.
+image = { workspace = true, optional = true }
+resvg = { workspace = true, optional = true }
+
+# X11
+as-raw-xcb-connection = { version = "1", optional = true }
+x11rb = { version = "0.13.1", features = [
+    "allow-unsafe-code",
+    "xkb",
+    "randr",
+    "xinput",
+    "cursor",
+    "resource_manager",
+    "sync",
+    "dri3",
+], optional = true }
+# WARNING: If you change this, you must also publish a new version of zed-xim to crates.io
+xim = { git = "https://github.com/zed-industries/xim-rs.git", rev = "16f35a2c881b815a2b6cdfd6687988e84f8447d8", features = [
+    "x11rb-xcb",
+    "x11rb-client",
+], package = "zed-xim", version = "0.4.0-zed", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
+sumi = { workspace = true, features = ["test-support"] }
+

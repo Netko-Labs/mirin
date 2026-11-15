@@ -1,5 +1,5 @@
 # Alpha crate, intentionally excluded from the root workspace (see the root
-# Cargo.toml `exclude`): gpui's dependency tree is large and its platform
+# Cargo.toml `exclude`): the engine's dependency tree is large and its platform
 # requirements (Vulkan on Linux, Metal on macOS, DirectX on Windows) differ from
 # the CEF core's. Build it standalone: `cargo build` from this directory. CI's
 # `metal` job (.github/workflows/ci.yml) checks it on its own.
@@ -9,17 +9,17 @@ version = "0.1.0-alpha.1"
 edition = "2021"
 license = "MIT"
 publish = false
-description = "mirin metal (alpha): GPU-rendered native UI for mirin apps, built on GPUI"
+description = "mirin metal (alpha): GPU-rendered native UI for mirin apps, drawn by sumi"
 
 [dependencies]
-# The engine: Zed's GPUI, forked (forks/zed; becoming sumi, docs/metal/engine.md).
-gpui = { path = "../../forks/zed/crates/gpui", default-features = false, features = ["wayland", "x11"] }
-gpui_platform = { path = "../../forks/zed/crates/gpui_platform", default-features = false, features = ["wayland", "x11"] }
+# The engine: sumi (forks/sumi; from Zed's GPUI, docs/metal/engine.md).
+sumi = { path = "../../forks/sumi/crates/sumi", default-features = false, features = ["wayland", "x11"] }
+sumi-platform = { path = "../../forks/sumi/crates/sumi-platform", default-features = false, features = ["wayland", "x11"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Async channel that wakes the window when the driver sends (already in gpui's tree).
+# Async channel that wakes the window when the driver sends (already in sumi's tree).
 futures = "0.3"
-# The GPUI fork's startup milestones in the trace (src/trace.rs; already in gpui's tree).
+# The engine's startup milestones in the trace (src/trace.rs; already in sumi's tree).
 log = "0.4"
 # The accessibility tree (src/access/): AccessKit's tree types, everywhere.
 accesskit = "0.25"
@@ -28,7 +28,7 @@ accesskit = "0.25"
 pprof = { version = "0.15", optional = true }
 
 # Ask the Wayland compositor which GPU it composites on (src/gpu.rs). Both are
-# already in gpui's dependency tree.
+# already in sumi's dependency tree.
 [target.'cfg(target_os = "linux")'.dependencies]
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
@@ -39,23 +39,29 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # version wgpu already builds.
 ash = "0.38"
 # Publish the accessibility tree over AT-SPI (src/access/linux.rs), so Orca
-# reads Metal's UI; on zbus 5, which gpui's tree already builds.
+# reads Metal's UI; on zbus 5, which sumi's tree already builds.
 accesskit_unix = "0.24"
 
-# GPUI's test platform (a window with no GPU, a monospace stand-in for the
+# sumi's test platform (a window with no GPU, a monospace stand-in for the
 # text system), for tests that lay elements out (src/render/tests.rs).
 [dev-dependencies]
-gpui = { path = "../../forks/zed/crates/gpui", default-features = false, features = ["test-support"] }
+sumi = { path = "../../forks/sumi/crates/sumi", default-features = false, features = ["test-support"] }
 # AccessKit's own tree (already built: the Unix adapter uses it), so the
 # accessibility tests hand it every update as the adapter would.
 accesskit_consumer = "0.39"
 
 [features]
+default = ["dashi"]
+# Dashi's own Wayland protocols in the engine (the unified title bar,
+# forks/sumi/crates/sumi-linux/src/linux/wayland/dashi.rs). Off, the host is
+# for a plain Wayland or X11 desktop: a window with a transparent title bar
+# keeps the compositor's, as it does today on any compositor but Dashi.
+dashi = ["sumi-platform/dashi"]
 profiling = ["dep:pprof"]
 
 # mirin's forks (forks/README.md), each with its changes in a MIRIN.md.
-# zed's workspace patches do not reach a dependent outside its workspace: the
-# ones GPUI's crates need are repeated here (forks/zed/Cargo.toml,
+# sumi's workspace patches do not reach a dependent outside its workspace: the
+# ones its crates need are repeated here (forks/sumi/Cargo.toml,
 # [patch.crates-io]); keep them in step with it.
 [patch.crates-io]
 async-task = { git = "https://github.com/smol-rs/async-task", rev = "41fd3359c75e221bd8b187a8ee361aa309c1714c" }
@@ -73,7 +79,7 @@ gpu-allocator = { path = "../../forks/gpu-allocator" }
 [patch."https://github.com/gfx-rs/wgpu"]
 wgpu-hal = { path = "../../forks/wgpu/wgpu-hal" }
 
-# GPUI, taffy, and the text stack are unusably slow unoptimized; optimize
+# sumi, taffy, and the text stack are unusably slow unoptimized; optimize
 # dependencies in dev builds too (this crate itself stays fast to compile).
 [profile.dev.package."*"]
 opt-level = 3

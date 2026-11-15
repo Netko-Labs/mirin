@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
 
-use gpui::{
+use sumi::{
     prelude::*, px, size, App, AsyncApp, Bounds, TitlebarOptions, WindowBackgroundAppearance,
     WindowBounds, WindowHandle, WindowOptions,
 };
@@ -24,7 +24,6 @@ use crate::focus::FOCUS_MARKER;
 use crate::media::MetalAssets;
 use crate::patch::{Document, PatchError, PatchOp};
 use crate::sim::{self, LayoutMap, SimCommand};
-use crate::surface::Surface;
 use crate::titlebar::{Chrome, Controls, TitleBar};
 use crate::tree::NodeSpec;
 use crate::window::{DriverMessage, NativeUiOptions, RootView};
@@ -66,6 +65,15 @@ pub enum HostMessage {
     Hide,
 }
 
+/// The application, on the platform the engine picks, with the engine's own
+/// AccessKit adapter off: mirin's `access/` tree is the one screen readers
+/// get (it is incremental and survives retained subtrees, which the engine's
+/// is not and does not), so the engine's would only publish a second, empty
+/// application (docs/metal/gpui-next.md, "Round 5: a small app's footprint").
+fn application() -> sumi::Application {
+    sumi::Application::new_inaccessible(sumi_platform::current_platform(false))
+}
+
 /// Open the native window and hand the calling thread to GPUI's event loop.
 /// Blocks until the app quits; call on the process main thread. A window
 /// opens on the driver's first tree (`FirstTree`), or on `initial_tree` when
@@ -78,7 +86,7 @@ pub fn run(
     updates: mpsc::Receiver<DriverMessage>,
     events: mpsc::Sender<NativeUiEvent>,
 ) {
-    crate::gpui_api::application()
+    application()
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
             crate::render::warm_fonts(cx);
@@ -102,7 +110,7 @@ pub fn run(
                 for reason in std::mem::take(&mut first.resyncs) {
                     ask_resync(&events, reason);
                 }
-                let opened = crate::gpui_api::update(cx, |cx| {
+                let opened = cx.update(|cx| {
                     open_window(
                         cx,
                         &options,
@@ -111,10 +119,9 @@ pub fn run(
                         events.clone(),
                         access.clone(),
                     )
-                })
-                .flatten();
+                });
                 let Some(window) = opened else {
-                    crate::gpui_api::update(cx, |cx| cx.quit());
+                    cx.update(|cx| cx.quit());
                     return;
                 };
                 let mut drive = Drive::new(Some(window), events, None, access);
@@ -213,14 +220,14 @@ pub fn run_deferred(
     messages: mpsc::Receiver<HostMessage>,
     events: mpsc::Sender<NativeUiEvent>,
 ) {
-    crate::gpui_api::application()
+    application()
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
             // A hide closes the last window; the loop must go on without one.
-            crate::gpui_api::keep_running_without_windows(cx);
+            cx.set_quit_mode(sumi::QuitMode::Explicit);
             let hiding = Rc::new(Cell::new(false));
             let watch = hiding.clone();
-            crate::gpui_api::on_window_closed(cx, move |cx| {
+            cx.on_window_closed(move |cx, _window| {
                 if !watch.replace(false) {
                     cx.quit();
                 }
@@ -258,19 +265,6 @@ fn bridge<T: Send + 'static, M: Send + 'static>(
         }
     });
     rx
-}
-
-/// Open the window for `options`, drawing `tree` on its first frame
-/// (`placeholder` when it is the host's stand-in, not the driver's); None
-/// (logged) when the platform refused it.
-/// Whether scroll views paint their content at whole device pixels (GPUI
-/// fork's `Window::set_scroll_snap`): the offset keeps its fraction, so a
-/// touchpad's small steps add up and the scroll bar reads what it did, and
-/// a scrolled frame moves what was drawn by whole pixels, which retained
-/// subtrees copy (`retain.rs`). `MIRIN_METAL_SCROLL_SNAP=0` paints at the
-/// offset itself, as before: for comparing the two.
-fn scroll_snap() -> bool {
-    std::env::var("MIRIN_METAL_SCROLL_SNAP").map_or(true, |value| value != "0")
 }
 
 fn open_window(
@@ -311,22 +305,13 @@ fn open_window(
             .map(|(width, height)| size(px(width), px(height))),
         ..Default::default()
     };
-    let window_options = crate::gpui_api::with_surface(
-        window_options,
-        match &options.surface {
-            Some(Surface::Layer(layer)) => Some(layer),
-            _ => None,
-        },
-        matches!(options.surface, Some(Surface::Lock)),
-        cx,
-    );
+    let window_options = crate::surface::with_role(window_options, options.surface.as_ref(), cx);
     let layout = LayoutMap::default();
     let event_sender = EventSender::new(events, layout.clone());
     let chrome_events = event_sender.clone();
     let close_events = event_sender.clone();
     let visibility_events = event_sender.clone();
-    let opened = cx.open_window(window_options, |window, cx| {
-        crate::gpui_api::set_scroll_snap(window, scroll_snap());
+    let opened = cx.open_window(window_options, |_window, cx| {
         cx.new(|cx| RootView::new(tree, placeholder, event_sender, layout, cx))
     });
     let window = match opened {
@@ -413,12 +398,17 @@ fn open_window(
             "{FOCUS_MARKER}: focus, press modifiers and visibility"
         ));
         let mut visible = true;
-        crate::gpui_api::observe_visibility(window, move |now| {
-            if now != visible {
-                visible = now;
-                visibility_events.visibility(now);
-            }
-        });
+        // The engine reports xdg_toplevel's `suspended` as the window's
+        // visibility.
+        window
+            .observe_window_visibility(move |visibility, _window, _cx| {
+                let now = visibility.is_visible();
+                if now != visible {
+                    visible = now;
+                    visibility_events.visibility(now);
+                }
+            })
+            .detach();
     });
     Some(window)
 }
@@ -618,7 +608,7 @@ fn tell_settled(
 
 /// Under a check: the animations that asked for the next frame are told it
 /// has come, a step later on their clock (`check.rs`). Whether any had.
-fn run_animations(window: &mut gpui::Window, cx: &mut App) -> bool {
+fn run_animations(window: &mut sumi::Window, cx: &mut App) -> bool {
     let animating = window.run_next_frame_callbacks(cx) > 0;
     if animating {
         crate::check::advance();
@@ -629,10 +619,10 @@ fn run_animations(window: &mut gpui::Window, cx: &mut App) -> bool {
 /// Under a check: draw the frame the window waits for now, not when the
 /// compositor next asks (it presents the last one drawn when it does).
 /// Whether there was one.
-fn draw_if_dirty(window: &mut gpui::Window, cx: &mut App) -> bool {
+fn draw_if_dirty(window: &mut sumi::Window, cx: &mut App) -> bool {
     let draws = window.is_dirty();
     if draws {
-        crate::gpui_api::draw(window, cx);
+        window.draw(cx).clear(cx);
     }
     draws
 }
@@ -709,7 +699,7 @@ impl Drive {
                         // The driver went away: a shown window keeps its last
                         // tree; a host with none has nothing left to show.
                         if self.window.is_none() {
-                            crate::gpui_api::update(cx, |cx| cx.quit());
+                            cx.update(|cx| cx.quit());
                         }
                         return;
                     }
@@ -783,7 +773,7 @@ impl Drive {
             // Give the event loop a moment to send the unlock
             // before the process goes.
             cx.background_executor().timer(UNLOCK_FLUSH).await;
-            crate::gpui_api::update(cx, |cx| cx.quit());
+            cx.update(|cx| cx.quit());
             return false;
         }
         self.apply(turn, cx)
@@ -893,7 +883,7 @@ impl Drive {
         if actions.is_empty() {
             return true;
         }
-        let any_window: gpui::AnyWindowHandle = window.into();
+        let any_window: sumi::AnyWindowHandle = window.into();
         let dispatched = any_window.update(cx, |_root, window, cx| {
             for action in actions {
                 sim::perform(action, &events, window, cx);
@@ -936,7 +926,7 @@ impl Drive {
             return false;
         };
         let settling = self.settling.get_or_insert_with(Settling::start);
-        let any_window: gpui::AnyWindowHandle = window.into();
+        let any_window: sumi::AnyWindowHandle = window.into();
         let traced = crate::window::scene_traced().is_some();
         let waits = if !painted {
             Ok(true)
@@ -1008,17 +998,15 @@ impl Drive {
             None => (Document::new((resident.initial_for)(&options)), true),
         };
         let events = self.events.clone();
-        let opened = crate::gpui_api::update(cx, |cx| {
-            open_window(cx, &options, tree, placeholder, events, self.access.clone())
-        })
-        .flatten();
+        let opened = cx
+            .update(|cx| open_window(cx, &options, tree, placeholder, events, self.access.clone()));
         match opened {
             Some(window) => {
                 self.window = Some(window);
                 true
             }
             None => {
-                crate::gpui_api::update(cx, |cx| cx.quit());
+                cx.update(|cx| cx.quit());
                 false
             }
         }
@@ -1172,23 +1160,23 @@ mod tests {
         drawn: std::rc::Rc<std::cell::Cell<u32>>,
     }
 
-    impl gpui::Render for Fades {
+    impl sumi::Render for Fades {
         fn render(
             &mut self,
-            window: &mut gpui::Window,
-            _: &mut gpui::Context<Self>,
-        ) -> impl gpui::IntoElement {
+            window: &mut sumi::Window,
+            _: &mut sumi::Context<Self>,
+        ) -> impl sumi::IntoElement {
             self.drawn.set(self.drawn.get() + 1);
             if self.left > 0 {
                 self.left -= 1;
                 window.request_animation_frame();
             }
-            gpui::div()
+            sumi::div()
         }
     }
 
-    #[gpui::test]
-    fn a_settle_draws_an_animation_to_its_end(cx: &mut gpui::TestAppContext) {
+    #[sumi::test]
+    fn a_settle_draws_an_animation_to_its_end(cx: &mut sumi::TestAppContext) {
         use super::{draw_if_dirty, run_animations};
         let drawn = std::rc::Rc::new(std::cell::Cell::new(0));
         let counted = drawn.clone();
