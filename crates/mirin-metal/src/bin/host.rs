@@ -11,8 +11,9 @@ use std::sync::mpsc;
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
-    HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar,
-    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER, SETTLE_MARKER,
+    HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface, TitleBar,
+    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER, SCROLL_MARKER,
+    SETTLE_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -196,6 +197,49 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
         }
         return Ok(HostLine::Window(DriverMessage::MinSize(width, height)));
     }
+    // The app scrolls a view to an offset; an axis it leaves out stays.
+    if line.trim_start().starts_with("{\"scrollTo\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Request {
+            id: String,
+            x: Option<f32>,
+            y: Option<f32>,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct ScrollToLine {
+            scroll_to: Request,
+        }
+        let parsed: ScrollToLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let Request { id, x, y } = parsed.scroll_to;
+        if x.is_none() && y.is_none() || [x, y].iter().flatten().any(|at| !at.is_finite()) {
+            return Err("\"scrollTo\" needs an x or a y, each a number".into());
+        }
+        return Ok(HostLine::Window(DriverMessage::Scroll(ScrollCommand::To {
+            id,
+            x,
+            y,
+        })));
+    }
+    // The app shows a node: the views around it scroll the least that does.
+    if line.trim_start().starts_with("{\"scrollIntoView\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Request {
+            id: String,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct ScrollIntoViewLine {
+            scroll_into_view: Request,
+        }
+        let parsed: ScrollIntoViewLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let id = parsed.scroll_into_view.id;
+        return Ok(HostLine::Window(DriverMessage::Scroll(
+            ScrollCommand::IntoView { id },
+        )));
+    }
     #[cfg(target_os = "linux")]
     if line.trim_start().starts_with("{\"toplevel\"") {
         #[derive(serde::Deserialize)]
@@ -301,6 +345,14 @@ fn event_line(event: &NativeUiEvent) -> serde_json::Value {
     if let EventKind::Wheel { dx, dy } = &event.kind {
         line["dx"] = serde_json::json!(dx);
         line["dy"] = serde_json::json!(dy);
+    }
+    if let EventKind::Scroll(position) = &event.kind {
+        line["x"] = serde_json::json!(position.x);
+        line["y"] = serde_json::json!(position.y);
+        line["contentWidth"] = serde_json::json!(position.content_width);
+        line["contentHeight"] = serde_json::json!(position.content_height);
+        line["width"] = serde_json::json!(position.width);
+        line["height"] = serde_json::json!(position.height);
     }
     if let EventKind::Chrome(chrome) = &event.kind {
         line["titleBar"] = serde_json::json!(chrome.title_bar.name());
@@ -505,12 +557,18 @@ fn main() {
         "{PATCH_MARKER}: patch protocol {PATCH_PROTOCOL}"
     ));
     mirin_metal::trace::log(format_args!("{SETTLE_MARKER}: the settle simulation"));
+    mirin_metal::trace::log(format_args!(
+        "{SCROLL_MARKER}: a scroll view's offset, read and written"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
         "patches": PATCH_PROTOCOL,
         // This host takes the `settle` simulation and answers `settled`.
         "settle": true,
+        // This host reports a scroll view's offset (`onScroll`) and takes
+        // `scrollTo` and `scrollIntoView` lines (`scroll.rs`).
+        "scroll": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
@@ -727,6 +785,51 @@ mod line_tests {
         assert_eq!(
             super::parse_line(r#"{"sim":{"kind":"settle"}}"#),
             Ok(DriverMessage::Sim(SimCommand::Settle))
+        );
+    }
+
+    #[test]
+    fn the_driver_scrolls_a_view_to_an_offset_and_a_node_into_view() {
+        use mirin_metal::{DriverMessage, EventKind, NativeUiEvent, ScrollCommand, ScrollPosition};
+        let scroll = |line: &str| match parse_host_line(line) {
+            Ok(HostLine::Window(DriverMessage::Scroll(command))) => Some(command),
+            _ => None,
+        };
+        assert_eq!(
+            scroll(r#"{"scrollTo":{"id":"12","y":240.5}}"#),
+            Some(ScrollCommand::To {
+                id: "12".into(),
+                x: None,
+                y: Some(240.5),
+            })
+        );
+        assert_eq!(
+            scroll(r#"{"scrollIntoView":{"id":"45"}}"#),
+            Some(ScrollCommand::IntoView { id: "45".into() })
+        );
+        // An offset names an axis, and nothing else is taken.
+        assert!(parse_host_line(r#"{"scrollTo":{"id":"12"}}"#).is_err());
+        assert!(parse_host_line(r#"{"scrollTo":{"id":"12","y":1,"animated":true}}"#).is_err());
+        assert!(parse_host_line(r#"{"scrollIntoView":{"id":"45","block":"start"}}"#).is_err());
+        // What the driver hears of a view that scrolled.
+        let line = super::event_line(&NativeUiEvent {
+            node_id: "12".into(),
+            kind: EventKind::Scroll(ScrollPosition {
+                x: 0.0,
+                y: 240.5,
+                content_width: 400.0,
+                content_height: 800.0,
+                width: 400.0,
+                height: 200.0,
+            }),
+            bounds: None,
+        });
+        assert_eq!(
+            line,
+            serde_json::json!({
+                "type": "scroll", "nodeId": "12", "x": 0.0, "y": 240.5,
+                "contentWidth": 400.0, "contentHeight": 800.0, "width": 400.0, "height": 200.0,
+            })
         );
     }
 

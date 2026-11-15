@@ -25,6 +25,10 @@ export class TreeSync {
   /** What the host holds, by id: each node sent and not removed since. */
   private readonly nodes = new Map<string, HostNode>();
   private patching = false;
+  /** The host reports scroll offsets and takes scroll commands (its `protocol` line says `scroll`). */
+  private scrolls = false;
+  /** Scroll commands asked for while the first tree is held: they go after it. */
+  private held: string[] = [];
   /** The next send is the whole tree (the first, after a resync, a new root). */
   private wholeNext = true;
   private root: HostInstance | null = null;
@@ -46,10 +50,21 @@ export class TreeSync {
     this.waiting = options.awaitHost === true;
   }
 
-  /** The host applies patches of `version`: send the whole tree with every id now, patches after. */
-  hostPatches(version: number): void {
+  /**
+   * The host applies patches of `version`: send the whole tree with every id
+   * now, patches after. One that says `scroll` is told which views listen
+   * to their offset, and takes scroll commands.
+   */
+  hostPatches(version: number, says: { scroll?: boolean } = {}): void {
     const waited = this.waiting;
     this.waiting = false;
+    if (this.scrolls !== (says.scroll === true)) {
+      this.scrolls = says.scroll === true;
+      // Heads written for a host that was not told of `onScroll` are not this one's.
+      const root = rootOf(this.container);
+      if (root) forgetHeads(root);
+      if (!waited && (version !== PATCH_PROTOCOL || this.patching)) this.resync();
+    }
     if (version !== PATCH_PROTOCOL || this.patching) {
       if (waited) this.resync();
       return;
@@ -63,6 +78,19 @@ export class TreeSync {
     if (!this.waiting) return;
     this.waiting = false;
     this.resync();
+  }
+
+  /**
+   * A line asking the host to scroll (`{"scrollTo":…}`, `{"scrollIntoView":…}`)
+   * for node `id`: after the tree that has the node, and only to a host
+   * that takes it. A node the host does not hold is not asked for.
+   */
+  command(id: string, line: string): void {
+    if (this.waiting) {
+      this.held.push(line);
+      return;
+    }
+    if (this.scrolls && this.nodes.has(id)) this.send(line);
   }
 
   /** Send the whole tree now (the host asked: a patch didn't apply). */
@@ -126,6 +154,10 @@ export class TreeSync {
     this.fields.follow(fields);
     this.last = json;
     this.send(json);
+    // What was asked of the tree before it could go.
+    const held = this.held;
+    this.held = [];
+    if (this.scrolls) for (const line of held) this.send(line);
   }
 
   /** A node and its subtree as JSON; with `fields`, also what the host now holds. */
@@ -139,7 +171,7 @@ export class TreeSync {
     const wire =
       fields && kept && kept.head !== undefined && kept.headProps === kept.props
         ? kept.head
-        : headJson(node, parent, { ids: this.patching, root });
+        : headJson(node, parent, { ids: this.patching, root, scrolls: this.scrolls });
     if (fields) {
       if (kept) {
         kept.head = wire;
@@ -295,7 +327,11 @@ export class TreeSync {
   private setOp(node: HostNode, fresh: Set<HostNode>, ops: string[]): void {
     if (!this.holds(node) || fresh.has(node)) return;
     const parent = node.parent && node.parent.kind !== "root" ? node.parent : null;
-    const wire = headJson(node, parent, { ids: true, root: node === this.root });
+    const wire = headJson(node, parent, {
+      ids: true,
+      root: node === this.root,
+      scrolls: this.scrolls,
+    });
     if (node.kind === "input") this.followField(node);
     if (wire === node.wire) return;
     node.wire = wire;
@@ -305,7 +341,7 @@ export class TreeSync {
   /** A new subtree as JSON, now held by the host. */
   private freshJson(node: HostNode, parent: HostInstance, fresh: Set<HostNode>): string {
     fresh.add(node);
-    const wire = headJson(node, parent, { ids: true, root: false });
+    const wire = headJson(node, parent, { ids: true, root: false, scrolls: this.scrolls });
     node.wire = wire;
     this.nodes.set(node.key, node);
     if (node.kind === "input") this.followField(node);
@@ -333,6 +369,14 @@ export class TreeSync {
   private holds(node: HostNode): boolean {
     return this.nodes.get(node.key) === node;
   }
+}
+
+/** Drop the heads kept for a whole tree (`InstanceBase.head`) in a subtree. */
+function forgetHeads(node: HostNode): void {
+  if (node.kind === "raw") return;
+  node.head = undefined;
+  node.headProps = undefined;
+  for (const child of node.children) forgetHeads(child);
 }
 
 /** The mounted root: the container's first host instance. */

@@ -69,7 +69,7 @@ fn scroll_view(id: &'static str, handle: &ScrollHandle, activity: Activity) -> S
         .flex_col()
         .overflow_y_scroll()
         .track_scroll(handle)
-        .child(bars_for(down(handle), activity))
+        .child(bars_for(down(handle), activity, None))
 }
 
 impl Render for Page {
@@ -87,7 +87,7 @@ impl Render for Page {
                         .overflow_y_scroll()
                         .track_scroll(&self.inner)
                         .children((0..rows).map(|_| div().flex_shrink_0().h(px(50.0))))
-                        .child(bars_for(down(&self.inner), Activity::default()));
+                        .child(bars_for(down(&self.inner), Activity::default(), None));
                     return inner.into_any_element();
                 }
             }
@@ -119,7 +119,7 @@ impl Render for Page {
             .gap(px(spec.gap))
             .p(px(spec.padding))
             .children(rows)
-            .child(bars_for(down(&self.outer), self.activity.clone()));
+            .child(bars_for(down(&self.outer), self.activity.clone(), None));
         if spec.border {
             page = page.border_1();
         }

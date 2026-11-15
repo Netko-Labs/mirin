@@ -125,7 +125,7 @@ patches change it in place, in order (section "Patches").
   content size, CSS `flex-grow`), `shrink`, `fill`, `center`, `align` (`start|center|end|stretch`), `justify`
   (`start|center|end|between`), `background`, `hoverBackground`, `cornerRadius`,
   `borderWidth` (1 or 2), `borderColor`, `scroll` (vertical), `scrollX`, `clip`, `opacity`,
-  `onPress`. `id` is required for `onPress`, `hoverBackground`, and `scroll`
+  `onPress`, `onScroll` and `scrollThrottle` (a scroll view's offset, "Scroll views" below). `id` is required for `onPress`, `hoverBackground`, and `scroll`
   (GPUI keeps per-element state for those); the TypeScript side sends one for
   every node.
 - Presses go to the innermost view that handles them, and stop there: a left
@@ -273,7 +273,9 @@ patches change it in place, in order (section "Patches").
   view; `contextmenu` carries them too), `{"type":"change","nodeId","value"}`,
   `{"type":"submit","nodeId","value"}`, `{"type":"selection","nodeId","start",
   "end","textHash"}`, `{"type":"runpress","nodeId","run","offset","shift","ctrl","alt",
-  "meta"}` (styled runs, above), `{"type":"layout","nodeId":"root",
+  "meta"}` (styled runs, above), `{"type":"scroll","nodeId","x","y",
+  "contentWidth","contentHeight","width","height"}` (a scroll view's offset,
+  "Scroll views" below), `{"type":"layout","nodeId":"root",
   "nodes":[{id,x,y,width,height}]}` in reply to a layout query, and
   `{"type":"frame","nodeId":"root"}` once a newly opened window has painted its
   first frame (once per open; a driver times an open with it), and
@@ -404,9 +406,52 @@ patches change it in place, in order (section "Patches").
     was drawn again each frame (section 5b). (`MIRIN_METAL_SCROLL_SNAP=0`
     painted at the offset itself, for comparing the two, on the gpui 0.2.2
     build; sumi always paints at whole device pixels and the switch is gone.) A
-    whole-pixel scroll paints what it did. Nothing reports a scroll
-    position to the app yet; when something does, it is the offset, not
-    where it was painted.
+    whole-pixel scroll paints what it did. What the app hears of a scroll
+    position (below) is the offset, not where it was painted.
+  - **Read and written by the driver** (`src/scroll.rs`). A scroll view
+    with `onScroll` (a virtualized list too) tells the driver where it
+    stands whenever its offset changes, whoever moved it (the wheel, its
+    bar, the driver, content that got shorter): `{"type":"scroll","nodeId",
+    "x","y","contentWidth","contentHeight","width","height"}`, the offset
+    from the content's start (never negative, fractions kept), the
+    content's size and the view's own. A view starts at 0, 0 and says
+    nothing until it leaves it; one that starts listening later says where
+    it is then. The view is looked at as it is drawn (the scroll bar reads
+    the same geometry), so there is at most one event a frame, and with
+    `scrollThrottle` (ms) at most one every so many ms: the offset the view
+    ends on is always told, by a timer when no frame comes (under
+    `MIRIN_METAL_CHECK` nothing is held back, so a `settle` has nothing
+    left to wait for). The driver writes it with two lines:
+    `{"scrollTo":{"id","x","y"}}` puts scroll view `id` at an offset (an
+    axis left out stays; the view keeps it in its range as it is next
+    drawn, so a tree that grew the content and the offset into it may come
+    in one turn), and `{"scrollIntoView":{"id"}}` scrolls every scroll view
+    around the view or input `id`, innermost first, the least that shows it
+    whole: nothing when it shows, to its start when it is longer than the
+    view (the DOM's `nearest`). A node's place is what the last frame
+    painted, so one that came with the turn's tree is shown once a frame
+    has drawn it (two frames at most are waited for), and it is looked at
+    again until a look moves nothing (six frames at most). Both lines are
+    applied after the trees and patches sent before them. A window opened
+    again (a resident host) starts every view at its start and tells
+    nothing: the app that hid it knows. A host that does this says
+    `"scroll":true` in its `protocol` line (and names `MIRIN_METAL_SCROLL`,
+    `SCROLL_MARKER`); one from before refuses a tree with `onScroll` and
+    both lines, so a driver sends them only to a host that said so.
+  - **A list the driver reads or scrolls counts all its rows.** A
+    virtualized list knows a row's height once it has laid it out and
+    counts the others as nothing: its range is the rows it has seen, its
+    offset counts only those above it, and a row far away is reached a
+    screen at a time. A person scrolling never notices; a driver would (an
+    offset that is not where the content is, `scrollIntoView` creeping
+    there). So a list with `onScroll`, or one the driver has sent a
+    `scrollTo` or a `scrollIntoView` into, counts the rows it has not laid
+    out at the height of one it has (`list::estimate_rows`, GPUI's
+    `with_uniform_item_height`; again when rows come or its width
+    changes). Rows of one height, a file list's, are then counted exactly
+    and a far row is reached in one frame; rows of other heights by that
+    estimate, until they are laid out. Lists nobody reads or scrolls are
+    as they were.
   - **The scroll bar** (`scrollbar.rs`) is an overlay, as on macOS: a thumb 6
     wide along the right edge (and the bottom, for `scrollX`), drawn over the
     content, with no room kept for it. It shows while the view scrolls and
@@ -456,7 +501,22 @@ sends it opaque with its alpha as a fade),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
 `<TextInput>` below it takes unless it sets its own (a theme gives fields its
 selection color once), and
-`<ScrollView>` (a scrolling `<View>`).
+`<ScrollView>` (a scrolling `<View>`), whose offset the app reads with React
+Native's `onScroll` (called with `ScrollInfo`: `contentOffset`, `contentSize`,
+`layoutMeasurement`, without a `nativeEvent` around them) and
+`scrollEventThrottle`, and writes through its `ref`, a `ViewHandle`:
+`scrollTo({ x, y })` (no `animated`: it jumps), `scrollToEnd()`, and on any
+view `scrollIntoView()`, which shows it in the scroll views around it (React
+Native has no such method; the DOM's name and its `nearest`). Both work on
+any `<View>` that scrolls. The handlers are sent, and the lines written, only
+to a host whose `protocol` event says `scroll`; on an older one `onScroll`
+never fires and the methods do nothing. A file browser's area selection is
+the case it was built for (Dashi's Files): `onLayout` says where the scroll
+view is in the window, `onScroll` how far its content has gone under it (a
+wheel during the drag included), so the rectangle stays anchored to the
+content; `scrollTo` scrolls it at the edges and `onScroll` says where that
+ended; `scrollIntoView` follows the keyboard's selection
+(`bench/scroll-check.tsx` checks each against what the host painted).
 
 ### Patches
 
@@ -468,7 +528,8 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
 - **Negotiation.** A host that takes patches says so on stdout as it starts,
   before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
   (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
-  says `"settle":true` too, for the `settle` simulation). A driver
+  says `"settle":true` too, for the `settle` simulation, and `"scroll":true`
+  for a scroll view's offset). A driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now

@@ -263,6 +263,44 @@ export interface WheelInfo {
   dy: number;
 }
 
+/**
+ * Where a scroll view stands, as React Native's scroll event says it (without
+ * the `nativeEvent` around it): how far it is scrolled from its content's
+ * start, how large the content is, and how large the view is, in px.
+ */
+export interface ScrollInfo {
+  /** Never negative, and whole or not as the view is scrolled (a touchpad scrolls by parts of a pixel). */
+  contentOffset: { x: number; y: number };
+  contentSize: { width: number; height: number };
+  layoutMeasurement: { width: number; height: number };
+}
+
+/**
+ * What a `<View>`'s (or `<ScrollView>`'s) `ref` holds, besides being a
+ * `createPortal` target: `const list = useRef<ViewHandle>(null)`. The methods
+ * need a host whose `protocol` event says `scroll`; on an older one they do
+ * nothing.
+ */
+export interface ViewHandle {
+  /**
+   * Scroll this scroll view to an offset from its content's start, in px
+   * (React Native's `scrollTo`, without `animated`: it jumps). An axis left
+   * out stays where it is, and the view keeps the offset in its range, so
+   * `onScroll` says where it ended.
+   */
+  scrollTo(offset: { x?: number; y?: number }): void;
+  /** Scroll this scroll view to its end: the bottom, or the right edge of one that only scrolls across. */
+  scrollToEnd(): void;
+  /**
+   * Scroll every scroll view around this view the least that shows it whole
+   * (the DOM's `scrollIntoView({ block: "nearest", inline: "nearest" })`):
+   * nothing when it already shows, to its start when it is longer than the
+   * view. A view that came with this commit is shown once it is drawn, and a
+   * row a long list has not laid out yet is brought in too.
+   */
+  scrollIntoView(): void;
+}
+
 /** Painted bounds of a node in window pixels. */
 export interface Bounds {
   x: number;
@@ -335,7 +373,10 @@ export type AccessibilityRole =
   | "search";
 
 export interface ViewProps extends AccessibilityProps {
-  /** Receives the mounted host instance (usable as a `createPortal` target). */
+  /**
+   * Receives the mounted host instance: a `createPortal` target and a
+   * `ViewHandle` (`scrollTo`, `scrollToEnd`, `scrollIntoView`).
+   */
   ref?: Ref<unknown>;
   style?: ViewStyle;
   /**
@@ -411,6 +452,21 @@ export interface ViewProps extends AccessibilityProps {
   onKeyDown?: (event: KeyDownInfo) => void;
   /** The wheel or touchpad scrolled over this view, in lines. */
   onWheel?: (event: WheelInfo) => void;
+  /**
+   * A scroll view's offset changed, whoever moved it: the wheel, its scroll
+   * bar, `scrollTo`, `scrollIntoView`, or its content getting shorter. At
+   * most once a frame; a view that was never scrolled is at 0, 0 and says
+   * nothing. On a view that scrolls (`<ScrollView>`, `overflow: "scroll"`),
+   * a long list included; needs a host whose `protocol` event says `scroll`
+   * (an older one is not told of the handler, and never calls it).
+   */
+  onScroll?: (event: ScrollInfo) => void;
+  /**
+   * At most one `onScroll` every this many ms (React Native's name). The
+   * offset the view ends on is always told, once the wait is over. 0 or
+   * absent: every frame it moved.
+   */
+  scrollEventThrottle?: number;
   /**
    * Drag these files out of the window: a press here and a move of a few
    * pixels starts it, and any app's window that takes files gets them (this
@@ -628,9 +684,11 @@ export type NativeEvent =
    * The host applies tree patches of protocol `patches` (sent once, as it
    * starts): `render` then sends only what each commit changed. A host older
    * than patches never sends it, and gets the whole tree every commit.
-   * `settle` is true from a host that takes the `settle` simulation.
+   * `settle` is true from a host that takes the `settle` simulation, and
+   * `scroll` from one that reports a scroll view's offset (`onScroll`) and
+   * takes `scrollTo` and `scrollIntoView` (`ViewHandle`).
    */
-  | { type: "protocol"; nodeId: "root"; patches: number; settle?: boolean }
+  | { type: "protocol"; nodeId: "root"; patches: number; settle?: boolean; scroll?: boolean }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),
    * or still waited for a frame when the host gave up (20 s, or a minute of
@@ -643,6 +701,17 @@ export type NativeEvent =
   /** A patch didn't apply (`reason`): the host wants the whole tree, and drops patches until it comes. */
   | { type: "resync"; nodeId: "root"; reason: string }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
+  /** A scroll view with `onScroll` stands somewhere else: its offset, its content's size and its own. */
+  | {
+      type: "scroll";
+      nodeId: string;
+      x: number;
+      y: number;
+      contentWidth: number;
+      contentHeight: number;
+      width: number;
+      height: number;
+    }
   | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] }

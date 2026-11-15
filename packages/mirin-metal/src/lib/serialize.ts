@@ -133,10 +133,15 @@ const WEIGHT: Record<NonNullable<TextStyle["fontWeight"]>, TextNodeProps["weight
   bold: "bold",
 };
 
-/** How heads are written: with an `id` on every node (a patching host), and as the root (which always fills the window). */
+/**
+ * How heads are written: with an `id` on every node (a patching host), as
+ * the root (which always fills the window), and with `onScroll` said (a
+ * host that reports scroll offsets).
+ */
 export interface HeadOptions {
   ids: boolean;
   root: boolean;
+  scrolls?: boolean;
 }
 
 /**
@@ -150,7 +155,9 @@ export function headJson(
   options: HeadOptions,
 ): string {
   // A view's head is written as text, from the fields it sets (`view-props.ts`).
-  if (node.kind === "view") return viewHeadJson(node.key, node.props, options.root);
+  if (node.kind === "view") {
+    return viewHeadJson(node.key, node.props, options.root, options.scrolls);
+  }
   return JSON.stringify(head(node, parent, options));
 }
 

@@ -65,6 +65,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             nodeId: "root",
             patches: record.patches,
             ...(record.settle === true ? { settle: true } : {}),
+            ...(record.scroll === true ? { scroll: true } : {}),
           }
         : null;
     case "settled":
@@ -142,6 +143,24 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
         super: false,
       };
       return { type: "runpress", nodeId, run, offset, modifiers };
+    }
+    case "scroll": {
+      const { x, y, contentWidth, contentHeight, width, height } = record;
+      const numbers = [x, y, contentWidth, contentHeight, width, height];
+      if (!numbers.every((value) => typeof value === "number" && Number.isFinite(value))) {
+        return null;
+      }
+      const [left, top, wide, tall, viewWidth, viewHeight] = numbers as number[];
+      return {
+        type: "scroll",
+        nodeId,
+        x: left as number,
+        y: top as number,
+        contentWidth: wide as number,
+        contentHeight: tall as number,
+        width: viewWidth as number,
+        height: viewHeight as number,
+      };
     }
     case "selection": {
       const { start, end, textHash } = record;

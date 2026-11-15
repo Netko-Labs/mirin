@@ -11,6 +11,7 @@
 //! list's content, whose top left is where the list paints it: a scroll
 //! moves that group alone, as it does a scroll view's content.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -32,6 +33,65 @@ pub(crate) struct VirtualList {
     /// The rows, cloned from the tree when it changes (not per frame).
     rows: Rc<Vec<NodeSpec>>,
     spacing: Spacing,
+    /// The driver reads or sets this list's offset (`scroll.rs`), so the
+    /// rows not laid out yet are counted (`estimate`).
+    estimates: bool,
+    /// They are, for the rows as they now are.
+    counted: Counted,
+}
+
+/// How wide a list was when its rows were last counted (`estimate_rows`):
+/// a list forgets every height when its width changes.
+pub(crate) type Counted = Rc<Cell<Option<f32>>>;
+
+/// Count the rows of a list not laid out yet at the height of one that is.
+/// A list knows a row's height only once it has laid it out, and counts the
+/// others as nothing: its content is then as long as the rows it has seen,
+/// its offset counts only those above it, and a row far away is reached a
+/// screen at a time. That serves a person scrolling; a driver that reads the
+/// offset or sends the list to a row needs the whole length. Rows of one
+/// height (a file list) are then counted exactly; others by that estimate
+/// until they are laid out. False until a row has been laid out to go by;
+/// `counted` says whether this call counted them.
+pub(crate) fn estimate_rows(state: &ListState, counted: &Cell<Option<f32>>) -> bool {
+    let width = f32::from(state.viewport_bounds().size.width);
+    if counted.get() == Some(width) {
+        return false;
+    }
+    // The row under the first one in view has the gap above it, as most do.
+    let top = state.logical_scroll_top().item_ix;
+    let Some(row) = [top + 1, top]
+        .into_iter()
+        .find_map(|row| state.bounds_for_item(row))
+    else {
+        return false;
+    };
+    // Rows already laid out keep their own height as their estimate.
+    let _ = state.clone().with_uniform_item_height(row.size.height);
+    counted.set(Some(width));
+    true
+}
+
+impl VirtualList {
+    /// Count the rows not laid out yet (`estimate_rows`), from here on.
+    pub(crate) fn estimate(&mut self) {
+        self.estimates = true;
+        estimate_rows(&self.state, &self.counted);
+    }
+
+    /// The row node `id` is, or is in.
+    pub(crate) fn row_of(&self, id: &str) -> Option<usize> {
+        fn holds(node: &NodeSpec, id: &str) -> bool {
+            if crate::render::node_id(node).as_deref() == Some(id) {
+                return true;
+            }
+            match node {
+                NodeSpec::View { children, .. } => children.iter().any(|child| holds(child, id)),
+                _ => false,
+            }
+        }
+        self.rows.iter().position(|row| holds(row, id))
+    }
 }
 
 /// Padding around the rows (summed over the container and any wrappers) and
@@ -169,9 +229,13 @@ pub(crate) fn sync(lists: &mut HashMap<String, VirtualList>, tree: &NodeSpec) {
         let entry = match lists.remove(id) {
             Some(mut entry) => {
                 if entry.spacing == spacing {
-                    invalidate_changed(&entry.state, &entry.rows, rows);
+                    if invalidate_changed(&entry.state, &entry.rows, rows) {
+                        // The rows that came are counted again.
+                        entry.counted.set(None);
+                    }
                 } else {
                     entry.state.reset(rows.len());
+                    entry.counted.set(None);
                 }
                 entry.rows = Rc::new(rows.to_vec());
                 entry.spacing = spacing;
@@ -183,6 +247,8 @@ pub(crate) fn sync(lists: &mut HashMap<String, VirtualList>, tree: &NodeSpec) {
                     state: ListState::new(rows.len(), ListAlignment::Top, px(OVERDRAW)),
                     rows: Rc::new(rows.to_vec()),
                     spacing,
+                    estimates: false,
+                    counted: Rc::default(),
                 }
             }
         };
@@ -210,11 +276,12 @@ fn collect<'a>(node: &'a NodeSpec, out: &mut Vec<(&'a str, &'a [NodeSpec], Spaci
 }
 
 /// Splice the range between the unchanged head and tail of the rows, so
-/// cached heights survive for every row that did not change.
-fn invalidate_changed(state: &ListState, old: &[NodeSpec], new: &[NodeSpec]) {
+/// cached heights survive for every row that did not change. Whether any
+/// row changed.
+fn invalidate_changed(state: &ListState, old: &[NodeSpec], new: &[NodeSpec]) -> bool {
     let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
     if prefix == old.len() && old.len() == new.len() {
-        return;
+        return false;
     }
     let room = old.len().min(new.len()) - prefix;
     let mut suffix = old
@@ -230,6 +297,7 @@ fn invalidate_changed(state: &ListState, old: &[NodeSpec], new: &[NodeSpec]) {
         suffix -= 1;
     }
     state.splice(prefix..old.len() - suffix, new.len() - prefix - suffix);
+    true
 }
 
 /// Render a virtualized list inside its already-styled container. Padding
@@ -247,6 +315,9 @@ pub(crate) fn render_list(
     let Some(entry) = view.lists.get(id) else {
         return container.into_any_element();
     };
+    // A list whose driver reads its offset, or has scrolled it, counts all
+    // its rows, as soon as one is laid out (`scroll.rs`).
+    let counted = (props.on_scroll || entry.estimates).then(|| Rc::clone(&entry.counted));
     let rows = entry.rows.clone();
     let spacing = entry.spacing;
     let layout = view.layout.clone();
@@ -303,9 +374,33 @@ pub(crate) fn render_list(
         .entry(id.to_string())
         .or_default()
         .clone();
+    let reporter = crate::scroll::Reporter::of(id, props, view);
     // After the list, so the list has laid out its viewport when the bar reads it.
-    let bar = crate::scrollbar::bars_for(crate::scrollbar::Scrolled::List(state), activity);
-    container.child(rows_element).child(bar).into_any_element()
+    let bar = crate::scrollbar::bars_for(
+        crate::scrollbar::Scrolled::List(state.clone()),
+        activity,
+        reporter,
+    );
+    let Some(counted) = counted else {
+        return container.child(rows_element).child(bar).into_any_element();
+    };
+    // After the list too: a row is laid out to go by.
+    let count = sumi::canvas(
+        move |_, window, _cx| {
+            if estimate_rows(&state, &counted) {
+                // The rows are laid out again at their estimates, and the bar with them.
+                window.request_animation_frame();
+            }
+        },
+        |_, (), _, _| {},
+    )
+    .absolute()
+    .size_0();
+    container
+        .child(rows_element)
+        .child(count)
+        .child(bar)
+        .into_any_element()
 }
 
 #[cfg(test)]

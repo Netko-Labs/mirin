@@ -3,6 +3,7 @@
 
 use std::sync::mpsc;
 
+use crate::scroll::ScrollPosition;
 use crate::sim::{LayoutMap, LayoutNode};
 use crate::titlebar::Chrome;
 
@@ -85,6 +86,8 @@ pub enum EventKind {
     Typing { typing: bool },
     /// The wheel or touchpad scrolled over a `view` with `onWheel`, in lines.
     Wheel { dx: f32, dy: f32 },
+    /// A scroll view with `onScroll` stands somewhere else (`scroll.rs`).
+    Scroll(ScrollPosition),
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
     Resize,
     /// Files dragged over a `view` with `onDrop` (enter, over, leave), or
@@ -216,6 +219,7 @@ impl EventKind {
             EventKind::Visibility { .. } => "visibility",
             EventKind::Typing { .. } => "typing",
             EventKind::Wheel { .. } => "wheel",
+            EventKind::Scroll(_) => "scroll",
             EventKind::Resize => "resize",
             EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
@@ -240,6 +244,7 @@ impl EventKind {
             | EventKind::ContextMenu { .. }
             | EventKind::KeyDown(_)
             | EventKind::Wheel { .. }
+            | EventKind::Scroll(_)
             | EventKind::Resize
             | EventKind::Drop(_)
             | EventKind::Chrome(_)
@@ -352,6 +357,10 @@ impl EventSender {
 
     pub(crate) fn wheel(&self, node_id: &str, dx: f32, dy: f32) {
         self.send(node_id, EventKind::Wheel { dx, dy });
+    }
+
+    pub(crate) fn scroll(&self, node_id: &str, position: ScrollPosition) {
+        self.send(node_id, EventKind::Scroll(position));
     }
 
     pub(crate) fn hover(&self, node_id: &str, hovered: bool) {
