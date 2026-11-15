@@ -10,11 +10,10 @@ use std::sync::mpsc;
 #[cfg(target_os = "linux")]
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
-    parse_patch, parse_surface, parse_tree, run, run_deferred, Antialiasing, DriverMessage,
-    EventKind, HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface,
-    TitleBar, ACTIVATION_MARKER, IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER, OPEN_MIN_SIZE_MARKER,
+    parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
+    HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface, TitleBar,
+    ACTIVATION_MARKER, IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER, OPEN_MIN_SIZE_MARKER,
     PATCH_MARKER, PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
-    TEXT_ANTIALIASING_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -239,24 +238,6 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
         let id = parsed.scroll_into_view.id;
         return Ok(HostLine::Window(DriverMessage::Scroll(
             ScrollCommand::IntoView { id },
-        )));
-    }
-    // Text in grays or by subpixels, from here on.
-    if line.trim_start().starts_with("{\"textAntialiasing\"") {
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        struct TextLine {
-            text_antialiasing: String,
-        }
-        let parsed: TextLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
-        let antialiasing =
-            Antialiasing::parse(&parsed.text_antialiasing).ok_or_else(|| {
-                format!(
-                    "textAntialiasing ({TEXT_ANTIALIASING_MARKER}) is \"grayscale\", \"subpixel\" or \"default\""
-                )
-            })?;
-        return Ok(HostLine::Window(DriverMessage::TextAntialiasing(
-            antialiasing,
         )));
     }
     #[cfg(target_os = "linux")]
@@ -600,9 +581,6 @@ fn main() {
         "{IMAGE_ERROR_MARKER}: an image that cannot be drawn tells the driver"
     ));
     mirin_metal::trace::log(format_args!(
-        "{TEXT_ANTIALIASING_MARKER}: text in grays or by subpixels, as the driver says"
-    ));
-    mirin_metal::trace::log(format_args!(
         "{OPAQUE_SURFACE_MARKER}: a surface opened opaque when the driver says it is"
     ));
     write_line(&serde_json::json!({
@@ -627,8 +605,6 @@ fn main() {
         "scroll": true,
         // This host tells the driver of an image it cannot draw (`onError`).
         "imageError": true,
-        // This host takes a `textAntialiasing` line (`text_mode.rs`).
-        "textAntialiasing": true,
         // This host opens a surface that says `"opaque":true` opaque
         // (`surface.rs`); one from before refuses that surface.
         "opaqueSurface": true,
@@ -897,32 +873,17 @@ mod line_tests {
     }
 
     #[test]
-    fn text_antialiasing_is_one_of_three() {
-        use mirin_metal::{Antialiasing, DriverMessage};
-        let asked = |line: &str| match parse_host_line(line) {
-            Ok(HostLine::Window(DriverMessage::TextAntialiasing(antialiasing))) => {
-                Some(antialiasing)
-            }
-            _ => None,
-        };
-        assert_eq!(
-            asked(r#"{"textAntialiasing":"subpixel"}"#),
-            Some(Antialiasing::Subpixel)
-        );
-        assert_eq!(
-            asked(r#"{"textAntialiasing":"grayscale"}"#),
-            Some(Antialiasing::Grayscale)
-        );
-        assert_eq!(
-            asked(r#"{"textAntialiasing":"default"}"#),
-            Some(Antialiasing::Default)
-        );
-        // The refusal names the marker, so the binary carries it for a driver to find.
-        assert!(matches!(
-            parse_host_line(r#"{"textAntialiasing":"lcd"}"#),
-            Err(error) if error.contains(super::TEXT_ANTIALIASING_MARKER)
-        ));
-        assert!(parse_host_line(r#"{"textAntialiasing":true}"#).is_err());
+    fn text_antialiasing_is_not_changed_by_a_line() {
+        // It is chosen as the host starts (`MIRIN_METAL_TEXT`). A driver
+        // from when a line changed it is refused, as any line the host does
+        // not know is: logged, and the host goes on as it was.
+        for line in [
+            r#"{"textAntialiasing":"subpixel"}"#,
+            r#"{"textAntialiasing":"grayscale"}"#,
+            r#"{"textAntialiasing":"default"}"#,
+        ] {
+            assert!(parse_host_line(line).is_err(), "{line}");
+        }
     }
 
     #[test]

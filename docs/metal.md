@@ -713,9 +713,8 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   a field's `baseHash`, `"selectionHash":true` for a `selection`'s
   `textHash`, `"revisionRebase":true` for typing carried over a new
   `revision`, `"scroll":true` for a scroll view's offset,
-  `"imageError":true` for an image's `onError`, and `"textAntialiasing":true`
-  for the line of that name, section 4; `"opaqueSurface":true` too, for a
-  surface's `opaque`). A driver
+  `"imageError":true` for an image's `onError`, and `"opaqueSurface":true`
+  for a surface's `opaque`). A driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now
@@ -1046,7 +1045,14 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   to the text's (Medium text over a family with Regular and Bold only) is
   passed over by cosmic-text, which then takes the nearest weight of any
   family that has the character. It was so before sumi too.
-- **Text is antialiased in grays; subpixel is a choice.** sumi asks for
+- **Text is antialiased in grays; subpixel is an opt-in chosen at spawn.**
+  Grayscale is the default and the supported way. Subpixel is asked for
+  when a host is started, by `MIRIN_METAL_TEXT=subpixel` in its environment
+  or `spawnNativeHost(binary, { textAntialiasing: "subpixel" })`, which
+  sets it, and holds for the host's life: nothing changes it while the
+  host runs. A host kept warm (`deferred`) is the same process for every
+  window it opens, so they all open in the mode it started with; a setting
+  the person changes takes effect in hosts started after it. sumi asks for
   subpixel antialiasing on Linux (colour at a glyph's edges, sharper on a
   panel whose subpixels are the horizontal red, green, blue stripes it
   assumes). The host sets grayscale instead (`src/text_mode.rs`): it is
@@ -1064,40 +1070,23 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   starts (`sumi-wgpu`'s `wgpu_prepare.rs`); a host drawing in grays never
   uses them, and their module was 1 MB each held for as long as it lived
   (`docs/metal/engine.md`, section 7).
-- **A driver changes it while the host runs** (2026-11-15). The variable
-  is what a host starts with (`NativeHostOptions.textAntialiasing` sets it
-  for a spawn); a `{"textAntialiasing":"subpixel"}` line
-  (`setTextAntialiasing()` on the transport; `"grayscale"`, or `"default"`
-  for what the host started with) changes it from there on, so a setting
-  the person changes needs no new host. A shown window is drawn again
-  once, whole; a line sent while no window is shown (a deferred host
-  before its `open`, a resident one while hidden) is how the next one
-  opens. It works because the engine decides each glyph's antialiasing as
-  it paints it (`Window::should_use_subpixel_rendering` reads the mode
-  then) and keys the two kinds apart in its glyph atlas, so nothing is
-  thrown away: the host sets the mode and bumps a number that is part of
-  every retained subtree's version (`RootView::text_changed`,
-  `retain.rs`), without which a kept drawing would go on showing glyphs of
-  the other kind. What it costs, on a window of 30 lines of text in ten
-  sizes and two weights (900 × 700, scale 1.75; three runs under the bench
-  lock): the first change to a kind draws one frame that rasterizes every
-  glyph again, 45 to 133 ms beside other work (28 ms on a quiet machine)
-  where a frame of that window takes about 2, and the host's anonymous
-  memory grows 1.6 MB (13.4 to 15.1 MB: the subpixel atlas, four bytes a
-  pixel where the gray one has one); changing back, or again, draws one
-  ordinary whole frame (1.4 to 7.8 ms) and grows nothing, since both
-  kinds stay in the atlas. The engine keeps one mode for the process (its
-  windows share it), which for a host is one window at a time; a mode for
-  each of several windows in one process would need the engine's window
-  to own it (`forks/sumi/crates/sumi/src/window.rs`), and was left alone.
-  A host that takes the line says `"textAntialiasing":true` in its
-  `protocol` line (and names `MIRIN_METAL_TEXT_ANTIALIASING`); one from
-  before refuses the line on stderr, and the transport sends it none. The
-  default is unchanged: grays on Linux. A host that started in grays has
-  not parsed the subpixel shaders ahead (the bullet above): the window's
-  renderer builds a pipeline when it first draws with it, so the first
-  change to subpixel also parses them, in that one slow frame, and from
-  then on the host holds their module as one started in subpixel does.
+- **It was changeable while the host ran, for a day** (2026-11-15: a
+  `{"textAntialiasing": …}` line, `setTextAntialiasing()` on the transport,
+  `"textAntialiasing":true` in the `protocol` line and the marker
+  `MIRIN_METAL_TEXT_ANTIALIASING`), and the owner took it out: one mode a
+  process, chosen at its start, is what is supported. A driver from that
+  day that still sends the line is refused as any unknown line is (logged
+  on the host's stderr, `rejected line`; the host goes on in the mode it
+  started with). Its transport sent the line only to a host that said the
+  word, which none says now, so in practice it sends nothing. A driver
+  from now against a host of that day ignores the word and has no way to
+  send the line. What made the switch work is the engine's own and stays:
+  it decides each glyph's antialiasing as it paints it
+  (`Window::should_use_subpixel_rendering`) and keys the two kinds apart
+  in its glyph atlas, which a process still needs, since an opaque window
+  and a transparent surface of one host draw in different kinds. What was
+  the host's went: the redraw it forced on a change, and the number in
+  every retained subtree's version that made each draw anew.
 - **A layer surface draws grays unless it says it is opaque** (2026-11-15).
   Subpixel antialiasing blends a glyph into what is behind it a channel at
   a time (red, green and blue each have their own coverage; the engine's
@@ -3083,10 +3072,9 @@ A `{"minSize":{"width":W,"height":H}}` line changes the least size afterwards
 (Calculator's tape beside its keypad). It doesn't resize the window; send a
 size too (the host applies the least size first). A host from before either
 refuses the line on stderr and ignores the variable.
-`MIRIN_METAL_TEXT=subpixel` (`textAntialiasing`) is how text is antialiased
-from the start, and a `{"textAntialiasing":"subpixel"}` line
-(`setTextAntialiasing()` on the transport) changes it afterwards (section 4,
-"Text on Linux").
+`MIRIN_METAL_TEXT=subpixel` (`textAntialiasing`) asks for subpixel text where
+the host draws grays by default; it is read as the host starts and nothing
+changes it after (section 4, "Text on Linux").
 `MIRIN_METAL_CLOSE=ask` (`askToClose`) lets the app answer a close from outside
 itself: when the compositor asks the window to close (`xdg_toplevel.close`: its
 close control, a shell's close, quit, or logout), the window stays and the host
