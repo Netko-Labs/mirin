@@ -150,7 +150,6 @@ pub struct WaylandWindowState {
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
     client_corner_radii: Corners<Pixels>,
-    accesskit_adapter: Option<accesskit_unix::Adapter>,
     // mirin: where Dashi draws its traffic lights over a unified title bar.
     chrome_controls: Option<Bounds<Pixels>>,
 }
@@ -747,7 +746,6 @@ impl WaylandWindowState {
             window_controls: WindowControls::default(),
             client_inset: None,
             client_corner_radii: Corners::default(),
-            accesskit_adapter: None,
             chrome_controls: None, // mirin:
         })
     }
@@ -1804,9 +1802,6 @@ impl WaylandWindowStatePtr {
             fun(focus);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
-        if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
-            adapter.update_window_focus_state(focus);
-        }
     }
 
     pub fn set_hovered(&self, focus: bool) {
@@ -2491,59 +2486,11 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn a11y_init(&self, callbacks: sumi::A11yCallbacks) {
-        let activation_handler = TrivialActivationHandler {
-            callback: callbacks.activation,
-        };
-        let action_handler = TrivialActionHandler(callbacks.action);
-        let deactivation_handler = TrivialDeactivationHandler {
-            callback: callbacks.deactivation,
-        };
-
-        let adapter =
-            accesskit_unix::Adapter::new(activation_handler, action_handler, deactivation_handler);
-
-        self.borrow_mut().accesskit_adapter = Some(adapter);
-    }
-
-    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
-        let mut state = self.borrow_mut();
-        if let Some(adapter) = state.accesskit_adapter.as_mut() {
-            adapter.update_if_active(|| tree_update);
-        }
-    }
-
-    fn a11y_update_window_bounds(&self) {
-        // Wayland doesn't expose window position, so this is a no-op
-    }
-}
-
-struct TrivialActivationHandler {
-    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
-}
-
-impl accesskit::ActivationHandler for TrivialActivationHandler {
-    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
-        (self.callback)()
-    }
-}
-
-struct TrivialActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
-
-impl accesskit::ActionHandler for TrivialActionHandler {
-    fn do_action(&mut self, request: accesskit::ActionRequest) {
-        (self.0)(request);
-    }
-}
-
-struct TrivialDeactivationHandler {
-    callback: Box<dyn Fn() + Send + 'static>,
-}
-
-impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
-    fn deactivate_accessibility(&mut self) {
-        (self.callback)();
-    }
+    // mirin: the engine publishes no accessibility tree on Linux
+    // (`a11y_init` and its kin keep the trait's no-ops). Metal publishes
+    // its own (`crates/mirin-metal/src/access/`) and runs the engine with
+    // its tree off, so the engine's adapter was a second AccessKit stack
+    // linked into every app and never started.
 }
 
 fn add_rounded_rect(
