@@ -190,7 +190,7 @@ fn carets_sent_with_every_tree_never_put_a_key_before_one_typed_earlier(cx: &mut
     // letters stay in the order they were typed, and the digits in theirs.
     let mut dice = Dice(0xca2e7);
     for round in 0..300 {
-        let (field, app, keys) = crossing(cx, &mut dice, true);
+        let (field, app, keys) = crossing(cx, &mut dice, true, "abcdefgh", "");
         assert_eq!(field, app, "round {round}");
         assert_eq!(field.len(), keys.len(), "round {round}: {field:?}");
         let letters: String = field.chars().filter(char::is_ascii_alphabetic).collect();

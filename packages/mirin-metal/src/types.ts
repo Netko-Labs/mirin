@@ -499,8 +499,13 @@ export interface TextInputProps extends AccessibilityProps {
    */
   value: string;
   /**
-   * Bump it to reset the native buffer to `value` even when `value` didn't change: after
+   * Bump it to write `value` to the field again even when `value` didn't change: after
    * refusing an edit (a key the app took for itself), so the field shows `value` again.
+   * It is a write as a new `value` is: what was typed after the text the app refused is
+   * typed again on `value` and reported through `onChangeText`, so taking a key out
+   * costs no key after it ("12x+3" typed at once, the "x" refused: "12+3"). A host
+   * whose `protocol` event does not say `revisionRebase` resets the field to `value`
+   * and drops those keys.
    */
   valueRevision?: number;
   placeholder?: string;
@@ -733,6 +738,8 @@ export type NativeEvent =
    * `selectionHash` from one that takes a `selection` with the hash of the
    * text it was made in, and drops one made in a text the field no longer
    * holds,
+   * `revisionRebase` from one that carries what was typed onto the value
+   * of a new `valueRevision` too (older ones reset the field to it),
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
    * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), `imageError` from
    * one that says when an image cannot be drawn (`onError`),
@@ -747,6 +754,7 @@ export type NativeEvent =
       activation?: boolean;
       rebase?: boolean;
       selectionHash?: boolean;
+      revisionRebase?: boolean;
       scroll?: boolean;
       imageError?: boolean;
       textAntialiasing?: boolean;

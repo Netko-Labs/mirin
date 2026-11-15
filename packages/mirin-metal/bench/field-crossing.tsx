@@ -14,6 +14,11 @@
  * - `write`: "*" typed into "5", and the app writes "57" before it has
  *   heard of the "*" (always a crossing); the line must read "57*".
  *
+ * - `refuse`: "12x+3" typed at once into a line that takes no "x": the app
+ *   hears "12x" and writes "12" again (a new `valueRevision`) while "+3" is
+ *   already in the field; the line must read "12+3" (Dashi's D129: the
+ *   reset used to drop the "+3").
+ *
  * And each of them three ways: the app saying no `selection`, saying its
  * caret with every text (at the end of the line, after what the keypad
  * wrote), and with the caret inside the line ("12", the caret after the 1:
@@ -35,7 +40,8 @@
  * (no `"rebase":true` in its `protocol` line) fails it, and one from
  * before a selection's `textHash` (no `"selectionHash":true`) fails the
  * rounds with a caret: the key lands in front ("sin(!*6="), and then the
- * app's caret and the field's go on answering each other.
+ * app's caret and the field's go on answering each other. One from before
+ * `"revisionRebase":true` fails the `refuse` rounds.
  *
  * Needs a Wayland compositor that presents, as the layout checks do:
  * `dashi-comp --backend winit --no-xwayland -c "bun bench/field-crossing.tsx <host>"`
@@ -73,7 +79,8 @@ interface Line {
 const app = {
   line: "",
   heard: 0,
-  set: (_next: Line): void => {},
+  /** The line starts over (a new revision). */
+  set: (_next: Omit<Line, "revision">): void => {},
   /** A keypad key: its text typed at the app's caret. */
   key: (_text: string): void => {},
 };
@@ -89,7 +96,7 @@ function caretAfter(old: string, text: string): number {
 function Calculator() {
   const [line, setLine] = useState<Line>({ text: "", revision: 0, caret: 0, says: false });
   app.line = line.text;
-  app.set = setLine;
+  app.set = (next) => setLine((old) => ({ ...next, revision: old.revision + 1 }));
   app.key = (text) =>
     setLine((old) => ({
       ...old,
@@ -106,7 +113,14 @@ function Calculator() {
         selection={line.says ? { start: line.caret, end: line.caret } : undefined}
         onChangeText={(text) => {
           app.heard += 1;
-          setLine((old) => ({ ...old, text, caret: caretAfter(old.text, text) }));
+          // The line takes no "x": its text without it is written again.
+          const kept = text.replaceAll("x", "");
+          setLine((old) => ({
+            ...old,
+            text: kept,
+            revision: old.revision + (kept === text ? 0 : 1),
+            caret: kept === old.text ? old.caret : caretAfter(old.text, kept),
+          }));
         }}
         onSelectionChange={({ end }) => setLine((old) => ({ ...old, caret: end }))}
         style={{ height: 32, padding: 8, color: "#fafafa", backgroundColor: "#27272a" }}
@@ -138,6 +152,7 @@ let said = 0;
 let changes = 0;
 let rebases = false;
 let namesSelections = false;
+let rebasesRevisions = false;
 const waiting: Array<(event: NativeEvent) => void> = [];
 /** The hash of the text the app is writing: the round's last key is typed at the first change made on it. */
 let lastKeyOn: number | null = null;
@@ -145,6 +160,7 @@ transport.onEvent((event) => {
   if (event.type === "protocol") {
     rebases = event.rebase === true;
     namesSelections = event.selectionHash === true;
+    rebasesRevisions = event.revisionRebase === true;
   }
   if (event.type === "settled") {
     waiting.shift()?.(event);
@@ -155,7 +171,9 @@ transport.onEvent((event) => {
   changes += 1;
   // Heard here before `render` hears it (this listener came first), so the
   // key goes to the field ahead of whatever the app answers.
-  if (event.baseHash !== undefined && event.baseHash === lastKeyOn) {
+  // (In a `refuse` round the field also typed its "x" on that text, before.)
+  const onWrite = event.baseHash !== undefined && event.baseHash === lastKeyOn;
+  if (onWrite && !event.value.includes("x")) {
     lastKeyOn = null;
     transport.simulate({ kind: "type", text: "!" });
   }
@@ -181,15 +199,13 @@ async function settled(): Promise<void> {
   }
 }
 
-type Kind = "click" | "write";
+type Kind = "click" | "write" | "refuse";
 /** What the app says of its caret: nothing, or where it is, at the line's end or inside it. */
 type Caret = "unsaid" | "end" | "inside";
 
-let revision = 0;
 /** The line starts over as `text` with the caret at `caret`, in the app and in the field. */
 async function start(text: string, caret: number, says: boolean): Promise<void> {
-  revision += 1;
-  app.set({ text, revision, caret, says });
+  app.set({ text, caret, says });
   await settled();
 }
 
@@ -199,7 +215,11 @@ interface Outcome {
   crossed: boolean;
 }
 
-/** What each round starts from (the caret at `at`), the keypad's key, and what the line must read at its end. */
+/**
+ * What each round starts from (the caret at `at`), what the app writes at
+ * its caret (the keypad's key, or the keys it takes of those typed), and
+ * what the line must read at its end.
+ */
 interface Round {
   from: string;
   at: number;
@@ -218,6 +238,11 @@ const ROUNDS: Record<Kind, Record<Caret, Round>> = {
     end: { from: "5", at: 1, key: "sin(", line: "5sin(*!" },
     inside: { from: "12", at: 1, key: "sin(", line: "1sin(*!2" },
   },
+  refuse: {
+    unsaid: { from: "", at: 0, key: "12", line: "12+3!" },
+    end: { from: "", at: 0, key: "12", line: "12+3!" },
+    inside: { from: "98", at: 1, key: "12", line: "912+3!8" },
+  },
 };
 
 async function round(kind: Kind, caret: Caret): Promise<Outcome> {
@@ -232,9 +257,11 @@ async function round(kind: Kind, caret: Caret): Promise<Outcome> {
     transport.simulate({ kind: "click", id: root.nodeId(key) ?? "" });
     transport.simulate({ kind: "focus", id: field });
     transport.simulate({ kind: "type", text: "*6=" });
-  } else {
+  } else if (kind === "write") {
     transport.simulate({ kind: "type", text: "*" });
     app.key(key);
+  } else {
+    transport.simulate({ kind: "type", text: "12x+3" });
   }
   await settled();
   lastKeyOn = null;
@@ -244,7 +271,7 @@ async function round(kind: Kind, caret: Caret): Promise<Outcome> {
 
 await settled();
 const failures: string[] = [];
-const kinds: Kind[] = ["click", "write"];
+const kinds: Kind[] = ["click", "write", "refuse"];
 const carets: Caret[] = ["unsaid", "end", "inside"];
 const crossed = Object.fromEntries(
   kinds.flatMap((kind) => carets.map((caret) => [`${kind} ${caret}`, 0])),
@@ -271,6 +298,6 @@ const crossings = Object.entries(crossed)
   .map(([name, count]) => `${count} (${name})`)
   .join(", ");
 console.log(
-  `field-crossing: ${rounds} rounds of each, ${failures.length} wrong; crossed ${crossings}${rebases ? "" : "; the host does not rebase"}${namesSelections ? "" : "; the host takes no selection's text"}${restless ? "; a round never came to rest" : ""}${gone ? "; the host went away" : ""}`,
+  `field-crossing: ${rounds} rounds of each, ${failures.length} wrong; crossed ${crossings}${rebases ? "" : "; the host does not rebase"}${namesSelections ? "" : "; the host takes no selection's text"}${rebasesRevisions ? "" : "; the host resets on a new revision"}${restless ? "; a round never came to rest" : ""}${gone ? "; the host went away" : ""}`,
 );
 process.exit(failures.length === 0 && !gone && !restless ? 0 : 1);

@@ -50,9 +50,10 @@ export class FieldTexts {
 
   /**
    * A field goes out with this value and revision: a value the app set (not
-   * one the field typed) replaces the buffer, as a new revision does.
-   * Answers the hash of the text the value was set over, for a host that
-   * takes it (`stamps`): the same for as long as the value stays.
+   * one the field typed) replaces the buffer, as a new revision does (the
+   * app wrote its value again: it refused what the field typed). Answers
+   * the hash of the text the value was set over, for a host that takes it
+   * (`stamps`): the same for as long as the value and the revision stay.
    */
   field(
     id: string,
@@ -73,10 +74,7 @@ export class FieldTexts {
       return undefined;
     }
     if (known.value === value && known.revision === revision) return known.base;
-    if (known.revision !== revision) {
-      // A reset, whatever the field holds.
-      known.base = undefined;
-    } else if (stamps) {
+    if (stamps) {
       known.hash ??= textHash(known.text);
       known.base = known.hash;
     } else known.base = undefined;

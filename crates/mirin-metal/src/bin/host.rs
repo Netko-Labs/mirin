@@ -619,6 +619,9 @@ fn main() {
         // And a `selection`'s `textHash`: one made in a text the field no
         // longer holds is dropped (`selection.rs`).
         "selectionHash": true,
+        // And a new `revision` with a `baseHash` as a write: the keys typed
+        // after a refused one are carried onto the value (`value.rs`).
+        "revisionRebase": true,
         // This host reports a scroll view's offset (`onScroll`) and takes
         // `scrollTo` and `scrollIntoView` lines (`scroll.rs`).
         "scroll": true,
