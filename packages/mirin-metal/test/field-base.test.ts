@@ -147,6 +147,64 @@ describe("a field the app also writes", () => {
   });
 });
 
+describe("a key the app refuses", () => {
+  /** A line that takes no "x": it writes its text again (a new revision). */
+  function Refusing({ heard }: { heard: string[] }) {
+    const [line, setLine] = useState({ text: "", revision: 0 });
+    return createElement(
+      View,
+      null,
+      createElement(TextInput, {
+        value: line.text,
+        valueRevision: line.revision,
+        testID: "line",
+        onChangeText: (text: string) => {
+          heard.push(text);
+          const kept = text.replaceAll("x", "");
+          setLine((old) => ({ text: kept, revision: old.revision + (kept === text ? 0 : 1) }));
+        },
+      }),
+    );
+  }
+
+  test("is taken out by a write over the text that had it, and the keys after it are heard once", async () => {
+    const transport = fakeTransport();
+    const heard: string[] = [];
+    const root = render(createElement(Refusing, { heard }), transport);
+    await nextCommit();
+    transport.emit(REBASES);
+    const id = root.nodeId("line") ?? "";
+    // "12x+3" typed at once: the field reports each key before the app answers any.
+    transport.emit(change(id, "1", ""));
+    transport.emit(change(id, "12", "1"));
+    expect(line(root)).toMatchObject({ value: "12", baseHash: textHash("12") });
+    transport.emit(change(id, "12x", "12"));
+    // The same text again, written over the one with the x.
+    expect(line(root)).toMatchObject({ value: "12", revision: 1, baseHash: textHash("12x") });
+    // What was typed on the text with the x is not the app's.
+    transport.emit(change(id, "12x+", "12x"));
+    transport.emit(change(id, "12x+3", "12x+"));
+    expect(heard).toEqual(["1", "12", "12x"]);
+    // The field took the write and typed "+3" again on it.
+    transport.emit(change(id, "12+3", "12"));
+    expect(heard).toEqual(["1", "12", "12x", "12+3"]);
+    expect(line(root)).toMatchObject({ value: "12+3", revision: 1, baseHash: textHash("12+3") });
+    root.unmount();
+  });
+
+  test("goes out with no text to a host from before it", async () => {
+    const transport = fakeTransport();
+    const root = render(createElement(Refusing, { heard: [] }), transport);
+    await nextCommit();
+    transport.emit({ type: "protocol", nodeId: "root", patches: 1 });
+    const id = root.nodeId("line") ?? "";
+    transport.emit({ type: "change", nodeId: id, value: "x" });
+    expect(line(root)).toMatchObject({ value: "", revision: 1 });
+    expect(transport.sent.join("")).not.toContain("baseHash");
+    root.unmount();
+  });
+});
+
 describe("FieldTexts", () => {
   test("a value keeps the hash it went out with for as long as it stays", () => {
     const fields = new FieldTexts();
@@ -155,10 +213,12 @@ describe("FieldTexts", () => {
     // Typed since: the same value again (another prop changed) says the same.
     expect(fields.typed("1", "7*", textHash("7"), textHash("7*"))).toBe(true);
     expect(fields.field("1", "7", undefined, true)).toBe(textHash(""));
-    // A new revision is a reset: nothing to carry.
-    expect(fields.field("1", "7", 1, true)).toBeUndefined();
+    // A new revision is the app's value written again, over what the field typed.
+    expect(fields.field("1", "7", 1, true)).toBe(textHash("7*"));
     expect(fields.typed("1", "7*", textHash("7*"))).toBe(false);
     expect(fields.typed("1", "7!", textHash("7"))).toBe(true);
+    // To a host that takes no text it says none.
+    expect(fields.field("1", "7", 2, false)).toBeUndefined();
   });
 
   test("a field it does not know, or a host that names no text, is believed", () => {
@@ -188,5 +248,10 @@ describe("parseNativeEvent", () => {
         '{"type":"protocol","nodeId":"root","patches":1,"settle":true,"rebase":true}',
       ),
     ).toEqual({ type: "protocol", nodeId: "root", patches: 1, settle: true, rebase: true });
+    expect(
+      parseNativeEvent(
+        '{"type":"protocol","nodeId":"root","patches":1,"rebase":true,"revisionRebase":true}',
+      ),
+    ).toEqual({ type: "protocol", nodeId: "root", patches: 1, rebase: true, revisionRebase: true });
   });
 });

@@ -9,8 +9,12 @@
 //! carried onto it (`field/rebase.rs`), reported as a `change` made on the
 //! app's value. The driver drops a `change` made on a text its app has
 //! since replaced, so the two end with the same text and no key is lost.
+//! A new `revision` is the app writing its value again (it refused a key:
+//! its text did not change, the field's did), and is taken as a write is:
+//! the keys typed after the refused one are carried onto it.
 //! A driver from before `baseHash` is answered as before: a value the
-//! field sent itself is a late echo, any other resets the buffer.
+//! field sent itself is a late echo, any other resets the buffer, and so
+//! does a new `revision`.
 
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -90,6 +94,20 @@ fn take_value(
         }
         return Taken::Kept;
     }
+    take_write(field, synced, echoes, value, base_hash, reports)
+}
+
+/// Take a `value` the driver's app wrote over the text hashing to
+/// `base_hash`: it replaces that text, and what the field typed into it
+/// since is done again to the value.
+fn take_write(
+    field: &mut Field,
+    synced: &str,
+    echoes: &mut VecDeque<String>,
+    value: &str,
+    base_hash: u32,
+    reports: bool,
+) -> Taken {
     // The text the driver knew: its last value, or one reported since.
     let known = std::iter::once(synced)
         .chain(echoes.iter().map(String::as_str))
@@ -109,6 +127,31 @@ fn take_value(
     };
     echoes.clear();
     taken
+}
+
+/// Take the `value` of a new `revision`: the app wrote it again, the same
+/// text or another, over the text hashing to `base_hash` (it refused a key
+/// and wants its text back). A write as any other, but never the field's
+/// own text coming back: the field shows it, with what was typed after the
+/// text the app knew carried onto it. A driver that names no text (one
+/// from before it) is answered as before: the value replaces the buffer
+/// and what was typed since is dropped.
+fn take_revision(
+    field: &mut Field,
+    synced: &str,
+    echoes: &mut VecDeque<String>,
+    value: &str,
+    base_hash: Option<u32>,
+    reports: bool,
+) -> Taken {
+    match base_hash {
+        Some(base_hash) => take_write(field, synced, echoes, value, base_hash, reports),
+        None => {
+            field.reset(value);
+            echoes.clear();
+            Taken::Reset
+        }
+    }
 }
 
 /// Tell the driver the field's text changed (`change`), and expect it back.
@@ -133,8 +176,9 @@ impl RootView {
 }
 
 /// Create the editing state of a field new to the tree, or bring an existing
-/// one in line with its props: a new `revision` resets the buffer, a new
-/// `value` is taken as `take_value` says, a new `selection` selects.
+/// one in line with its props: the `value` of a new `revision` is taken as
+/// `take_revision` says, a new `value` as `take_value` says, and a new
+/// `selection` selects.
 pub(crate) fn sync_input(
     inputs: &mut HashMap<String, InputState>,
     events: &EventSender,
@@ -146,10 +190,15 @@ pub(crate) fn sync_input(
             let mut taken = Taken::Kept;
             if state.revision != spec.revision {
                 state.revision = spec.revision;
-                state.field.reset(&spec.value);
+                taken = take_revision(
+                    &mut state.field,
+                    &state.synced_value,
+                    &mut state.echoes,
+                    &spec.value,
+                    spec.base_hash,
+                    spec.on_change,
+                );
                 state.synced_value = spec.value.clone();
-                state.echoes.clear();
-                taken = Taken::Reset;
             } else if state.synced_value != spec.value {
                 taken = take_value(
                     &mut state.field,

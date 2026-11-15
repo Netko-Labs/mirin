@@ -168,7 +168,8 @@ patches change it in place, in order (section "Patches").
   editing buffer, caret, selection, and focus (`window::InputState`); a
   different `value` in a later tree resets the buffer (controlled-input
   semantics), and so does a new `revision`: the caret goes to the end, or to
-  `selection` when the tree has one. Enter submits a single-line input;
+  `selection` when the tree has one (unless the field typed meanwhile:
+  "Two writers", below). Enter submits a single-line input;
   multiline inserts a newline and Ctrl/Cmd+Enter submits.
   Two writers (`src/value.rs`, `src/field/rebase.rs`): a field's text is
   typed in the renderer and set by the app, and the two cross (a keypad
@@ -203,7 +204,28 @@ patches change it in place, in order (section "Patches").
   real window, with the app saying no caret, its caret at the line's end
   and inside it). Without `baseHash` on the node
   (a driver from before it) the host does as it did: a value it reported
-  itself is a late echo, any other resets and drops what was typed. A host
+  itself is a late echo, any other resets and drops what was typed.
+  A new `revision` is a write too (2026-11-15). An app that refuses a key
+  cannot say so with its `value`, which did not change, so it bumps
+  `revision` (`valueRevision`): the app wrote its value again. With
+  `baseHash` that is a write over the text the driver knew the field held
+  (the one with the refused key), taken as any other except that it is
+  never the field's own text coming back: a field that still holds that
+  text is reset to the value, and one that typed since has the typing
+  carried onto it and reports it. "12x+3" typed at once into a line that
+  takes no "x": the app hears "12x" and writes "12" again over it, the
+  field holds "12x+3" by then, and it ends as "12+3", which the app hears
+  as one change made on its "12" (`value::tests::refusal`, and the
+  `refuse` rounds of `bench/field-crossing.tsx`). Before, a new
+  `revision` reset the buffer whatever it held and the "+3" was lost
+  (Dashi's Calculator waited 25 ms before taking a key out). So
+  `revision` no longer means "drop what the field holds"; it means "this
+  value is a write, though it is the same text as the last". Without
+  `baseHash` (a driver from before `rebase`, or a host that was never
+  told) it resets as it did. A host that carries typing over a new
+  `revision` says `"revisionRebase":true` in its `protocol` line; a
+  driver sends `baseHash` with a new `revision` to any host that says
+  `rebase` (one from before this takes the node and resets). A host
   that does all this says `"rebase":true` in its `protocol` line (and
   names `MIRIN_METAL_REBASE`, `REBASE_MARKER`); one from before refuses a
   tree with `baseHash`, so a driver sends it only to a host that said so.
@@ -593,7 +615,9 @@ app has since replaced: `lib/field-texts.ts` drops a `change` whose `baseHash`
 is not the text the field holds as far as the driver knows, and every field's
 node says which text its `value` was set over, to a host that said `rebase`;
 an app that wants to merge by hand hears every `change`, with both hashes, on
-`transport.onEvent`) and
+`transport.onEvent`), `valueRevision` (bump it to write `value` again after
+refusing an edit: the keys typed after the refused one are typed again on
+`value` and heard, on a host that says `revisionRebase`) and
 `selectionColor` on it,
 `runs` (`TextRun`: `start`, `end`, `color`, `backgroundColor`, `fontWeight`,
 `fontStyle`, `textDecorationLine`, `fontSize`, `press`) and `onRunPress`
@@ -646,7 +670,8 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
   says `"settle":true` too, for the `settle` simulation, `"rebase":true` for
   a field's `baseHash`, `"selectionHash":true` for a `selection`'s
-  `textHash`, `"scroll":true` for a scroll view's offset,
+  `textHash`, `"revisionRebase":true` for typing carried over a new
+  `revision`, `"scroll":true` for a scroll view's offset,
   `"imageError":true` for an image's `onError`, and `"textAntialiasing":true`
   for the line of that name, section 4). A driver
   patches only a host that announced a version it speaks; until then, and

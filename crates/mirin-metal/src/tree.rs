@@ -350,8 +350,10 @@ pub struct InputProps {
     /// Driver-owned value. When it changes between trees the buffer is reset.
     #[serde(default)]
     pub value: String,
-    /// A new number resets the buffer to `value` even when `value` didn't change: the
+    /// A new number says the app wrote `value` again, even when `value` didn't change: the
     /// driver refused a change it was sent (a key it took for itself) and wants its text back.
+    /// With `base_hash` it is a write over that text, and what the field typed into it since
+    /// is carried onto the value; without it the buffer is reset to `value`.
     #[serde(default)]
     pub revision: u64,
     /// What the field held, as far as the driver knew, when its app set this

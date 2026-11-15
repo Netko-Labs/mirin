@@ -68,6 +68,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             ...(record.activation === true ? { activation: true } : {}),
             ...(record.rebase === true ? { rebase: true } : {}),
             ...(record.selectionHash === true ? { selectionHash: true } : {}),
+            ...(record.revisionRebase === true ? { revisionRebase: true } : {}),
             ...(record.scroll === true ? { scroll: true } : {}),
             ...(record.imageError === true ? { imageError: true } : {}),
             ...(record.textAntialiasing === true ? { textAntialiasing: true } : {}),
