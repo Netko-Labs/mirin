@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{div, list, prelude::*, px, AnyElement, Context, Div, ListAlignment, ListState};
+use sumi::{div, list, prelude::*, px, AnyElement, Context, Div, ListAlignment, ListState};
 
 use crate::render::{node_id, record_child_bounds, render_node, watches_layout};
 use crate::tree::{Align, Direction, NodeSpec, ViewProps};

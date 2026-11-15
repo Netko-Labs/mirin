@@ -4,11 +4,11 @@
 //! paths a person does without touching the desktop. The layout query reports
 //! the painted bounds of every id'd node so a driver can target nodes by id.
 
-use gpui::{
+use serde::Deserialize;
+use sumi::{
     point, px, App, FocusHandle, Keystroke, ListState, Modifiers, Pixels, Point, ScrollHandle,
     Window,
 };
-use serde::Deserialize;
 
 use crate::events::{EventSender, Modifiers as Held, PointerPhase};
 pub(crate) use crate::layout::LayoutMap;
@@ -303,7 +303,7 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
         SimAction::Hover(id, hovered) => events.hover(&id, hovered),
         SimAction::Move(position) => {
             let _ = window.dispatch_event(
-                gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                sumi::PlatformInput::MouseMove(sumi::MouseMoveEvent {
                     position,
                     pressed_button: None,
                     modifiers: Modifiers::default(),

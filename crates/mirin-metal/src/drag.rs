@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{ExternalPaths, Pixels, Point, Window};
+use sumi::{ExternalPaths, Pixels, Point, Window};
 
 use crate::events::{DropEvent, DropPhase};
 use crate::tree::{DragFiles, NodeSpec};

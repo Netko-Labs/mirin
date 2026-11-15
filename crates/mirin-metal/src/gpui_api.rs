@@ -2,13 +2,13 @@
 //! began on), over the engine's own (`forks/zed`). It folds into the engine
 //! when the engine becomes sumi (docs/metal/engine.md, step 3).
 
-use gpui::{
+use sumi::{
     App, Application, AsyncApp, BoxShadow, FocusHandle, Hsla, Keystroke, ListState, Pixels, Point,
     ScrollHandle, ShapedLine, Size, Subscription, Window, WindowKind, WindowOptions,
 };
 
 #[cfg(target_os = "linux")]
-pub(crate) use gpui::layer_shell::{KeyboardInteractivity, Layer};
+pub(crate) use sumi::layer_shell::{KeyboardInteractivity, Layer};
 
 /// A layer surface's layer. Layer surfaces are Wayland's: elsewhere the
 /// options parse (the protocol is the same on every platform) and the
@@ -32,7 +32,7 @@ pub enum KeyboardInteractivity {
     #[default]
     OnDemand,
 }
-pub(crate) use gpui::ScrollEvent as ScrollWheelEvent;
+pub(crate) use sumi::ScrollEvent as ScrollWheelEvent;
 
 /// The application, on the platform GPUI picks, with GPUI's own AccessKit
 /// adapter off: mirin's `access/` tree is the one screen readers get (it is
@@ -40,12 +40,12 @@ pub(crate) use gpui::ScrollEvent as ScrollWheelEvent;
 /// not), so GPUI's would only publish a second, empty application
 /// (docs/metal/gpui-next.md, "Round 5: a small app's footprint").
 pub(crate) fn application() -> Application {
-    Application::new_inaccessible(gpui_platform::current_platform(false))
+    Application::new_inaccessible(sumi_platform::current_platform(false))
 }
 
 /// The event loop goes on when the last window closes (a resident host hides it).
 pub(crate) fn keep_running_without_windows(cx: &mut App) {
-    cx.set_quit_mode(gpui::QuitMode::Explicit);
+    cx.set_quit_mode(sumi::QuitMode::Explicit);
 }
 
 /// Run `callback` whenever a window closes.
@@ -69,13 +69,13 @@ pub(crate) fn focus(window: &mut Window, handle: &FocusHandle, cx: &mut App) {
 /// How far a scroll view can scroll.
 pub(crate) fn scroll_max(handle: &ScrollHandle) -> Size<Pixels> {
     let max = handle.max_offset();
-    gpui::size(max.x, max.y)
+    sumi::size(max.x, max.y)
 }
 
 /// How far a list can scroll, for its scroll bar.
 pub(crate) fn list_scroll_max(state: &ListState) -> Size<Pixels> {
     let max = state.max_offset_for_scrollbar();
-    gpui::size(max.x, max.y)
+    sumi::size(max.x, max.y)
 }
 
 /// Paint a shaped line from its left edge.
@@ -85,8 +85,8 @@ pub(crate) fn paint_line(
     line_height: Pixels,
     window: &mut Window,
     cx: &mut App,
-) -> gpui::Result<()> {
-    line.paint(origin, line_height, gpui::TextAlign::Left, None, window, cx)
+) -> sumi::Result<()> {
+    line.paint(origin, line_height, sumi::TextAlign::Left, None, window, cx)
 }
 
 /// An outer box shadow.
@@ -109,17 +109,17 @@ pub(crate) fn box_shadow(
 /// `&'static str`, dynamic text names the platform.
 pub(crate) fn parse_keystroke(source: &str) -> Result<Keystroke, impl std::fmt::Debug> {
     let os = if cfg!(target_os = "macos") {
-        gpui::OperatingSystem::Mac
+        sumi::OperatingSystem::Mac
     } else if cfg!(target_os = "windows") {
-        gpui::OperatingSystem::Windows
+        sumi::OperatingSystem::Windows
     } else {
-        gpui::OperatingSystem::Linux
+        sumi::OperatingSystem::Linux
     };
     Keystroke::parse_with_os(source, os)
 }
 
 /// `on_scroll` (upstream's name for `on_scroll_wheel`).
-pub(crate) fn on_wheel<E: gpui::InteractiveElement>(
+pub(crate) fn on_wheel<E: sumi::InteractiveElement>(
     element: E,
     listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
 ) -> E {
@@ -164,13 +164,13 @@ pub struct LayerShellOptions {
 #[cfg(target_os = "linux")]
 impl LayerShellOptions {
     fn window_kind(&self) -> WindowKind {
-        use gpui::{layer_shell::Anchor, px};
+        use sumi::{layer_shell::Anchor, px};
         let mut anchor = Anchor::empty();
         anchor.set(Anchor::TOP, self.anchor.top);
         anchor.set(Anchor::BOTTOM, self.anchor.bottom);
         anchor.set(Anchor::LEFT, self.anchor.left);
         anchor.set(Anchor::RIGHT, self.anchor.right);
-        WindowKind::LayerShell(gpui::layer_shell::LayerShellOptions {
+        WindowKind::LayerShell(sumi::layer_shell::LayerShellOptions {
             namespace: self.namespace.clone(),
             layer: self.layer,
             anchor,
@@ -249,12 +249,12 @@ pub(crate) fn draw(window: &mut Window, cx: &mut App) {
 /// A retained subtree whose root draws nothing from its own size: resized
 /// with everything inside where it was, its drawing is kept
 /// (`Retained::stretchable`).
-pub(crate) fn stretchable(retained: gpui::Retained, stretchable: bool) -> gpui::Retained {
+pub(crate) fn stretchable(retained: sumi::Retained, stretchable: bool) -> sumi::Retained {
     retained.stretchable(stretchable)
 }
 
 /// Fill the text system's caches for `fonts` (which faces match each, in
 /// order), from any thread, so the first text shaped in one doesn't.
-pub(crate) fn prewarm_fonts(text_system: &gpui::TextSystem, fonts: &[gpui::Font]) {
+pub(crate) fn prewarm_fonts(text_system: &sumi::TextSystem, fonts: &[sumi::Font]) {
     text_system.prewarm_fonts(fonts);
 }

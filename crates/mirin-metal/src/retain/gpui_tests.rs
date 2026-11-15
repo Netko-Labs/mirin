@@ -12,7 +12,7 @@ use std::{
     rc::Rc,
 };
 
-use gpui::{
+use sumi::{
     div, point, prelude::*, px, retained, rgb, size, AnyElement, Context, Entity, Modifiers,
     RetainedDraw, ScrollHandle, TestAppContext, VisualTestContext, Window,
 };
@@ -427,7 +427,7 @@ fn count(draws: &HashMap<RetainedDraw, usize>, draw: RetainedDraw) -> usize {
     draws.get(&draw).copied().unwrap_or_default()
 }
 
-#[gpui::test]
+#[sumi::test]
 fn kept_and_redrawn_rows_draw_what_drawing_everything_does(cx: &mut TestAppContext) {
     let kept = open(cx, plain(rows(12)), true);
     // Nothing changes: the rows are reused.
@@ -467,7 +467,7 @@ fn kept_and_redrawn_rows_draw_what_drawing_everything_does(cx: &mut TestAppConte
     assert_same(&again, &whole, "again");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn scrolled_rows_are_moved_not_drawn_again(cx: &mut TestAppContext) {
     let draws = compare(
         cx,
@@ -496,7 +496,7 @@ fn scrolled_rows_are_moved_not_drawn_again(cx: &mut TestAppContext) {
     assert!(count(&draws, RetainedDraw::Redrawn) > 5, "{draws:?}");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn rows_only_resized_keep_their_drawings(cx: &mut TestAppContext) {
     let width = |width: f32| {
         move |scene: &mut Scene| {
@@ -530,7 +530,7 @@ fn rows_only_resized_keep_their_drawings(cx: &mut TestAppContext) {
     }
 }
 
-#[gpui::test]
+#[sumi::test]
 fn rows_below_one_that_grew_are_moved(cx: &mut TestAppContext) {
     let grow = |index: usize, height: f32| {
         move |scene: &mut Scene| {
@@ -566,7 +566,7 @@ fn rows_below_one_that_grew_are_moved(cx: &mut TestAppContext) {
     assert!(count(&draws, RetainedDraw::Moved) > 10, "{draws:?}");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn subtrees_inside_moved_rows_keep_their_own_drawings(cx: &mut TestAppContext) {
     let recolor = |index: usize| {
         move |scene: &mut Scene| {
@@ -600,7 +600,7 @@ fn subtrees_inside_moved_rows_keep_their_own_drawings(cx: &mut TestAppContext) {
     assert!(count(&draws, RetainedDraw::Skipped) > 100, "{draws:?}");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn what_is_under_the_pointer_is_drawn_again_when_rows_move(cx: &mut TestAppContext) {
     // The pointer rests over the rows: each scroll puts another row (and
     // cell) under it, hovered though no pointer move said so.
@@ -633,7 +633,7 @@ fn what_is_under_the_pointer_is_drawn_again_when_rows_move(cx: &mut TestAppConte
     assert!(count(&draws, RetainedDraw::Moved) > 5, "{draws:?}");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_view_notified_while_it_was_left_undrawn_is_built_again(cx: &mut TestAppContext) {
     let run = |cx: &mut TestAppContext, retain: bool| {
         let opened = open(cx, scrolled(30, 3), retain);
@@ -664,24 +664,24 @@ fn a_view_notified_while_it_was_left_undrawn_is_built_again(cx: &mut TestAppCont
     assert!(count(&draws, RetainedDraw::Skipped) > 20, "{draws:?}");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_subtree_whose_elements_differ_from_build_to_build_is_built_apart(cx: &mut TestAppContext) {
     let mut scene = scrolled(12, 0);
     // Rows that may not be copied elsewhere are built again when they move,
     // with one more element than the layout they kept was made for.
     scene.loose = false;
     scene.unsteady = Some(Rc::default());
-    gpui::take_built_apart();
+    sumi::take_built_apart();
     let draws = compare(
         cx,
         scene,
         &[&|_| Some(9.0), &|_| Some(30.0), &|_| Some(0.0)],
     );
     assert!(count(&draws, RetainedDraw::Redrawn) > 10, "{draws:?}");
-    assert!(gpui::take_built_apart() > 10);
+    assert!(sumi::take_built_apart() > 10);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn rows_that_may_not_move_are_drawn_where_they_land(cx: &mut TestAppContext) {
     let mut scene = scrolled(30, 2);
     scene.loose = false;
@@ -703,7 +703,7 @@ fn rows_that_may_not_move_are_drawn_where_they_land(cx: &mut TestAppContext) {
 /// frame (as mirin-metal's root view is) left the row notified on every
 /// frame, and a notified subtree is never left out: once scrolled out of
 /// view it was copied, unseen, for good.
-#[gpui::test]
+#[sumi::test]
 fn what_a_build_reads_does_not_keep_the_subtree_around_it_in_the_frame(cx: &mut TestAppContext) {
     let run = |cx: &mut TestAppContext, reads: bool| {
         let mut scene = scrolled(30, 3);
@@ -753,7 +753,7 @@ fn what_a_build_reads_does_not_keep_the_subtree_around_it_in_the_frame(cx: &mut 
 /// layout, where a subtree compares what it is drawn under: a kept subtree
 /// went on showing its invisible drawing (metal-ui's popover without its
 /// heading, its menu without the items in a group).
-#[gpui::test]
+#[sumi::test]
 fn rows_first_drawn_under_no_opacity_are_drawn_again_when_it_shows(cx: &mut TestAppContext) {
     let mut scene = plain(rows(6));
     scene.opacity = 0.0;
@@ -803,7 +803,7 @@ const THERE_AND_BACK: &[f32] = &[
     0., 70., 140., 210., 140., 70., 0., 70., 140., 210., 140., 70., 0., 210., 0.,
 ];
 
-#[gpui::test]
+#[sumi::test]
 fn rows_scrolled_out_and_back_are_copied_not_built_again(cx: &mut TestAppContext) {
     for cells in [0, 3] {
         let kept = scroll_through(cx, cells, true, THERE_AND_BACK);
@@ -825,7 +825,7 @@ fn rows_scrolled_out_and_back_are_copied_not_built_again(cx: &mut TestAppContext
     }
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_row_under_the_pointer_when_it_leaves_the_view_is_not_kept_hovered(cx: &mut TestAppContext) {
     // A row is hovered, scrolled out of view under a pointer that stays
     // (no move tells it), the pointer moves far below, over where another
@@ -862,7 +862,7 @@ fn a_row_under_the_pointer_when_it_leaves_the_view_is_not_kept_hovered(cx: &mut 
     }
 }
 
-#[gpui::test]
+#[sumi::test]
 fn cells_that_hear_hovers_hear_what_drawing_everything_tells_them(cx: &mut TestAppContext) {
     // The pointer rests over the view while it scrolls, rows clipped at its
     // edges move in and out, and the window is resized under it.
@@ -912,7 +912,7 @@ const UNEVEN_STEPS: &[Step<'static>] = &[
     &|_| Some(13.3),
 ];
 
-#[gpui::test]
+#[sumi::test]
 fn rows_move_by_whole_device_pixels_at_any_scale_factor(cx: &mut TestAppContext) {
     // Port of the fork's `scaled` test. Upstream's scroll view paints its
     // content at whole device pixels, so rows move by whole device pixels
@@ -951,12 +951,12 @@ fn rows_move_by_whole_device_pixels_at_any_scale_factor(cx: &mut TestAppContext)
     compare_at(cx, scrolled(30, 0), 1.1, UNEVEN_STEPS);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn small_wheel_steps_draw_what_drawing_everything_does(cx: &mut TestAppContext) {
     // Port of the fork's `scaled` wheel test: a touchpad's steps of a
     // fraction of a pixel, the view painted at the device pixel upstream
     // snaps its offset to, rows moved, cells with masks of their own.
-    use gpui::{ScrollDelta, ScrollEvent, TouchPhase};
+    use sumi::{ScrollDelta, ScrollEvent, TouchPhase};
     const STEP: f32 = 0.3;
     const STEPS: usize = 40;
     // Cells clip their text with masks of their own, which keep a row from

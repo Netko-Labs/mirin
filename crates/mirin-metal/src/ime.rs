@@ -14,7 +14,7 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui::{
+use sumi::{
     px, App, Bounds, Entity, InputHandler, Pixels, Point, TextLayout, UTF16Selection, Window,
 };
 

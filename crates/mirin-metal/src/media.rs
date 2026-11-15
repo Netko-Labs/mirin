@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-use gpui::{div, img, prelude::*, px, rgba, svg, AnyElement, AssetSource, ObjectFit, SharedString};
+use sumi::{div, img, prelude::*, px, rgba, svg, AnyElement, AssetSource, ObjectFit, SharedString};
 
 use crate::tree::{parse_color, ImageProps, SvgProps};
 
@@ -38,14 +38,14 @@ pub(crate) fn register_svg(markup: &str) -> String {
 pub(crate) struct MetalAssets;
 
 impl AssetSource for MetalAssets {
-    fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+    fn load(&self, path: &str) -> sumi::Result<Option<Cow<'static, [u8]>>> {
         let map = registry()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         Ok(map.get(path).map(|bytes| Cow::Owned(bytes.clone())))
     }
 
-    fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
+    fn list(&self, path: &str) -> sumi::Result<Vec<SharedString>> {
         let map = registry()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());

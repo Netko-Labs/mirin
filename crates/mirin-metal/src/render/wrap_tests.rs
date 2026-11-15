@@ -1,7 +1,7 @@
 //! Where GPUI breaks a wrapped text, on its test platform (every char one em
 //! wide: 10 px at its size).
 
-use gpui::{div, point, prelude::*, px, size, AvailableSpace, StyledText, TestAppContext};
+use sumi::{div, point, prelude::*, px, size, AvailableSpace, StyledText, TestAppContext};
 
 const URL_NOTE: &str = "Read the plan at https://github.com/Netko-Labs/dashiOS/blob/release/0.8.0/docs/architecture.md#session-startup-and-the-systemd-user-target before the review.";
 
@@ -22,7 +22,7 @@ fn lines(cx: &mut TestAppContext, text: &'static str, chars: usize) -> Vec<Strin
     layout.wrapped_text().lines().map(str::to_owned).collect()
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_long_url_breaks_after_a_slash_or_a_hyphen_where_the_line_is_full(cx: &mut TestAppContext) {
     // Before, a line broke before a slash and never at a hyphen: a narrow note had
     // "https:/", "/github.com/Netko-Labs/dashiOS", "/blob/release/0.8.0/docs", …, a line a segment.
@@ -39,7 +39,7 @@ fn a_long_url_breaks_after_a_slash_or_a_hyphen_where_the_line_is_full(cx: &mut T
     );
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_url_in_a_wide_line_breaks_once_at_the_last_slash_that_fits(cx: &mut TestAppContext) {
     assert_eq!(
         lines(cx, URL_NOTE, 62),
@@ -51,7 +51,7 @@ fn a_url_in_a_wide_line_breaks_once_at_the_last_slash_that_fits(cx: &mut TestApp
     );
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_url_that_fits_on_the_next_line_moves_there_whole(cx: &mut TestAppContext) {
     // As a browser does: it breaks at the space before the URL, not at a slash inside it.
     assert_eq!(

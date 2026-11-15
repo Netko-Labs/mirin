@@ -9,7 +9,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui::{Bounds, Pixels, TextLayout, Window};
+use sumi::{Bounds, Pixels, TextLayout, Window};
 
 use crate::caret::caret_point;
 

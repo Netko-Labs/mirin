@@ -21,7 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{
+use sumi::{
     canvas, fill, point, px, rgba, size, AnyElement, App, Bounds, DispatchPhase, Hitbox,
     HitboxBehavior, IntoElement, ListState, MouseButton, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, Styled, Window,
@@ -496,7 +496,7 @@ pub(crate) fn bars_for(scrolled: Scrolled, activity: Activity) -> AnyElement {
     .into_any_element()
 }
 
-fn with_opacity(color: u32, opacity: f32) -> gpui::Rgba {
+fn with_opacity(color: u32, opacity: f32) -> sumi::Rgba {
     let alpha = ((color & 0xff) as f32 * opacity).round() as u32;
     rgba((color & !0xff) | alpha)
 }
@@ -607,8 +607,8 @@ fn listen(
 mod tests {
     use super::{bars, fade, paged, scrolled_at, thumb_span, Activity, Axis, Geometry, Press};
     use super::{BAND, FADE, SHOWN};
-    use gpui::{point, px, size, Bounds};
     use std::time::{Duration, Instant};
+    use sumi::{point, px, size, Bounds};
 
     #[test]
     fn the_bar_shows_while_scrolling_then_fades() {

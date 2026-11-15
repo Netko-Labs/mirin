@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{Bounds, Pixels, Point};
+use sumi::{Bounds, Pixels, Point};
 
 use crate::sim::LayoutNode;
 

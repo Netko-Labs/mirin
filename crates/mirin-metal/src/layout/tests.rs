@@ -5,7 +5,7 @@ mod old;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use gpui::{point, px, size, Bounds, Pixels};
+use sumi::{point, px, size, Bounds, Pixels};
 
 use super::{Frame, LayoutMap, Placed};
 use old::OldMap;

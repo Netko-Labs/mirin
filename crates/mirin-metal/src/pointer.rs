@@ -6,7 +6,7 @@
 //! window-wide, not tied to the root's hitbox (which stops at the window's
 //! edge, and left a drag that ended outside it stuck).
 
-use gpui::{
+use sumi::{
     canvas, div, prelude::*, AnyElement, Context, DispatchPhase, DragMoveEvent, ExternalPaths,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
 };

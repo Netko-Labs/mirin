@@ -12,7 +12,7 @@
 
 use std::ops::Range;
 
-use gpui::{fill, point, px, rgba, App, Pixels, SharedString, TextLayout, Window};
+use sumi::{fill, point, px, rgba, App, Pixels, SharedString, TextLayout, Window};
 
 use crate::caret::{caret_point, selection_rects, Laid};
 use crate::field::Display;

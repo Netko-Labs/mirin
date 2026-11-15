@@ -12,9 +12,9 @@ publish = false
 description = "mirin metal (alpha): GPU-rendered native UI for mirin apps, built on GPUI"
 
 [dependencies]
-# The engine: Zed's GPUI, forked (forks/zed; becoming sumi, docs/metal/engine.md).
-gpui = { path = "../../forks/zed/crates/gpui", default-features = false, features = ["wayland", "x11"] }
-gpui_platform = { path = "../../forks/zed/crates/gpui_platform", default-features = false, features = ["wayland", "x11"] }
+# The engine: sumi (forks/sumi; from Zed's GPUI, docs/metal/engine.md).
+sumi = { path = "../../forks/sumi/crates/sumi", default-features = false, features = ["wayland", "x11"] }
+sumi-platform = { path = "../../forks/sumi/crates/sumi-platform", default-features = false, features = ["wayland", "x11"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async channel that wakes the window when the driver sends (already in gpui's tree).
@@ -45,7 +45,7 @@ accesskit_unix = "0.24"
 # GPUI's test platform (a window with no GPU, a monospace stand-in for the
 # text system), for tests that lay elements out (src/render/tests.rs).
 [dev-dependencies]
-gpui = { path = "../../forks/zed/crates/gpui", default-features = false, features = ["test-support"] }
+sumi = { path = "../../forks/sumi/crates/sumi", default-features = false, features = ["test-support"] }
 # AccessKit's own tree (already built: the Unix adapter uses it), so the
 # accessibility tests hand it every update as the adapter would.
 accesskit_consumer = "0.39"

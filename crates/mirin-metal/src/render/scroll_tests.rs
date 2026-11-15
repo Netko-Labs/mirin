@@ -4,7 +4,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use gpui::{
+use sumi::{
     div, point, prelude::*, px, size, Context, Div, Modifiers, MouseButton, Pixels, Point,
     ScrollDelta, ScrollHandle, Stateful, TestAppContext, VisualTestContext, Window,
 };
@@ -186,14 +186,14 @@ fn wheel(cx: &mut VisualTestContext, at: Point<Pixels>, dy: f32) {
     draw(cx);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_scroll_view_scrolls_exactly_to_its_end(cx: &mut TestAppContext) {
     // Ten 50-tall rows in a 300-tall window: 200 past it.
     let (_, outer, _, _) = open(cx, Spec::default(), 400.0, 300.0);
     assert_eq!(max(&outer), 200.0);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn its_padding_counts_once(cx: &mut TestAppContext) {
     // 22 above and below the rows, 12 between them (Software's pages). The
     // bars' canvas at the view's corner once made the top padding count twice:
@@ -207,7 +207,7 @@ fn its_padding_counts_once(cx: &mut TestAppContext) {
     assert_eq!(max(&outer), 22.0 + 500.0 + 9.0 * 12.0 + 22.0 - 300.0);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn its_last_rows_margin_and_its_border_count(cx: &mut TestAppContext) {
     let spec = Spec {
         last_margin: 30.0,
@@ -224,7 +224,7 @@ fn its_last_rows_margin_and_its_border_count(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
+#[sumi::test]
 fn the_end_stays_in_reach_and_in_range_as_the_window_changes(cx: &mut TestAppContext) {
     let (_, outer, _, cx) = open(cx, Spec::default(), 400.0, 300.0);
     let at = point(px(100.0), px(100.0));
@@ -253,7 +253,7 @@ fn the_end_stays_in_reach_and_in_range_as_the_window_changes(cx: &mut TestAppCon
     assert_eq!(scrolled(&outer), 166.5);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_view_scrolled_between_pixels_paints_on_them_and_keeps_its_offset(cx: &mut TestAppContext) {
     // The second row is a scroll view itself: where it is painted says
     // where the page painted its rows. A test window draws two device
@@ -297,7 +297,7 @@ fn a_view_scrolled_between_pixels_paints_on_them_and_keeps_its_offset(cx: &mut T
     assert_eq!(painted(&inner), 50.0 - 236.0);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn content_that_grows_later_scrolls_further(cx: &mut TestAppContext) {
     let (spec, outer, _, cx) = open(cx, Spec::default(), 400.0, 300.0);
     spec.borrow_mut().rows = 20;
@@ -311,7 +311,7 @@ fn content_that_grows_later_scrolls_further(cx: &mut TestAppContext) {
     assert_eq!((max(&outer), scrolled(&outer)), (100.0, 100.0));
 }
 
-#[gpui::test]
+#[sumi::test]
 fn rows_that_clip_are_not_squeezed_to_fit(cx: &mut TestAppContext) {
     // A rounded card clips its content (`overflow: hidden`), which in CSS lets
     // it shrink to nothing: in a scroll view each such row was squeezed to fit
@@ -328,7 +328,7 @@ fn rows_that_clip_are_not_squeezed_to_fit(cx: &mut TestAppContext) {
     assert_eq!(max(&outer), 200.0, "each row keeps its length");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn the_wheel_scrolls_the_innermost_view_then_the_one_around_it(cx: &mut TestAppContext) {
     // A 100-tall list of six 50-tall rows, second on the page.
     let spec = Spec {
@@ -358,7 +358,7 @@ fn the_wheel_scrolls_the_innermost_view_then_the_one_around_it(cx: &mut TestAppC
     );
 }
 
-#[gpui::test]
+#[sumi::test]
 fn the_thumb_can_be_dragged(cx: &mut TestAppContext) {
     let (_, outer, _, cx) = open(cx, Spec::default(), 400.0, 300.0);
     let none = Modifiers::none();
@@ -392,7 +392,7 @@ fn the_thumb_can_be_dragged(cx: &mut TestAppContext) {
     assert_eq!(scrolled(&outer), 200.0);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_press_on_the_track_pages(cx: &mut TestAppContext) {
     let spec = Spec {
         rows: 40,
@@ -414,7 +414,7 @@ fn a_press_on_the_track_pages(cx: &mut TestAppContext) {
     assert_eq!(scrolled(&outer), 0.0, "and back up");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn the_bar_takes_only_presses_on_it(cx: &mut TestAppContext) {
     use std::cell::Cell;
     // A row as wide as the view, under the bar's band.
@@ -497,7 +497,7 @@ fn a_scroll_views_children_keep_their_length_unless_they_ask() {
     }
 }
 
-#[gpui::test]
+#[sumi::test]
 fn content_wider_than_a_view_that_scrolls_down_has_no_bar_across(cx: &mut TestAppContext) {
     struct Wide(ScrollHandle);
     impl Render for Wide {
@@ -522,7 +522,7 @@ fn content_wider_than_a_view_that_scrolls_down_has_no_bar_across(cx: &mut TestAp
     assert_eq!(crate::scrollbar::bars(&geometry).len(), 1);
 }
 
-#[gpui::test]
+#[sumi::test]
 fn the_pointer_near_the_edge_shows_the_bar_until_it_leaves_the_window(cx: &mut TestAppContext) {
     use crate::scrollbar::Axis;
     struct Near(ScrollHandle, Activity);
@@ -546,7 +546,7 @@ fn the_pointer_near_the_edge_shows_the_bar_until_it_leaves_the_window(cx: &mut T
     cx.simulate_mouse_move(point(px(392.0), px(100.0)), None, none);
     draw(cx);
     assert!(activity.active(Axis::Vertical), "in the band");
-    cx.simulate_event(gpui::MouseExitEvent {
+    cx.simulate_event(sumi::MouseExitEvent {
         position: point(px(399.0), px(100.0)),
         pressed_button: None,
         modifiers: none,

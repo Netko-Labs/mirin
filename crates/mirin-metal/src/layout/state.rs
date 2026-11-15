@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{px, Bounds, Pixels, Point};
+use sumi::{px, Bounds, Pixels, Point};
 
 use super::{Changes, Placed};
 

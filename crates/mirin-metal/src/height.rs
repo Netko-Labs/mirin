@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui::{div, prelude::*, px, AnyElement, Window};
+use sumi::{div, prelude::*, px, AnyElement, Window};
 
 use crate::tree::{Align, NodeSpec, ViewProps};
 
@@ -171,11 +171,11 @@ pub(crate) fn clip(
     }
     if let Some(align) = props.align_self {
         clip.style().align_self = Some(match align {
-            Align::Start => gpui::AlignItems::FlexStart,
-            Align::Center => gpui::AlignItems::Center,
-            Align::End => gpui::AlignItems::FlexEnd,
-            Align::Stretch => gpui::AlignItems::Stretch,
-            Align::Baseline => gpui::AlignItems::Baseline,
+            Align::Start => sumi::AlignItems::FlexStart,
+            Align::Center => sumi::AlignItems::Center,
+            Align::End => sumi::AlignItems::FlexEnd,
+            Align::Stretch => sumi::AlignItems::Stretch,
+            Align::Baseline => sumi::AlignItems::Baseline,
         });
     }
     let heights = heights.clone();

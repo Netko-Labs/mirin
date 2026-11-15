@@ -1,7 +1,7 @@
 //! Highlights and line numbers: where the driver's offsets land in the
 //! drawn text, and which lines a clip shows.
 
-use gpui::{point, px, size, Bounds, Pixels, Point};
+use sumi::{point, px, size, Bounds, Pixels, Point};
 
 use super::{highlight_ranges, line_starts, utf16_bytes, visible_bytes, visible_part};
 use crate::caret::Laid;

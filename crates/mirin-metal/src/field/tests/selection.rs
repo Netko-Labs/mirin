@@ -4,13 +4,13 @@
 use super::super::words::{paragraph_at, word_at, word_end_after, word_start_before};
 use super::super::{Edit, Field};
 use super::{ctrl, key, press, press_in, shift, with, Board, Rows};
-use gpui::Modifiers;
+use sumi::Modifiers;
 
 fn chars(text: &str) -> Vec<char> {
     text.chars().collect()
 }
 
-fn alt(name: &str) -> gpui::Keystroke {
+fn alt(name: &str) -> sumi::Keystroke {
     let modifiers = Modifiers {
         alt: true,
         ..Modifiers::default()
@@ -18,7 +18,7 @@ fn alt(name: &str) -> gpui::Keystroke {
     with(modifiers, name)
 }
 
-fn ctrl_shift(name: &str) -> gpui::Keystroke {
+fn ctrl_shift(name: &str) -> sumi::Keystroke {
     let modifiers = Modifiers {
         control: true,
         shift: true,

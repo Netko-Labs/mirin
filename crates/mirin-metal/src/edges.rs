@@ -1,7 +1,7 @@
 //! Box edges the flex shorthand does not cover: per-side padding, margins
 //! (including `auto`), per-side border widths, and Tailwind shadow presets.
 
-use gpui::{hsla, point, prelude::*, px, AbsoluteLength, BoxShadow, DefiniteLength, Div, Length};
+use sumi::{hsla, point, prelude::*, px, AbsoluteLength, BoxShadow, DefiniteLength, Div, Length};
 
 use crate::tree::ViewProps;
 

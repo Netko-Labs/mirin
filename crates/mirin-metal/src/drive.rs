@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
 
-use gpui::{
+use sumi::{
     prelude::*, px, size, App, AsyncApp, Bounds, TitlebarOptions, WindowBackgroundAppearance,
     WindowBounds, WindowHandle, WindowOptions,
 };
@@ -618,7 +618,7 @@ fn tell_settled(
 
 /// Under a check: the animations that asked for the next frame are told it
 /// has come, a step later on their clock (`check.rs`). Whether any had.
-fn run_animations(window: &mut gpui::Window, cx: &mut App) -> bool {
+fn run_animations(window: &mut sumi::Window, cx: &mut App) -> bool {
     let animating = window.run_next_frame_callbacks(cx) > 0;
     if animating {
         crate::check::advance();
@@ -629,7 +629,7 @@ fn run_animations(window: &mut gpui::Window, cx: &mut App) -> bool {
 /// Under a check: draw the frame the window waits for now, not when the
 /// compositor next asks (it presents the last one drawn when it does).
 /// Whether there was one.
-fn draw_if_dirty(window: &mut gpui::Window, cx: &mut App) -> bool {
+fn draw_if_dirty(window: &mut sumi::Window, cx: &mut App) -> bool {
     let draws = window.is_dirty();
     if draws {
         crate::gpui_api::draw(window, cx);
@@ -893,7 +893,7 @@ impl Drive {
         if actions.is_empty() {
             return true;
         }
-        let any_window: gpui::AnyWindowHandle = window.into();
+        let any_window: sumi::AnyWindowHandle = window.into();
         let dispatched = any_window.update(cx, |_root, window, cx| {
             for action in actions {
                 sim::perform(action, &events, window, cx);
@@ -936,7 +936,7 @@ impl Drive {
             return false;
         };
         let settling = self.settling.get_or_insert_with(Settling::start);
-        let any_window: gpui::AnyWindowHandle = window.into();
+        let any_window: sumi::AnyWindowHandle = window.into();
         let traced = crate::window::scene_traced().is_some();
         let waits = if !painted {
             Ok(true)
@@ -1172,23 +1172,23 @@ mod tests {
         drawn: std::rc::Rc<std::cell::Cell<u32>>,
     }
 
-    impl gpui::Render for Fades {
+    impl sumi::Render for Fades {
         fn render(
             &mut self,
-            window: &mut gpui::Window,
-            _: &mut gpui::Context<Self>,
-        ) -> impl gpui::IntoElement {
+            window: &mut sumi::Window,
+            _: &mut sumi::Context<Self>,
+        ) -> impl sumi::IntoElement {
             self.drawn.set(self.drawn.get() + 1);
             if self.left > 0 {
                 self.left -= 1;
                 window.request_animation_frame();
             }
-            gpui::div()
+            sumi::div()
         }
     }
 
-    #[gpui::test]
-    fn a_settle_draws_an_animation_to_its_end(cx: &mut gpui::TestAppContext) {
+    #[sumi::test]
+    fn a_settle_draws_an_animation_to_its_end(cx: &mut sumi::TestAppContext) {
         use super::{draw_if_dirty, run_animations};
         let drawn = std::rc::Rc::new(std::cell::Cell::new(0));
         let counted = drawn.clone();

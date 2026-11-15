@@ -1,7 +1,7 @@
 //! Elements as GPUI lays them out, on its test platform (every char one em
 //! wide).
 
-use gpui::{div, point, prelude::*, px, size, AvailableSpace, StyledText, TestAppContext};
+use sumi::{div, point, prelude::*, px, size, AvailableSpace, StyledText, TestAppContext};
 
 use super::one_line;
 
@@ -33,7 +33,7 @@ fn cut_in_box_at_most(cx: &mut TestAppContext, text: StyledText, max: f32) {
     );
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_one_line_text_its_box_cuts_ends_in_an_ellipsis(cx: &mut TestAppContext) {
     // Measured first at its full width (the box is sized by its content),
     // then given the box's 120 px: the line drawn is the cut one, not the
@@ -47,7 +47,7 @@ fn a_one_line_text_its_box_cuts_ends_in_an_ellipsis(cx: &mut TestAppContext) {
     assert!(layout.bounds().size.width <= px(120.0));
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_one_line_text_that_fits_is_drawn_whole(cx: &mut TestAppContext) {
     let text = StyledText::new("notes.txt");
     let layout = text.layout().clone();
@@ -57,7 +57,7 @@ fn a_one_line_text_that_fits_is_drawn_whole(cx: &mut TestAppContext) {
 
 /// The width a box centered in a 448 px column takes for `text` (as Dashi's
 /// notice is over a window's content): `max` its widest, if any.
-fn centered_width(cx: &mut TestAppContext, text: String, max: Option<f32>) -> gpui::Pixels {
+fn centered_width(cx: &mut TestAppContext, text: String, max: Option<f32>) -> sumi::Pixels {
     use std::cell::Cell;
     use std::rc::Rc;
     let seen = Rc::new(Cell::new(None));
@@ -80,7 +80,7 @@ fn centered_width(cx: &mut TestAppContext, text: String, max: Option<f32>) -> gp
                 .child(crate::render::flex_from_zero(div(), 1.0).child(StyledText::new(text)));
             div().flex().flex_col().items_center().w(px(448.0)).child(
                 boxed.child(row).child(
-                    gpui::canvas(
+                    sumi::canvas(
                         |_, _, _| {},
                         move |bounds, (), _, _| drawn.set(Some(bounds)),
                     )
@@ -93,20 +93,20 @@ fn centered_width(cx: &mut TestAppContext, text: String, max: Option<f32>) -> gp
     seen.get().expect("drawn").size.width
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_centered_box_is_never_wider_than_its_column(cx: &mut TestAppContext) {
     // Its text is longer than the column: it takes the column's width and wraps (fit-content).
     assert_eq!(centered_width(cx, NAME.repeat(2), Some(560.0)), px(448.0));
     assert_eq!(centered_width(cx, NAME.repeat(2), None), px(448.0));
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_short_centered_box_keeps_its_content_width(cx: &mut TestAppContext) {
     let width = centered_width(cx, "Saved.".into(), Some(560.0));
     assert!(width < px(448.0) && width >= px(120.0), "{width:?}");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_box_narrower_than_the_ellipsis_shows_nothing(cx: &mut TestAppContext) {
     // Not a sliver of "…" clipped at its edge (a title's detail with a few px left).
     let text = StyledText::new(NAME);
@@ -118,7 +118,7 @@ fn a_box_narrower_than_the_ellipsis_shows_nothing(cx: &mut TestAppContext) {
 /// Two texts side by side in a 200 px row, each one line; `kept` wraps each
 /// in a box that keeps its content's width (`flexShrink: 0`). What is drawn.
 fn side_by_side(
-    cx: &mut gpui::VisualTestContext,
+    cx: &mut sumi::VisualTestContext,
     first: &'static str,
     second: &'static str,
     kept: bool,
@@ -151,7 +151,7 @@ fn side_by_side(
     (layouts.0.text().to_string(), layouts.1.text().to_string())
 }
 
-#[gpui::test]
+#[sumi::test]
 fn two_one_line_texts_in_a_row_each_take_half_of_it_whatever_their_words(cx: &mut TestAppContext) {
     // Why Dashi's voice chip drew "can r…" beside a short line with room to
     // spare: a one-line text is as wide as its box (`one_line`), so two in a
@@ -169,7 +169,7 @@ fn two_one_line_texts_in_a_row_each_take_half_of_it_whatever_their_words(cx: &mu
     );
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_text_whose_words_change_is_measured_again_at_their_width(cx: &mut TestAppContext) {
     // The same place in the same window, frame after frame, with other words:
     // each frame's text is as wide as its own words, never the last frame's.
@@ -225,7 +225,7 @@ fn drawn_in_box_of(cx: &mut TestAppContext, text: &'static str, width: f32) -> (
     (drawn, wide)
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_line_whose_box_lost_part_of_a_pixel_to_rounding_is_drawn_whole(cx: &mut TestAppContext) {
     // A button as wide as its label, at scale 1.75: the box is the label's
     // width rounded to device pixels, a fraction of a px less than the line
@@ -239,7 +239,7 @@ fn a_line_whose_box_lost_part_of_a_pixel_to_rounding_is_drawn_whole(cx: &mut Tes
     assert!(cut.ends_with('…') && cut != "notes.txt", "drawn {cut:?}");
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_paragraph_sized_larger_takes_its_own_line_height(cx: &mut TestAppContext) {
     // A heading in an editable field: its paragraph shaped at its size, each
     // line at the height the style gives that size (`with_paragraph_sizes`).

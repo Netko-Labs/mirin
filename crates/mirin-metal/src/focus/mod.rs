@@ -18,7 +18,7 @@ mod order;
 
 use std::collections::HashMap;
 
-use gpui::{
+use sumi::{
     div, prelude::*, px, rgba, AnyElement, App, Context, Div, FocusHandle, KeyDownEvent, Stateful,
     Window,
 };

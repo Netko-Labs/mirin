@@ -6,7 +6,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use gpui::{div, prelude::*, px, size, Bounds, Context, Pixels, TestAppContext, Window};
+use sumi::{div, prelude::*, px, size, Bounds, Context, Pixels, TestAppContext, Window};
 
 /// A column of three rows 10 px tall, 3.25 px apart, inside 1.25 px of padding.
 struct Column {
@@ -27,7 +27,7 @@ impl Render for Column {
     }
 }
 
-#[gpui::test]
+#[sumi::test]
 fn lengths_of_a_fraction_of_a_device_pixel_are_laid_out_as_authored(cx: &mut TestAppContext) {
     let rows = Rc::new(RefCell::new(Vec::new()));
     let seen = rows.clone();

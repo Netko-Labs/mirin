@@ -3,7 +3,7 @@
 //! own `insert_op` (a quad's strips, the mask it is drawn under, a copied
 //! drawing's primitives), and GPUI's own tests need zed's workspace.
 
-use gpui::{point, size, Bounds, ContentMask, Hsla, Quad, ScaledPixels, Scene, Underline};
+use sumi::{point, size, Bounds, ContentMask, Hsla, Quad, ScaledPixels, Scene, Underline};
 
 fn square(x: f32) -> Bounds<ScaledPixels> {
     Bounds {

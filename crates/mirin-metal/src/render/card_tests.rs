@@ -4,7 +4,7 @@
 
 use std::sync::mpsc;
 
-use gpui::{px, size, TestAppContext};
+use sumi::{px, size, TestAppContext};
 
 use crate::events::EventSender;
 use crate::patch::Document;
@@ -43,7 +43,7 @@ fn node<'a>(nodes: &'a [LayoutNode], id: &str) -> &'a LayoutNode {
         .unwrap_or_else(|| panic!("node {id} was laid out"))
 }
 
-#[gpui::test]
+#[sumi::test]
 fn a_card_is_as_tall_as_its_rows_at_every_width(cx: &mut TestAppContext) {
     // 744 is the window in which the page is exactly as wide as its rows'
     // least width (a knob, 120 of words, a 260 slider): there the card came
