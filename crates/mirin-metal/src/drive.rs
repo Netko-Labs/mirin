@@ -89,6 +89,7 @@ pub fn run(
     application()
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
+            crate::text_mode::apply(cx);
             crate::render::warm_fonts(cx);
             let (access, asked) = futures::channel::mpsc::unbounded();
             let mut messages = bridge(updates, HostMessage::Driver);
@@ -223,6 +224,7 @@ pub fn run_deferred(
     application()
         .with_assets(MetalAssets)
         .run(move |cx: &mut App| {
+            crate::text_mode::apply(cx);
             // A hide closes the last window; the loop must go on without one.
             cx.set_quit_mode(sumi::QuitMode::Explicit);
             let hiding = Rc::new(Cell::new(false));

@@ -791,6 +791,19 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   to the text's (Medium text over a family with Regular and Bold only) is
   passed over by cosmic-text, which then takes the nearest weight of any
   family that has the character. It was so before sumi too.
+- **Text is antialiased in grays; subpixel is a choice.** sumi asks for
+  subpixel antialiasing on Linux (colour at a glyph's edges, sharper on a
+  panel whose subpixels are the horizontal red, green, blue stripes it
+  assumes). The host sets grayscale instead (`src/text_mode.rs`): it is
+  what Metal drew before sumi and what Dashi's look was designed on, it is
+  right on any panel, rotated or not, and a screenshot or a recording
+  carries no colour fringes to another screen. `MIRIN_METAL_TEXT=subpixel`
+  in the host's environment (`NativeHostOptions.env`, or the driver's own)
+  asks for subpixel; a window that is not opaque (a panel over the desktop)
+  draws grays either way, since the fringes need a known background.
+  `MIRIN_METAL_TEXT=grayscale` asks for grays on macOS and Windows, where
+  the host otherwise leaves the platform's default. Layout does not depend
+  on it: only glyph pixels differ.
 - **Emoji are drawn** (2026-11-15). Noto Color Emoji as Fedora ships it
   (`Noto-COLRv1.ttf`) holds COLRv1 glyphs: paint graphs of gradients,
   transforms, clips and composited layers. swash draws colour bitmaps and
