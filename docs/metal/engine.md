@@ -276,7 +276,14 @@ deferred way into their lists until only nested layers did.
 Layouts: identical to `host-sumi1` (`grid`, `browser`, `scroll`,
 `scroll-fractional`). Drawings differ from it by upstream's design, so the
 check is the host against itself with `MIRIN_METAL_RETAIN=0` and `--scene`:
-identical at 1, 1.25 and 1.5 (those four and `across`).
+identical at 1, 1.25 and 1.5 (those four and `across`) on the two builds
+before the last change to how a copied drawing goes into its lists; on the
+final one, at 1 (all five), at 1.25 (all but `across`) and at 1.5
+(`browser`, `scroll`, `scroll-fractional`). `across` at 1.25 and 1.5 and
+`grid` at 1.5 were not got clean on it: that evening one host of a pair
+heard a hover the other did not, at steps that changed from run to run, and
+`host-sumi1` against itself failed the same way. They are to be run again
+on a quiet desktop.
 `MIRIN_METAL_ACCESS_CHECK=1` over the stress bench: no complaints.
 Screenshots of the example browser (a card, a scroll area, a popover, a
 menu, a dialog, a hover card, typography) and of the stress app with
