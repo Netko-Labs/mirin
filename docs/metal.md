@@ -2724,7 +2724,19 @@ is also resident: `{"hide":true}` (`hide()`) closes its window but keeps the
 process, the GPU context, the fonts, and the newest tree (trees sent while it
 is hidden are kept, newest wins; title lines and simulated input are dropped,
 the next open names the window), and the next `open` line opens it again
-drawing that tree on its first frame, as often as the driver likes. A hide is
+drawing that tree on its first frame, as often as the driver likes, with no
+wait between them: a hide in the turn of the open (before the compositor
+configured the surface or a frame was drawn) and an open in the turn of the
+hide are both fine, on a layer surface and on a window. Every open makes a
+new `wl_surface` with a new wgpu surface on the host's one device, and a
+hide drops both before the next line is read, so nothing of the old window
+is left for the new one to collide with. (The engine before sumi drew with
+blade and lost its host to `ERROR_EXTENSION_NOT_PRESENT` and
+`ERROR_NATIVE_WINDOW_IN_USE_KHR` there in Dashi's VM, which Dashi's capsule
+waited 400 ms and 150 ms to avoid; with sumi, `bench/hide-race.ts` ran 800
+rounds, 1,800 opens, on a layer surface and 200 on a window on a hardware
+GPU, and 200 of each on llvmpipe, about 30 ms a round, with no host lost,
+no open refused and no GPU error, and it is one of the gates.) A hide is
 not a close: the host doesn't exit and `onClose` doesn't fire; closing the
 window any other way (the person, the compositor) still ends the host. An
 `open` while the window is shown, and a `hide` while it is hidden or on a host
@@ -2766,15 +2778,21 @@ bun bench/gates.ts <host> --reference=<host before the change>
   (`reopen.ts`): every open after the first makes a new surface on the GPU
   context the first one made. A host whose context came from the one
   prepared as it connected once failed here ("failed to open window: Failed
-  to create surface"), which is how Dashi's launcher did not appear.
+  to create surface"), which is how Dashi's launcher did not appear;
+- a host kept warm outlives a layer surface hidden as it opens and opened
+  as it hides, forty rounds (`hide-race.ts`): `open` and `hide` in one
+  write, a `hide` the moment the window opened (before its first frame),
+  `hide` and `open` in one write with a frame on screen, and five of them
+  in one write; after each the host has to open a window and draw it, and
+  to have logged no error from its GPU layer.
 
-20 checks, four at a time (`--jobs`), each in a nested compositor of its
+21 checks, four at a time (`--jobs`), each in a nested compositor of its
 own (`dashi-comp --backend winit --no-xwayland` on a private
 `DASHI_COMP_SOCKET`; the headless compositors cannot present on every
 machine). It prints a line a check and a summary, shows what a failed check
 said, and exits non-zero on any difference; `--only=<text>` runs the checks
 whose name has the text, `--logs=<dir>` keeps their output. Without
-`--reference` it runs the 15 scene checks and the window's.
+`--reference` it runs the 15 scene checks and the window's two.
 
 The checks wait for nothing but the host: `layout-check.tsx` gives its
 hosts `MIRIN_METAL_CHECK=1` and after each step sends `settle`, lets React
