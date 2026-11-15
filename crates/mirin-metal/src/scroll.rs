@@ -197,13 +197,16 @@ impl Reporter {
 }
 
 /// A node asked into view, until a frame has drawn the tree it is in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Reveal {
     id: String,
     frames: u8,
     /// A list brought its row in by index, from above it (`Some(true)`) or
     /// from below: once the row is laid out it goes to the edge it came by.
     came: Option<bool>,
+    /// Not a node to show but a view to put at an offset (`x`, `y`), asked
+    /// before a frame had laid the view out: it is put there once one has.
+    to: Option<(Option<f32>, Option<f32>)>,
 }
 
 /// How far to scroll (down or right; negative: up or left) so that the
@@ -239,43 +242,80 @@ fn ancestors<'t>(node: &'t NodeSpec, id: &str, path: &mut Vec<&'t ViewProps>) ->
     false
 }
 
+/// Whether the tree has a view `id` that scrolls.
+fn scrolls(node: &NodeSpec, id: &str) -> bool {
+    let NodeSpec::View { props, children } = node else {
+        return false;
+    };
+    if props.id.as_deref() == Some(id) {
+        return props.scroll || props.scroll_x;
+    }
+    children.iter().any(|child| scrolls(child, id))
+}
+
 impl RootView {
     /// Do what the driver asked of a scroll view. The tree it names is the
     /// one this view holds: the turn's trees are applied before.
     pub(crate) fn scroll(&mut self, command: ScrollCommand, cx: &mut Context<Self>) {
         match command {
-            ScrollCommand::To { id, x, y } => self.scroll_to(&id, x, y),
+            ScrollCommand::To { id, x, y } => {
+                // The newest offset asked of a view is the one it gets.
+                self.reveals
+                    .retain(|reveal| reveal.to.is_none() || reveal.id != id);
+                if !self.scroll_to(&id, x, y) {
+                    self.reveals.push(Reveal {
+                        id,
+                        frames: 0,
+                        came: None,
+                        to: Some((x, y)),
+                    });
+                }
+            }
             ScrollCommand::IntoView { id } => {
                 if !self.tree.contains(&id) {
                     eprintln!("[mirin-metal] scrollIntoView: no node with id {id:?}");
                     return;
                 }
-                self.reveals.retain(|reveal| reveal.id != id);
+                self.reveals
+                    .retain(|reveal| reveal.to.is_some() || reveal.id != id);
                 self.reveals.push(Reveal {
                     id,
                     frames: 0,
                     came: None,
+                    to: None,
                 });
             }
         }
         cx.notify();
     }
 
-    fn scroll_to(&mut self, id: &str, x: Option<f32>, y: Option<f32>) {
+    /// Put scroll view `id` at an offset. False when it cannot be yet: a
+    /// list no frame has laid out has no length to be sent along (the
+    /// caller keeps the offset for the frame after one has).
+    fn scroll_to(&mut self, id: &str, x: Option<f32>, y: Option<f32>) -> bool {
         let at = |value: f32| px(-value.max(0.0));
         if let Some(list) = self.lists.get_mut(id) {
             // To an offset in its whole length, not in the rows it has laid out.
-            list.estimate();
+            if !list.estimate() {
+                return false;
+            }
             if let Some(y) = y {
                 list.state.set_offset_from_scrollbar(point(px(0.0), at(y)));
             }
-        } else if let Some(handle) = self.scrolls.get(id) {
-            // Kept in its range as the view is next drawn.
-            let offset = handle.offset();
-            handle.set_offset(point(x.map_or(offset.x, at), y.map_or(offset.y, at)));
-        } else {
-            eprintln!("[mirin-metal] scrollTo: no scroll view with id {id:?}");
+            return true;
         }
+        // A scroll view's state is made as it is first drawn; one that came
+        // with the turn's tree has none yet (an app scrolls a view in an
+        // effect of the commit that mounts it). It is made here, and the
+        // first frame draws the view at the offset, kept in its range.
+        if !scrolls(self.tree.tree(), id) {
+            eprintln!("[mirin-metal] scrollTo: no scroll view with id {id:?}");
+            return true;
+        }
+        let handle = self.scrolls.entry(id.to_owned()).or_default();
+        let offset = handle.offset();
+        handle.set_offset(point(x.map_or(offset.x, at), y.map_or(offset.y, at)));
+        true
     }
 
     /// As a frame begins: bring the nodes asked for into view, by where the
@@ -305,6 +345,10 @@ impl RootView {
     /// Scroll the views around the node so it shows; whether any moved.
     fn reveal(&mut self, reveal: &mut Reveal) -> bool {
         let id = reveal.id.as_str();
+        if let Some((x, y)) = reveal.to {
+            // An offset kept for a list: done once a frame has laid it out.
+            return !self.scroll_to(id, x, y);
+        }
         let tree = Rc::clone(self.tree.tree());
         let mut around = Vec::new();
         if !ancestors(&tree, id, &mut around) {

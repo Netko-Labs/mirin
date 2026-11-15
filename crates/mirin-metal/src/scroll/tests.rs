@@ -513,3 +513,129 @@ fn rows_of_several_heights_scrolled_through_are_counted_as_they_are(cx: &mut Tes
     assert_eq!(page.told().last().map(|told| told.y), Some(3000.0));
     assert_eq!(page.row(cx, 77).0, 2990.0 - 3000.0);
 }
+
+/// A window on `json` that has drawn no frame yet: what a host has when the
+/// lines after a view's first tree arrive.
+fn undrawn<'a>(cx: &'a mut TestAppContext, json: &str) -> (Page, &'a mut VisualTestContext) {
+    let tree = parse_tree(json).expect("test tree must parse");
+    let (tx, events) = channel();
+    let layout = LayoutMap::default();
+    let sender = EventSender::new(tx, layout.clone());
+    let (view, cx) = cx.add_window_view(move |_, cx| {
+        RootView::new(Document::new(tree), false, sender, layout, cx)
+    });
+    cx.simulate_resize(size(px(400.0), px(700.0)));
+    (Page { view, events }, cx)
+}
+
+#[sumi::test]
+fn a_view_sent_to_an_offset_before_its_first_frame_opens_there(cx: &mut TestAppContext) {
+    // Dashi's Calendar: its hours are scrolled to the morning in an effect
+    // of the commit that mounts them, before the host has drawn them.
+    let (page, cx) = undrawn(cx, &page(40, r#","onScroll":true"#));
+    page.to(cx, 280.0);
+    assert_eq!(page.row(cx, 7).0, 50.0);
+    assert_eq!(page.told().last().map(|told| told.y), Some(280.0));
+}
+
+#[sumi::test]
+fn a_view_that_comes_with_a_tree_is_sent_to_an_offset_in_that_turn(cx: &mut TestAppContext) {
+    // Mounted later, in a subtree that came in the same commit.
+    let (page, cx) = open(cx, r#"{"type":"view","props":{"id":"root","fill":true}}"#);
+    let tree = parse_tree(&self::page(40, r#","onScroll":true"#)).expect("tree");
+    cx.update(|_, cx| {
+        page.view.update(cx, |view, cx| {
+            view.set_tree(tree, cx);
+            view.scroll(
+                ScrollCommand::To {
+                    id: "rows".into(),
+                    x: None,
+                    y: Some(280.0),
+                },
+                cx,
+            );
+        });
+    });
+    for _ in 0..4 {
+        draw(cx);
+    }
+    assert_eq!(page.row(cx, 7).0, 50.0);
+    assert_eq!(page.told().last().map(|told| told.y), Some(280.0));
+}
+
+#[sumi::test]
+fn a_long_list_that_comes_with_a_tree_is_sent_to_an_offset_in_that_turn(cx: &mut TestAppContext) {
+    let (page, cx) = open(cx, r#"{"type":"view","props":{"id":"root","fill":true}}"#);
+    cx.simulate_resize(size(px(400.0), px(700.0)));
+    draw(cx);
+    let tree = parse_tree(&files(400, 0..0)).expect("tree");
+    cx.update(|_, cx| {
+        page.view.update(cx, |view, cx| {
+            view.set_tree(tree, cx);
+            for y in [520.0, 2600.0] {
+                view.scroll(
+                    ScrollCommand::To {
+                        id: "rows".into(),
+                        x: None,
+                        y: Some(y),
+                    },
+                    cx,
+                );
+            }
+        });
+    });
+    for _ in 0..4 {
+        draw(cx);
+    }
+    // The newest of the two, in the whole list's length.
+    assert_eq!(page.row(cx, 100).0, 0.0);
+    assert_eq!(
+        page.told().last().map(|told| (told.y, told.content_height)),
+        Some((2600.0, 400.0 * 26.0))
+    );
+}
+
+#[sumi::test]
+fn a_long_list_sent_to_an_offset_before_its_first_frame_opens_there(cx: &mut TestAppContext) {
+    let (page, cx) = undrawn(cx, &files(400, 0..0));
+    page.to(cx, 2600.0);
+    assert_eq!(page.row(cx, 100).0, 0.0);
+    assert_eq!(
+        page.told().last().map(|told| (told.y, told.content_height)),
+        Some((2600.0, 400.0 * 26.0))
+    );
+}
+
+#[sumi::test]
+fn a_node_asked_into_view_before_its_first_frame_is_shown(cx: &mut TestAppContext) {
+    let (page, cx) = undrawn(cx, &files(400, 0..0));
+    page.show(cx, "row300");
+    assert_eq!(page.row(cx, 300), (568.0, 594.0));
+    // And in a plain scroll view.
+    let (page, cx) = undrawn(cx, &self::page(40, ""));
+    page.show(cx, "row30");
+    assert_eq!(page.row(cx, 30), (210.0, 250.0));
+}
+
+#[sumi::test]
+fn the_last_of_several_asked_before_the_first_frame_is_where_it_opens(cx: &mut TestAppContext) {
+    let (page, cx) = undrawn(cx, &files(400, 0..0));
+    for y in [520.0, 2600.0, 1300.0] {
+        cx.update(|_, cx| {
+            page.view.update(cx, |view, cx| {
+                view.scroll(
+                    ScrollCommand::To {
+                        id: "rows".into(),
+                        x: None,
+                        y: Some(y),
+                    },
+                    cx,
+                );
+            });
+        });
+    }
+    for _ in 0..4 {
+        draw(cx);
+    }
+    assert_eq!(page.row(cx, 50).0, 0.0);
+}
