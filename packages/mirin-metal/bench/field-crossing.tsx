@@ -19,7 +19,16 @@
  *   already in the field; the line must read "12+3" (Dashi's D129: the
  *   reset used to drop the "+3").
  *
- * And each of them three ways: the app saying no `selection`, saying its
+ * - `chase`: no write at all. The app follows the field's caret
+ *   (`onSelectionChange` into `selection`), and the person presses ← in
+ *   "abcd" as the app puts its caret after the "a": the report of the one
+ *   and the tree with the other cross. The two must come to rest on one
+ *   caret, in a handful of reports, and the next key land there ("abc!d":
+ *   the app took the person's). A host that says back a selection it took
+ *   from the tree never rests: each takes the other's caret for a new
+ *   move, without end.
+ *
+ * And each of the first three three ways: the app saying no `selection`, saying its
  * caret with every text (at the end of the line, after what the keypad
  * wrote), and with the caret inside the line ("12", the caret after the 1:
  * the keypad's text and the keys both go there). The app's caret is made in
@@ -41,7 +50,8 @@
  * before a selection's `textHash` (no `"selectionHash":true`) fails the
  * rounds with a caret: the key lands in front ("sin(!*6="), and then the
  * app's caret and the field's go on answering each other. One from before
- * `"revisionRebase":true` fails the `refuse` rounds.
+ * `"revisionRebase":true` fails the `refuse` rounds, and one that reports
+ * the driver's own selection back fails `chase`.
  *
  * Needs a Wayland compositor that presents, as the layout checks do:
  * `dashi-comp --backend winit --no-xwayland -c "bun bench/field-crossing.tsx <host>"`
@@ -83,6 +93,8 @@ const app = {
   set: (_next: Omit<Line, "revision">): void => {},
   /** A keypad key: its text typed at the app's caret. */
   key: (_text: string): void => {},
+  /** The app puts its caret at `at`, in the text it has. */
+  caret: (_at: number): void => {},
 };
 
 /** Where the caret is after `old` was edited into `text`: after what was put in. */
@@ -103,6 +115,7 @@ function Calculator() {
       text: old.text.slice(0, old.caret) + text + old.text.slice(old.caret),
       caret: old.caret + text.length,
     }));
+  app.caret = (at) => setLine((old) => ({ ...old, caret: at }));
   return (
     <View style={{ flex: 1, padding: 12, gap: 12, backgroundColor: "#18181b" }}>
       <TextInput
@@ -150,9 +163,11 @@ transport.onClose(() => {
 /** Everything the host said but its answers to `settle`, counted. */
 let said = 0;
 let changes = 0;
+let selections = 0;
 let rebases = false;
 let namesSelections = false;
 let rebasesRevisions = false;
+let echoes = true;
 const waiting: Array<(event: NativeEvent) => void> = [];
 /** The hash of the text the app is writing: the round's last key is typed at the first change made on it. */
 let lastKeyOn: number | null = null;
@@ -161,12 +176,14 @@ transport.onEvent((event) => {
     rebases = event.rebase === true;
     namesSelections = event.selectionHash === true;
     rebasesRevisions = event.revisionRebase === true;
+    echoes = event.noSelectionEcho !== true;
   }
   if (event.type === "settled") {
     waiting.shift()?.(event);
     return;
   }
   said += 1;
+  if (event.type === "selection") selections += 1;
   if (event.type !== "change") return;
   changes += 1;
   // Heard here before `render` hears it (this listener came first), so the
@@ -269,6 +286,31 @@ async function round(kind: Kind, caret: Caret): Promise<Outcome> {
   return { line: app.line, crossed: changes - sent > app.heard - heard };
 }
 
+/** The most selections a `chase` round may hear before it has come to rest. */
+const CHASE_REPORTS = 8;
+
+/**
+ * The person's ← and the app's caret cross in a text nobody writes: what
+ * the line reads after one more key, and how many selections were reported
+ * on the way.
+ */
+async function chase(): Promise<{ line: string; reports: number }> {
+  const field = root.nodeId("line") ?? "";
+  await start("abcd", 4, true);
+  transport.simulate({ kind: "focus", id: field });
+  await settled();
+  const before = selections;
+  transport.simulate({ kind: "key", keystroke: "left" });
+  app.caret(1);
+  await settled();
+  const reports = selections - before;
+  if (!restless) {
+    transport.simulate({ kind: "type", text: "!" });
+    await settled();
+  }
+  return { line: app.line, reports };
+}
+
 await settled();
 const failures: string[] = [];
 const kinds: Kind[] = ["click", "write", "refuse"];
@@ -291,6 +333,18 @@ for (let index = 0; index < rounds && !gone && !restless; index += 1) {
     }
   }
 }
+let chased = 0;
+for (let index = 0; index < rounds && !gone && !restless; index += 1) {
+  const { line, reports } = await chase();
+  chased += 1;
+  if (restless || reports > CHASE_REPORTS) {
+    failures.push(
+      `round ${index} chase: ${reports} selections reported${restless ? ", and the two never came to rest" : ""}`,
+    );
+  } else if (line !== "abc!d") {
+    failures.push(`round ${index} chase: the app has ${JSON.stringify(line)}, not "abc!d"`);
+  }
+}
 root.unmount();
 
 for (const failure of failures.slice(0, 10)) console.log(failure);
@@ -298,6 +352,6 @@ const crossings = Object.entries(crossed)
   .map(([name, count]) => `${count} (${name})`)
   .join(", ");
 console.log(
-  `field-crossing: ${rounds} rounds of each, ${failures.length} wrong; crossed ${crossings}${rebases ? "" : "; the host does not rebase"}${namesSelections ? "" : "; the host takes no selection's text"}${rebasesRevisions ? "" : "; the host resets on a new revision"}${restless ? "; a round never came to rest" : ""}${gone ? "; the host went away" : ""}`,
+  `field-crossing: ${rounds} rounds of each, ${failures.length} wrong; crossed ${crossings}; ${chased} chases${rebases ? "" : "; the host does not rebase"}${namesSelections ? "" : "; the host takes no selection's text"}${rebasesRevisions ? "" : "; the host resets on a new revision"}${echoes ? "; the host reports the app's own selection back" : ""}${restless ? "; a round never came to rest" : ""}${gone ? "; the host went away" : ""}`,
 );
 process.exit(failures.length === 0 && !gone && !restless ? 0 : 1);

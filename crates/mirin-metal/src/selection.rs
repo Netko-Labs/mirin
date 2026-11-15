@@ -1,9 +1,11 @@
 //! A field's selection between the renderer and the driver, and the
 //! pointer selecting in it: a press places the caret or selects (by word,
 //! by line), a drag extends it wherever the pointer goes until the button
-//! lifts, and every change is reported to a driver that listens
-//! (`onSelection`). A driver's `selection` prop sets it, as `value` sets the
-//! text: a selection it echoes late (one the field reported) is not a reset,
+//! lifts, and every change the field or the person made is reported to a
+//! driver that listens (`onSelection`). A driver's `selection` prop sets it,
+//! as `value` sets the text, and like a value the driver set it is not
+//! reported back (`SelectionState::took`): a selection it echoes late (one
+//! the field reported) is not a reset,
 //! and one its app made in a text the field no longer holds (`textHash` on
 //! it names that text) is dropped, as a `change` made on a replaced text is.
 //!
@@ -87,8 +89,9 @@ impl SelectionState {
 
     /// A new tree: select the driver's `selection` when it changed (and is
     /// not a late echo, nor made in a text the field no longer holds) or
-    /// the buffer was just reset, and tell a listening driver where the
-    /// selection is when that moved it.
+    /// the buffer was just reset. What the field took from the tree is not
+    /// said back (`took`); a caret a reset put at the text's end by itself
+    /// is.
     pub(crate) fn sync(
         &mut self,
         field: &mut Field,
@@ -99,19 +102,39 @@ impl SelectionState {
         self.listening = props.on_selection;
         let wanted = props.selection.map(|range| (range.start, range.end));
         let reset = taken == Taken::Reset;
-        let mut moved = reset;
+        let mut took = None;
         if let Some(range) = props.selection {
             let changed = self.synced != wanted;
             let fresh = changed && !is_late(field, props, range, taken);
             if reset || (fresh && driver_resets(&mut self.echoes, &(range.start, range.end))) {
                 self.echoes.clear();
                 field.set_selection_utf16(range.start, range.end);
-                moved = true;
+                took = Some((range.start, range.end));
             }
         }
         self.synced = wanted;
-        if moved {
-            self.report(&props.id, field, events);
+        match took {
+            Some(said) => self.took(&props.id, field, said, events),
+            None if reset => self.report(&props.id, field, events),
+            None => {}
+        }
+    }
+
+    /// The field selected what the driver's tree `said`. That is the
+    /// driver's own word, and it is not told it: an app that mirrors what
+    /// it hears into `selection` would send it again, and when its caret
+    /// crossed one the person moved, the two were each taken for the
+    /// other's next move, reported, mirrored, and answered each other
+    /// without end. So only what the field or the person did is reported:
+    /// a key, a click, a drag, typing, a rebase's caret, a reset's caret at
+    /// the end of the text. A selection the field could not take as said
+    /// (past the end of the text, inside a character) is where the field
+    /// put it instead, which the driver does not know: that is reported.
+    fn took(&mut self, id: &str, field: &Field, said: (usize, usize), events: &EventSender) {
+        if field.selection_utf16() == said {
+            self.reported = Some(said);
+        } else {
+            self.report(id, field, events);
         }
     }
 

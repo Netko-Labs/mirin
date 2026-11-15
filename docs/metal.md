@@ -295,7 +295,32 @@ patches change it in place, in order (section "Patches").
   with a `value` the field rebased is dropped, the rest as before. A host
   that takes it says `"selectionHash":true` in its `protocol` line; one
   from before refuses a `selection` with a `textHash`, so a driver sends
-  it only to a host that said so. The host
+  it only to a host that said so.
+  What is reported (`SelectionState::took`, 2026-11-15): what the person or
+  the field did, never what the driver's own tree said. A `selection` the
+  field took from the tree, as the tree said it, is the driver's own word
+  and is not said back, as a `value` the driver wrote is not reported as a
+  `change`: `onSelectionChange` does not fire for a caret the app set. It
+  still fires for a key, a click or a drag, for typing, for the caret a
+  rebase kept, for the caret a reset put at the end of the text by itself
+  (a new value with no `selection`), and for a `selection` the field could
+  not take as said (past the end of the text, inside a character: it says
+  where it put it). A `selection` dropped as late moves nothing, so there
+  is nothing to say: the driver has heard the field's caret already. Why:
+  an app that mirrors what it hears into `selection` (a controlled
+  selection) sent the report of its own caret back, and when its caret
+  crossed one the person moved (← pressed as the app set a caret), each
+  was taken for the other's next move, reported, mirrored and taken
+  again, without end: 117,000 `selection` events in three seconds, a core
+  pinned for as long as the window lived. Now the app's caret is taken in
+  silence, the person's is reported once and mirrored once, and the two
+  rest on it (`value::tests::echo`, and the `chase` rounds of
+  `bench/field-crossing.tsx`). React Native is the same on iOS (a
+  `selection` from JavaScript is set without telling the delegate, so no
+  `onSelectionChange`) and not on Android, where `setSelection` runs the
+  selection watcher and a focused field reports it; an app that needs to
+  know its `selection` was taken has it in its own state. A host that
+  does this says `"noSelectionEcho":true` in its `protocol` line. The host
   names `MIRIN_METAL_SELECTION` (`SELECTION_MARKER`) for a driver checking
   for a caret and selection at all.
   Highlights and line numbers (`src/marks.rs`): `highlights` washes each
@@ -651,7 +676,9 @@ an app's checks; and a `selection` the app sets goes out with the hash of the
 text it was made in, to a host that said `selectionHash`, so one set while
 keys the app had not heard of were typed is not taken and the caret stays
 behind them: an app can say its caret with every text it writes, at its end
-too), `onChangeText` (never called with a text typed on a value the
+too; it is called for what the person or the field did, a key, a click,
+typing, a rebase's caret, and not for a `selection` the app set, on a host
+that says `noSelectionEcho`), `onChangeText` (never called with a text typed on a value the
 app has since replaced: `lib/field-texts.ts` drops a `change` whose `baseHash`
 is not the text the field holds as far as the driver knows, and every field's
 node says which text its `value` was set over, to a host that said `rebase`;
