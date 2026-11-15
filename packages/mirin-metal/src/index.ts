@@ -34,6 +34,7 @@ export type {
   RunPressInfo,
   SimCommand,
   SvgProps,
+  TextAntialiasing,
   TextHighlight,
   TextInputDefaultProps,
   TextInputProps,

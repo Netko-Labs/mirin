@@ -65,6 +65,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             nodeId: "root",
             patches: record.patches,
             ...(record.settle === true ? { settle: true } : {}),
+            ...(record.textAntialiasing === true ? { textAntialiasing: true } : {}),
           }
         : null;
     case "settled":
@@ -314,6 +315,13 @@ export interface NativeHostOptions {
    * once. Windows only; ignored for surfaces and deferred hosts.
    */
   askToClose?: boolean;
+  /**
+   * How the host antialiases text from its start (`MIRIN_METAL_TEXT`):
+   * `"grayscale"` or `"subpixel"`. Unset, the driver's own environment
+   * decides, else the host's default (grays on Linux). Changed later with
+   * `setTextAntialiasing` on the transport, without a new host.
+   */
+  textAntialiasing?: "grayscale" | "subpixel";
   /** Extra environment for the host process. */
   env?: Record<string, string>;
   /**
@@ -356,6 +364,7 @@ export function spawnNativeHost(
   if (options.surface !== undefined) env.MIRIN_METAL_SURFACE = JSON.stringify(options.surface);
   if (options.titleBar !== undefined) env.MIRIN_METAL_TITLEBAR = options.titleBar;
   if (options.askToClose) env.MIRIN_METAL_CLOSE = "ask";
+  if (options.textAntialiasing !== undefined) env.MIRIN_METAL_TEXT = options.textAntialiasing;
   Object.assign(env, options.env);
   const child = Bun.spawn([binaryPath], {
     stdin: "pipe",
@@ -459,6 +468,14 @@ export function spawnNativeHost(
       };
       child.stdin.write(`${JSON.stringify({ minSize })}\n`);
       void child.stdin.flush();
+    },
+    setTextAntialiasing(mode) {
+      // A host from before it would refuse the line; one that has not said
+      // its word yet is one from before it, or not a moment old.
+      if (protocol?.type !== "protocol" || protocol.textAntialiasing !== true) return false;
+      child.stdin.write(`${JSON.stringify({ textAntialiasing: mode })}\n`);
+      void child.stdin.flush();
+      return true;
     },
     open(window) {
       child.stdin.write(`${JSON.stringify({ open: window })}\n`);

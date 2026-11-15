@@ -21,6 +21,7 @@ use crate::render::{record_root_bounds, render_node};
 use crate::selection::SelectionState;
 use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
+use crate::text_mode::Antialiasing;
 use crate::titlebar::TitleBar;
 use crate::tree::{collect_inputs, collect_key_ids, collect_scroll_ids, NodeSpec};
 
@@ -95,6 +96,10 @@ pub enum DriverMessage {
     /// an app that needs more room while it shows more (a sidebar). It does
     /// not resize the window; send a size too.
     MinSize(f32, f32),
+    /// Antialias text in grays or by subpixels from here on
+    /// (`{"textAntialiasing": …}`, `text_mode.rs`): a shown window is drawn
+    /// again whole, and the next one opens so.
+    TextAntialiasing(Antialiasing),
 }
 
 /// Whether a new driver `value` resets the buffer. A value the renderer sent
@@ -165,6 +170,10 @@ pub(crate) struct RootView {
     pub(crate) scrolls: HashMap<String, ScrollHandle>,
     /// When each scrollable node last scrolled, for its auto-hiding scroll bar (`scrollbar.rs`).
     pub(crate) scroll_activity: HashMap<String, crate::scrollbar::Activity>,
+    /// How often the text's antialiasing changed under this window: part of
+    /// every retained subtree's version, so each is drawn anew after a
+    /// change instead of keeping glyphs of the other kind (`retain.rs`).
+    pub(crate) text_epoch: u64,
     /// Set while rendering a child of a view that scrolls along its
     /// direction: the child keeps its length there (render.rs).
     pub(crate) keeps_length: bool,
@@ -223,6 +232,7 @@ impl RootView {
             claims: crate::press::Claims::default(),
             scrolls: HashMap::new(),
             scroll_activity: HashMap::new(),
+            text_epoch: 0,
             keeps_length: false,
             lists: HashMap::new(),
             key_targets: HashMap::new(),
@@ -323,6 +333,14 @@ impl RootView {
             self.scrolls.retain(|id, _| ids.contains(id));
             self.scroll_activity.retain(|id, _| ids.contains(id));
         }
+    }
+
+    /// The text's antialiasing changed: everything is drawn again, the
+    /// subtrees kept across frames included.
+    pub(crate) fn text_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.text_epoch += 1;
+        window.refresh();
+        cx.notify();
     }
 
     /// Create state for new inputs, reset buffers whose driver value changed,

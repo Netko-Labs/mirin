@@ -10,9 +10,10 @@ use std::sync::mpsc;
 #[cfg(target_os = "linux")]
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
-    parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
-    HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar,
+    parse_patch, parse_surface, parse_tree, run, run_deferred, Antialiasing, DriverMessage,
+    EventKind, HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar,
     OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER, SETTLE_MARKER,
+    TEXT_ANTIALIASING_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -195,6 +196,24 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
             return Err("\"minSize\" needs a width and a height of at least 1".into());
         }
         return Ok(HostLine::Window(DriverMessage::MinSize(width, height)));
+    }
+    // Text in grays or by subpixels, from here on.
+    if line.trim_start().starts_with("{\"textAntialiasing\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct TextLine {
+            text_antialiasing: String,
+        }
+        let parsed: TextLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let antialiasing =
+            Antialiasing::parse(&parsed.text_antialiasing).ok_or_else(|| {
+                format!(
+                    "textAntialiasing ({TEXT_ANTIALIASING_MARKER}) is \"grayscale\", \"subpixel\" or \"default\""
+                )
+            })?;
+        return Ok(HostLine::Window(DriverMessage::TextAntialiasing(
+            antialiasing,
+        )));
     }
     #[cfg(target_os = "linux")]
     if line.trim_start().starts_with("{\"toplevel\"") {
@@ -505,12 +524,17 @@ fn main() {
         "{PATCH_MARKER}: patch protocol {PATCH_PROTOCOL}"
     ));
     mirin_metal::trace::log(format_args!("{SETTLE_MARKER}: the settle simulation"));
+    mirin_metal::trace::log(format_args!(
+        "{TEXT_ANTIALIASING_MARKER}: text in grays or by subpixels, as the driver says"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
         "patches": PATCH_PROTOCOL,
         // This host takes the `settle` simulation and answers `settled`.
         "settle": true,
+        // This host takes a `textAntialiasing` line (`text_mode.rs`).
+        "textAntialiasing": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
@@ -728,6 +752,35 @@ mod line_tests {
             super::parse_line(r#"{"sim":{"kind":"settle"}}"#),
             Ok(DriverMessage::Sim(SimCommand::Settle))
         );
+    }
+
+    #[test]
+    fn text_antialiasing_is_one_of_three() {
+        use mirin_metal::{Antialiasing, DriverMessage};
+        let asked = |line: &str| match parse_host_line(line) {
+            Ok(HostLine::Window(DriverMessage::TextAntialiasing(antialiasing))) => {
+                Some(antialiasing)
+            }
+            _ => None,
+        };
+        assert_eq!(
+            asked(r#"{"textAntialiasing":"subpixel"}"#),
+            Some(Antialiasing::Subpixel)
+        );
+        assert_eq!(
+            asked(r#"{"textAntialiasing":"grayscale"}"#),
+            Some(Antialiasing::Grayscale)
+        );
+        assert_eq!(
+            asked(r#"{"textAntialiasing":"default"}"#),
+            Some(Antialiasing::Default)
+        );
+        // The refusal names the marker, so the binary carries it for a driver to find.
+        assert!(matches!(
+            parse_host_line(r#"{"textAntialiasing":"lcd"}"#),
+            Err(error) if error.contains(super::TEXT_ANTIALIASING_MARKER)
+        ));
+        assert!(parse_host_line(r#"{"textAntialiasing":true}"#).is_err());
     }
 
     #[test]
