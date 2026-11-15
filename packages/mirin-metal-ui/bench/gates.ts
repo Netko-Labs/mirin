@@ -12,7 +12,8 @@
  *   factors 1, 1.25 and 1.5: those four and `across` draw with retained
  *   subtrees what drawing everything does.
  * - `<host>` kept warm shows its window again after every hide
- *   (`reopen.ts`).
+ *   (`reopen.ts`), and outlives a layer surface hidden as it opens and
+ *   opened as it hides (`hide-race.ts`).
  *
  * Prints a line per check and a summary, and exits non-zero when any check
  * found a difference or did not finish. `--only` runs the checks whose name
@@ -107,7 +108,7 @@ console.log(
 );
 process.exit(failed === 0 ? 0 : 1);
 
-/** The set: layouts against the reference, retained against not by scale, then the window. */
+/** The set: layouts against the reference, retained against not by scale, then the window's two. */
 function gateSet(host: string, reference: string | undefined): Check[] {
   const layouts = ["grid", "browser", "scroll", "scroll-fractional"];
   const against: Check[] = reference
@@ -132,7 +133,12 @@ function gateSet(host: string, reference: string | undefined): Check[] {
     args: [host],
     script: "reopen.ts",
   };
-  return [...against, ...retained, reopen];
+  const hideRace: Check = {
+    name: "surface hidden as it opens, opened as it hides",
+    args: [host, "--rounds=40", "--gpu-errors"],
+    script: "hide-race.ts",
+  };
+  return [...against, ...retained, reopen, hideRace];
 }
 
 /** Run the checks, `jobs` at a time; the results in the checks' order. */
