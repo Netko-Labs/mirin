@@ -51,6 +51,7 @@ mod titlebar;
 pub mod toplevels;
 pub mod trace;
 mod tree;
+mod value;
 mod window;
 
 pub use access::{ACCESSIBLE_MARKER, APP_NAME_VAR};
@@ -67,4 +68,5 @@ pub use tree::{
     parse_tree, Align, Direction, InputProps, InputRun, Justify, NodeSpec, SelectionRange,
     TextProps, ViewProps, Weight,
 };
+pub use value::REBASE_MARKER;
 pub use window::{DriverMessage, NativeUiOptions};

@@ -45,6 +45,11 @@ export interface TextInstance extends InstanceBase {
 export interface InputInstance extends InstanceBase {
   kind: "input";
   props: TextInputProps;
+  /**
+   * The hash of the text the app set its `value` over (`lib/field-texts.ts`),
+   * sent as `baseHash` to a host that takes it.
+   */
+  base?: number;
 }
 
 /** A raw string/number child, e.g. the text inside `<Text>`. */

@@ -9,7 +9,14 @@
 
 import { type CommitLog, takeLog } from "./commit-log.ts";
 import type { FieldTexts } from "./field-texts.ts";
-import type { Container, HostInstance, HostNode, HostParent, ViewInstance } from "./instances.ts";
+import type {
+  Container,
+  HostInstance,
+  HostNode,
+  HostParent,
+  InputInstance,
+  ViewInstance,
+} from "./instances.ts";
 import { longestIncreasing } from "./order.ts";
 import { headJson } from "./serialize.ts";
 
@@ -19,12 +26,20 @@ export const PATCH_PROTOCOL = 1;
 /** React's moves in one view, at most, sent as it made them (each is one move). */
 const FEWEST_FROM = 2;
 
-type FieldList = Map<string, { value: string; revision: number | undefined }>;
+/** What a host's `protocol` line says it does, besides patches. */
+export interface HostSays {
+  /** It takes a field's `baseHash` and carries typing onto a value written meanwhile. */
+  rebase?: boolean;
+  /** It reports scroll offsets (`onScroll`) and takes `scrollTo` and `scrollIntoView`. */
+  scroll?: boolean;
+}
 
 export class TreeSync {
   /** What the host holds, by id: each node sent and not removed since. */
   private readonly nodes = new Map<string, HostNode>();
   private patching = false;
+  /** The host takes a field's `baseHash` (its `protocol` line says `rebase`). */
+  private stamps = false;
   /** The host reports scroll offsets and takes scroll commands (its `protocol` line says `scroll`). */
   private scrolls = false;
   /** Scroll commands asked for while the first tree is held: they go after it. */
@@ -52,12 +67,15 @@ export class TreeSync {
 
   /**
    * The host applies patches of `version`: send the whole tree with every id
-   * now, patches after. One that says `scroll` is told which views listen
-   * to their offset, and takes scroll commands.
+   * now, patches after. What else its `protocol` line says (`says`) decides
+   * what it is told: one that says `rebase`, which text each field's value
+   * was set over, from the next value set; one that says `scroll`, which
+   * views listen to their offset, and it takes scroll commands.
    */
-  hostPatches(version: number, says: { scroll?: boolean } = {}): void {
+  hostPatches(version: number, says: HostSays = {}): void {
     const waited = this.waiting;
     this.waiting = false;
+    this.stamps = says.rebase === true;
     if (this.scrolls !== (says.scroll === true)) {
       this.scrolls = says.scroll === true;
       // Heads written for a host that was not told of `onScroll` are not this one's.
@@ -149,9 +167,9 @@ export class TreeSync {
     this.root = root;
     this.wholeNext = false;
     this.nodes.clear();
-    const fields: FieldList = new Map();
+    const fields = new Set<string>();
     const json = this.wholeJson(root, null, fields);
-    this.fields.follow(fields);
+    this.fields.keep(fields);
     this.last = json;
     this.send(json);
     // What was asked of the tree before it could go.
@@ -161,8 +179,17 @@ export class TreeSync {
   }
 
   /** A node and its subtree as JSON; with `fields`, also what the host now holds. */
-  private wholeJson(node: HostNode, parent: HostInstance | null, fields: FieldList | null): string {
+  private wholeJson(
+    node: HostNode,
+    parent: HostInstance | null,
+    fields: Set<string> | null,
+  ): string {
     const root = node === this.root;
+    // Before its head is written: the head says which text the value was set over.
+    if (fields && node.kind === "input") {
+      this.followField(node);
+      fields.add(node.key);
+    }
     // A view's or an input's head is its props and nothing else (the root's
     // also says it fills the window): one written from these very props is
     // still right. Only a tree that is sent reads it; `lastTree()` works
@@ -179,12 +206,6 @@ export class TreeSync {
       }
       if (this.patching) node.wire = wire;
       this.nodes.set(node.key, node);
-      if (node.kind === "input" && node.props.onSelectionChange) {
-        fields.set(node.key, {
-          value: node.props.value,
-          revision: node.props.valueRevision,
-        });
-      }
     }
     if (node.kind !== "view") return wire;
     const children = node.children.map((child) => this.wholeJson(child, node, fields));
@@ -327,12 +348,12 @@ export class TreeSync {
   private setOp(node: HostNode, fresh: Set<HostNode>, ops: string[]): void {
     if (!this.holds(node) || fresh.has(node)) return;
     const parent = node.parent && node.parent.kind !== "root" ? node.parent : null;
+    if (node.kind === "input") this.followField(node);
     const wire = headJson(node, parent, {
       ids: true,
       root: node === this.root,
       scrolls: this.scrolls,
     });
-    if (node.kind === "input") this.followField(node);
     if (wire === node.wire) return;
     node.wire = wire;
     ops.push(`{"op":"set","id":"${node.key}","node":${wire}}`);
@@ -341,10 +362,10 @@ export class TreeSync {
   /** A new subtree as JSON, now held by the host. */
   private freshJson(node: HostNode, parent: HostInstance, fresh: Set<HostNode>): string {
     fresh.add(node);
+    if (node.kind === "input") this.followField(node);
     const wire = headJson(node, parent, { ids: true, root: false, scrolls: this.scrolls });
     node.wire = wire;
     this.nodes.set(node.key, node);
-    if (node.kind === "input") this.followField(node);
     if (node.kind !== "view") return wire;
     const children = node.children.map((child) => this.freshJson(child, node, fresh));
     return `${wire.slice(0, -1)},"children":[${children.join(",")}]}`;
@@ -359,11 +380,10 @@ export class TreeSync {
     for (const child of node.children) this.forget(child);
   }
 
-  private followField(node: HostInstance & { kind: "input" }): void {
-    const id = node.key;
-    if (node.props.onSelectionChange) {
-      this.fields.field(id, node.props.value, node.props.valueRevision);
-    } else this.fields.forget(id);
+  /** A field goes out: what it now holds, and which text its value was set over. */
+  private followField(node: InputInstance): void {
+    const { value, valueRevision } = node.props;
+    node.base = this.fields.field(node.key, value, valueRevision, this.stamps);
   }
 
   private holds(node: HostNode): boolean {

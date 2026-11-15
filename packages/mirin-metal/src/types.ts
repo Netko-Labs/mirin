@@ -488,7 +488,15 @@ export interface TextProps {
 }
 
 export interface TextInputProps extends AccessibilityProps {
-  /** Controlled value; a change resets the native buffer. */
+  /**
+   * Controlled value. Setting the text the field last reported leaves the
+   * native buffer alone; any other value replaces it. Keys typed before
+   * the field took such a value (the app wrote as the person typed) are not
+   * lost: the field types them again into the value and reports the result
+   * through `onChangeText`, which never hears a text typed on a value the
+   * app has since replaced (a host from before 2026-11-15 resets instead,
+   * and reports what was typed on the old text).
+   */
   value: string;
   /**
    * Bump it to reset the native buffer to `value` even when `value` didn't change: after
@@ -657,7 +665,16 @@ export interface LayoutNode {
 export type NativeEvent =
   /** `modifiers` is absent from a host older than `MIRIN_METAL_FOCUS`. */
   | { type: "press"; nodeId: string; bounds?: Bounds; modifiers?: Modifiers }
-  | { type: "change"; nodeId: string; value: string }
+  /**
+   * A field's text after an edit. `baseHash` names the text the edit was
+   * made on and `textHash` the value itself (`textHash()` of each; a host
+   * from before 2026-11-15 says neither). `render` passes `onChangeText`
+   * only a change made on what the app last set or heard; one typed on a
+   * text the app has since replaced is dropped, and the host, once it takes
+   * the app's value, reports the typing carried onto it. A listener on the
+   * transport hears every one.
+   */
+  | { type: "change"; nodeId: string; value: string; baseHash?: number; textHash?: number }
   | { type: "submit"; nodeId: string; value: string }
   | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
   /** `textHash` names the text the offsets are into (lib/text-hash.ts); an older host leaves it out. */
@@ -685,10 +702,19 @@ export type NativeEvent =
    * starts): `render` then sends only what each commit changed. A host older
    * than patches never sends it, and gets the whole tree every commit.
    * `settle` is true from a host that takes the `settle` simulation, and
+   * `rebase` from one that takes a field's `baseHash` (the text its `value`
+   * was set over) and carries what was typed meanwhile onto the value, and
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
    * takes `scrollTo` and `scrollIntoView` (`ViewHandle`).
    */
-  | { type: "protocol"; nodeId: "root"; patches: number; settle?: boolean; scroll?: boolean }
+  | {
+      type: "protocol";
+      nodeId: "root";
+      patches: number;
+      settle?: boolean;
+      rebase?: boolean;
+      scroll?: boolean;
+    }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),
    * or still waited for a frame when the host gave up (20 s, or a minute of

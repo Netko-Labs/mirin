@@ -170,6 +170,49 @@ patches change it in place, in order (section "Patches").
   semantics), and so does a new `revision`: the caret goes to the end, or to
   `selection` when the tree has one. Enter submits a single-line input;
   multiline inserts a newline and Ctrl/Cmd+Enter submits.
+  Two writers (`src/value.rs`, `src/field/rebase.rs`): a field's text is
+  typed in the renderer and set by the app, and the two cross (a keypad
+  writes "7" into a calculator's line while "*6=" is typed into it: the keys
+  reach the field before the tree with the 7 does). Each side says which
+  text its change was made on, by that text's hash (`textHash`, below; a
+  hash and not a counter, see the end of this paragraph). A `change` is
+  `{"type":"change","nodeId","value","baseHash","textHash"}`: `textHash` is
+  `value`'s and `baseHash` that of the text the edit was made on (left out
+  when the field cannot say: it reported no changes until now). An `input`
+  takes `baseHash` too: the hash of the text the field held, as far as the
+  driver knew, when its app set this `value`. Equal to `value`'s own hash,
+  the value is the field's text coming back, and nothing is reset, whatever
+  the field has typed since. Any other, the app wrote the value over that
+  text: when the field still holds it, the value replaces it (a reset, the
+  caret at its end); when the field has typed into it meanwhile and reports
+  changes (`onChange`), the typing is done again to the value (a rebase),
+  the caret stays with what was typed, and the result is reported as a
+  `change` whose `baseHash` is the value's. A rebase reads each side's
+  change as one splice of the text both knew; the typing keeps its place
+  before what the app replaced, moves with the text after it, and goes
+  right after the app's own text where it began inside what the app
+  replaced or at the very point it wrote ("7", then "*6=": `7*6=`). The
+  host finds the text a `baseHash` names among the value before this one
+  and the texts it reported since (64 at most); one it no longer keeps is a
+  reset. The driver's half is to drop a `change` whose `baseHash` is not
+  the text its app last set or heard: the field held that text only until
+  the app's value arrived, and reports the typing again on it. So the two
+  end with the same text and no key lost, in either order
+  (`value::tests`, 300 seeded crossings; `bench/field-crossing.tsx` in
+  `@mirinjs/metal` against a real window). Without `baseHash` on the node
+  (a driver from before it) the host does as it did: a value it reported
+  itself is a late echo, any other resets and drops what was typed. A host
+  that does all this says `"rebase":true` in its `protocol` line (and
+  names `MIRIN_METAL_REBASE`, `REBASE_MARKER`); one from before refuses a
+  tree with `baseHash`, so a driver sends it only to a host that said so.
+  Not covered: a `submit` carries the field's text as it was when Enter
+  was pressed, crossing or not. Why a hash: it names the text itself,
+  which is all an edit depends on (the same text is the same base, however
+  it came about, so a value written twice is no trap), it needs no count
+  kept in step on both sides across whole-tree resyncs, hidden resident
+  hosts and re-made nodes, and the selection already carried it. React
+  Native's `eventCount` / `mostRecentEventCount` is the counter's answer,
+  and it can only drop the app's write when the two cross.
   Caret and selection (`src/field.rs`, `src/field/{keys,press,words}.rs`,
   `src/selection.rs`, `src/caret.rs`): a click puts the caret at the
   character under it (past a glyph's middle is after it), a drag selects
@@ -270,7 +313,9 @@ patches change it in place, in order (section "Patches").
 - Colors are `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
 - Events: `{"type":"press","nodeId","shift","ctrl","alt","meta"}` (the
   modifiers held, Super as `meta`; all false for Space or Enter on a focused
-  view; `contextmenu` carries them too), `{"type":"change","nodeId","value"}`,
+  view; `contextmenu` carries them too), `{"type":"change","nodeId","value",
+  "baseHash","textHash"}` (the text it was typed on and its own, "Two
+  writers" above),
   `{"type":"submit","nodeId","value"}`, `{"type":"selection","nodeId","start",
   "end","textHash"}`, `{"type":"runpress","nodeId","run","offset","shift","ctrl","alt",
   "meta"}` (styled runs, above), `{"type":"scroll","nodeId","x","y",
@@ -482,7 +527,12 @@ in a text the app has since replaced, which arrives late, is not passed on:
 `lib/field-texts.ts` follows what each field holds, from its `change` events
 and the values the app sets, and checks the event's `textHash` against it;
 the exported `textHash(text)` hashes as the host does, for a stand-in host in
-an app's checks) and
+an app's checks), `onChangeText` (never called with a text typed on a value the
+app has since replaced: `lib/field-texts.ts` drops a `change` whose `baseHash`
+is not the text the field holds as far as the driver knows, and every field's
+node says which text its `value` was set over, to a host that said `rebase`;
+an app that wants to merge by hand hears every `change`, with both hashes, on
+`transport.onEvent`) and
 `selectionColor` on it,
 `runs` (`TextRun`: `start`, `end`, `color`, `backgroundColor`, `fontWeight`,
 `fontStyle`, `textDecorationLine`, `fontSize`, `press`) and `onRunPress`
@@ -528,8 +578,9 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
 - **Negotiation.** A host that takes patches says so on stdout as it starts,
   before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
   (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
-  says `"settle":true` too, for the `settle` simulation, and `"scroll":true`
-  for a scroll view's offset). A driver
+  says `"settle":true` too, for the `settle` simulation, `"rebase":true` for
+  a field's `baseHash`, and `"scroll":true` for a scroll view's offset). A
+  driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now
@@ -872,7 +923,11 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   draws grays either way, since the fringes need a known background.
   `MIRIN_METAL_TEXT=grayscale` asks for grays on macOS and Windows, where
   the host otherwise leaves the platform's default. Layout does not depend
-  on it: only glyph pixels differ.
+  on it: only glyph pixels differ. The engine reads the variable too: only
+  a host that asked for subpixel has the subpixel shaders parsed while it
+  starts (`sumi-wgpu`'s `wgpu_prepare.rs`); a host drawing in grays never
+  uses them, and their module was 1 MB each held for as long as it lived
+  (`docs/metal/engine.md`, section 7).
 - **Emoji are drawn** (2026-11-15). Noto Color Emoji as Fedora ships it
   (`Noto-COLRv1.ttf`) holds COLRv1 glyphs: paint graphs of gradients,
   transforms, clips and composited layers. swash draws colour bitmaps and
@@ -939,7 +994,10 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
 - **Out.** `<View dragFiles={{ paths, icon?, iconSize? }}>`: a left press there
   and a move of 6 pixels with the button held starts a Wayland drag
   (`wl_data_device.start_drag`, GPUI's `Window::start_file_drag`, added in
-  the vendored copy). It offers `text/uri-list` for copying; `icon` (PNG,
+  the vendored copy). It offers `text/uri-list` for copying, which is what
+  GTK and Chromium read files from, and the paths as text, one a line
+  (`text/plain;charset=utf-8`, `UTF8_STRING`, `text/plain`), as a GTK file
+  drag does, for a terminal or a text field that takes no file list; `icon` (PNG,
   JPEG, or SVG) is drawn into a shm buffer, `iconSize` logical pixels across
   (48 by default) at the window's scale, centered under the pointer. A
   click without moving is still a press. `paths` are read when the drag
@@ -949,11 +1007,39 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   pointer, inside every scrolling or clipping ancestor (`drag.rs`):
   `enter`, `over` while moving, `leave`, or `drop`, with window coordinates,
   the paths, and the keyboard's modifiers. Only file lists are accepted
-  (GPUI's external paths); text drags are not.
+  (GPUI's external paths); text drags are not. The window accepts a drag
+  as it enters, with that drag's serial, when it offers `text/uri-list`
+  (`wl_data_offer.accept`, then `set_actions` copy, then `receive`), and
+  refuses one with no file in it, a link or text, as GTK refuses a drag
+  (`set_actions(0, 0)`, `accept(serial, nil)`), keeping the offer until
+  the drag leaves: the source then hears `wl_data_source.cancelled` at the
+  drop. Before 2026-11-15 it accepted at every offer that named the type,
+  with the serial of the drag before, and destroyed an offer it had
+  accepted when the list held no file: the compositor told the source the
+  drop was performed and nothing after, and a GTK source's drag never
+  ended.
 - **Not yet.** Other platforms (GPUI's default is to refuse the drag), a
-  drag of anything but files, and choosing move over copy in another app:
-  the drag offers copy only; an app moving files within itself decides on
-  its own.
+  drag of anything but files (a link dropped on a Metal window is refused,
+  and a Metal view cannot drag one), choosing move over copy in another
+  app (the drag offers copy only; an app moving files within itself decides
+  on its own), and the file-transfer portal's
+  `application/vnd.portal.filetransfer`: a sandboxed app (a Flatpak without
+  the files' directory) gets a `file://` URL it may not be able to open.
+- **Checked against other apps (2026-11-15).** Real drags in a nested
+  `dashi-comp`, each side's `WAYLAND_DEBUG=1` kept: a file from a Metal
+  view dropped on a GTK 4.22 `GtkDropTarget` for `GdkFileList` arrives as
+  the file, on one for text as its path, and on Helium's (Chromium, on
+  Wayland) `<input type="file">` is chosen by the field (`drop`, then
+  `change`, with the file's name and size); Chromium and GTK both ask for
+  `text/uri-list` and nothing else. A GTK file drag (which offers
+  `text/uri-list`, text and the portal's two types) dropped on a Metal
+  `onDrop` view gives `enter`, `over` and `drop` with the path. A link
+  dragged from GTK (`text/uri-list` with an `https:` URL, text,
+  `text/x-moz-url`, what Firefox offers) is refused and its source ends
+  with `cancelled`. Helium started as an X11 app (`--ozone-platform=x11`,
+  under the compositor's Xwayland) gets nothing from the same Metal drag:
+  the page hears no `dragenter` and the source hears `cancelled`. That
+  path is the compositor's, between Wayland and X11.
 
 ### Accessibility (AT-SPI)
 
@@ -2659,6 +2745,30 @@ lockfile (`cd ../../forks/accesskit_unix`, `cp
 test --lib`, `rm Cargo.lock`), and its AT-SPI layer's and consumer's the
 same way (`atspi-alone`, `consumer-alone`; each fork's `MIRIN.md`).
 
+**A build with no network.** `Cargo.lock` has git dependencies (wgpu and
+six others) beside crates.io's, so a plain build fetches. Every release
+carries `mirin-metal-<version>-source.tar.xz` (and its `.sha256`): this
+crate, `forks/` and the license as the tag has them, every other
+dependency in `crates/mirin-metal/vendor/` (`cargo vendor --locked`, 532
+crates, most of the 56 MB) and a `crates/mirin-metal/.cargo/config.toml`
+that points cargo at them and sets `net.offline`. In it,
+
+```sh
+cd crates/mirin-metal
+cargo build --release --locked --offline --bin mirin-metal-host
+```
+
+builds with an empty `CARGO_HOME` and no network (`BUILDING.md` in the
+tarball says the same, with the build dependencies). `scripts/metal-source.ts
+pack <directory>` makes it from the commit checked out and `verify
+<tarball>` builds the host from it that way, in a network namespace with
+no interface where the kernel allows one; the release workflow's
+`metal-source` job runs both on a tag before it uploads. No
+`rust-toolchain` file is in the tree (`pack` refuses one outside
+`vendor/`): the build takes the Rust on the `PATH`, and nothing makes
+rustup or a packager's cargo download another. A vendored crate's own
+toolchain file is never read, since cargo is not started in its directory.
+
 The TypeScript packages are checked with the rest of the repository
 (`bun run fmt-lint`, `bun run typecheck`, `bun run test`). The root `test`
 script runs `@mirinjs/metal-ui`'s tests from their package directory, because
@@ -2785,7 +2895,19 @@ is also resident: `{"hide":true}` (`hide()`) closes its window but keeps the
 process, the GPU context, the fonts, and the newest tree (trees sent while it
 is hidden are kept, newest wins; title lines and simulated input are dropped,
 the next open names the window), and the next `open` line opens it again
-drawing that tree on its first frame, as often as the driver likes. A hide is
+drawing that tree on its first frame, as often as the driver likes, with no
+wait between them: a hide in the turn of the open (before the compositor
+configured the surface or a frame was drawn) and an open in the turn of the
+hide are both fine, on a layer surface and on a window. Every open makes a
+new `wl_surface` with a new wgpu surface on the host's one device, and a
+hide drops both before the next line is read, so nothing of the old window
+is left for the new one to collide with. (The engine before sumi drew with
+blade and lost its host to `ERROR_EXTENSION_NOT_PRESENT` and
+`ERROR_NATIVE_WINDOW_IN_USE_KHR` there in Dashi's VM, which Dashi's capsule
+waited 400 ms and 150 ms to avoid; with sumi, `bench/hide-race.ts` ran 800
+rounds, 1,800 opens, on a layer surface and 200 on a window on a hardware
+GPU, and 200 of each on llvmpipe, about 30 ms a round, with no host lost,
+no open refused and no GPU error, and it is one of the gates.) A hide is
 not a close: the host doesn't exit and `onClose` doesn't fire; closing the
 window any other way (the person, the compositor) still ends the host. An
 `open` while the window is shown, and a `hide` while it is hidden or on a host
@@ -2827,15 +2949,21 @@ bun bench/gates.ts <host> --reference=<host before the change>
   (`reopen.ts`): every open after the first makes a new surface on the GPU
   context the first one made. A host whose context came from the one
   prepared as it connected once failed here ("failed to open window: Failed
-  to create surface"), which is how Dashi's launcher did not appear.
+  to create surface"), which is how Dashi's launcher did not appear;
+- a host kept warm outlives a layer surface hidden as it opens and opened
+  as it hides, forty rounds (`hide-race.ts`): `open` and `hide` in one
+  write, a `hide` the moment the window opened (before its first frame),
+  `hide` and `open` in one write with a frame on screen, and five of them
+  in one write; after each the host has to open a window and draw it, and
+  to have logged no error from its GPU layer.
 
-20 checks, four at a time (`--jobs`), each in a nested compositor of its
+21 checks, four at a time (`--jobs`), each in a nested compositor of its
 own (`dashi-comp --backend winit --no-xwayland` on a private
 `DASHI_COMP_SOCKET`; the headless compositors cannot present on every
 machine). It prints a line a check and a summary, shows what a failed check
 said, and exits non-zero on any difference; `--only=<text>` runs the checks
 whose name has the text, `--logs=<dir>` keeps their output. Without
-`--reference` it runs the 15 scene checks and the window's.
+`--reference` it runs the 15 scene checks and the window's two.
 
 The checks wait for nothing but the host: `layout-check.tsx` gives its
 hosts `MIRIN_METAL_CHECK=1` and after each step sends `settle`, lets React

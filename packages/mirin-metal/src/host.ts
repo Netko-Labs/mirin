@@ -65,6 +65,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             nodeId: "root",
             patches: record.patches,
             ...(record.settle === true ? { settle: true } : {}),
+            ...(record.rebase === true ? { rebase: true } : {}),
             ...(record.scroll === true ? { scroll: true } : {}),
           }
         : null;
@@ -170,10 +171,20 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
         ? { type: "selection", nodeId, start, end, textHash }
         : { type: "selection", nodeId, start, end };
     }
-    case "change":
+    case "change": {
+      const { value, baseHash, textHash } = record;
+      if (typeof value !== "string") return null;
+      return {
+        type: "change",
+        nodeId,
+        value,
+        ...(typeof baseHash === "number" ? { baseHash } : {}),
+        ...(typeof textHash === "number" ? { textHash } : {}),
+      };
+    }
     case "submit":
       return typeof record.value === "string"
-        ? { type: record.type, nodeId, value: record.value }
+        ? { type: "submit", nodeId, value: record.value }
         : null;
     case "keydown":
     case "windowkey": {
