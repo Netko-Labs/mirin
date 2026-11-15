@@ -1,0 +1,16 @@
+sumi
+The engine mirin Metal draws with (https://github.com/Netko-Labs/mirin).
+
+This product includes software developed by Zed Industries, Inc.
+
+sumi derives from the GPUI crates of the Zed repository
+(https://github.com/zed-industries/zed) as they were at commit
+703b5ac3f4ffe1e87a073123ae56e22f72f095c4 (2026-11-14), which are licensed
+under the Apache License, Version 2.0 (LICENSE-APACHE). The files have been
+changed by the mirin project: the crates were moved and renamed (gpui is
+sumi, gpui_<x> is sumi-<x>), cut to what mirin Metal calls, and changed
+since. MIRIN.md lists the changes up to that commit, PICKS.md what was taken
+from Zed after it, and the git history the rest. The changes are under the
+same license.
+
+Zed's repository carries no NOTICE file of its own.

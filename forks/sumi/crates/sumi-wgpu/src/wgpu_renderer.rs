@@ -324,7 +324,10 @@ impl WgpuRenderer {
         let surface_configured = ctx_ref.is_none();
         let (context, surface) = match ctx_ref.as_mut() {
             Some(context) => {
-                let surface = create_surface(&context.instance, window_handle.as_raw())
+                // mirin: `create_surface_on` gives a prepared instance the
+                // window's display; without it a host's second window failed
+                // with `MissingDisplayHandle`.
+                let surface = create_surface_on(context, window, window_handle.as_raw())
                     .context("Failed to create surface")?;
                 context.check_compatible_with_surface(&surface)?;
                 (context, surface)
@@ -1924,8 +1927,8 @@ impl WgpuRenderer {
             surface
         } else {
             let ctx_ref = gpu_context.borrow();
-            let instance = &ctx_ref.as_ref().unwrap().instance;
-            create_surface(instance, window_handle.as_raw())?
+            // mirin: as a second window's surface is made (`create_surface_on`).
+            create_surface_on(ctx_ref.as_ref().unwrap(), window, window_handle.as_raw())?
         };
 
         let gpu_context = Rc::clone(gpu_context);
@@ -2212,6 +2215,26 @@ fn create_surface(
 ) -> anyhow::Result<wgpu::Surface<'static>> {
     // Fall back to the display handle already provided via InstanceDescriptor::display.
     create_surface_with_display(instance, None, raw_window_handle)
+}
+
+/// mirin: a surface for `window` on the instance of a context that exists
+/// already: a host's second window, or a window whose surface is made again.
+/// An instance made with a display uses it, as upstream does; a prepared one
+/// (`wgpu_prepare.rs`) has none and is given the window's.
+fn create_surface_on<W: HasDisplayHandle>(
+    context: &WgpuContext,
+    window: &W,
+    raw_window_handle: raw_window_handle::RawWindowHandle,
+) -> anyhow::Result<wgpu::Surface<'static>> {
+    let display = if context.instance_lacks_display {
+        let display = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
+        Some(display.as_raw())
+    } else {
+        None
+    };
+    create_surface_with_display(&context.instance, display, raw_window_handle)
 }
 
 /// mirin: `create_surface` on an instance made without a display (a prepared

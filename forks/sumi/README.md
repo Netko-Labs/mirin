@@ -12,7 +12,10 @@ GPUI crates of the zed repository (Zed Industries) at commit `703b5ac3`
 (2026-11-14). Every crate keeps Zed's `Apache-2.0` license: `LICENSE-APACHE`
 here is Zed's, each crate links to it, and mirin's changes are under the
 same terms. `MIRIN.md` lists what changed up to the fork point; the git
-history has what changed since.
+history has what changed since. `NOTICE` says the same in the form
+Apache-2.0 asks a redistribution to carry (Zed's repository has none of its
+own): a package of a binary built from sumi ships it beside the license
+text.
 
 ## Crates
 

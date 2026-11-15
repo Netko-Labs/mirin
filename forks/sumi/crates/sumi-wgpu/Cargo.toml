@@ -30,8 +30,12 @@ log.workspace = true
 parking_lot.workspace = true
 profiling.workspace = true
 raw-window-handle.workspace = true
+# mirin: COLRv1 colour glyphs (src/color_glyph.rs): skrifa reads the paint
+# graph, tiny-skia draws it. The versions cosmic-text and resvg already build.
+skrifa = "0.40"
 smallvec.workspace = true
 swash.workspace = true
+tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"] }
 unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
 sumi-util.workspace = true

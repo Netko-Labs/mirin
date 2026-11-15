@@ -44,6 +44,7 @@ mod scrollbar;
 mod selection;
 mod sim;
 mod surface;
+mod text_mode;
 mod titlebar;
 #[cfg(target_os = "linux")]
 pub mod toplevels;

@@ -2427,6 +2427,11 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, window, cx| {
+                        // mirin: a window under a check is active for as
+                        // long as the check lasts (`set_platform_input_ignored`).
+                        if window.platform_input_ignored {
+                            return;
+                        }
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
@@ -2470,6 +2475,12 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, window, _| {
+                        // mirin: the pointer coming in or going out is the
+                        // platform's input: a window under a check does not
+                        // hear it (`set_platform_input_ignored`).
+                        if window.platform_input_ignored {
+                            return;
+                        }
                         window.hovered.set(active);
                         window.refresh();
                     })
@@ -3353,10 +3364,27 @@ impl Window {
     /// must not reach it. The pointer is then where no platform event put
     /// it: at the origin until an event is dispatched, and again after the
     /// window's bounds change (which reads the platform's pointer).
+    ///
+    /// Whether the window is the active one, and whether the pointer is over
+    /// it, are the platform's word too, and are not heard either: the window
+    /// counts as active, with no pointer over it, from now on. A compositor
+    /// gives and takes the keyboard when it likes (a window that opens
+    /// beside this one, a person clicking elsewhere) and a person's pointer
+    /// comes and goes; each change draws the window again, and a focus ring
+    /// is drawn only in an active window. A check that compares every frame
+    /// two windows drew then saw one frame more in one than in the other,
+    /// which is not a difference in what they draw.
     pub fn set_platform_input_ignored(&mut self, ignored: bool) {
         self.platform_input_ignored = ignored;
         if ignored {
             self.mouse_position = Point::default();
+            self.hovered.set(false);
+            if !self.active.replace(true) {
+                self.refresh();
+            }
+        } else {
+            // The pointer says where it is with its next event.
+            self.active.set(self.platform_window.is_active());
         }
     }
 

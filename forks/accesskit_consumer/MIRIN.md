@@ -7,6 +7,12 @@ path, and `crates/mirin-metal` (both builds) patches crates.io's to it, so its
 tests' own AccessKit tree is this one too. Every change is marked with a
 `// mirin:` comment in the source.
 
+**License.** `LICENSE-APACHE`, `LICENSE-MIT`, `LICENSE.chromium` (some files derive from Chromium,
+as their headers say) and `AUTHORS` here are
+AccessKit's, from its repository (https://github.com/AccessKit/accesskit) at
+the tag `accesskit_unix-v0.24.1`: the crates.io package carries none. This
+copy is modified (the table below); mirin's changes are under the same terms.
+
 | Change | Files | Why |
 | --- | --- | --- |
 | A hidden sibling after an empty container is stepped over | `src/iterators.rs` (`next_filtered_sibling`, `previous_filtered_sibling`; test `hidden_after_empty`) | A walk that reached a container the filter sees through (`ExcludeNode`) with no children went on to the next sibling still meaning to look inside it: when that sibling was hidden whole (`ExcludeSubtree`) with children, the walk went into it and ended at its end. So a parent's filtered children stopped at such a pair (the siblings after it were missing from AT-SPI), and a node's count of the filtered siblings before it fell short. Found by the random trees of `forks/accesskit_atspi_common`'s sibling places, which compare a parent's list with each node's count. Metal's trees never hold that pair (no node of theirs is hidden or clips its children, so nothing is hidden whole, and a frame always has children), so what Metal publishes is unchanged. Upstreamable. |

@@ -11,6 +11,8 @@
  * - `<host>` against itself with `MIRIN_METAL_RETAIN=0`, `--scene`, at scale
  *   factors 1, 1.25 and 1.5: those four and `across` draw with retained
  *   subtrees what drawing everything does.
+ * - `<host>` kept warm shows its window again after every hide
+ *   (`reopen.ts`).
  *
  * Prints a line per check and a summary, and exits non-zero when any check
  * found a difference or did not finish. `--only` runs the checks whose name
@@ -34,10 +36,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-/** One `layout-check.tsx` run. */
-type Check = { name: string; args: string[] };
+/** One run of a script of `bench/`: `layout-check.tsx` unless it names another. */
+type Check = { name: string; args: string[]; script?: string };
 /** What the process inside the compositor is told, through its environment. */
-type Inside = { args: string[]; log: string; status: string };
+type Inside = { script: string; args: string[]; log: string; status: string };
+/** The script of most checks; it alone takes `--visible`. */
+const LAYOUT_CHECK = "layout-check.tsx";
 type Result = { check: Check; passed: boolean; seconds: number; log: string; again: boolean };
 
 /** How long one check may take, compositor and all. */
@@ -103,7 +107,7 @@ console.log(
 );
 process.exit(failed === 0 ? 0 : 1);
 
-/** The set: layouts against the reference, then retained against not, by scale. */
+/** The set: layouts against the reference, retained against not by scale, then the window. */
 function gateSet(host: string, reference: string | undefined): Check[] {
   const layouts = ["grid", "browser", "scroll", "scroll-fractional"];
   const against: Check[] = reference
@@ -123,7 +127,12 @@ function gateSet(host: string, reference: string | undefined): Check[] {
       ],
     })),
   );
-  return [...against, ...retained];
+  const reopen: Check = {
+    name: "window opens again after a hide",
+    args: [host],
+    script: "reopen.ts",
+  };
+  return [...against, ...retained, reopen];
 }
 
 /** Run the checks, `jobs` at a time; the results in the checks' order. */
@@ -158,6 +167,7 @@ async function runCheck(
 ): Promise<Result> {
   const began = performance.now();
   const inside: Inside = {
+    script: check.script ?? LAYOUT_CHECK,
     args: check.args,
     log: join(logs, `${index}.log`),
     status: join(logs, `${index}.status`),
@@ -214,7 +224,12 @@ async function runInside(): Promise<number> {
   // One descriptor, appending: the check and the hosts it starts all write to it.
   const log = openSync(inside.log, "a");
   const child = Bun.spawn(
-    [process.execPath, join(packageDir, "bench/layout-check.tsx"), ...inside.args, "--visible"],
+    [
+      process.execPath,
+      join(packageDir, "bench", inside.script),
+      ...inside.args,
+      ...(inside.script === LAYOUT_CHECK ? ["--visible"] : []),
+    ],
     { cwd: packageDir, stdin: "ignore", stdout: log, stderr: log },
   );
   const code = await child.exited;
@@ -232,11 +247,15 @@ function parseInside(value: string | undefined): Inside | null {
     return null;
   }
   if (typeof parsed !== "object" || parsed === null) return null;
-  const { args, log, status } = parsed as Record<string, unknown>;
+  const { script, args, log, status } = parsed as Record<string, unknown>;
   if (!Array.isArray(args) || !args.every((arg): arg is string => typeof arg === "string")) {
     return null;
   }
-  return typeof log === "string" && typeof status === "string" ? { args, log, status } : null;
+  // A file of `bench/` by its name, never a path.
+  if (typeof script !== "string" || !/^[\w-]+\.tsx?$/.test(script)) return null;
+  return typeof log === "string" && typeof status === "string"
+    ? { script, args, log, status }
+    : null;
 }
 
 /** A check's line, and for a failed one what it said. */

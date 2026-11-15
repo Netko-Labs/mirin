@@ -1089,6 +1089,13 @@ impl VisualTestContext {
         self.background_executor.run_until_parked();
     }
 
+    /// mirin: simulates the pointer coming over the window, or leaving it.
+    pub fn simulate_window_hover(&mut self, hovered: bool) {
+        self.test_window(self.window)
+            .simulate_hover_status_change(hovered);
+        self.background_executor.run_until_parked();
+    }
+
     /// Simulates the user closing the window.
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {

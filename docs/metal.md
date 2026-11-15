@@ -330,7 +330,15 @@ patches change it in place, in order (section "Patches").
   what the platform delivers (the person's pointer crossing the window,
   their keyboard) is dropped in the GPUI fork, and the pointer is at the
   origin until a simulated move, and again after a resize, as it is for a
-  window no pointer entered. Animations (a scroll bar's fade,
+  window no pointer entered. Whether the window is the active one and
+  whether the pointer is over it are the platform's word too and are not
+  heard: the window counts as active, with no pointer over it, for as long
+  as the check lasts (a focus ring shows, as in a window a person is
+  using). A compositor gives and takes the keyboard when it likes, for one
+  when a second window opens beside the first, and each such change drew
+  the window again: `scene browser @1.25` then found one frame more in one
+  host than in the other, 4 runs of 6 in Dashi's VM, with the frame each
+  settled into the same every time. Animations (a scroll bar's fade,
   `heightTransitionMs`) read a clock that only `settle` moves, 250 ms for
   every frame an animation asked for, so they run through their frames at
   once (a scroll bar: shown three frames, part faded, gone) and end the
@@ -771,6 +779,53 @@ Radeon 890M with Mesa RADV:
   for a frame callback only when a frame draws and wakes idle windows when
   they become dirty (`forks/gpui/MIRIN.md`). Measured in dashi-comp: an
   idle desktop draws nothing.
+
+### Text on Linux
+
+sumi's text system on Linux is cosmic-text (shaping and font fallback) and
+swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
+
+- **Variable fonts are drawn at the weight asked for.** Fedora ships Noto
+  Sans CJK, Arabic, Devanagari and most of Noto as variable fonts: one face
+  with a weight axis. A font id is a face at a weight: the text's own
+  family gets an id for each weight asked of it, and a fallback face is
+  drawn at the weight of the text it stands in for. Before 2026-11-15 a
+  variable face was always drawn at its default, which for Noto Sans CJK is
+  Thin (Chinese, Japanese and Korean came out hairline) and for the others
+  Regular (bold Arabic was not bold). Style and width need no such care:
+  cosmic-text sorts fallback faces by weight, then width, then style, and
+  those are separate faces, not axes sumi sets.
+- **Left as it is:** a fallback family of fixed weights that has none equal
+  to the text's (Medium text over a family with Regular and Bold only) is
+  passed over by cosmic-text, which then takes the nearest weight of any
+  family that has the character. It was so before sumi too.
+- **Text is antialiased in grays; subpixel is a choice.** sumi asks for
+  subpixel antialiasing on Linux (colour at a glyph's edges, sharper on a
+  panel whose subpixels are the horizontal red, green, blue stripes it
+  assumes). The host sets grayscale instead (`src/text_mode.rs`): it is
+  what Metal drew before sumi and what Dashi's look was designed on, it is
+  right on any panel, rotated or not, and a screenshot or a recording
+  carries no colour fringes to another screen. `MIRIN_METAL_TEXT=subpixel`
+  in the host's environment (`NativeHostOptions.env`, or the driver's own)
+  asks for subpixel; a window that is not opaque (a panel over the desktop)
+  draws grays either way, since the fringes need a known background.
+  `MIRIN_METAL_TEXT=grayscale` asks for grays on macOS and Windows, where
+  the host otherwise leaves the platform's default. Layout does not depend
+  on it: only glyph pixels differ.
+- **Emoji are drawn** (2026-11-15). Noto Color Emoji as Fedora ships it
+  (`Noto-COLRv1.ttf`) holds COLRv1 glyphs: paint graphs of gradients,
+  transforms, clips and composited layers. swash draws colour bitmaps and
+  COLRv0's flat layers, not those, so every emoji was shaped and then drawn
+  as nothing, on the gpui 0.2.2 build too. `sumi-wgpu`'s `color_glyph.rs`
+  draws them: skrifa walks the paint graph and tiny-skia paints it (both
+  were in the tree already, for cosmic-text and for SVG), into the same
+  image a colour glyph from swash arrives as. A sweep gradient is drawn as
+  one flat colour (tiny-skia 0.11 has none; Noto's emoji use none). A font
+  is taken for an emoji font by its PostScript name, `NotoColorEmoji`, as
+  upstream does: another colour font (Twemoji) is still drawn as plain
+  outlines or not at all.
+- Tests: `crates/mirin-metal/tests/text_weight.rs` and `tests/emoji.rs`,
+  with small fonts cut from Noto Sans and Noto Color Emoji (`tests/fonts/`).
 
 ### Unified title bar (Dashi)
 
@@ -2706,15 +2761,20 @@ bun bench/gates.ts <host> --reference=<host before the change>
 - layouts, `<host>` against the reference: `layout-check.tsx` on `grid`,
   `browser`, `scroll` and `scroll-fractional`;
 - retained against `MIRIN_METAL_RETAIN=0` with `--scene`, at
-  `MIRIN_METAL_SCALE` 1, 1.25 and 1.5: those four and `across`.
+  `MIRIN_METAL_SCALE` 1, 1.25 and 1.5: those four and `across`;
+- a host kept warm opens its window again after a hide, twenty times
+  (`reopen.ts`): every open after the first makes a new surface on the GPU
+  context the first one made. A host whose context came from the one
+  prepared as it connected once failed here ("failed to open window: Failed
+  to create surface"), which is how Dashi's launcher did not appear.
 
-19 checks, four at a time (`--jobs`), each in a nested compositor of its
+20 checks, four at a time (`--jobs`), each in a nested compositor of its
 own (`dashi-comp --backend winit --no-xwayland` on a private
 `DASHI_COMP_SOCKET`; the headless compositors cannot present on every
 machine). It prints a line a check and a summary, shows what a failed check
 said, and exits non-zero on any difference; `--only=<text>` runs the checks
 whose name has the text, `--logs=<dir>` keeps their output. Without
-`--reference` it runs the 15 scene checks.
+`--reference` it runs the 15 scene checks and the window's.
 
 The checks wait for nothing but the host: `layout-check.tsx` gives its
 hosts `MIRIN_METAL_CHECK=1` and after each step sends `settle`, lets React
