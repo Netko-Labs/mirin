@@ -298,6 +298,38 @@ patches change it in place, in order (section "Patches").
   reader's focus), and `{"kind":"move","id"}` / `{"kind":"move","x","y"}`
   moves the pointer there through GPUI's real mouse dispatch, so
   `hoverBackground` and `onHover` respond (`hover` only reports `onHover`).
+  `{"kind":"settle"}` is answered with
+  `{"type":"settled","nodeId":"root","quiet":true}` once the window has
+  settled: every tree, patch, size and simulation sent before it is applied
+  (after one of those the host first stands aside for the window's own
+  tasks: a resize on Wayland ends in one), a frame with them is drawn, and
+  the window waits for no other (no view is dirty, no animation asked for a
+  frame). `quiet` is false when it still waited after 20 s, or after a
+  minute of animation under a check, and when there is no window to settle
+  (hidden; the simulations queued are dropped). With
+  `MIRIN_METAL_TRACE_SCENE` the event also carries `scene`, the digest of
+  the last frame drawn. A host that takes it says `"settle":true` in its
+  `protocol` line (and its binary names `MIRIN_METAL_SETTLE`); one from
+  before refuses the line. What the app does in answer to the events before
+  `settled` (a press that sets state) reaches the host after it: a check
+  asks again once its driver is done, until a round brings nothing new
+  (`bench/layout-check.tsx`).
+- Check mode: `MIRIN_METAL_CHECK=1` in the host's environment, for a window
+  a check drives (`src/check.rs`). The window hears only simulated input:
+  what the platform delivers (the person's pointer crossing the window,
+  their keyboard) is dropped in the GPUI fork, and the pointer is at the
+  origin until a simulated move, and again after a resize, as it is for a
+  window no pointer entered. Animations (a scroll bar's fade,
+  `heightTransitionMs`) read a clock that only `settle` moves, 250 ms for
+  every frame an animation asked for, so they run through their frames at
+  once (a scroll bar: shown three frames, part faded, gone) and end the
+  same on every run. And `settle` draws the frames the window waits for
+  itself instead of waiting for the compositor to ask for each (a nested
+  compositor asks about once a second); the compositor is shown the last
+  one when it next asks. With `MIRIN_METAL_TRACE_SCENE=1` the per-frame
+  `scene` trace line is left out (a `settled` event has the digest;
+  describing a scene costs more than drawing it). Without check mode
+  `settle` answers as well, at the pace frames come.
 - Grid: `grid` lays children out as a CSS grid (taffy) with `gridColumns` /
   `gridRows` track lists (a number is px; `"1fr"`, `"25%"`, `"auto"`,
   `"min-content"`, `"max-content"`; `{"min","max"}` is `minmax`), item
@@ -411,7 +443,8 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
 
 - **Negotiation.** A host that takes patches says so on stdout as it starts,
   before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
-  (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`). A driver
+  (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
+  says `"settle":true` too, for the `settle` simulation). A driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now
@@ -2642,7 +2675,51 @@ echo '{"type":"view","props":{"fill":true,"center":true,"background":"#3b82f6"},
   | crates/mirin-metal/target/debug/mirin-metal-host
 ```
 
-For checks and benchmarks, not for an app to set: `MIRIN_METAL_RETAIN=0`
+### Validate an engine change
+
+`bench/gates.ts` in `packages/mirin-metal-ui` runs the checks a change to
+the engine (the GPUI fork, retained subtrees, layout, text) has to pass, in
+one command:
+
+```sh
+cd packages/mirin-metal-ui
+bun bench/gates.ts <host> --reference=<host before the change>
+```
+
+- layouts, `<host>` against the reference: `layout-check.tsx` on `grid`,
+  `browser`, `scroll` and `scroll-fractional`;
+- retained against `MIRIN_METAL_RETAIN=0` with `--scene`, at
+  `MIRIN_METAL_SCALE` 1, 1.25 and 1.5: those four and `across`.
+
+19 checks, four at a time (`--jobs`), each in a nested compositor of its
+own (`dashi-comp --backend winit --no-xwayland` on a private
+`DASHI_COMP_SOCKET`; the headless compositors cannot present on every
+machine). It prints a line a check and a summary, shows what a failed check
+said, and exits non-zero on any difference; `--only=<text>` runs the checks
+whose name has the text, `--logs=<dir>` keeps their output. Without
+`--reference` it runs the 15 scene checks.
+
+The checks wait for nothing but the host: `layout-check.tsx` gives its
+hosts `MIRIN_METAL_CHECK=1` and after each step sends `settle`, lets React
+finish what the host's events started, and asks again until a round
+exchanges nothing (section 2, "Simulation" and "Check mode"). So the set
+takes about a minute where it took 55 with fixed waits (1.5 s a step, 3.5 s
+with `--scene`, one check at a time under a lock), gives the same answer
+beside a build or with the pointer over a check's window, and leaves no
+file behind. Three sets at once beside a `cargo build`: every check passed
+in each. A host with a moved drawing's quads left behind (`Primitive::move_by`)
+fails 12 of the 15 scene checks.
+
+The reference has to take `settle` too (any host built from this point
+on). One from before is driven with the fixed waits, and its window hears
+the person's pointer: a `scroll` check against such a host fails on a hover
+whenever the pointer rests where its window opens. `gates.ts` runs a failed
+check against such a reference once more, alone, which helps against load
+but not against a pointer that stays. Timing benches (`bench/native.tsx`,
+`bench/stress.tsx`) are not part of the set and still run one at a time.
+
+For checks and benchmarks, not for an app to set: `MIRIN_METAL_CHECK=1`
+(check mode, section 2); `MIRIN_METAL_RETAIN=0`
 draws every frame whole (no retained subtrees, section 5b);
 `MIRIN_METAL_SCROLL_SNAP=0` paints scroll views at their offset itself,
 between device pixels (section 2); and `MIRIN_METAL_SCALE=<factor>` draws at

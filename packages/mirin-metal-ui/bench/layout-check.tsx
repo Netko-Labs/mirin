@@ -47,10 +47,22 @@
  * differs, give each host a file with
  * `--env-a=MIRIN_METAL_TRACE_SCENE=<path>` (every frame's drawing is
  * appended to it), and `LAYOUT_CHECK_TRACE=1` echoes the hosts' trace.
+ *
+ * Nothing here waits a fixed time. After each step the check asks the host
+ * to settle (the `settle` simulation, with `MIRIN_METAL_CHECK=1`: the host
+ * hears only simulated input, runs its animations to their end and draws
+ * its frames at once) and lets React finish what the host's events started,
+ * again and again until a round brings nothing new; a wait that takes over
+ * a minute fails the check. So a check takes seconds, gives the same answer
+ * on a busy machine, and several can run at once, each in a compositor of
+ * its own (`bench/gates.ts` runs the set). A host from before `settle` (its
+ * `protocol` line does not say it) is driven the old way, with fixed waits
+ * of 1.5 s a step (3.5 s with `--scene`): slow, and only right on a quiet
+ * machine with the pointer elsewhere. `--fixed-waits` drives every host
+ * that way, to compare the two ways on one host.
  */
 
 import {
-  type LayoutNode,
   type NativeEvent,
   render,
   ScrollView,
@@ -61,7 +73,7 @@ import {
   TextInput,
   View,
 } from "@mirinjs/metal";
-import { useState } from "react";
+import { type ReactNode, startTransition, useEffect, useState } from "react";
 import { Browser } from "../demo/browser.tsx";
 import { ThemeProvider } from "../src/provider.tsx";
 
@@ -75,6 +87,8 @@ if (!app || !hostA || !hostB || !apps.includes(app)) {
   process.exit(2);
 }
 const scene = args.includes("--scene");
+/** `--fixed-waits`: no host is asked to settle (see above). */
+const fixedWaits = args.includes("--fixed-waits");
 /** `--bounds-digits=N`: compare bounds to N decimals (see above); exact without. */
 const boundsDigits = args.find((arg) => arg.startsWith("--bounds-digits="))?.split("=")[1];
 const bound = (value: number): string => {
@@ -413,8 +427,76 @@ const driven: Step[] =
 
 type Snapshot = Map<string, string>;
 
+/** How long any one wait may take before the check fails. */
+const WAIT_MS = 60_000;
+
+/** Fail the check with what went wrong (never a difference: exit code 2). */
+function fail(message: string): never {
+  console.error(`layout-check: ${message}`);
+  process.exit(2);
+}
+
+/** `promise`, or the check fails saying what never came. */
+function within<T>(promise: Promise<T>, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no ${what} in ${WAIT_MS / 1000} s`)), WAIT_MS);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Tells when React has rendered and committed everything asked of it so
+ * far: a transition (the lowest priority there is) through a state of its
+ * own, whose effect runs once the commit with it, and so every update asked
+ * before it, is done.
+ */
+class Idle {
+  private asked = 0;
+  private reached = 0;
+  private waiting: Array<{ tick: number; done: () => void }> = [];
+  private ask: ((tick: number) => void) | null = null;
+
+  /** The wrapper mounted: it takes the ticks from now on, and the last one asked. */
+  mounted(ask: (tick: number) => void): void {
+    this.ask = ask;
+    if (this.asked > this.reached) ask(this.asked);
+  }
+
+  /** The commit with `tick` is done. */
+  committed(tick: number): void {
+    this.reached = Math.max(this.reached, tick);
+    const done = this.waiting.filter((wait) => wait.tick <= this.reached);
+    this.waiting = this.waiting.filter((wait) => wait.tick > this.reached);
+    for (const wait of done) wait.done();
+  }
+
+  /** Resolves once React has nothing left of what was asked before this. */
+  idle(): Promise<void> {
+    this.asked += 1;
+    const tick = this.asked;
+    return new Promise((done) => {
+      this.waiting.push({ tick, done });
+      this.ask?.(tick);
+    });
+  }
+}
+
+/** The app, under a state `idle` moves to tell when React is done. */
+function Settles({ idle, children }: { idle: Idle; children: ReactNode }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    idle.mounted((next) => startTransition(() => setTick(next)));
+  }, [idle]);
+  useEffect(() => {
+    idle.committed(tick);
+  }, [idle, tick]);
+  return children;
+}
+
 async function run(binary: string): Promise<Array<{ name: string; layout: Snapshot }>> {
-  // What the last frame drew (`--scene`), from the host's trace.
+  // What the last frame drew (`--scene`): from the host's `settled` event,
+  // or for a host without it from its trace.
   let drew = "";
   const transport = spawnNativeHost(binary, {
     title: "layout check",
@@ -422,6 +504,9 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
     height: 800,
     env: {
       ...display?.env,
+      // Only simulated input, animations at once, frames without waiting
+      // (a host from before it ignores it).
+      ...(fixedWaits ? {} : { MIRIN_METAL_CHECK: "1" }),
       ...(scene ? { MIRIN_METAL_TRACE: "1", MIRIN_METAL_TRACE_SCENE: "1" } : {}),
       ...hostEnv("a"),
     },
@@ -433,26 +518,63 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
       }
     },
   });
-  let layout: LayoutNode[] | null = null;
   // The nodes pressed and hovered since the last snapshot, in order.
   let heard: string[] = [];
+  // What the driver sent and the host said since the check last looked:
+  // a round of settling that moves neither is the last.
+  let exchanged = 0;
+  const send = transport.send.bind(transport);
+  transport.send = (line) => {
+    exchanged += 1;
+    send(line);
+  };
+  type Answer = Extract<NativeEvent, { type: "protocol" | "settled" | "layout" }>;
+  const answers = new Map<Answer["type"], (event: Answer) => void>();
+  let gone: ((error: Error) => void) | null = null;
+  const closed = new Promise<never>((_, reject) => {
+    gone = reject;
+  });
+  // Unheard when the check ends by itself.
+  closed.catch(() => {});
+  transport.onClose(() => gone?.(new Error("the host exited")));
+  /** The host's next event of a type it sends only in answer. */
+  const answer = <T extends Answer["type"]>(type: T): Promise<Extract<Answer, { type: T }>> =>
+    within(
+      Promise.race([
+        new Promise<Extract<Answer, { type: T }>>((resolve) => {
+          answers.set(type, (event) => resolve(event as Extract<Answer, { type: T }>));
+        }),
+        closed,
+      ]),
+      `${type} from ${binary}`,
+    );
+  const word = answer("protocol");
   transport.onEvent((event: NativeEvent) => {
-    if (event.type === "layout") layout = event.nodes;
+    if (event.type === "protocol" || event.type === "settled" || event.type === "layout") {
+      const waiting = answers.get(event.type);
+      answers.delete(event.type);
+      waiting?.(event);
+      return;
+    }
+    exchanged += 1;
     if (event.type === "press") heard.push(`press ${event.nodeId}`);
     if (event.type === "hover") heard.push(`hover ${event.nodeId} ${event.hovered}`);
   });
+  const idle = new Idle();
   const root = render(
-    app === "scroll" || app === "scroll-fractional" ? (
-      <Scrolled />
-    ) : app === "across" ? (
-      <Across />
-    ) : app === "grid" ? (
-      <Grid />
-    ) : (
-      <ThemeProvider>
-        <Browser initial="button-demo" />
-      </ThemeProvider>
-    ),
+    <Settles idle={idle}>
+      {app === "scroll" || app === "scroll-fractional" ? (
+        <Scrolled />
+      ) : app === "across" ? (
+        <Across />
+      ) : app === "grid" ? (
+        <Grid />
+      ) : (
+        <ThemeProvider>
+          <Browser initial="button-demo" />
+        </ThemeProvider>
+      )}
+    </Settles>,
     transport,
   );
   const nodeId = (testId: string): string => {
@@ -460,11 +582,34 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
     if (!id) throw new Error(`no node ${testId}`);
     return id;
   };
+  const settles = (await word).settle === true && !fixedWaits;
+  if (!settles) console.error(`layout-check: ${binary} is given fixed waits`);
+  /**
+   * The host and the app have both come to rest: the host has drawn what
+   * it was sent, React has answered what the host said, and a round of
+   * both exchanged nothing more. A host without `settle` is given `ms`.
+   */
+  const settled = async (ms: number): Promise<void> => {
+    if (!settles) {
+      await Bun.sleep(ms);
+      return;
+    }
+    for (let round = 0; ; round += 1) {
+      if (round === 100) throw new Error(`${binary} and the app never came to rest`);
+      const before = exchanged;
+      const waiting = answer("settled");
+      transport.simulate({ kind: "settle" });
+      const event = await waiting;
+      if (!event.quiet) throw new Error(`${binary} did not settle`);
+      if (event.scene !== undefined) drew = event.scene;
+      await within(idle.idle(), "idle app");
+      if (exchanged === before) return;
+    }
+  };
   const snapshot = async (): Promise<Snapshot> => {
-    layout = null;
+    const waiting = answer("layout");
     transport.simulate({ kind: "layout" });
-    for (let waited = 0; layout === null && waited < 3000; waited += 20) await Bun.sleep(20);
-    const nodes: LayoutNode[] = layout ?? [];
+    const { nodes } = await waiting;
     const snapshot = new Map(
       nodes.map((node) => [
         node.id,
@@ -476,7 +621,7 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
     if (scene) snapshot.set("(drew)", drew);
     return snapshot;
   };
-  await Bun.sleep(3000);
+  await settled(3000);
   const out = [{ name: "initial", layout: await snapshot() }];
   for (const step of driven) {
     const laid = out.at(-1)?.layout;
@@ -486,10 +631,10 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
     };
     if (step.width !== undefined) transport.setSize(step.width, 800);
     else if (step.command) transport.simulate(step.command(nodeId, at));
-    // Several frames: the driver's answer, then whatever it settles into
-    // (a scroll bar fades for over a second, at a nested compositor's pace
-    // of a frame a second).
-    await Bun.sleep(scene ? 3500 : 1500);
+    // Without `settle`, several frames: the driver's answer, then whatever
+    // it settles into (a scroll bar fades for over a second, at a nested
+    // compositor's pace of a frame a second).
+    await settled(scene ? 3500 : 1500);
     out.push({ name: step.name, layout: await snapshot() });
   }
   root.unmount();
@@ -498,22 +643,22 @@ async function run(binary: string): Promise<Array<{ name: string; layout: Snapsh
 }
 
 // Each host runs in a process of its own, so node ids (a counter in the
-// renderer) line up between the two.
-const record = args.find((arg) => arg.startsWith("--record="))?.slice("--record=".length);
-if (record) {
-  const steps = await run(hostA);
-  display?.close();
-  await Bun.write(
-    record,
-    JSON.stringify(steps.map((step) => ({ name: step.name, layout: [...step.layout] }))),
+// renderer) line up between the two. The child (`--record`) writes its
+// steps to its standard output, which nothing else of it uses.
+type Recorded = Array<{ name: string; layout: Array<[string, string]> }>;
+if (args.includes("--record")) {
+  const steps = await run(hostA).catch((error: unknown) =>
+    fail(error instanceof Error ? error.message : String(error)),
   );
+  display?.close();
+  const record: Recorded = steps.map((step) => ({ name: step.name, layout: [...step.layout] }));
+  await Bun.write(Bun.stdout, JSON.stringify(record));
   process.exit(0);
 }
 async function recorded(
   binary: string,
   host: "a" | "b",
 ): Promise<Array<{ name: string; layout: Snapshot }>> {
-  const path = `${process.env.TMPDIR ?? "/tmp"}/layout-check-${process.pid}-${Math.random()}.json`;
   const child = Bun.spawn(
     [
       process.execPath,
@@ -521,18 +666,25 @@ async function recorded(
       app as string,
       binary,
       "-",
-      `--record=${path}`,
+      "--record",
       ...args.filter(
-        (arg) => arg === "--visible" || arg === "--scene" || arg.startsWith("--bounds-digits="),
+        (arg) =>
+          arg === "--visible" ||
+          arg === "--scene" ||
+          arg === "--fixed-waits" ||
+          arg.startsWith("--bounds-digits="),
       ),
       // The child runs it as its first host.
       ...Object.entries(hostEnv(host)).map(([name, value]) => `--env-a=${name}=${value}`),
     ],
-    { stdout: "inherit", stderr: "inherit", env: { ...process.env, ...display?.env } },
+    { stdout: "pipe", stderr: "inherit", env: { ...process.env, ...display?.env } },
   );
-  await child.exited;
-  const steps: Array<{ name: string; layout: Array<[string, string]> }> =
-    await Bun.file(path).json();
+  const [text, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  if (code !== 0) {
+    display?.close();
+    fail(`${binary} was not recorded`);
+  }
+  const steps = JSON.parse(text) as Recorded;
   return steps.map((step) => ({ name: step.name, layout: new Map(step.layout) }));
 }
 const a = await recorded(hostA, "a");
