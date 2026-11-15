@@ -60,7 +60,21 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
         : null;
     case "protocol":
       return nodeId === "root" && typeof record.patches === "number"
-        ? { type: "protocol", nodeId: "root", patches: record.patches }
+        ? {
+            type: "protocol",
+            nodeId: "root",
+            patches: record.patches,
+            ...(record.settle === true ? { settle: true } : {}),
+          }
+        : null;
+    case "settled":
+      return nodeId === "root" && typeof record.quiet === "boolean"
+        ? {
+            type: "settled",
+            nodeId: "root",
+            quiet: record.quiet,
+            ...(typeof record.scene === "string" ? { scene: record.scene } : {}),
+          }
         : null;
     case "resync":
       return nodeId === "root"

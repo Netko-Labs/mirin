@@ -620,8 +620,16 @@ export type NativeEvent =
    * The host applies tree patches of protocol `patches` (sent once, as it
    * starts): `render` then sends only what each commit changed. A host older
    * than patches never sends it, and gets the whole tree every commit.
+   * `settle` is true from a host that takes the `settle` simulation.
    */
-  | { type: "protocol"; nodeId: "root"; patches: number }
+  | { type: "protocol"; nodeId: "root"; patches: number; settle?: boolean }
+  /**
+   * The answer to a `settle` simulation: the window has settled (`quiet`),
+   * or still waited for a frame when the host gave up (20 s, or a minute of
+   * animation under `MIRIN_METAL_CHECK=1`). `scene` is the digest of the
+   * last frame drawn, from a host that traces it (`MIRIN_METAL_TRACE_SCENE`).
+   */
+  | { type: "settled"; nodeId: "root"; quiet: boolean; scene?: string }
   /** A patch didn't apply (`reason`): the host wants the whole tree, and drops patches until it comes. */
   | { type: "resync"; nodeId: "root"; reason: string }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
@@ -662,6 +670,21 @@ export type SimCommand =
   | { kind: "scroll"; id: string; dy: number; dx?: number }
   /** Give the keyboard to a field or `focusable` view, pressing nothing (a screen reader's focus). */
   | { kind: "focus"; id: string }
+  /**
+   * Ask for a `settled` event once the window has settled: everything sent
+   * before this (trees, patches, sizes, simulations) is applied, a frame
+   * with it is drawn, and the window waits for no other (no view is dirty,
+   * no animation asked for a frame). What the app does in answer to the
+   * events before `settled` comes after it, so a check that presses
+   * something sends `settle` again once its driver has answered, until a
+   * round brings nothing new (`bench/layout-check.tsx` in
+   * `@mirinjs/metal-ui`). Only a host whose `protocol` event says
+   * `settle: true` takes it; one from before refuses the line. With
+   * `MIRIN_METAL_CHECK=1` in the host's environment the window hears no
+   * input but simulated input, animations run to their end at once, and
+   * frames are drawn without waiting for the compositor.
+   */
+  | { kind: "settle" }
   | { kind: "window"; action: "zoom" | "minimize" };
 
 /**

@@ -12,7 +12,7 @@ use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
     HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar,
-    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER,
+    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER, SETTLE_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -372,10 +372,13 @@ fn main() {
     mirin_metal::trace::log(format_args!(
         "{PATCH_MARKER}: patch protocol {PATCH_PROTOCOL}"
     ));
+    mirin_metal::trace::log(format_args!("{SETTLE_MARKER}: the settle simulation"));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
         "patches": PATCH_PROTOCOL,
+        // This host takes the `settle` simulation and answers `settled`.
+        "settle": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
@@ -543,6 +546,12 @@ fn main() {
                     None => serde_json::Value::Null,
                 };
             }
+            if let EventKind::Settled { quiet, scene } = &event.kind {
+                line["quiet"] = serde_json::json!(quiet);
+                if let Some(scene) = scene {
+                    line["scene"] = serde_json::json!(scene);
+                }
+            }
             if let EventKind::Layout { nodes } = &event.kind {
                 line["nodes"] = serde_json::Value::Array(
                     nodes
@@ -690,6 +699,15 @@ fn initial_tree(options: &NativeUiOptions) -> mirin_metal::NodeSpec {
 #[cfg(test)]
 mod line_tests {
     use super::{parse_host_line, HostLine};
+
+    #[test]
+    fn a_settle_is_a_simulation_line() {
+        use mirin_metal::{DriverMessage, SimCommand};
+        assert_eq!(
+            super::parse_line(r#"{"sim":{"kind":"settle"}}"#),
+            Ok(DriverMessage::Sim(SimCommand::Settle))
+        );
+    }
 
     #[test]
     fn hide_is_a_line_of_its_own() {

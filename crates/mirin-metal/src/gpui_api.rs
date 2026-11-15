@@ -239,8 +239,9 @@ pub(crate) fn observe_visibility(window: &mut Window, mut callback: impl FnMut(b
 /// the fork's alone.
 pub(crate) fn set_scroll_snap(_window: &mut Window, _snap: bool) {}
 
-/// Draw the window's next frame and drop it (tests).
-#[cfg(test)]
+/// Draw the window's next frame now, without the platform asking for it
+/// (tests, and a `settle` under a check); the platform presents it when it
+/// next asks.
 pub(crate) fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear(cx);
 }

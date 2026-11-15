@@ -179,7 +179,7 @@ pub(crate) struct Activity(Rc<RefCell<BarState>>);
 
 impl Activity {
     /// Note the scroll position now; how visible the bars are (0 to 1).
-    fn visibility(&self, scrolled: (f32, f32), now: Instant) -> f32 {
+    pub(crate) fn visibility(&self, scrolled: (f32, f32), now: Instant) -> f32 {
         let mut state = self.0.borrow_mut();
         match state.seen {
             // The first look is not a scroll: a view does not open with its bar showing.
@@ -437,7 +437,7 @@ pub(crate) fn bars_for(scrolled: Scrolled, activity: Activity) -> AnyElement {
     canvas(
         move |_, window, _cx| {
             let geometry = source.geometry();
-            let now = Instant::now();
+            let now = crate::check::now();
             let opacity = state.visibility(geometry.scrolled, now);
             let found = bars(&geometry);
             if found.is_empty() {
@@ -522,7 +522,7 @@ fn listen(
                 if phase != DispatchPhase::Capture {
                     return;
                 }
-                let now = Instant::now();
+                let now = crate::check::now();
                 if let Some(held) = activity.held() {
                     if let Some((bar, _)) = bars.iter().find(|(bar, _)| bar.axis == held.axis) {
                         let start = bar.along(event.position) - held.grab;
@@ -555,7 +555,7 @@ fn listen(
             let Some(bar) = hovered(&bars, window) else {
                 return;
             };
-            let now = Instant::now();
+            let now = crate::check::now();
             match bar.press(bar.along(event.position)) {
                 Press::Grab(grab) => {
                     scrolled.grabbed();
@@ -582,7 +582,7 @@ fn listen(
         window.on_mouse_event(move |_: &MouseExitEvent, phase, window, _cx: &mut App| {
             if phase == DispatchPhase::Capture
                 && activity.held().is_none()
-                && activity.set_near(None, Instant::now())
+                && activity.set_near(None, crate::check::now())
             {
                 window.refresh();
             }
@@ -596,7 +596,7 @@ fn listen(
             }
             if activity.held().is_some() {
                 scrolled.let_go();
-                activity.hold(None, Instant::now());
+                activity.hold(None, crate::check::now());
                 window.refresh();
             }
         });
