@@ -30,6 +30,8 @@ const FEWEST_FROM = 2;
 export interface HostSays {
   /** It takes a field's `baseHash` and carries typing onto a value written meanwhile. */
   rebase?: boolean;
+  /** It takes a `selection` with the hash of the text it was made in. */
+  selectionHash?: boolean;
   /** It reports scroll offsets (`onScroll`) and takes `scrollTo` and `scrollIntoView`. */
   scroll?: boolean;
   /** It says when an image cannot be drawn (`onError`). */
@@ -42,6 +44,8 @@ export class TreeSync {
   private patching = false;
   /** The host takes a field's `baseHash` (its `protocol` line says `rebase`). */
   private stamps = false;
+  /** The host takes a `selection`'s `textHash` (its `protocol` line says `selectionHash`). */
+  private stampsSelections = false;
   /** The host reports scroll offsets and takes scroll commands (its `protocol` line says `scroll`). */
   private scrolls = false;
   /** Scroll commands asked for while the first tree is held: they go after it. */
@@ -73,7 +77,8 @@ export class TreeSync {
    * The host applies patches of `version`: send the whole tree with every id
    * now, patches after. What else its `protocol` line says (`says`) decides
    * what it is told: one that says `rebase`, which text each field's value
-   * was set over, from the next value set; one that says `scroll`, which
+   * was set over, from the next value set; one that says `selectionHash`,
+   * which text each `selection` was made in; one that says `scroll`, which
    * views listen to their offset, and it takes scroll commands; one that
    * says `imageError`, which images listen for their failure.
    */
@@ -81,6 +86,7 @@ export class TreeSync {
     const waited = this.waiting;
     this.waiting = false;
     this.stamps = says.rebase === true;
+    this.stampsSelections = says.selectionHash === true;
     const scrolls = says.scroll === true;
     const imageErrors = says.imageError === true;
     if (this.scrolls !== scrolls || this.imageErrors !== imageErrors) {
@@ -401,10 +407,14 @@ export class TreeSync {
     for (const child of node.children) this.forget(child);
   }
 
-  /** A field goes out: what it now holds, and which text its value was set over. */
+  /**
+   * A field goes out: what it now holds, which text its value was set over
+   * and which its selection was made in.
+   */
   private followField(node: InputInstance): void {
-    const { value, valueRevision } = node.props;
+    const { value, valueRevision, selection } = node.props;
     node.base = this.fields.field(node.key, value, valueRevision, this.stamps);
+    node.selectedIn = this.stampsSelections ? this.fields.selected(node.key, selection) : undefined;
   }
 
   private holds(node: HostNode): boolean {

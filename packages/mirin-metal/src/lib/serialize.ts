@@ -74,7 +74,7 @@ interface InputNodeProps {
   insertTab?: boolean;
   tabSize?: number;
   onKey?: boolean;
-  selection?: { start: number; end: number };
+  selection?: { start: number; end: number; textHash?: number };
   onSelection?: boolean;
   selectionColor?: Color;
   runs?: InputRunProps[];
@@ -327,8 +327,10 @@ function inputProps(instance: InputInstance): InputNodeProps {
   const tabSize = tabStops(input.tabSize);
   if (tabSize !== undefined) props.tabSize = tabSize;
   if (input.onKeyPress) props.onKey = true;
-  if (input.selection)
+  if (input.selection) {
     props.selection = { start: offset(input.selection.start), end: offset(input.selection.end) };
+    if (instance.selectedIn !== undefined) props.selection.textHash = instance.selectedIn;
+  }
   if (input.onSelectionChange) props.onSelection = true;
   if (input.selectionColor) props.selectionColor = input.selectionColor;
   if (input.runs && input.runs.length > 0) props.runs = input.runs.map(serializeRun);

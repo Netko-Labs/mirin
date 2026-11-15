@@ -54,7 +54,7 @@ where
 
 /// What a driver's new `value` did to a field's text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Taken {
+pub(crate) enum Taken {
     /// Nothing: it is the field's own text, coming back.
     Kept,
     /// It replaced the text.
@@ -178,9 +178,7 @@ pub(crate) fn sync_input(
                 report_change(state, &spec.id, events);
             }
             let field = &mut state.field;
-            state
-                .selection
-                .sync(field, spec, taken == Taken::Reset, events);
+            state.selection.sync(field, spec, taken, events);
             if taken == Taken::Rebased {
                 state.selection.report(&spec.id, &state.field, events);
             }

@@ -3,7 +3,9 @@
 //! by line), a drag extends it wherever the pointer goes until the button
 //! lifts, and every change is reported to a driver that listens
 //! (`onSelection`). A driver's `selection` prop sets it, as `value` sets the
-//! text: a selection it echoes late (one the field reported) is not a reset.
+//! text: a selection it echoes late (one the field reported) is not a reset,
+//! and one its app made in a text the field no longer holds (`textHash` on
+//! it names that text) is dropped, as a `change` made on a replaced text is.
 //!
 //! Every drawn field hears every pointer move and release, pressed or not:
 //! a drag can be over before the frame after its press is drawn (a busy or
@@ -18,11 +20,11 @@ use sumi::{
 };
 
 use crate::caret::{Drawn, DrawnCell};
-use crate::events::EventSender;
+use crate::events::{text_hash, EventSender};
 use crate::field::{Field, Press};
 use crate::runs::{pressed, Units};
-use crate::tree::{InputProps, InputRun};
-use crate::value::driver_resets;
+use crate::tree::{InputProps, InputRun, SelectionRange};
+use crate::value::{driver_resets, Taken};
 use crate::window::RootView;
 
 #[cfg(test)]
@@ -52,6 +54,22 @@ pub(crate) struct SelectionState {
     reported: Option<(usize, usize)>,
 }
 
+/// Whether the driver's `selection` was made in a text the field does not
+/// hold: the app set it before it knew what was typed since, so its offsets
+/// are into another text and the caret stays with the typing. Dropped for
+/// good, as the driver drops a `change` made on a text its app replaced:
+/// the field has reported where its caret is.
+fn is_late(field: &Field, props: &InputProps, range: SelectionRange, taken: Taken) -> bool {
+    match range.text_hash {
+        // A driver follows what a field holds by its changes: one that
+        // hears none cannot name the text, and is believed.
+        Some(made_in) => props.on_change && made_in != text_hash(&field.buffer),
+        // A driver that doesn't say: the selection that comes with a value
+        // is in that value, which a rebase put the typing into.
+        None => taken == Taken::Rebased,
+    }
+}
+
 impl SelectionState {
     /// A new field's state: its driver's selection applied, and nothing to report.
     pub(crate) fn new(field: &mut Field, props: &InputProps) -> Self {
@@ -68,23 +86,26 @@ impl SelectionState {
     }
 
     /// A new tree: select the driver's `selection` when it changed (and is
-    /// not a late echo) or the buffer was just `reset`, and tell a listening
-    /// driver where the selection is when that moved it.
+    /// not a late echo, nor made in a text the field no longer holds) or
+    /// the buffer was just reset, and tell a listening driver where the
+    /// selection is when that moved it.
     pub(crate) fn sync(
         &mut self,
         field: &mut Field,
         props: &InputProps,
-        reset: bool,
+        taken: Taken,
         events: &EventSender,
     ) {
         self.listening = props.on_selection;
         let wanted = props.selection.map(|range| (range.start, range.end));
+        let reset = taken == Taken::Reset;
         let mut moved = reset;
-        if let Some((start, end)) = wanted {
+        if let Some(range) = props.selection {
             let changed = self.synced != wanted;
-            if reset || (changed && driver_resets(&mut self.echoes, &(start, end))) {
+            let fresh = changed && !is_late(field, props, range, taken);
+            if reset || (fresh && driver_resets(&mut self.echoes, &(range.start, range.end))) {
                 self.echoes.clear();
-                field.set_selection_utf16(start, end);
+                field.set_selection_utf16(range.start, range.end);
                 moved = true;
             }
         }

@@ -50,6 +50,11 @@ export interface InputInstance extends InstanceBase {
    * sent as `baseHash` to a host that takes it.
    */
   base?: number;
+  /**
+   * The hash of the text the app made its `selection` in, sent as the
+   * selection's `textHash` to a host that takes it.
+   */
+  selectedIn?: number;
 }
 
 /** A raw string/number child, e.g. the text inside `<Text>`. */
