@@ -1,4 +1,4 @@
-//! Retained subtrees on upstream GPUI (`forks/zed`) draw what drawing
+//! Retained subtrees in the engine (`forks/sumi`) draw what drawing
 //! everything does: moved, left out, and built again onto their kept
 //! layout. Ports of the fork's GPUI-level tests
 //! (`forks/gpui/src/elements/retained/tests.rs`); upstream GPUI's own tests

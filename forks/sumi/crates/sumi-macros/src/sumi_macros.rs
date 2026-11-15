@@ -45,7 +45,7 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
 ///
 /// ```compile_fail
 /// # #[macro_use] extern crate sumi_macros;
-/// # #[macro_use] extern crate gpui;
+/// # #[macro_use] extern crate sumi;
 /// #[derive(AppContext)]
 /// struct MyContext<'a> {
 ///     app: &'a mut sumi::App
@@ -65,7 +65,7 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
 ///
 /// ```compile_fail
 /// # #[macro_use] extern crate sumi_macros;
-/// # #[macro_use] extern crate gpui;
+/// # #[macro_use] extern crate sumi;
 /// #[derive(VisualContext)]
 /// struct MyContext<'a, 'b> {
 ///     #[app]
@@ -76,7 +76,7 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
 ///
 /// ```compile_fail
 /// # #[macro_use] extern crate sumi_macros;
-/// # #[macro_use] extern crate gpui;
+/// # #[macro_use] extern crate sumi;
 /// #[derive(VisualContext)]
 /// struct MyContext<'a, 'b> {
 ///     app: &'a mut sumi::App,

@@ -25,8 +25,8 @@
  *
  * `scroll-fractional` is the `scroll` app scrolled by fractions of a pixel
  * (a touchpad's steps, small ones that add up, the ends). A scroll view
- * paints its content at whole device pixels (`MIRIN_METAL_SCROLL_SNAP`),
- * which a host from before that does not, so it is for comparing one host
+ * paints its content at whole device pixels, which a host from before
+ * that does not, so it is for comparing one host
  * with itself: `--scene --env-b=MIRIN_METAL_RETAIN=0`, and at another scale
  * factor with `--env-a=MIRIN_METAL_SCALE=1.5 --env-b=MIRIN_METAL_SCALE=1.5`.
  * A host from round 3 needs `--bounds-digits=3` there (bounds compared to

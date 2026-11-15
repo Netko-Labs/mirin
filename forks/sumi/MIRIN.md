@@ -1,13 +1,19 @@
-# mirin's fork of upstream GPUI
+# sumi: what changed against Zed, up to the fork point
 
-The GPUI crates of the zed repository (Zed Industries, Apache-2.0) at
-commit `703b5ac3` (2026-11-14; `../README.md` says what is here and how it
-was synced), forked in the monorepo: the engine `crates/mirin-metal` builds
-on, becoming sumi (`docs/metal/engine.md`). This is the last merge from Zed:
-from here the crates are renamed and fixes are picked by hand. It replaced a fork of gpui 0.2.2 (`../gpui`,
-in git history until 2026-11-14; `docs/metal/gpui-next.md`). Every change is
-listed here and marked with a `// mirin:` comment in the source. Rows that
-port a change of that fork say which (its `MIRIN.md`, in history).
+**This is a closed record.** sumi was a fork of the GPUI crates of the zed
+repository (Zed Industries, Apache-2.0) until Zed commit `703b5ac3`
+(2026-11-14), the last one merged. The rows below are every change mirin
+made to those crates up to that point, each marked with a `// mirin:`
+comment in the source. From there the code is sumi's own (`README.md`):
+changes are ordinary commits in this repository's history, and what is
+taken from Zed afterwards is a row in `PICKS.md`.
+
+The rows name files as they were at the fork point. The crates have since
+moved and been renamed: `crates/gpui` is `crates/sumi`, and `crates/gpui_<x>`
+is `crates/sumi-<x>` (`wgpu`, `linux`, `macos`, `windows`, `apple`,
+`platform`, `macros`, `util`, `shared-string`). Rows that port a change of
+the earlier fork of gpui 0.2.2 (`../gpui`, in git history until 2026-11-14;
+`docs/metal/gpui-next.md`) say which (its `MIRIN.md`, in history).
 
 | Change | Files | Why |
 | --- | --- | --- |
@@ -98,8 +104,5 @@ draws paths as tiles in the main pass, with no intermediate or multisampled
 texture at all; mirin's row is dropped), and a layer as wide as what it
 draws, which mirin's aligned `line_paint_bounds` approximated.
 
-There is no next merge: `../README.md` has how the syncs were done, and
-`docs/metal/engine.md` how fixes are picked from upstream from here.
-
-Checks: mirin-metal's tests on this fork, `cd crates/mirin-metal &&
-cargo test --lib`, and `cargo clippy --all-targets -- -D warnings` there.
+There is no next merge: `README.md` has how fixes are picked from Zed from
+here, and `docs/metal/engine.md` what has been removed since (step 3).

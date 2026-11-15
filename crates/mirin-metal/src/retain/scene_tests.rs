@@ -1,4 +1,4 @@
-//! Upstream GPUI's layer tests (`forks/zed/crates/gpui/src/scene.rs`), run
+//! Upstream GPUI's layer tests (`forks/sumi/crates/sumi/src/scene.rs`), run
 //! here on its public API: mirin's fork inserts every primitive through its
 //! own `insert_op` (a quad's strips, the mask it is drawn under, a copied
 //! drawing's primitives), and GPUI's own tests need zed's workspace.

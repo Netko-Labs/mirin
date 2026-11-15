@@ -13,10 +13,10 @@ both reference.
   on public API changes.
 - `docs/macos-mvp.md`, `docs/windows-port.md`, and `docs/linux-port.md` record
   platform status, findings, gaps, and milestone history.
-- `docs/metal.md` owns Metal, the CEF-free GPUI flavor: the element-tree
+- `docs/metal.md` owns Metal, the CEF-free flavor drawn by sumi: the element-tree
   protocol, process model decisions, platform findings, and milestones.
-  `forks/*/MIRIN.md` lists every change in the monorepo
-  forks.
+  `docs/metal/engine.md` owns sumi, Metal's engine (`forks/sumi`), and
+  `forks/*/MIRIN.md` lists every change in the monorepo forks.
 - Code is allowed to move, but source-of-truth docs must move with the behavior
   in the same change.
 
@@ -51,7 +51,7 @@ crates/
   mirin-codec/      updater codec library and release executable
   mirin-core/       Rust native core loaded through Bun FFI
   mirin-helper/     CEF subprocess executable
-  mirin-metal/      Metal renderer: GPUI native UI without CEF (alpha, outside the workspace)
+  mirin-metal/      Metal renderer: native UI drawn by sumi, without CEF (alpha, outside the workspace)
 packages/
   mirin/            public runtime package (`mirinjs`)
   mirin-cli/        CLI package (`@mirinjs/cli`)
@@ -70,13 +70,18 @@ docs/
   architecture.md   process/threading/CEF/IPC source of truth
   api-design.md     public API source of truth
   conventions.md    this rulebook
-  metal.md          Metal (CEF-free, GPUI) source of truth
+  metal.md          Metal (CEF-free, drawn by sumi) source of truth
   metal/            Metal's runtime spec and desktop-shell plan
 ```
 
-Metal's crate keeps GPUI's own layout under `src/` and its forks under
-`vendor/` (`gpui`, `taffy`, `accesskit_unix`), each with a `MIRIN.md` that lists
-mirin's changes; mark every changed line in a fork with a `// mirin:` comment.
+Metal's engine is sumi (`forks/sumi`: Zed's GPUI, forked, renamed and cut to
+what Metal calls; every crate stays `Apache-2.0`). It keeps Zed's layout
+under `crates/` and is ours to change: a change is an ordinary commit, and a
+fix taken from Zed is a row in `forks/sumi/PICKS.md`. The other forks
+(`forks/taffy-next`, `forks/wgpu`, `forks/gpu-allocator`, the three AccessKit
+crates) still follow their upstreams, each with a `MIRIN.md` that lists
+mirin's changes; mark every changed line in a fork, and every place sumi
+departs from Zed, with a `// mirin:` comment.
 
 Target TypeScript package layout:
 
