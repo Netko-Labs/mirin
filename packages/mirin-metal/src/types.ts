@@ -728,8 +728,9 @@ export type NativeEvent =
    * was set over) and carries what was typed meanwhile onto the value,
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
    * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), `imageError` from
-   * one that says when an image cannot be drawn (`onError`), and
-   * `textAntialiasing` from one that takes `setTextAntialiasing`.
+   * one that says when an image cannot be drawn (`onError`),
+   * `textAntialiasing` from one that takes `setTextAntialiasing`, and
+   * `opaqueSurface` from one that opens a surface that says `opaque` so.
    */
   | {
       type: "protocol";
@@ -741,6 +742,7 @@ export type NativeEvent =
       scroll?: boolean;
       imageError?: boolean;
       textAntialiasing?: boolean;
+      opaqueSurface?: boolean;
     }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),
@@ -884,7 +886,8 @@ export interface NativeHostTransport extends NativeTransport {
    * (`NativeHostOptions.textAntialiasing`, else grays on Linux). A shown
    * window is drawn again once, whole; a window opened later opens so, so a
    * deferred host is told before `open()`. A window that is not opaque (a
-   * layer surface) always draws grays. Layout does not change. Only a host
+   * layer or lock surface that does not say `opaque`) always draws grays.
+   * Layout does not change. Only a host
    * whose `protocol` event says `textAntialiasing` takes it; for an older
    * one this does nothing (and returns false).
    */

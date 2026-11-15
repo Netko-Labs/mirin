@@ -23,7 +23,7 @@ text.
 | --- | --- | --- |
 | `sumi` | `gpui` | The core: elements, styles, layout (taffy), text, the scene, windows, focus and key dispatch. No platform code. |
 | `sumi-platform` | `gpui_platform` | Picks the platform crate for the target. |
-| `sumi-linux` | `gpui_linux` | Wayland and X11. Dashi's own protocols are its `dashi` module, behind the `dashi` feature. |
+| `sumi-linux` | `gpui_linux` | Wayland and X11. Dashi's own protocols are its `dashi` module, behind the `dashi` feature. A layer or lock surface with an opaque background is opaque to the compositor, as a server-decorated window is (`draws_decorations`). |
 | `sumi-wgpu` | `gpui_wgpu` | The wgpu renderer (Vulkan, GL when there is none) and the cosmic-text text system, for Linux. |
 | `sumi-macos`, `sumi-apple` | `gpui_macos`, `gpui_apple` | macOS, and the Metal renderer and CoreText it draws with. |
 | `sumi-windows` | `gpui_windows` | Windows (DirectX, DirectWrite). |
