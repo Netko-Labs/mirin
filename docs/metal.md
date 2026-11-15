@@ -933,7 +933,10 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
 - **Out.** `<View dragFiles={{ paths, icon?, iconSize? }}>`: a left press there
   and a move of 6 pixels with the button held starts a Wayland drag
   (`wl_data_device.start_drag`, GPUI's `Window::start_file_drag`, added in
-  the vendored copy). It offers `text/uri-list` for copying; `icon` (PNG,
+  the vendored copy). It offers `text/uri-list` for copying, which is what
+  GTK and Chromium read files from, and the paths as text, one a line
+  (`text/plain;charset=utf-8`, `UTF8_STRING`, `text/plain`), as a GTK file
+  drag does, for a terminal or a text field that takes no file list; `icon` (PNG,
   JPEG, or SVG) is drawn into a shm buffer, `iconSize` logical pixels across
   (48 by default) at the window's scale, centered under the pointer. A
   click without moving is still a press. `paths` are read when the drag
@@ -943,11 +946,39 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   pointer, inside every scrolling or clipping ancestor (`drag.rs`):
   `enter`, `over` while moving, `leave`, or `drop`, with window coordinates,
   the paths, and the keyboard's modifiers. Only file lists are accepted
-  (GPUI's external paths); text drags are not.
+  (GPUI's external paths); text drags are not. The window accepts a drag
+  as it enters, with that drag's serial, when it offers `text/uri-list`
+  (`wl_data_offer.accept`, then `set_actions` copy, then `receive`), and
+  refuses one with no file in it, a link or text, as GTK refuses a drag
+  (`set_actions(0, 0)`, `accept(serial, nil)`), keeping the offer until
+  the drag leaves: the source then hears `wl_data_source.cancelled` at the
+  drop. Before 2026-11-15 it accepted at every offer that named the type,
+  with the serial of the drag before, and destroyed an offer it had
+  accepted when the list held no file: the compositor told the source the
+  drop was performed and nothing after, and a GTK source's drag never
+  ended.
 - **Not yet.** Other platforms (GPUI's default is to refuse the drag), a
-  drag of anything but files, and choosing move over copy in another app:
-  the drag offers copy only; an app moving files within itself decides on
-  its own.
+  drag of anything but files (a link dropped on a Metal window is refused,
+  and a Metal view cannot drag one), choosing move over copy in another
+  app (the drag offers copy only; an app moving files within itself decides
+  on its own), and the file-transfer portal's
+  `application/vnd.portal.filetransfer`: a sandboxed app (a Flatpak without
+  the files' directory) gets a `file://` URL it may not be able to open.
+- **Checked against other apps (2026-11-15).** Real drags in a nested
+  `dashi-comp`, each side's `WAYLAND_DEBUG=1` kept: a file from a Metal
+  view dropped on a GTK 4.22 `GtkDropTarget` for `GdkFileList` arrives as
+  the file, on one for text as its path, and on Helium's (Chromium, on
+  Wayland) `<input type="file">` is chosen by the field (`drop`, then
+  `change`, with the file's name and size); Chromium and GTK both ask for
+  `text/uri-list` and nothing else. A GTK file drag (which offers
+  `text/uri-list`, text and the portal's two types) dropped on a Metal
+  `onDrop` view gives `enter`, `over` and `drop` with the path. A link
+  dragged from GTK (`text/uri-list` with an `https:` URL, text,
+  `text/x-moz-url`, what Firefox offers) is refused and its source ends
+  with `cancelled`. Helium started as an X11 app (`--ozone-platform=x11`,
+  under the compositor's Xwayland) gets nothing from the same Metal drag:
+  the page hears no `dragenter` and the source hears `cancelled`. That
+  path is the compositor's, between Wayland and X11.
 
 ### Accessibility (AT-SPI)
 
