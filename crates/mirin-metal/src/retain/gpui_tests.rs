@@ -57,6 +57,9 @@ struct Scene {
     /// A cell's build reads the view that renders the rows, as an app's
     /// build reads its own state (mirin-metal's root view).
     reads: bool,
+    /// The opacity of the view around the rows. Not part of any version:
+    /// what is inside draws under it.
+    opacity: f32,
 }
 
 struct Rows {
@@ -205,6 +208,7 @@ impl Render for Rows {
             .flex()
             .flex_col()
             .gap(px(2.5))
+            .opacity(scene.opacity)
             .children(rows);
         let list = if scene.viewport > 0.0 {
             list.h(px(scene.viewport))
@@ -247,6 +251,7 @@ fn plain(rows: Vec<Row>) -> Scene {
         unsteady: None,
         builds: Rc::default(),
         reads: false,
+        opacity: 1.0,
     }
 }
 
@@ -271,6 +276,7 @@ fn scrolled(count: usize, cells: usize) -> Scene {
         unsteady: None,
         builds: Rc::default(),
         reads: false,
+        opacity: 1.0,
     }
 }
 
@@ -740,6 +746,34 @@ fn what_a_build_reads_does_not_keep_the_subtree_around_it_in_the_frame(cx: &mut 
         reading, silent,
         "built, redrawn, reused, moved and left out, frame by frame"
     );
+}
+
+/// An overlay measures itself at opacity 0 and then shows: its subtrees were
+/// first drawn invisible. Opacity is set around prepaint and paint, not
+/// layout, where a subtree compares what it is drawn under: a kept subtree
+/// went on showing its invisible drawing (metal-ui's popover without its
+/// heading, its menu without the items in a group).
+#[gpui::test]
+fn rows_first_drawn_under_no_opacity_are_drawn_again_when_it_shows(cx: &mut TestAppContext) {
+    let mut scene = plain(rows(6));
+    scene.opacity = 0.0;
+    let draws = compare(
+        cx,
+        scene,
+        &[
+            &|scene| {
+                scene.opacity = 1.0;
+                None
+            },
+            &|_| None,
+            &|scene| {
+                scene.opacity = 0.5;
+                None
+            },
+        ],
+    );
+    assert!(count(&draws, RetainedDraw::Redrawn) >= 12, "{draws:?}");
+    assert!(count(&draws, RetainedDraw::Reused) >= 6, "{draws:?}");
 }
 
 /// Scroll to each of `stops` in turn, with retained rows (`retain`) or

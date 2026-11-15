@@ -272,6 +272,13 @@ struct RetainedState {
     made: u64,
     released: Rc<RefCell<Vec<LayoutId>>>,
     statics: Statics,
+    // mirin: the opacity its drawing was made under (`f32::to_bits`).
+    // Opacity is set around an element's prepaint and paint, not its
+    // layout, so `Statics`, read as it is laid out, always sees 1: a
+    // subtree first drawn inside a view at opacity 0 (an overlay measuring
+    // itself before it shows) kept that invisible drawing when the view
+    // became opaque.
+    opacity: u32,
     /// Its last drawing, and with it the retained subtrees right inside
     /// (`Drawn::nested`).
     drawn: Record,
@@ -464,6 +471,7 @@ impl Element for Retained {
                         made: window.layout_engine_mut().epoch(),
                         released,
                         statics,
+                        opacity: 1.0f32.to_bits(),
                         drawn,
                         accessed_entities: FxHashSet::default(),
                         states: ElementStates::default(),
@@ -533,6 +541,16 @@ impl Element for Retained {
                 if built.is_none() && matches!(plan, Plan::Redraw) && state.unpark(window) {
                     plan = self::plan(&state.drawn.borrow(), bounds, &mask, place, allowed, window);
                 }
+                // mirin: a drawing made under another opacity is not this
+                // one's: it is drawn again (one left out stays out, and is
+                // looked at again when it shows).
+                let opacity = window.element_opacity().to_bits();
+                if built.is_none()
+                    && matches!(plan, Plan::Reuse | Plan::Move { .. })
+                    && state.opacity != opacity
+                {
+                    plan = Plan::Redraw;
+                }
                 let draw = match (&built, &plan) {
                     (Some(_), _) => RetainedDraw::Built,
                     (None, Plan::Skip) => RetainedDraw::Skipped,
@@ -567,6 +585,7 @@ impl Element for Retained {
                         RetainedPrepaint::Moved { by, old_mask }
                     }
                     Plan::Redraw => {
+                        state.opacity = opacity;
                         // mirin: the subtrees right inside are about to be
                         // planned: their records hear what its copies did.
                         tell_inside(&mut state.drawn.borrow_mut());
