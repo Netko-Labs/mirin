@@ -12,7 +12,8 @@ use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
     HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar,
-    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER, SETTLE_MARKER,
+    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER,
+    SETTLE_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -223,6 +224,17 @@ fn event_line(event: &NativeUiEvent) -> serde_json::Value {
     {
         line["start"] = serde_json::json!(start);
         line["end"] = serde_json::json!(end);
+        line["textHash"] = serde_json::json!(text_hash);
+    }
+    if let EventKind::Change {
+        base_hash,
+        text_hash,
+        ..
+    } = &event.kind
+    {
+        if let Some(base_hash) = base_hash {
+            line["baseHash"] = serde_json::json!(base_hash);
+        }
         line["textHash"] = serde_json::json!(text_hash);
     }
     if let EventKind::Hover { hovered } = &event.kind {
@@ -505,12 +517,18 @@ fn main() {
         "{PATCH_MARKER}: patch protocol {PATCH_PROTOCOL}"
     ));
     mirin_metal::trace::log(format_args!("{SETTLE_MARKER}: the settle simulation"));
+    mirin_metal::trace::log(format_args!(
+        "{REBASE_MARKER}: a field's edit is carried onto a value written meanwhile"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
         "patches": PATCH_PROTOCOL,
         // This host takes the `settle` simulation and answers `settled`.
         "settle": true,
+        // This host takes a field's `baseHash` and carries what was typed
+        // onto a value written meanwhile (`field/rebase.rs`).
+        "rebase": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
