@@ -17,8 +17,8 @@ history of how Metal got onto upstream GPUI.
 
 ## 1. Where we are
 
-Metal draws with a fork of Zed's GPUI: `forks/zed` (at `f8cfc7ed`,
-2026-11-10) with `forks/taffy-next` (taffy 0.15) and two small forks for a
+Metal draws with a fork of Zed's GPUI: `forks/zed` (at `703b5ac3`,
+2026-11-14, the last commit merged from Zed) with `forks/taffy-next` (taffy 0.15) and two small forks for a
 small app's GPU memory (`forks/wgpu`, wgpu-hal alone, and
 `forks/gpu-allocator`). Our changes are rows in each fork's `MIRIN.md`.
 
@@ -120,7 +120,7 @@ accessibility keeps today.
 | Step | What | Effort |
 | --- | --- | --- |
 | 1 | **Switch to upstream.** Done 2026-11-14: select in a scroll view, the footprint at 1.5 and layouts at other scales closed; `forks/gpui`, `forks/taffy`, `forks/blade-graphics` and the second build deleted. | done |
-| 2 | **Last sync** to Zed `main`. | 1–2 days |
+| 2 | **Last sync** to Zed `main`. Done 2026-11-14, at `703b5ac3`: upstream's reworked renderer (a depth buffer and an opaque pass, batching by kind, paths as tiles, Levien's shadows) with every mirin row on it; section 6 has what it cost and what it didn't. | done |
 | 3 | **Become sumi.** Move the crates to `forks/sumi/`, rename, fold `src/gpui_api.rs` in, drop the crates and modules listed above, put Dashi's protocols behind `dashi`. Measure size, RSS and first frame before and after. | 2–3 days |
 | 4 | **The retained frame** (section 3). | 1–2 weeks |
 | 5 | **Native slots** (section 5): the engine's `NativeSlot`, the protocol's `native` node, drawn fallbacks everywhere. | about a week |
@@ -238,3 +238,47 @@ lines only. `MIRIN_METAL_ACCESS_CHECK=1` over the stress bench: no
 complaints. Not checked: Dashi's layer surfaces, session lock and file
 drag on a real session with this engine (`gpui-next.md`, step 4's half
 day by hand); Dashi takes this engine only after that.
+
+**After the last sync (2026-11-14).** The host at Zed `703b5ac3`
+(`forks/zed/MIRIN.md` has what changed shape) beside `host-sumi1`,
+interleaved, medians of two runs; the machine was shared that evening, so
+the last column is the frame's instructions on the window's thread
+(`--features profiling`, `stress.tsx --low`), which load does not move,
+against the host before the sync:
+
+| Measure | after the sync | `host-sumi1` | instructions, after / before (M) |
+| --- | --- | --- | --- |
+| select, type, hover (ms) | 1.7, 1.0, 1.95 | 1.65, 1.05, 1.9 | 7.04 / 7.16, 3.91 / 3.97, 7.10 / 7.22 |
+| grow, scroll, resize (ms) | 1.6, 2.95, 2.15 | 1.5, 2.6, 1.95 | 7.36 / 7.62, 13.03 / 12.87, 8.25 / 8.89 |
+| select, grow in a scroll view (ms) | 1.85, 1.65 | 1.8, 1.7 | 8.21 / 8.23, 8.21 / 8.73 |
+| scroll across (ms) | 2.4 | 2.3 | 8.95 / 9.07 |
+| stress RSS at idle, at the end | 194–195, 279–280 MB | 192, 279–281 MB | |
+| at 1.5: grow, scroll, RSS at idle | 1.7 ms, 3.1 ms, 205 MB | 1.5 ms, 2.6 ms, 205 MB | |
+| counter: RSS, GPU memory, first frame | 65.3 MB, 20.3 MB, 30–34 ms | 65.1 MB, 16.2 MB, 27–28 ms | |
+
+Two rows are over by more than noise. **Scroll** is 0.3 ms dearer by the
+clock in both sessions that measured it (2.8 and 2.95 against 2.7 and 2.6)
+with the same instructions; a longer scroll (240 steps) ran 3.1 ms against
+4.1 on a loaded machine, so the clock is not settled, and what is left to
+suspect is upstream's renderer itself (the opaque pass and the depth
+attachment on every frame). **The counter's GPU memory** is 4 MB up:
+upstream's depth buffer, 1.9 MB at 800 by 600, does not fit what is left of
+the first 2 MiB block and takes a 4 MiB one. Both are step 3's to settle
+(a depth texture in an allocation of its own, or none for a window that
+draws nothing over anything).
+
+What the sync did cost, and what was done about it, is in
+`forks/zed/MIRIN.md`: upstream's split of every rounded quad into five
+primitives made every frame of the stress bench 3.5 M instructions dearer
+until small quads were drawn whole again, and a copied line's glyphs took a
+deferred way into their lists until only nested layers did.
+
+Layouts: identical to `host-sumi1` (`grid`, `browser`, `scroll`,
+`scroll-fractional`). Drawings differ from it by upstream's design, so the
+check is the host against itself with `MIRIN_METAL_RETAIN=0` and `--scene`:
+identical at 1, 1.25 and 1.5 (those four and `across`).
+`MIRIN_METAL_ACCESS_CHECK=1` over the stress bench: no complaints.
+Screenshots of the example browser (a card, a scroll area, a popover, a
+menu, a dialog, a hover card, typography) and of the stress app with
+shadows, in the window and scrolled, differ from `host-sumi1`'s only in
+what the pointer hovers. macOS and Windows were not built here.

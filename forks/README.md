@@ -12,7 +12,7 @@ changed code carries a `// mirin:` comment.
 | `accesskit_unix` | `accesskit_unix` 0.24.1 (AccessKit, MIT OR Apache-2.0) | `crates/mirin-metal` |
 | `accesskit_atspi_common` | `accesskit_atspi_common` 0.21.1 (AccessKit, MIT OR Apache-2.0), the version `accesskit_unix` pins | `forks/accesskit_unix` |
 | `accesskit_consumer` | `accesskit_consumer` 0.39.2 (AccessKit, MIT OR Apache-2.0), the version `accesskit_atspi_common` pins | `forks/accesskit_atspi_common`, `crates/mirin-metal`'s tests |
-| `zed` | the GPUI crates of the zed repository at `f8cfc7ed` (2026-11-10; Zed Industries, every crate Apache-2.0) | `crates/mirin-metal` (the engine; becoming sumi, `docs/metal/engine.md`) |
+| `zed` | the GPUI crates of the zed repository at `703b5ac3` (2026-11-14, the last sync; Zed Industries, every crate Apache-2.0) | `crates/mirin-metal` (the engine; becoming sumi, `docs/metal/engine.md`) |
 | `taffy-next` | `taffy` 0.15.0 (DioxusLabs, MIT), the version GPUI pins | `forks/zed` |
 | `wgpu` | `wgpu-hal` of the wgpu repository at `cddb2f5d` (gfx-rs, MIT OR Apache-2.0), the commit GPUI pins | `forks/zed` (`gpui_wgpu`, through wgpu) |
 | `gpu-allocator` | `gpu-allocator` 0.28.0 (Traverse Research, MIT OR Apache-2.0), the version wgpu-hal pins | `forks/wgpu` |
@@ -60,7 +60,9 @@ a link to the root's); none of zed's GPL crates is imported. Changed files
 say so with `// mirin:` comments and rows in `zed/MIRIN.md`, as Apache-2.0
 asks.
 
-Re-sync to a newer zed commit (a stable release's, about monthly):
+The last sync was to `703b5ac3` (2026-11-14): from here the crates become
+sumi and upstream's fixes are picked by hand (`docs/metal/engine.md`). How a
+sync to a newer zed commit was done:
 
 ```sh
 git worktree add ../forks-upstream-next forks-upstream-next
@@ -75,10 +77,10 @@ cd - && git merge forks-upstream-next    # resolve conflicts against zed/MIRIN.m
 ```
 
 If the new commit pins another taffy, replace `taffy-next/` the same way.
-Then check that `cargo metadata` in `crates/mirin-metal/next` lists no
+Then check that `cargo metadata` in `crates/mirin-metal` lists no
 crate from `forks/zed` that is missing (a new dependency of GPUI's means one
-more `crates/<name>`), refresh `crates/mirin-metal/next/Cargo.lock` from the
+more `crates/<name>`), refresh `crates/mirin-metal/Cargo.lock` from the
 new commit's `Cargo.lock` for the versions upstream tests, repeat any new
-`[patch.crates-io]` entries of zed's root manifest in the next manifest
+`[patch.crates-io]` entries of zed's root manifest in mirin-metal's manifest
 (a workspace's patches do not reach a dependent outside it), and run the
 checks in `zed/MIRIN.md`.
