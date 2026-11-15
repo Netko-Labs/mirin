@@ -80,6 +80,12 @@ pub enum SimCommand {
     /// Give the keyboard to field or `focusable` view `id`, pressing nothing
     /// (a screen reader's focus).
     Focus { id: String },
+    /// Answer with a `settled` event once the window has settled: every
+    /// tree, patch and simulation sent before this is applied, a frame with
+    /// them is drawn, and the window waits for no other (no view is dirty,
+    /// no animation asked for a frame). The window's driver handles it
+    /// (`drive.rs`); a host that takes it names `SETTLE_MARKER`.
+    Settle,
 }
 
 fn half() -> f32 {
@@ -264,6 +270,8 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
                 (*dx, *dy),
             ))
         }
+        // Never performed: the window's driver waits it out (`drive.rs`).
+        SimCommand::Settle => None,
         SimCommand::Window { action } => match action.as_str() {
             "zoom" => Some(SimAction::Zoom),
             "minimize" => Some(SimAction::Minimize),
@@ -380,5 +388,11 @@ mod command_tests {
     fn a_focus_names_its_element() {
         let command: SimCommand = serde_json::from_str(r#"{"kind":"focus","id":"save"}"#).unwrap();
         assert_eq!(command, SimCommand::Focus { id: "save".into() });
+    }
+
+    #[test]
+    fn a_settle_is_a_command_of_its_own() {
+        let command: SimCommand = serde_json::from_str(r#"{"kind":"settle"}"#).unwrap();
+        assert_eq!(command, SimCommand::Settle);
     }
 }

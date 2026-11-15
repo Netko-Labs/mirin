@@ -32,6 +32,16 @@ use crate::window::{DriverMessage, NativeUiOptions, RootView};
 /// After a simulated click, how long to wait for the driver's resulting tree
 /// before performing the commands queued behind it.
 const SIM_SETTLE_INTERVAL: Duration = Duration::from_millis(16);
+/// Under a check (`check.rs`), how long a `settle` that drew a frame waits
+/// before it looks again: long enough for the driver's lines to come in.
+const CHECK_SETTLE_INTERVAL: Duration = Duration::from_millis(1);
+/// How long a `settle` waits for the window before it answers that it has
+/// not settled (a window the compositor never shows, an animation without
+/// end).
+const SETTLE_LIMIT: Duration = Duration::from_secs(20);
+/// Under a check, how many frames a `settle` draws before it answers the
+/// same: a minute of animation at `check::FRAME_STEP`.
+const SETTLE_FRAMES: u32 = 600;
 /// How long an unlocking lock surface stays so the unlock reaches the compositor.
 const UNLOCK_FLUSH: Duration = Duration::from_millis(100);
 
@@ -359,6 +369,8 @@ fn open_window(
     })
     .detach();
     let _ = window.update(cx, |view, window, cx| {
+        // Under a check the window hears only simulated input (`check.rs`).
+        window.set_platform_input_ignored(crate::check::enabled());
         window.set_window_title(&title);
         view.access = tree_access;
         view.apply_pending_focus(window, cx);
@@ -531,6 +543,118 @@ struct Drive {
     pending: VecDeque<SimCommand>,
     /// Where a window's accessibility tree sends a screen reader's presses.
     access: UnboundedSender<SimCommand>,
+    /// The `settle` at the head of `pending`, while it waits for the window.
+    settling: Option<Settling>,
+    /// This loop has stood aside for the window's own tasks since it last
+    /// did anything to the window (`apply`): a `settle` looks only then.
+    stood_aside: bool,
+    /// What came after a `settle` that is still waiting, in order: a
+    /// `settle` is about what was sent before it, so the rest waits for its
+    /// answer. The frames drawn to settle are then the same however fast
+    /// the driver answers the events of the first of them.
+    after_settle: Vec<HostMessage>,
+}
+
+/// A `settle` waiting for the window: since when, the frames it drew, and
+/// a digest of what each drew, in order (`MIRIN_METAL_TRACE_SCENE`).
+struct Settling {
+    since: std::time::Instant,
+    frames: u32,
+    drew: u64,
+}
+
+impl Settling {
+    fn start() -> Self {
+        Self {
+            since: std::time::Instant::now(),
+            frames: 0,
+            drew: 0,
+        }
+    }
+
+    /// Take a frame's scene digest into the digest of all of them (FNV-1a
+    /// over the digests' bytes: the same in every build of the host).
+    fn drew(&mut self, scene: u64) {
+        let mut digest = if self.drew == 0 {
+            0xcbf2_9ce4_8422_2325
+        } else {
+            self.drew
+        };
+        for byte in scene.to_le_bytes() {
+            digest = (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.drew = digest;
+    }
+
+    /// Whether it has waited long enough to answer that nothing settled.
+    fn is_overdue(&self) -> bool {
+        self.since.elapsed() > SETTLE_LIMIT || self.frames > SETTLE_FRAMES
+    }
+}
+
+/// Answer a `settle`: the window settled (`quiet`), or did not in time, or
+/// there is none to settle. `scene` is what its last frame drew and
+/// `frames` what all the frames drawn to settle did, when the host traces
+/// that.
+fn tell_settled(
+    events: &mpsc::Sender<NativeUiEvent>,
+    quiet: bool,
+    scene: Option<String>,
+    frames: Option<String>,
+) {
+    if !quiet {
+        eprintln!("[mirin-metal-host] settle: the window did not settle");
+    }
+    let _ = events.send(NativeUiEvent {
+        node_id: "root".into(),
+        kind: crate::events::EventKind::Settled {
+            quiet,
+            scene,
+            frames,
+        },
+        bounds: None,
+    });
+}
+
+/// Under a check: the animations that asked for the next frame are told it
+/// has come, a step later on their clock (`check.rs`). Whether any had.
+fn run_animations(window: &mut gpui::Window, cx: &mut App) -> bool {
+    let animating = window.run_next_frame_callbacks(cx) > 0;
+    if animating {
+        crate::check::advance();
+    }
+    animating
+}
+
+/// Under a check: draw the frame the window waits for now, not when the
+/// compositor next asks (it presents the last one drawn when it does).
+/// Whether there was one.
+fn draw_if_dirty(window: &mut gpui::Window, cx: &mut App) -> bool {
+    let draws = window.is_dirty();
+    if draws {
+        crate::gpui_api::draw(window, cx);
+    }
+    draws
+}
+
+/// The commands to perform this turn, taken off the queue: up to a click
+/// (the driver's tree answering it must come before what follows), and
+/// never past a `settle`, which stays at the head until the window has
+/// settled. The flag is whether a `settle` is now at the head with nothing
+/// before it left to perform.
+fn take_due(pending: &mut VecDeque<SimCommand>) -> (Vec<SimCommand>, bool) {
+    let mut due = Vec::new();
+    while let Some(command) = pending.front() {
+        if matches!(command, SimCommand::Settle) {
+            return (due, true);
+        }
+        let settles = matches!(command, SimCommand::Click { .. });
+        due.extend(pending.pop_front());
+        if settles {
+            break;
+        }
+    }
+    (due, false)
 }
 
 impl Drive {
@@ -548,6 +672,9 @@ impl Drive {
             desynced: false,
             pending: VecDeque::new(),
             access,
+            settling: None,
+            stood_aside: false,
+            after_settle: Vec::new(),
         }
     }
 
@@ -563,7 +690,10 @@ impl Drive {
     ) {
         loop {
             let mut batch = Vec::new();
-            if self.pending.is_empty() {
+            if !self.settle_waits() && !self.after_settle.is_empty() {
+                // The settle is answered: what waited behind it, first.
+                batch = std::mem::take(&mut self.after_settle);
+            } else if self.pending.is_empty() {
                 let next = futures::future::select(messages.next(), asked.next()).await;
                 let message = match next {
                     futures::future::Either::Left((message, _)) => message,
@@ -585,7 +715,17 @@ impl Drive {
                     }
                 }
             } else {
-                cx.background_executor().timer(SIM_SETTLE_INTERVAL).await;
+                // A check's `settle` draws its frames one after another.
+                let settling = matches!(self.pending.front(), Some(SimCommand::Settle));
+                let interval = if settling && crate::check::enabled() {
+                    CHECK_SETTLE_INTERVAL
+                } else {
+                    SIM_SETTLE_INTERVAL
+                };
+                // The timer wakes this loop behind whatever the window
+                // queued for itself meanwhile.
+                cx.background_executor().timer(interval).await;
+                self.stood_aside = true;
             }
             while let Ok(message) = messages.try_recv() {
                 batch.push(message);
@@ -603,6 +743,10 @@ impl Drive {
     async fn turn(&mut self, batch: Vec<HostMessage>, cx: &mut AsyncApp) -> bool {
         let mut turn = Turn::default();
         for message in batch {
+            if self.settle_waits() {
+                self.after_settle.push(message);
+                continue;
+            }
             match message {
                 HostMessage::Driver(DriverMessage::Tree(tree)) => turn.trees.whole(*tree),
                 HostMessage::Driver(DriverMessage::Patch(ops)) => turn.trees.patch(ops),
@@ -666,7 +810,7 @@ impl Drive {
         turn.min_size = None;
         if !self.pending.is_empty() {
             eprintln!("[mirin-metal-host] dropped simulated input: no window is shown");
-            self.pending.clear();
+            self.drop_pending();
         }
     }
 
@@ -685,6 +829,8 @@ impl Drive {
                 }
             });
         }
+        // Whether this turn does anything to the window.
+        let mut touched = turn.size.is_some() || turn.min_size.is_some();
         // The least size first: a window grown to show a sidebar is never under it.
         if let Some((width, height)) = turn.min_size {
             let _ = window.update(cx, |_view, window, _cx| {
@@ -696,20 +842,34 @@ impl Drive {
                 window.resize(size(px(width), px(height)));
             });
         }
-        let mut sims = Vec::new();
-        while let Some(command) = self.pending.pop_front() {
-            let settles = matches!(command, SimCommand::Click { .. });
-            sims.push(command);
-            if settles {
-                break;
+        let (sims, settle) = take_due(&mut self.pending);
+        if !turn.trees.is_empty() || !sims.is_empty() {
+            touched = true;
+            if !self.perform(window, turn.trees, sims, cx) {
+                return false;
             }
         }
-        if turn.trees.is_empty() && sims.is_empty() {
-            return true;
+        // What a turn does to the window may end in a task of the window's
+        // own (a resize on Wayland is one). A `settle` looks only once this
+        // loop has stood aside for those since the last thing it did: the
+        // settle stays at the head, so the loop waits before its next turn.
+        if touched {
+            self.stood_aside = false;
         }
+        !settle || !self.stood_aside || self.settle(window, cx)
+    }
+
+    /// Apply the turn's trees and perform its simulations. False when the
+    /// window is gone.
+    fn perform(
+        &mut self,
+        window: WindowHandle<RootView>,
+        trees: Trees,
+        sims: Vec<SimCommand>,
+        cx: &mut AsyncApp,
+    ) -> bool {
         // Resolve while the view is leased; dispatch with only the window
         // leased, because keystrokes re-enter the view's listeners.
-        let trees = turn.trees;
         let desynced = &mut self.desynced;
         let resolved = window.update(cx, |view, window, cx| {
             if !trees.is_empty() {
@@ -740,6 +900,96 @@ impl Drive {
             }
         });
         dispatched.is_ok()
+    }
+
+    /// Whether a `settle` is waiting for the window.
+    fn settle_waits(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|command| matches!(command, SimCommand::Settle))
+    }
+
+    /// Drop the simulations that wait; a `settle` among them is answered
+    /// (nothing settled), so its driver is not left waiting.
+    fn drop_pending(&mut self) {
+        let settles = self
+            .pending
+            .drain(..)
+            .filter(|command| matches!(command, SimCommand::Settle))
+            .count();
+        self.settling = None;
+        for _ in 0..settles {
+            tell_settled(&self.events, false, None, None);
+        }
+    }
+
+    /// One look at the window for the `settle` at the head of `pending`:
+    /// answered and taken off once the window waits for no frame, or once
+    /// it has waited too long. Under a check the frame the window waits for
+    /// is drawn here, one a look, and the animations' clock moved for each
+    /// an animation asked for; otherwise frames come as the platform asks
+    /// for them. Before the platform's first frame the window has no size
+    /// to draw at, so that one is always waited for. False when the window
+    /// is gone.
+    fn settle(&mut self, window: WindowHandle<RootView>, cx: &mut AsyncApp) -> bool {
+        let Ok(painted) = window.update(cx, |view, _window, _cx| view.has_painted()) else {
+            return false;
+        };
+        let settling = self.settling.get_or_insert_with(Settling::start);
+        let any_window: gpui::AnyWindowHandle = window.into();
+        let traced = crate::window::scene_traced().is_some();
+        let waits = if !painted {
+            Ok(true)
+        } else if crate::check::enabled() {
+            // From here on the window draws only here: every frame is one
+            // a `settle` asked for, the same ones on every run. Then the
+            // animations notify their views, and the frame is drawn once
+            // that has taken effect, which is when the update ends.
+            any_window
+                .update(cx, |_root, window, cx| {
+                    window.set_frames_held(true);
+                    run_animations(window, cx)
+                })
+                .and_then(|animating| {
+                    any_window
+                        .update(cx, |_root, window, cx| {
+                            let drew = draw_if_dirty(window, cx);
+                            (drew, (drew && traced).then(|| window.last_scene_digest()))
+                        })
+                        .map(|(drew, scene)| {
+                            if let Some(scene) = scene {
+                                settling.drew(scene);
+                            }
+                            drew || animating
+                        })
+                })
+        } else {
+            any_window.update(cx, |_root, window, _cx| window.frame_pending())
+        };
+        let Ok(waits) = waits else {
+            return false;
+        };
+        if waits {
+            settling.frames += u32::from(painted && crate::check::enabled());
+            if !settling.is_overdue() {
+                return true;
+            }
+        }
+        // What the frames drawn to settle drew, and the settled one, whole,
+        // for a check of two hosts' drawing (`MIRIN_METAL_TRACE_SCENE`).
+        let frames = (traced && crate::check::enabled()).then(|| format!("{:x}", settling.drew));
+        self.settling = None;
+        self.pending.pop_front();
+        let scene = traced
+            .then(|| {
+                any_window
+                    .update(cx, |_root, window, _cx| window.last_scene_digest())
+                    .ok()
+            })
+            .flatten()
+            .map(|digest| format!("{digest:016x}"));
+        tell_settled(&self.events, !waits, scene, frames);
+        true
     }
 
     /// Open the window, drawing the newest tree the driver sent. False when
@@ -800,7 +1050,7 @@ impl Drive {
         }
         if !self.pending.is_empty() {
             eprintln!("[mirin-metal-host] dropped simulated input: the window was hidden");
-            self.pending.clear();
+            self.drop_pending();
         }
     }
 }
@@ -848,6 +1098,120 @@ mod tests {
                 HostMessage::Driver(DriverMessage::Unlock)
             ]
         ));
+    }
+
+    #[test]
+    fn a_settle_waits_for_what_came_before_it() {
+        use super::take_due;
+        let click = || SimCommand::Click {
+            id: Some("a".into()),
+            x: None,
+            y: None,
+        };
+        let key = || SimCommand::Key {
+            keystroke: "enter".into(),
+        };
+        let mut pending: std::collections::VecDeque<SimCommand> =
+            [key(), click(), key(), SimCommand::Settle, key()].into();
+        // Up to the click: the driver's answer to it comes before the rest.
+        assert_eq!(take_due(&mut pending), (vec![key(), click()], false));
+        // Then what is left before the settle, which now heads the queue...
+        assert_eq!(take_due(&mut pending), (vec![key()], true));
+        // ...and stays there, with what follows it, until it is answered.
+        assert_eq!(take_due(&mut pending), (vec![], true));
+        assert_eq!(pending.len(), 2);
+        pending.pop_front();
+        assert_eq!(take_due(&mut pending), (vec![key()], false));
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn a_settle_gives_up_on_a_window_that_never_settles() {
+        use super::{Settling, SETTLE_FRAMES, SETTLE_LIMIT};
+        let now = std::time::Instant::now();
+        let fresh = Settling {
+            frames: SETTLE_FRAMES,
+            ..Settling::start()
+        };
+        assert!(!fresh.is_overdue());
+        let animating = Settling {
+            frames: SETTLE_FRAMES + 1,
+            ..Settling::start()
+        };
+        assert!(animating.is_overdue());
+        if let Some(long_ago) = now.checked_sub(SETTLE_LIMIT + std::time::Duration::from_secs(1)) {
+            let unseen = Settling {
+                since: long_ago,
+                ..Settling::start()
+            };
+            assert!(unseen.is_overdue());
+        }
+    }
+
+    #[test]
+    fn the_frames_drawn_to_settle_are_told_apart_by_what_and_in_which_order() {
+        use super::Settling;
+        let drew = |scenes: &[u64]| {
+            let mut settling = Settling::start();
+            for scene in scenes {
+                settling.drew(*scene);
+            }
+            settling.drew
+        };
+        assert_eq!(drew(&[]), 0, "no frame");
+        assert_ne!(drew(&[7]), 0);
+        assert_eq!(drew(&[7, 9]), drew(&[7, 9]));
+        assert_ne!(drew(&[7, 9]), drew(&[9, 7]));
+        assert_ne!(drew(&[7, 9]), drew(&[7]));
+        assert_ne!(drew(&[7, 7]), drew(&[7]), "a frame drawn twice is two");
+    }
+
+    /// A view that asks for the next frame on each of its first frames.
+    struct Fades {
+        left: u32,
+        drawn: std::rc::Rc<std::cell::Cell<u32>>,
+    }
+
+    impl gpui::Render for Fades {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            self.drawn.set(self.drawn.get() + 1);
+            if self.left > 0 {
+                self.left -= 1;
+                window.request_animation_frame();
+            }
+            gpui::div()
+        }
+    }
+
+    #[gpui::test]
+    fn a_settle_draws_an_animation_to_its_end(cx: &mut gpui::TestAppContext) {
+        use super::{draw_if_dirty, run_animations};
+        let drawn = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = drawn.clone();
+        let (_view, cx) = cx.add_window_view(|_, _| Fades {
+            left: 3,
+            drawn: counted,
+        });
+        assert!(cx.update(|window, _| window.frame_pending()));
+        // As `Drive::settle` does under a check: a look at a time, until
+        // one finds nothing to run and nothing to draw.
+        let mut looks = 0;
+        loop {
+            let animating = cx.update(run_animations);
+            let drew = cx.update(draw_if_dirty);
+            if !animating && !drew {
+                break;
+            }
+            looks += 1;
+            assert!(looks < 10, "the window never settles");
+        }
+        // Three frames that each asked for the next, and the one that did not.
+        assert_eq!(drawn.get(), 4);
+        assert!(!cx.update(|window, _| window.frame_pending()));
     }
 
     fn patch(json: &str) -> HostMessage {

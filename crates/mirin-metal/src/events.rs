@@ -94,6 +94,16 @@ pub enum EventKind {
     /// A newly opened window painted its first frame (node id is `"root"`),
     /// so a driver can time an open; sent once per open.
     Frame,
+    /// The answer to a `settle` simulation (node id is `"root"`): the
+    /// window has settled (`quiet`), or still waited for a frame when the
+    /// host gave up waiting. With `MIRIN_METAL_TRACE_SCENE`, `scene` is the
+    /// digest of the last frame drawn, and under a check `frames` is a
+    /// digest of every frame drawn to settle, in order (none: `"0"`).
+    Settled {
+        quiet: bool,
+        scene: Option<String>,
+        frames: Option<String>,
+    },
     /// A patch didn't apply (`patch/`): the host asks the driver for the
     /// whole tree, and drops patches until it comes (node id is `"root"`).
     Resync { reason: String },
@@ -207,6 +217,7 @@ impl EventKind {
             EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
             EventKind::Frame => "frame",
+            EventKind::Settled { .. } => "settled",
             EventKind::CloseRequest => "close-request",
             EventKind::Resync { .. } => "resync",
         }
@@ -230,6 +241,7 @@ impl EventKind {
             | EventKind::Drop(_)
             | EventKind::Chrome(_)
             | EventKind::Frame
+            | EventKind::Settled { .. }
             | EventKind::CloseRequest => None,
             EventKind::Change { value }
             | EventKind::Submit { value }

@@ -14,6 +14,7 @@
 
 mod access;
 mod caret;
+mod check;
 mod counters;
 mod drag;
 mod drive;
@@ -52,6 +53,7 @@ mod tree;
 mod window;
 
 pub use access::{ACCESSIBLE_MARKER, APP_NAME_VAR};
+pub use check::SETTLE_MARKER;
 pub use drive::{run, run_deferred, HostMessage, OPEN_MIN_SIZE_MARKER, RESIDENT_MARKER};
 pub use events::{EventKind, Modifiers, NativeUiEvent, PointerPhase};
 pub use focus::FOCUS_MARKER;

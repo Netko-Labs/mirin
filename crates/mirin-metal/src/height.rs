@@ -160,7 +160,7 @@ pub(crate) fn clip(
     heights: &Heights,
     window: &mut Window,
 ) -> AnyElement {
-    let (height, moving) = heights.painted(id, Instant::now());
+    let (height, moving) = heights.painted(id, crate::check::now());
     if moving {
         window.request_animation_frame();
     }
@@ -186,7 +186,7 @@ pub(crate) fn clip(
                 return;
             };
             let natural = f32::from(content.size.height);
-            if heights.measured(&key, natural, ms, Instant::now()) {
+            if heights.measured(&key, natural, ms, crate::check::now()) {
                 window.request_animation_frame();
             }
         })

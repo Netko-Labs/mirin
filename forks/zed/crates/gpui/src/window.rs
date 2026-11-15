@@ -1366,6 +1366,10 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
+    /// mirin: input from the platform is dropped (`set_platform_input_ignored`).
+    platform_input_ignored: bool,
+    /// mirin: the platform's frame requests draw nothing (`set_frames_held`).
+    frames_held: bool,
     focus_listeners: SingleSubscriberSet<AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SingleSubscriberSet<AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
@@ -2149,6 +2153,24 @@ impl Window {
                     })
                     .log_err();
 
+                // mirin: a window whose frames are held is drawn only by its
+                // holder; the platform's requests show the last frame drawn.
+                let held = handle
+                    .update(&mut cx, |_, window, _| {
+                        if !window.frames_held {
+                            return false;
+                        }
+                        if window.needs_present.get() || request_frame_options.require_presentation
+                        {
+                            window.present();
+                        }
+                        true
+                    })
+                    .unwrap_or(false);
+                if held {
+                    return;
+                }
+
                 // Keep presenting briefly after high-rate input to prevent display
                 // underclocking, but subject to the same power limits as redraws.
                 let high_rate_input = input_rate_tracker.borrow_mut().is_high_rate();
@@ -2485,7 +2507,18 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move |event| {
                 handle
-                    .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
+                    .update(&mut cx, |_, window, cx| {
+                        // mirin: a window under a check hears only what the
+                        // check dispatches itself.
+                        if window.platform_input_ignored {
+                            DispatchEventResult {
+                                propagate: true,
+                                default_prevented: false,
+                            }
+                        } else {
+                            window.dispatch_event(event, cx)
+                        }
+                    })
                     .with_context(|| {
                         format!("dispatching input for window {:?}", handle.window_id())
                     })
@@ -2630,6 +2663,8 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
+            platform_input_ignored: false,
+            frames_held: false,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
@@ -3296,6 +3331,58 @@ impl Window {
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
 
+    /// mirin: whether the window waits for a frame: a view of it is dirty,
+    /// or a callback waits for the next frame (an animation).
+    pub fn frame_pending(&self) -> bool {
+        self.invalidator.is_dirty() || !self.next_frame_callbacks.borrow().is_empty()
+    }
+
+    /// mirin: whether a view of the window is dirty: the next frame draws.
+    pub fn is_dirty(&self) -> bool {
+        self.invalidator.is_dirty()
+    }
+
+    /// mirin: run the callbacks that wait for the next frame now, as the
+    /// platform's next frame request would, and say how many ran. With
+    /// [`Self::draw`] it lets a check draw the frames a window is waiting
+    /// for without waiting for the compositor to ask for each (a nested
+    /// compositor asks about once a second); the platform presents the last
+    /// of them when it next asks.
+    pub fn run_next_frame_callbacks(&mut self, cx: &mut App) -> usize {
+        let callbacks = self.next_frame_callbacks.take();
+        let count = callbacks.len();
+        for callback in callbacks {
+            callback(self, cx);
+        }
+        count
+    }
+
+    /// mirin: hold the window's frames, or let them go: while held, a
+    /// frame request from the platform draws nothing and runs no callback
+    /// that waits for the next frame; it only shows the last frame drawn.
+    /// Whoever holds them draws with [`Self::run_next_frame_callbacks`] and
+    /// [`Self::draw`], so every frame of the window is one it asked for (a
+    /// check that compares what each frame drew). Hold them only once the
+    /// window has drawn its first frame, which the platform must ask for.
+    pub fn set_frames_held(&mut self, held: bool) {
+        self.frames_held = held;
+    }
+
+    /// mirin: drop every input event the platform delivers (the pointer,
+    /// the keyboard, files dragged in) from now on, or hear them again.
+    /// Events dispatched with [`Self::dispatch_event`] and
+    /// [`Self::dispatch_keystroke`] are handled as before: a check drives
+    /// the window with those, and a person's pointer crossing the window
+    /// must not reach it. The pointer is then where no platform event put
+    /// it: at the origin until an event is dispatched, and again after the
+    /// window's bounds change (which reads the platform's pointer).
+    pub fn set_platform_input_ignored(&mut self, ignored: bool) {
+        self.platform_input_ignored = ignored;
+        if ignored {
+            self.mouse_position = Point::default();
+        }
+    }
+
     pub(crate) fn advance_scene_animations(&mut self, cx: &App) {
         let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
         self.rendered_frame.scene.advance_animations(elapsed);
@@ -3362,7 +3449,14 @@ impl Window {
         self.viewport_size = self.platform_window.content_size();
         self.last_window_bounds = self.platform_window.window_bounds();
         cx.sync_window_update_entry(self);
-        self.mouse_position = self.platform_window.mouse_position();
+        // mirin: a window that hears no platform input has no pointer the
+        // platform knows of: it is at the origin, where the platform says a
+        // pointer that never entered the window is.
+        self.mouse_position = if self.platform_input_ignored {
+            Point::default()
+        } else {
+            self.platform_window.mouse_position()
+        };
 
         self.refresh();
 
@@ -4710,6 +4804,16 @@ impl Window {
         use std::hash::{Hash, Hasher};
         let mut hasher = collections::FxHasher::default();
         self.scene_drawn().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// mirin: `scene_digest` of the last frame drawn, whole (what was
+    /// painted after a caller of `scene_digest` is in it too).
+    #[doc(hidden)]
+    pub fn last_scene_digest(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = collections::FxHasher::default();
+        self.last_scene_drawn().hash(&mut hasher);
         hasher.finish()
     }
 

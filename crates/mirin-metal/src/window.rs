@@ -247,6 +247,12 @@ impl RootView {
         view
     }
 
+    /// Whether the platform has had this window paint its first frame: it
+    /// is configured, at its size and scale factor.
+    pub(crate) fn has_painted(&self) -> bool {
+        !self.first_frame
+    }
+
     /// Replace the tree and reconcile input state with it.
     pub(crate) fn set_tree(&mut self, tree: NodeSpec, cx: &mut App) {
         // A whole tree: retained subtrees are compared with the old one (retain.rs).
@@ -520,7 +526,13 @@ impl Render for RootView {
                     ));
                 }
                 trace_scale(window.scale_factor());
-                if let Some(dump) = scene_traced() {
+                // Under a check a `settled` event says what the settled frame
+                // drew (`drive.rs`): the frames on the way there (an
+                // animation's) are not each described, which costs more
+                // than drawing them. A dump still has every frame.
+                let traced =
+                    scene_traced().filter(|dump| dump.is_some() || !crate::check::enabled());
+                if let Some(dump) = traced {
                     // For a check that two hosts draw the same (`layout-check --scene`).
                     let digest = window.scene_digest();
                     crate::trace::log(format_args!("scene {digest:016x}"));
@@ -578,7 +590,7 @@ fn trace_scale(scale: f32) {
 /// `Some`), for finding what differs. With `MIRIN_METAL_TRACE_SCENE_GLYPHS=1`
 /// it also says which subpixel variant each glyph is drawn as (a host from
 /// before that ignores it, so compare such a trace only with another).
-fn scene_traced() -> Option<Option<&'static std::path::Path>> {
+pub(crate) fn scene_traced() -> Option<Option<&'static std::path::Path>> {
     static TRACED: std::sync::OnceLock<Option<Option<std::path::PathBuf>>> =
         std::sync::OnceLock::new();
     TRACED
