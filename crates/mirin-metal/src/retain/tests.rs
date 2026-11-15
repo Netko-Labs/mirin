@@ -217,7 +217,7 @@ fn a_patch_builds_only_the_subtrees_whose_generation_moved(cx: &mut TestAppConte
 fn views_that_left_the_tree_are_not_remembered_for_good(cx: &mut TestAppContext) {
     let (view, window) = open(cx, grid(2, 6, &[], &[]));
     // Each patch swaps the last row for one of new views (as a list keyed
-    // by fresh ids does): 19 new ids a patch, 3800 over the run.
+    // by fresh ids does): 19 new ids a patch, 7600 over the run.
     let row = |round: usize| {
         let cards: Vec<String> = (0..6)
             .map(|col| {
@@ -236,7 +236,7 @@ fn views_that_left_the_tree_are_not_remembered_for_good(cx: &mut TestAppContext)
         )
     };
     let mut last = "row1".to_owned();
-    for round in 0..200 {
+    for round in 0..400 {
         let patch = format!(
             r#"{{"patch":[{{"op":"remove","id":"{last}"}},{{"op":"insert","parent":"grid","node":{}}}]}}"#,
             row(round)
@@ -251,7 +251,10 @@ fn views_that_left_the_tree_are_not_remembered_for_good(cx: &mut TestAppContext)
     }
     let walks = window.update(|_, cx| view.read(cx).boundaries.walks.len());
     assert!(walks <= 2 * super::WALKS_PRUNED_PAST, "{walks} walks kept");
+    // Nor are their retained subtrees, which a patch no longer goes over.
+    let kept = window.update(|_, cx| view.read(cx).boundaries.map.len());
+    assert!(kept <= 2 * super::WALKS_PRUNED_PAST, "{kept} subtrees kept");
     // What is left is still what the tree is: the last row is kept and drawn.
     let laid_out = layout(&view, window);
-    assert!(laid_out.iter().any(|node| node.id == "c19905"));
+    assert!(laid_out.iter().any(|node| node.id == "c39905"));
 }

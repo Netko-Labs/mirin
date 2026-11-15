@@ -49,8 +49,8 @@ struct Boundary {
     entity: Entity<Notified>,
     /// Child indices from the root to it in the current tree.
     path: Vec<u32>,
-    /// Found in the latest sync (and only once).
-    seen: bool,
+    /// The sync that last found it (`Boundaries::syncs`), and only once.
+    seen: u64,
     traits: Traits,
 }
 
@@ -90,6 +90,11 @@ pub(crate) struct Boundaries {
     /// How many of those were left the last time the ones no longer in the
     /// tree went (`prune_walks`).
     walks_kept: usize,
+    /// How many syncs there have been: what `Boundary::seen` counts in.
+    syncs: u64,
+    /// How many retained subtrees were left the last time the ones a patch
+    /// removed from the tree went (`prune_removed`).
+    kept: usize,
 }
 
 /// The fewest walks kept before any that left the tree are looked for.
@@ -120,9 +125,7 @@ impl Boundaries {
         if !enabled() {
             return;
         }
-        for boundary in self.map.values_mut() {
-            boundary.seen = false;
-        }
+        self.syncs += 1;
         let mut path = Vec::new();
         let mut duplicates = Vec::new();
         let synced = self.synced;
@@ -132,18 +135,37 @@ impl Boundaries {
             self.walks.clear();
         }
         self.walk(doc, old, changed, &mut path, &mut duplicates, cx);
-        if by_generation {
-            self.prune_walks(doc);
-        }
         self.synced = doc.generation();
-        // After a patch, a subtree that didn't change was not walked: the
-        // retained subtrees in it stay.
-        self.map.retain(|id, boundary| {
-            boundary.seen || (by_generation && doc.subtree_generation(id) <= synced)
-        });
+        if by_generation {
+            // After a patch, a subtree that didn't change was not walked:
+            // the retained subtrees in it stay. One that was walked and is
+            // no longer kept went as it was walked (`walk`); what is left
+            // is the ones the patch took out of the tree.
+            self.prune_walks(doc);
+            self.prune_removed(doc);
+        } else {
+            let syncs = self.syncs;
+            self.map.retain(|_, boundary| boundary.seen == syncs);
+            self.kept = self.map.len();
+        }
         for id in duplicates {
             self.map.remove(&id);
         }
+    }
+
+    /// A patch walks only what it changed, so the retained subtrees of the
+    /// views it removed are not come across. Looking for them among all of
+    /// them after every patch cost a patch what the window holds (2,601 on
+    /// the stress app: most of an apply). Nothing asks for one by an id
+    /// that is not in the tree, and an id that comes back is walked and
+    /// given a new version, so they are let go as `prune_walks` lets walks
+    /// go: once there are twice as many as after the last time.
+    fn prune_removed(&mut self, doc: &Document) {
+        if self.map.len() <= 2 * self.kept.max(WALKS_PRUNED_PAST) {
+            return;
+        }
+        self.map.retain(|id, _| doc.contains(id));
+        self.kept = self.map.len();
     }
 
     /// A patch walks only what it changed, so the walks of views it removed
@@ -239,9 +261,21 @@ impl Boundaries {
                 }
             }
         }
-        if let Some(id) = id.filter(|_| walk.traits.pure && walk.nodes >= MIN_NODES) {
-            let same = changed.map_or(walk.same, |changed| !changed(id));
-            self.keep(id, same, walk.traits, path, duplicates, cx);
+        match id {
+            Some(id) if walk.traits.pure && walk.nodes >= MIN_NODES => {
+                let same = changed.map_or(walk.same, |changed| !changed(id));
+                self.keep(id, same, walk.traits, path, duplicates, cx);
+            }
+            // Walked and not kept (it changed into something that is not
+            // kept): what was kept for it before goes. One found twice in
+            // this sync stays until the sync ends (`duplicates`).
+            Some(id) => {
+                let syncs = self.syncs;
+                if self.map.get(id).is_some_and(|kept| kept.seen != syncs) {
+                    self.map.remove(id);
+                }
+            }
+            None => {}
         }
         walk
     }
@@ -256,12 +290,12 @@ impl Boundaries {
         cx: &mut App,
     ) {
         if let Some(boundary) = self.map.get_mut(id) {
-            if boundary.seen {
+            if boundary.seen == self.syncs {
                 // Two nodes with one id: neither can be found by it.
                 duplicates.push(id.to_owned());
                 return;
             }
-            boundary.seen = true;
+            boundary.seen = self.syncs;
             boundary.traits = traits;
             path.clone_into(&mut boundary.path);
             if !same {
@@ -276,7 +310,7 @@ impl Boundaries {
             group: self.next,
             entity: cx.new(|_| Notified),
             path: path.to_vec(),
-            seen: true,
+            seen: self.syncs,
             traits,
         };
         self.map.insert(id.to_owned(), boundary);
