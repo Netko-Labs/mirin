@@ -195,26 +195,6 @@ fn a_subtree_whose_id_is_not_unique_is_not_kept(cx: &mut TestAppContext) {
 }
 
 #[sumi::test]
-fn a_change_of_text_antialiasing_draws_every_kept_subtree_anew(cx: &mut TestAppContext) {
-    // A kept drawing holds glyphs painted in the antialiasing of its day.
-    let (view, window) = open(cx, grid(8, 6, &[], &[]));
-    take_counts();
-    draw(window);
-    let kept = take_counts();
-    assert_eq!(kept.built, 0, "{kept:?}");
-    assert!(kept.reused > 0, "{kept:?}");
-    window.update(|window, cx| view.update(cx, |view, cx| view.text_changed(window, cx)));
-    draw(window);
-    // Every card, row and the grid around them: none is copied from before.
-    let anew = take_counts();
-    assert!(anew.built >= 8 * 6, "{anew:?}");
-    assert_eq!((anew.moved, anew.skipped), (0, 0), "{anew:?}");
-    // Once: the frame after keeps them again.
-    draw(window);
-    assert_eq!(take_counts().built, 0);
-}
-
-#[sumi::test]
 fn a_patch_builds_only_the_subtrees_whose_generation_moved(cx: &mut TestAppContext) {
     let (view, window) = open(cx, grid(8, 6, &[], &[]));
     let patch = r##"{"patch":[{"op":"set","id":"card9","node":{"type":"view","props":{

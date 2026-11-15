@@ -72,7 +72,6 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             ...(record.revisionRebase === true ? { revisionRebase: true } : {}),
             ...(record.scroll === true ? { scroll: true } : {}),
             ...(record.imageError === true ? { imageError: true } : {}),
-            ...(record.textAntialiasing === true ? { textAntialiasing: true } : {}),
             ...(record.opaqueSurface === true ? { opaqueSurface: true } : {}),
           }
         : null;
@@ -376,10 +375,15 @@ export interface NativeHostOptions {
    */
   askToClose?: boolean;
   /**
-   * How the host antialiases text from its start (`MIRIN_METAL_TEXT`):
-   * `"grayscale"` or `"subpixel"`. Unset, the driver's own environment
-   * decides, else the host's default (grays on Linux). Changed later with
-   * `setTextAntialiasing` on the transport, without a new host.
+   * How the host antialiases text (`MIRIN_METAL_TEXT`): `"grayscale"`, the
+   * default on Linux and the supported one, or `"subpixel"` (sharper on a
+   * panel of horizontal red, green, blue stripes; colour fringes on any
+   * other, and in a screenshot). Unset, the driver's own environment
+   * decides, else the host's default. It is chosen here, as the host
+   * starts, and holds for its life: a host kept warm (`deferred`) opens
+   * every window in it, and changing it means a new host. A window that is
+   * not opaque (a layer or lock surface that does not say `opaque`) draws
+   * grays either way.
    */
   textAntialiasing?: "grayscale" | "subpixel";
   /** Extra environment for the host process. */
@@ -528,14 +532,6 @@ export function spawnNativeHost(
       };
       child.stdin.write(`${JSON.stringify({ minSize })}\n`);
       void child.stdin.flush();
-    },
-    setTextAntialiasing(mode) {
-      // A host from before it would refuse the line; one that has not said
-      // its word yet is one from before it, or not a moment old.
-      if (protocol?.type !== "protocol" || protocol.textAntialiasing !== true) return false;
-      child.stdin.write(`${JSON.stringify({ textAntialiasing: mode })}\n`);
-      void child.stdin.flush();
-      return true;
     },
     open(window) {
       child.stdin.write(`${JSON.stringify({ open: window })}\n`);

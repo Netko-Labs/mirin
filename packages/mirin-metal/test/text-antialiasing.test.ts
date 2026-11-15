@@ -5,21 +5,17 @@ import { join } from "node:path";
 
 import { parseNativeEvent, spawnNativeHost } from "../src/host.ts";
 
-/**
- * A stand-in host: says `word`, then writes what it was started with
- * (`MIRIN_METAL_TEXT`) and the first line it is sent, if any comes.
- */
+/** A stand-in host: says `word`, and writes the `MIRIN_METAL_TEXT` it was started with. */
 async function standIn(
   word: string,
-  act: (host: ReturnType<typeof spawnNativeHost>) => boolean,
   options: Parameters<typeof spawnNativeHost>[1] = {},
-): Promise<{ took: boolean; started: string; line: string }> {
+): Promise<{ started: string }> {
   const dir = mkdtempSync(join(tmpdir(), "mirin-text-"));
   try {
     const script = join(dir, "host");
     writeFileSync(
       script,
-      `#!/bin/sh\nprintf '%s' "$MIRIN_METAL_TEXT" > "${dir}/started"\nprintf '%s\\n' '${word}'\nhead -n 1 > "${dir}/line"\n`,
+      `#!/bin/sh\nprintf '%s' "$MIRIN_METAL_TEXT" > "${dir}/started"\nprintf '%s\\n' '${word}'\ncat > /dev/null\n`,
     );
     chmodSync(script, 0o755);
     const host = spawnNativeHost(script, options);
@@ -28,49 +24,47 @@ async function standIn(
         if (event.type === "protocol") heard();
       }),
     );
-    const took = act(host);
     const closed = new Promise<void>((resolve) => host.onClose(resolve));
-    // A host that was sent nothing still reads: its input ends here.
-    if (!took) host.close();
+    host.close();
     await closed;
-    // Closed before it read anything, the stand-in may not have made the file.
-    const line = Bun.file(join(dir, "line"));
-    return {
-      took,
-      started: await Bun.file(join(dir, "started")).text(),
-      line: (await line.exists()) ? (await line.text()).trim() : "",
-    };
+    return { started: await Bun.file(join(dir, "started")).text() };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-test("a host that takes it is sent the antialiasing asked for, while it runs", async () => {
-  const says = '{"type":"protocol","nodeId":"root","patches":1,"textAntialiasing":true}';
-  expect(parseNativeEvent(says)).toEqual({
-    type: "protocol",
-    nodeId: "root",
-    patches: 1,
-    textAntialiasing: true,
-  });
-  const { took, line } = await standIn(says, (host) => host.setTextAntialiasing("subpixel"));
-  expect(took).toBe(true);
-  expect(JSON.parse(line)).toEqual({ textAntialiasing: "subpixel" });
-});
-
-test("a host from before it is sent nothing", async () => {
-  const { took, line } = await standIn('{"type":"protocol","nodeId":"root","patches":1}', (host) =>
-    host.setTextAntialiasing("grayscale"),
-  );
-  expect(took).toBe(false);
-  expect(line).toBe("");
-});
-
 test("a host starts with the antialiasing its spawn names", async () => {
   const word = '{"type":"protocol","nodeId":"root","patches":1}';
-  const named = await standIn(word, () => false, { textAntialiasing: "subpixel" });
+  const named = await standIn(word, { textAntialiasing: "subpixel" });
   expect(named.started).toBe("subpixel");
+  const grays = await standIn(word, { textAntialiasing: "grayscale" });
+  expect(grays.started).toBe("grayscale");
   // Unsaid, the driver's own environment (or nothing) decides, as before.
-  const unsaid = await standIn(word, () => false, { env: { MIRIN_METAL_TEXT: "" } });
+  const unsaid = await standIn(word, { env: { MIRIN_METAL_TEXT: "" } });
   expect(unsaid.started).toBe("");
+});
+
+test("a host kept warm starts with it too: its windows open in it", async () => {
+  const word = '{"type":"protocol","nodeId":"root","patches":1}';
+  const warm = await standIn(word, { deferred: true, textAntialiasing: "subpixel" });
+  expect(warm.started).toBe("subpixel");
+});
+
+test("nothing changes it while the host runs", async () => {
+  // A host from when a line did announces it: the word is not this driver's,
+  // and the transport has no way to send the line.
+  const says = '{"type":"protocol","nodeId":"root","patches":1,"textAntialiasing":true}';
+  expect(parseNativeEvent(says)).toEqual({ type: "protocol", nodeId: "root", patches: 1 });
+  const dir = mkdtempSync(join(tmpdir(), "mirin-text-"));
+  try {
+    const script = join(dir, "host");
+    writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' '${says}'\ncat > /dev/null\n`);
+    chmodSync(script, 0o755);
+    const host = spawnNativeHost(script);
+    await new Promise<void>((heard) => host.onEvent(() => heard()));
+    expect("setTextAntialiasing" in host).toBe(false);
+    host.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
