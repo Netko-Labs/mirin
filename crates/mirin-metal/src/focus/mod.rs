@@ -180,6 +180,12 @@ pub(crate) fn key_root(
         .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
             view.window_key_down(event, window, cx);
         }))
+        // A capture hears a modifier change as a move (`pointer.rs`).
+        .on_modifiers_changed(cx.listener(
+            |view, event: &sumi::ModifiersChangedEvent, window, _cx| {
+                view.modifiers_changed(event, window);
+            },
+        ))
         .child(content)
         .into_any_element()
 }
