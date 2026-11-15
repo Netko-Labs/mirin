@@ -254,18 +254,36 @@ against the host before the sync:
 | scroll across (ms) | 2.4 | 2.3 | 8.95 / 9.07 |
 | stress RSS at idle, at the end | 194–195, 279–280 MB | 192, 279–281 MB | |
 | at 1.5: grow, scroll, RSS at idle | 1.7 ms, 3.1 ms, 205 MB | 1.5 ms, 2.6 ms, 205 MB | |
-| counter: RSS, GPU memory, first frame | 65.3 MB, 20.3 MB, 30–34 ms | 65.1 MB, 16.2 MB, 27–28 ms | |
+| counter: RSS, GPU memory, first frame | 65.3 MB, 16.2 MB, 28–33 ms | 65.1 MB, 16.2 MB, 27–28 ms | |
 
-Two rows are over by more than noise. **Scroll** is 0.3 ms dearer by the
-clock in both sessions that measured it (2.8 and 2.95 against 2.7 and 2.6)
-with the same instructions; a longer scroll (240 steps) ran 3.1 ms against
-4.1 on a loaded machine, so the clock is not settled, and what is left to
-suspect is upstream's renderer itself (the opaque pass and the depth
-attachment on every frame). **The counter's GPU memory** is 4 MB up:
-upstream's depth buffer, 1.9 MB at 800 by 600, does not fit what is left of
-the first 2 MiB block and takes a 4 MiB one. Both are step 3's to settle
-(a depth texture in an allocation of its own, or none for a window that
-draws nothing over anything).
+Two rows were over by more than noise that evening, and were settled the
+next day on a quiet machine against main with the sync's checker
+(`host-main2`):
+
+- **Scroll and scroll across.** By the clock, scroll read 0.3 ms dearer
+  and scroll across 0.25 to 0.5 in some sessions and level in others (a
+  48-frame median moves by 0.3 ms from one session to the next). Over
+  200-frame scrolls, three interleaved runs each, they are level: scroll
+  3.1 ms against 3.1, scroll across 2.4 against 2.5, with fewer
+  instructions (14.06 M against 14.48, 9.04 M against 9.36) and the cycles
+  within what the runs differ by (scroll across 8.25 M against 7.92).
+  A profile of 600 frames of scroll across has the same samples inside the
+  frame on both (3,190 against 3,207). The frame the bench times ends
+  where painting does, so the renderer's new passes are not in it, and a
+  host that never uses a depth buffer scrolls no faster. Nothing was found
+  to fix but the bounds a primitive shows in, which the copy asked for
+  through a call (inlined).
+- **The counter's GPU memory** was 4 MB up (20.3 MB): upstream's depth
+  buffer, 1.9 MB at 800 by 600, did not fit what was left of the first
+  2 MiB block and took a 4 MiB one. A window now gets its depth buffer with
+  the first frame that has 128 quads (`forks/zed/MIRIN.md`): the counter
+  is at 16.2 MB again, as before the sync, and builds one pipeline fewer
+  before its first frame. The other ways were dearer or did less: an
+  allocation of its own for the depth buffer still adds its 1.9 MB
+  (18.1 MB); a first block it fits in is 4 MiB for every app; 16 bits of
+  depth still do not fit the first block beside the atlas and are too few
+  for a frame of more than 65,535 quads, each of which has a depth of its
+  own.
 
 What the sync did cost, and what was done about it, is in
 `forks/zed/MIRIN.md`: upstream's split of every rounded quad into five
@@ -276,16 +294,15 @@ deferred way into their lists until only nested layers did.
 Layouts: identical to `host-sumi1` (`grid`, `browser`, `scroll`,
 `scroll-fractional`). Drawings differ from it by upstream's design, so the
 check is the host against itself with `MIRIN_METAL_RETAIN=0` and `--scene`:
-identical at 1, 1.25 and 1.5 (those four and `across`) on the two builds
-before the last change to how a copied drawing goes into its lists; on the
-final one, at 1 (all five), at 1.25 (all but `across`) and at 1.5
-(`browser`, `scroll`, `scroll-fractional`). `across` at 1.25 and 1.5 and
-`grid` at 1.5 were not got clean on it: that evening one host of a pair
-heard a hover the other did not, at steps that changed from run to run, and
-`host-sumi1` against itself failed the same way. They are to be run again
-on a quiet desktop.
+identical at 1, 1.25 and 1.5 (those four and `across`): 19 checks of 19
+with `bench/gates.ts`, whose hosts are driven by `settle` and hear no real
+pointer (the evening of the sync three of them could not be got clean with
+the script before it, because one host of a pair heard a hover the other
+did not).
 `MIRIN_METAL_ACCESS_CHECK=1` over the stress bench: no complaints.
 Screenshots of the example browser (a card, a scroll area, a popover, a
 menu, a dialog, a hover card, typography) and of the stress app with
 shadows, in the window and scrolled, differ from `host-sumi1`'s only in
-what the pointer hovers. macOS and Windows were not built here.
+what the pointer hovers; the counter and a small dashboard, drawn without
+a depth buffer, are the pixels they were with one. macOS and Windows were
+not built here.
