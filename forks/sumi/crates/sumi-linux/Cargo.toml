@@ -74,13 +74,7 @@ strum.workspace = true
 url.workspace = true
 uuid.workspace = true
 
-# Always used
-oo7 = { workspace = true, features = [
-    "async-std",
-    "native_crypto",
-] }
 calloop = "0.14.3"
-notify-rust.workspace = true
 raw-window-handle.workspace = true
 
 # Used in both windowing options

@@ -107,7 +107,6 @@ itertools = "0.14.0"
 libc = "0.2"
 log = { version = "0.4", default-features = false, features = ["std"] }
 mach2 = "0.6"
-notify-rust = "4"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSAlert",
@@ -195,7 +194,6 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
     "UNNotificationTrigger",
     "UNUserNotificationCenter",
 ] }
-oo7 = { git = "https://github.com/zed-industries/oo7", rev = "731c1215edb6905876c6137ab300428c7b8d7c13", version = "0.6", default-features = false }
 parking_lot = "0.12.1"
 pathfinder_geometry = "0.5"
 postage = { version = "0.5", default-features = false }
