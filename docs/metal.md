@@ -2598,6 +2598,30 @@ lockfile (`cd ../../forks/accesskit_unix`, `cp
 test --lib`, `rm Cargo.lock`), and its AT-SPI layer's and consumer's the
 same way (`atspi-alone`, `consumer-alone`; each fork's `MIRIN.md`).
 
+**A build with no network.** `Cargo.lock` has git dependencies (wgpu and
+six others) beside crates.io's, so a plain build fetches. Every release
+carries `mirin-metal-<version>-source.tar.xz` (and its `.sha256`): this
+crate, `forks/` and the license as the tag has them, every other
+dependency in `crates/mirin-metal/vendor/` (`cargo vendor --locked`, 532
+crates, most of the 56 MB) and a `crates/mirin-metal/.cargo/config.toml`
+that points cargo at them and sets `net.offline`. In it,
+
+```sh
+cd crates/mirin-metal
+cargo build --release --locked --offline --bin mirin-metal-host
+```
+
+builds with an empty `CARGO_HOME` and no network (`BUILDING.md` in the
+tarball says the same, with the build dependencies). `scripts/metal-source.ts
+pack <directory>` makes it from the commit checked out and `verify
+<tarball>` builds the host from it that way, in a network namespace with
+no interface where the kernel allows one; the release workflow's
+`metal-source` job runs both on a tag before it uploads. No
+`rust-toolchain` file is in the tree (`pack` refuses one outside
+`vendor/`): the build takes the Rust on the `PATH`, and nothing makes
+rustup or a packager's cargo download another. A vendored crate's own
+toolchain file is never read, since cargo is not started in its directory.
+
 The TypeScript packages are checked with the rest of the repository
 (`bun run fmt-lint`, `bun run typecheck`, `bun run test`). The root `test`
 script runs `@mirinjs/metal-ui`'s tests from their package directory, because
