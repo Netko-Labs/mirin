@@ -15,10 +15,10 @@ gpui_platform = { version = "*", features = ["font-kit", "wayland", "x11"] }
 Everything in a standalone GPUI app starts with an `Application`. You can create one with `gpui_platform::application()`, which picks the windowing and text backends for the host OS, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()` and register your first root view.
 
 ```rust,no_run
-use gpui::*;
+use sumi::*;
 
 fn main() {
-    gpui_platform::application().run(|cx: &mut App| {
+    sumi_platform::application().run(|cx: &mut App| {
         // ..
     });
 }

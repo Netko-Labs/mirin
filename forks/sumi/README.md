@@ -64,8 +64,27 @@ bun bench/gates.ts <host> --reference=<host before the change>
 
 and anything that touches the frame is measured against the budgets in
 `docs/metal/engine.md`, section 6. Format the engine with `cargo fmt --all`
-from this directory. The unit tests inside these crates were written
-against Zed's whole workspace and are not run from here.
+from this directory.
+
+The crates' own unit tests (Zed's, and the ones mirin wrote beside its
+changes) run from here, on Linux, and CI's `metal` job runs them:
+
+```sh
+cd forks/sumi
+cargo test --locked --workspace --lib --tests   # 620 tests, 3 ignored
+```
+
+`--workspace` matters: the platform crates' tests need `sumi`'s
+`test-support`, which only the whole workspace turns on. This workspace has
+a `Cargo.lock` of its own for them (the crates' dev-dependencies are not in
+`crates/mirin-metal`'s); when a manifest here changes, bring it up to date
+with `cargo metadata --format-version 1 > /dev/null` and commit it. It
+patches taffy to mirin's fork as `crates/mirin-metal` does. The fonts and
+the image the tests read are Zed's, under their own licenses
+(`assets/fonts/*/`, `crates/sumi/examples/image/`). Three need a GPU device
+and take any (CI's is Mesa's software Vulkan). Not run: the doc tests (99
+examples of upstream's, five minutes; `cargo test --doc` passes), and the
+macOS and Windows crates' tests, which only build there.
 
 ## Picking from Zed
 

@@ -3388,6 +3388,22 @@ impl Window {
         }
     }
 
+    /// mirin: makes the window count as active or not, as the platform's
+    /// word would: the observers of its activation hear it and it is drawn
+    /// again. For a check, whose window does not hear the platform
+    /// (`set_platform_input_ignored`) and would otherwise never be seen
+    /// inactive; in a window that does, it holds until the platform next
+    /// says. Does nothing when the window is already so.
+    pub fn simulate_active_status(&mut self, active: bool, cx: &mut App) {
+        if self.active.replace(active) == active {
+            return;
+        }
+        self.activation_observers
+            .clone()
+            .retain(|callback| callback(self, cx));
+        self.refresh();
+    }
+
     pub(crate) fn advance_scene_animations(&mut self, cx: &App) {
         let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
         self.rendered_frame.scene.advance_animations(elapsed);
@@ -8943,6 +8959,8 @@ mod tests {
         rc::Rc,
         time::Duration,
     };
+
+    use super::{PlacedGlyphX, place_glyph_x};
 
     // mirin: `Window::paint_line_glyph`.
     #[test]

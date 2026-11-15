@@ -722,6 +722,8 @@ export type NativeEvent =
    * starts): `render` then sends only what each commit changed. A host older
    * than patches never sends it, and gets the whole tree every commit.
    * `settle` is true from a host that takes the `settle` simulation, and
+   * `activation` from one that takes the `activate` and `deactivate`
+   * window simulations,
    * `rebase` from one that takes a field's `baseHash` (the text its `value`
    * was set over) and carries what was typed meanwhile onto the value,
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
@@ -734,6 +736,7 @@ export type NativeEvent =
       nodeId: "root";
       patches: number;
       settle?: boolean;
+      activation?: boolean;
       rebase?: boolean;
       scroll?: boolean;
       imageError?: boolean;
@@ -818,7 +821,20 @@ export type SimCommand =
    * waiting for the compositor.
    */
   | { kind: "settle" }
-  | { kind: "window"; action: "zoom" | "minimize" };
+  | { kind: "window"; action: "zoom" | "minimize" }
+  /**
+   * Make the window count as not the active one (`deactivate`: as when
+   * another window takes the keyboard) or as active again (`activate`), so
+   * a check can see how an inactive window draws: a focus ring shows only
+   * in an active window, and a screen reader hears the window's state.
+   * Under `MIRIN_METAL_CHECK=1` a window is active whatever the compositor
+   * says, from its start and until a `deactivate`, and what is simulated
+   * holds until the next simulation; without it the compositor's next word
+   * replaces it. A simulation that changes nothing draws nothing. Only a
+   * host whose `protocol` event says `activation: true` takes them; one
+   * from before logs "unknown action" and stays as it was.
+   */
+  | { kind: "window"; action: "activate" | "deactivate" };
 
 /**
  * The channel to the native renderer. `spawnNativeHost` provides the stdio

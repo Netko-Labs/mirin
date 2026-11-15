@@ -484,9 +484,12 @@ mod tests {
             width: DevicePixels(64),
             height: DevicePixels(64),
         };
+        // mirin: 400, where upstream has 700: the first texture of colors
+        // is 512 across here (`FIRST_COLOR_ATLAS_SIZE`), and the tile has to
+        // fit it beside the keeper for the test to say anything.
         let big = Size {
-            width: DevicePixels(700),
-            height: DevicePixels(700),
+            width: DevicePixels(400),
+            height: DevicePixels(400),
         };
 
         let make_key = |image_id: usize| {

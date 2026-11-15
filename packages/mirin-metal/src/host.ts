@@ -65,6 +65,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             nodeId: "root",
             patches: record.patches,
             ...(record.settle === true ? { settle: true } : {}),
+            ...(record.activation === true ? { activation: true } : {}),
             ...(record.rebase === true ? { rebase: true } : {}),
             ...(record.scroll === true ? { scroll: true } : {}),
             ...(record.imageError === true ? { imageError: true } : {}),

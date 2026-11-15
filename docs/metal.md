@@ -374,6 +374,16 @@ patches change it in place, in order (section "Patches").
   reader's focus), and `{"kind":"move","id"}` / `{"kind":"move","x","y"}`
   moves the pointer there through GPUI's real mouse dispatch, so
   `hoverBackground` and `onHover` respond (`hover` only reports `onHover`).
+  `{"kind":"window","action":"deactivate"}` makes the window count as not
+  the active one, as when another window takes the keyboard, and
+  `"activate"` as active again (`Window::simulate_active_status` in sumi):
+  the window is drawn again, a focus ring shows only in an active one, and
+  a screen reader hears the change. A simulation that changes nothing draws
+  nothing; outside check mode the compositor's next word replaces it. A
+  host that takes the two says `"activation":true` in its `protocol` line
+  (and its binary names `MIRIN_METAL_ACTIVATION`); one from before logs
+  `sim window: unknown action` and stays as it was. (`"zoom"` and
+  `"minimize"` are the title bar's.)
   `{"kind":"settle"}` is answered with
   `{"type":"settled","nodeId":"root","quiet":true}` once the window has
   settled: every tree, patch, size and simulation sent before it is applied
@@ -402,7 +412,8 @@ patches change it in place, in order (section "Patches").
   whether the pointer is over it are the platform's word too and are not
   heard: the window counts as active, with no pointer over it, for as long
   as the check lasts (a focus ring shows, as in a window a person is
-  using). A compositor gives and takes the keyboard when it likes, for one
+  using), unless the check itself says otherwise: the `deactivate` and
+  `activate` window simulations are how a check sees an inactive window. A compositor gives and takes the keyboard when it likes, for one
   when a second window opens beside the first, and each such change drew
   the window again: `scene browser @1.25` then found one frame more in one
   host than in the other, 4 runs of 6 in Dashi's VM, with the frame each
@@ -997,7 +1008,11 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   draws them: skrifa walks the paint graph and tiny-skia paints it (both
   were in the tree already, for cosmic-text and for SVG), into the same
   image a colour glyph from swash arrives as. A sweep gradient is drawn as
-  one flat colour (tiny-skia 0.11 has none; Noto's emoji use none). A font
+  one flat colour, the mean of its stops (tiny-skia 0.11 has none). Noto's
+  emoji use none: of the 4,012 colour glyphs in Fedora's `Noto-COLRv1.ttf`
+  (google-noto-color-emoji-fonts 20260921) not one reaches a
+  `PaintSweepGradient`, counted with fontTools over every glyph's paint
+  graph, so the flat colour is only ever another font's. A font
   is taken for an emoji font by its PostScript name, `NotoColorEmoji`, as
   upstream does: another colour font (Twemoji) is still drawn as plain
   outlines or not at all.
@@ -2796,10 +2811,11 @@ The engine and the forks live at the repository root (`forks/sumi`, `forks/taffy
 `forks/wgpu`, `forks/gpu-allocator`, `forks/accesskit_unix`,
 `forks/accesskit_atspi_common`, `forks/accesskit_consumer`;
 `forks/README.md` explains the upstream branches and `forks/sumi/README.md`
-the engine). The unit tests inside sumi's crates were written against zed's
-whole workspace and do not run from here; what mirin changed in it is
-tested through this crate (`src/retain/gpui_tests.rs` and the render
-tests). The AccessKit adapter fork's tests build it alone with this crate's
+the engine). The unit tests inside sumi's crates run from its own
+workspace (`cd forks/sumi && cargo test --locked --workspace --lib
+--tests`, 620 of them; `forks/sumi/README.md`), and CI's `metal` job runs
+them; most of what mirin changed in the engine is tested through this
+crate (`src/retain/gpui_tests.rs` and the render tests). The AccessKit adapter fork's tests build it alone with this crate's
 lockfile (`cd ../../forks/accesskit_unix`, `cp
 ../../crates/mirin-metal/Cargo.lock .`,
 `CARGO_TARGET_DIR=../../crates/mirin-metal/target/accesskit-alone cargo

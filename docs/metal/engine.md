@@ -556,4 +556,72 @@ name, removed item or removed feature is left in them (searched); and their
 changes are the rename, import order, the `bench-support` atom out of their
 conditions, and the screen capture module and methods. CI's `metal` job
 builds macOS; nothing builds Windows, so `sumi-windows` is the crate most
-likely to hold a mistake. The unit tests inside sumi's crates are not run.
+likely to hold a mistake. The unit tests inside sumi's crates were not run
+at this step; section 8 has what it took to run them.
+
+## 8. The checks nobody had run
+
+Dashi moved onto sumi with four checks open. What each turned out to be:
+
+**sumi's own unit tests.** They did not build from `forks/sumi`, for four
+reasons, none of them Zed's workspace as such:
+
+- its manifest did not patch taffy to mirin's fork, which
+  `crates/mirin-metal` does for it, and the layout code calls what only the
+  fork has (`contains`, `below_changed_since`, `set_layout_epoch`);
+- three files the tests read were not brought over: IBM Plex Sans Regular,
+  Lilex Regular and Bold (`assets/fonts/`) and a JPEG with an EXIF
+  orientation (`crates/sumi/examples/image/`). They are Zed's, at the fork
+  commit, with their licenses beside them;
+- one of mirin's own tests had never been compiled
+  (`a_glyph_of_a_line_moved_by_whole_device_pixels_keeps_its_variant`, in
+  `window.rs`: it named `place_glyph_x` without importing it), and one of
+  upstream's read a field mirin's text system no longer has;
+- the platform crates' tests need `sumi`'s `test-support`, which only a
+  build of the whole workspace turns on.
+
+With those, all but four of the 623 passed or were upstream's to skip. The
+four each said something:
+
+| Test | What it found | What was done |
+| --- | --- | --- |
+| `sumi-util`: `logging_preserves_diagnostics_and_callers` | A logged error's target was `sumi-linux::…`, the directory's name, where the module is `sumi_linux`: `RUST_LOG=sumi_linux=debug` did not show it. The rename's doing. | Fixed (`log_error_with_caller`): the target is the module path. |
+| `sumi`: `border_widths_to_taffy_use_stroke_snapping` | Upstream rounds a border to a device pixel before layout; sumi lays out lengths as authored, on purpose (`AbsoluteLength::to_taffy`: Dashi's apps at 1.25 and 1.5). | The test now says what sumi does (`border_widths_go_to_taffy_as_authored`). |
+| `sumi`: `test_fractional_padding_does_not_make_a_fitting_container_scrollable` | The same decision, seen from outside: 4.25 px of padding around a 42 px child in a 50 px box overflows by half a pixel and scrolls by it, as in a browser. Upstream rounds the padding to 4 and it fits. | Kept and ignored, with the reason. It is a real difference from upstream: an app that pads by a fraction gets a scroll range of a fraction. |
+| `sumi-wgpu`: `remove_deallocates_tile_space_for_reuse` | It put a 700 px tile beside another in the first color texture, which is 512 across here (`FIRST_COLOR_ATLAS_SIZE`, for a small app's memory). | The tile is 400 px. |
+
+They run in CI's `metal` job on Linux: `cargo test --locked --workspace
+--lib --tests` in `forks/sumi`, which has a lockfile of its own for it, and
+`cargo fmt --all --check`. Not run: the 99 doc tests (five minutes; they
+pass by hand), and the macOS and Windows crates' tests, which build only
+there.
+
+**Font fallback by weight, the static case.** A family in separate files, a
+weight each (Thin and Regular, cut from Noto Sans's static files and named
+as those are: `tests/fonts/MirinTestWeights-*.ttf`), gives the file of the
+weight asked by name and as a fallback, whichever file the system read
+first, and a weight between the files gets one of them as CSS picks (300 is
+Thin, 700 is Regular); nothing was wrong. `tests/text_weight.rs`,
+`a_family_of_static_files_gives_the_file_of_the_weight_asked` and
+`a_fallback_of_static_files_is_the_file_of_the_weight_of_the_text`. One
+thing the test met on the way: a family is usable by name only if its
+faces have an "m" (`load_primary`), which is upstream's rule.
+
+**Sweep gradients in Noto's emoji.** None. Of the 4,012 colour glyphs of
+Fedora's `Noto-COLRv1.ttf` (google-noto-color-emoji-fonts 20260921), walked
+with fontTools through every layer, transform, composite and nested glyph,
+not one reaches a `PaintSweepGradient` or `PaintVarSweepGradient`: 1,735
+use a linear gradient and 1,805 a radial one. The module's comment said "a
+handful" and now says none. A sweep gradient in another font is drawn as
+one flat colour, the mean of its stops.
+
+**An inactive window under a check.** A window under a check counts as
+active whatever the compositor says, so a check could not see how an
+inactive one draws (a focus ring is not shown in one). A check can now say
+so itself: the `deactivate` and `activate` window simulations
+(`{"sim":{"kind":"window","action":"deactivate"}}`, `docs/metal.md` section
+2), which call `Window::simulate_active_status` here: the activation
+observers hear it and the window is drawn again, and under a check it
+holds until the check says otherwise. A host that takes them says
+`"activation":true` in its `protocol` line.
+`drive::tests::a_check_makes_its_window_inactive_and_active_again`.

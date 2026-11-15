@@ -1225,31 +1225,27 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 mod tests {
     use super::*;
 
+    // mirin: upstream's test asserted its stroke snapping (0.4 to 1, 1.6 to
+    // 2); a border goes to layout as authored (`border_widths_to_taffy`).
     #[test]
-    fn border_widths_to_taffy_use_stroke_snapping() {
+    fn border_widths_go_to_taffy_as_authored() {
         let border_widths = Edges {
             top: Pixels(0.0).into(),
             right: Pixels(0.4).into(),
             bottom: Pixels(0.5).into(),
             left: Pixels(1.6).into(),
         };
+        let length = taffy::style::LengthPercentage::length;
         let taffy_border = border_widths_to_taffy(&border_widths, Pixels(16.0), 1.0);
-
+        assert_eq!(taffy_border.top, length(0.0));
+        assert_eq!(taffy_border.right, length(0.4));
+        assert_eq!(taffy_border.bottom, length(0.5));
+        assert_eq!(taffy_border.left, length(1.6));
+        // In device pixels, still not rounded to one: 1 px is 1.5 at 1.5.
+        let one = Edges::all(Pixels(1.0).into());
         assert_eq!(
-            taffy_border.top,
-            taffy::style::LengthPercentage::length(0.0)
-        );
-        assert_eq!(
-            taffy_border.right,
-            taffy::style::LengthPercentage::length(1.0)
-        );
-        assert_eq!(
-            taffy_border.bottom,
-            taffy::style::LengthPercentage::length(1.0)
-        );
-        assert_eq!(
-            taffy_border.left,
-            taffy::style::LengthPercentage::length(2.0)
+            border_widths_to_taffy(&one, Pixels(16.0), 1.5).left,
+            length(1.5)
         );
     }
 }

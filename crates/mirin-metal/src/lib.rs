@@ -62,7 +62,7 @@ pub use focus::FOCUS_MARKER;
 pub use media::IMAGE_ERROR_MARKER;
 pub use patch::{parse_patch, PatchOp, PATCH_MARKER, PATCH_PROTOCOL};
 pub use scroll::{ScrollCommand, ScrollPosition, SCROLL_MARKER};
-pub use sim::{LayoutNode, SimCommand};
+pub use sim::{LayoutNode, SimCommand, ACTIVATION_MARKER};
 pub use surface::{parse_surface, Surface};
 pub use text_mode::{Antialiasing, TEXT_ANTIALIASING_MARKER};
 pub use titlebar::{Chrome, Controls, TitleBar};

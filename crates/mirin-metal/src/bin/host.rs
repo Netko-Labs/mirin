@@ -12,8 +12,9 @@ use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, Antialiasing, DriverMessage,
     EventKind, HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface,
-    TitleBar, IMAGE_ERROR_MARKER, OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL,
-    REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER, TEXT_ANTIALIASING_MARKER,
+    TitleBar, ACTIVATION_MARKER, IMAGE_ERROR_MARKER, OPEN_MIN_SIZE_MARKER, PATCH_MARKER,
+    PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
+    TEXT_ANTIALIASING_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -587,6 +588,9 @@ fn main() {
     ));
     mirin_metal::trace::log(format_args!("{SETTLE_MARKER}: the settle simulation"));
     mirin_metal::trace::log(format_args!(
+        "{ACTIVATION_MARKER}: a window made active or not by simulation"
+    ));
+    mirin_metal::trace::log(format_args!(
         "{REBASE_MARKER}: a field's edit is carried onto a value written meanwhile"
     ));
     mirin_metal::trace::log(format_args!(
@@ -604,6 +608,8 @@ fn main() {
         "patches": PATCH_PROTOCOL,
         // This host takes the `settle` simulation and answers `settled`.
         "settle": true,
+        // And the `activate` and `deactivate` window simulations.
+        "activation": true,
         // This host takes a field's `baseHash` and carries what was typed
         // onto a value written meanwhile (`field/rebase.rs`).
         "rebase": true,

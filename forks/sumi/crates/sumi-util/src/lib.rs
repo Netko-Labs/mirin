@@ -318,10 +318,14 @@ fn log_error_with_caller(
     let target = file.as_ref().and_then(|(_, s)| s.split_once("/src/"));
 
     let module_path = target.map(|(krate, module)| {
-        if module.starts_with(krate) {
+        // mirin: sumi's crates are in directories named with a hyphen
+        // (`sumi-linux`), their modules with an underscore: the target is
+        // the module's path, as `log` gives one and `RUST_LOG` filters by.
+        let krate = &krate.replace('-', "_");
+        if module.starts_with(krate.as_str()) {
             module.trim_end_matches(".rs").replace('/', "::")
         } else {
-            krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+            krate.clone() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
         }
     });
     let file = file.map(|(_, file)| format!("crates/{file}"));
@@ -676,7 +680,7 @@ mod logging_tests {
 
         fn log(&self, record: &Record<'_>) {
             assert_eq!(record.target(), "sumi_util::lib");
-            assert_eq!(record.module_path(), Some("crates/sumi_util/src/lib.rs"));
+            assert_eq!(record.module_path(), Some("crates/sumi-util/src/lib.rs"));
             assert_eq!(record.file(), Some(file!()));
             assert_eq!(record.level(), Level::Error);
             RECORDS.with_borrow_mut(|records| {
