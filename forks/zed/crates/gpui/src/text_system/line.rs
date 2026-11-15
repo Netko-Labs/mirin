@@ -552,16 +552,7 @@ fn paint_line(
         &mut Window,
     ),
 ) -> Result<()> {
-    let line_bounds = line_paint_bounds(
-        origin,
-        layout,
-        text,
-        line_height,
-        align,
-        align_width,
-        wrap_boundaries,
-    );
-    window.paint_layer(line_bounds, |window| {
+    window.paint_layer(|window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
@@ -856,16 +847,7 @@ fn paint_line_background(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
-    let line_bounds = line_paint_bounds(
-        origin,
-        layout,
-        text,
-        line_height,
-        align,
-        align_width,
-        wrap_boundaries,
-    );
-    window.paint_layer(line_bounds, |window| {
+    window.paint_layer(|window| {
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
@@ -998,55 +980,6 @@ fn paint_line_background(
     })
 }
 
-fn line_paint_bounds(
-    origin: Point<Pixels>,
-    layout: &LineLayout,
-    text: &str, // mirin: where a wrapped row's ink ends
-    line_height: Pixels,
-    align: TextAlign,
-    align_width: Option<Pixels>,
-    wrap_boundaries: &[WrapBoundary],
-) -> Bounds<Pixels> {
-    let mut bounds = Bounds::new(
-        origin,
-        size(
-            layout.width,
-            line_height * (wrap_boundaries.len() as f32 + 1.),
-        ),
-    );
-    if align == TextAlign::Left || layout.len == 0 {
-        return bounds;
-    }
-
-    let align_width = align_width.unwrap_or(layout.width);
-    let mut row_start = Pixels::ZERO;
-    // mirin: a row is aligned by where its ink ends (`wrapped_line_end_x`),
-    // as `aligned_origin_x` places its glyphs; the next starts at the break.
-    let row_ends = wrap_boundaries
-        .iter()
-        .map(|boundary| {
-            let next_start = layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
-                .position
-                .x;
-            (wrapped_line_end_x(layout, text, boundary), next_start)
-        })
-        .chain([(layout.width, layout.width)]);
-    for (row, (row_end, next_start)) in row_ends.enumerate() {
-        let width = row_end - row_start;
-        let offset = match align {
-            TextAlign::Left => Pixels::ZERO,
-            TextAlign::Center => (align_width - width) / 2.,
-            TextAlign::Right => align_width - width,
-        };
-        bounds = bounds.union(&Bounds::new(
-            point(origin.x + offset, origin.y + line_height * row as f32),
-            size(width, line_height),
-        ));
-        row_start = next_start;
-    }
-    bounds
-}
-
 /// mirin: where a wrapped line's ink ends: before the spaces it broke at.
 /// They stay in the text (the next line starts after them) but take no room
 /// at the line's end, so a right-aligned or centered wrapped line lines up
@@ -1160,111 +1093,6 @@ mod tests {
             }),
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
-        }
-    }
-
-    // mirin: a wrapped row's bounds end where its ink does.
-    #[test]
-    fn a_wrapped_rows_paint_bounds_end_before_the_space_it_broke_at() {
-        // "ab cd" 10 px a glyph, wrapped before "c": the first row is "ab".
-        let line = make_shaped_line(
-            "ab cd",
-            &[(0, 0.), (1, 10.), (2, 20.), (3, 30.), (4, 40.)],
-            50.,
-            &[],
-        );
-        let boundaries = [WrapBoundary {
-            run_ix: 0,
-            glyph_ix: 3,
-        }];
-        let origin = point(px(0.), px(0.));
-        let bounds = line_paint_bounds(
-            origin,
-            &line.layout,
-            "ab cd",
-            px(10.),
-            TextAlign::Right,
-            Some(px(100.)),
-            &boundaries,
-        );
-        // Both rows end at 100: "ab" from 80, "cd" from 80.
-        assert_eq!(
-            bounds,
-            Bounds::new(point(px(0.), px(0.)), size(px(100.), px(20.)))
-        );
-        let bounds = line_paint_bounds(
-            origin,
-            &line.layout,
-            "ab cd",
-            px(10.),
-            TextAlign::Right,
-            Some(px(20.)),
-            &boundaries,
-        );
-        assert_eq!(bounds.left(), px(0.));
-    }
-
-    #[test]
-    fn test_aligned_line_paint_bounds() {
-        let line = make_shaped_line("abcd", &[(0, 0.), (1, 10.), (2, 20.), (3, 30.)], 40., &[]);
-        let origin = point(px(10.), px(20.));
-        let line_height = px(16.);
-        for (wrapped, align_width, expected_edges) in [
-            (false, None, [(10., 50.), (10., 50.), (10., 50.)]),
-            (true, None, [(10., 50.), (10., 50.), (10., 50.)]),
-            (false, Some(40.), [(10., 50.), (10., 50.), (10., 50.)]),
-            (true, Some(40.), [(10., 50.), (10., 50.), (10., 50.)]),
-            (false, Some(100.), [(10., 50.), (10., 80.), (10., 110.)]),
-            (true, Some(100.), [(10., 50.), (10., 70.), (10., 110.)]),
-            (false, Some(10.), [(10., 50.), (-5., 50.), (-20., 50.)]),
-            (true, Some(10.), [(10., 50.), (5., 50.), (0., 50.)]),
-            (false, Some(0.), [(10., 50.), (-10., 50.), (-30., 50.)]),
-            (true, Some(0.), [(10., 50.), (0., 50.), (-10., 50.)]),
-        ] {
-            let boundaries = if wrapped {
-                vec![WrapBoundary {
-                    run_ix: 0,
-                    glyph_ix: 2,
-                }]
-            } else {
-                Vec::new()
-            };
-            for (align, (left, right)) in [TextAlign::Left, TextAlign::Center, TextAlign::Right]
-                .into_iter()
-                .zip(expected_edges)
-            {
-                assert_eq!(
-                    line_paint_bounds(
-                        origin,
-                        &line.layout,
-                        "abcd",
-                        line_height,
-                        align,
-                        align_width.map(px),
-                        &boundaries,
-                    ),
-                    Bounds::new(
-                        point(px(left), origin.y),
-                        size(px(right - left), px(if wrapped { 32. } else { 16. })),
-                    ),
-                    "wrapped={wrapped}, align={align:?}, align_width={align_width:?}",
-                );
-            }
-        }
-        let empty = make_shaped_line("", &[], 0., &[]);
-        for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
-            assert_eq!(
-                line_paint_bounds(
-                    origin,
-                    &empty.layout,
-                    "",
-                    line_height,
-                    align,
-                    Some(px(100.)),
-                    &[]
-                ),
-                Bounds::new(origin, size(Pixels::ZERO, line_height)),
-            );
         }
     }
 

@@ -400,4 +400,6 @@ fn build(
 #[cfg(test)]
 mod gpui_tests;
 #[cfg(test)]
+mod scene_tests;
+#[cfg(test)]
 mod tests;
