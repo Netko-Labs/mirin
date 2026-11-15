@@ -1,7 +1,7 @@
 //! mirin: render pipelines built on first use and shared by every window of
 //! a GPU context (port of `../../../gpui`'s `BladePipelineCache` row).
 //!
-//! Upstream built all nine pipelines (and parsed the shaders twice, once for
+//! Upstream built all ten pipelines (and parsed the shaders twice, once for
 //! the subpixel variant) when a window's renderer was created, and again when
 //! the window turned out opaque (`update_transparency`): ~22 ms of a small
 //! app's start, for a window that draws quads and text. Each pipeline is now
@@ -18,7 +18,6 @@ use std::sync::{Arc, OnceLock};
 pub(crate) struct PipelineKey {
     pub surface_format: wgpu::TextureFormat,
     pub alpha_mode: wgpu::CompositeAlphaMode,
-    pub path_sample_count: u32,
     pub dual_source_blending: bool,
     pub uses_webgl_instance_data: bool,
 }
@@ -65,9 +64,9 @@ impl PipelineCache {
             shaders: self.shaders.get_or_init(Default::default).clone(),
             key,
             quads: OnceLock::new(),
+            opaque_quads: OnceLock::new(),
             shadows: OnceLock::new(),
-            path_rasterization: OnceLock::new(),
-            paths: OnceLock::new(),
+            path_tiles: OnceLock::new(),
             underlines: OnceLock::new(),
             mono_sprites: OnceLock::new(),
             subpixel_sprites: OnceLock::new(),
@@ -156,9 +155,9 @@ pub(crate) struct WgpuPipelines {
     shaders: Arc<Shaders>,
     key: PipelineKey,
     quads: OnceLock<wgpu::RenderPipeline>,
+    opaque_quads: OnceLock<wgpu::RenderPipeline>,
     shadows: OnceLock<wgpu::RenderPipeline>,
-    path_rasterization: OnceLock<wgpu::RenderPipeline>,
-    paths: OnceLock<wgpu::RenderPipeline>,
+    path_tiles: OnceLock<wgpu::RenderPipeline>,
     underlines: OnceLock<wgpu::RenderPipeline>,
     mono_sprites: OnceLock<wgpu::RenderPipeline>,
     subpixel_sprites: OnceLock<Option<wgpu::RenderPipeline>>,
@@ -166,9 +165,51 @@ pub(crate) struct WgpuPipelines {
 }
 
 impl WgpuPipelines {
+    /// Whether the target takes colors multiplied by their alpha, which
+    /// the shaders are told in the globals (upstream kept it with the
+    /// pipelines it built).
+    pub fn premultiplied_alpha(&self) -> bool {
+        self.key.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied
+    }
+
     pub fn quads(&self) -> &wgpu::RenderPipeline {
         self.quads
             .get_or_init(|| self.build_color("quads", "vs_quad", "fs_quad", false, self.module()))
+    }
+
+    /// The opaque pass: no blending, and the one pipeline that writes depth.
+    pub fn opaque_quads(&self) -> &wgpu::RenderPipeline {
+        self.opaque_quads.get_or_init(|| {
+            self.build(
+                "opaque_quads",
+                "vs_opaque_quad",
+                "fs_opaque_quad",
+                &self.layouts.instances,
+                None,
+                wgpu::ColorTargetState {
+                    format: self.key.surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                },
+                true,
+                self.module(),
+            )
+        })
+    }
+
+    pub fn path_tiles(&self) -> &wgpu::RenderPipeline {
+        self.path_tiles.get_or_init(|| {
+            self.build(
+                "path_tiles",
+                "vs_path_tile",
+                "fs_path_tile",
+                &self.layouts.path_tiles,
+                None,
+                self.color_target(),
+                false,
+                self.module(),
+            )
+        })
     }
 
     pub fn shadows(&self) -> &wgpu::RenderPipeline {
@@ -243,56 +284,18 @@ impl WgpuPipelines {
                     "subpixel_sprites",
                     "vs_subpixel_sprite",
                     "fs_subpixel_sprite",
+                    &self.layouts.instances,
                     Some(&self.layouts.texture),
-                    wgpu::PrimitiveTopology::TriangleStrip,
                     wgpu::ColorTargetState {
                         format: self.key.surface_format,
                         blend: Some(subpixel_blend),
                         write_mask: wgpu::ColorWrites::COLOR,
                     },
-                    1,
+                    false,
                     module,
                 ))
             })
             .as_ref()
-    }
-
-    pub fn path_rasterization(&self) -> &wgpu::RenderPipeline {
-        self.path_rasterization.get_or_init(|| {
-            self.build(
-                "path_rasterization",
-                "vs_path_rasterization",
-                "fs_path_rasterization",
-                None,
-                wgpu::PrimitiveTopology::TriangleList,
-                wgpu::ColorTargetState {
-                    format: self.key.surface_format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                },
-                self.key.path_sample_count,
-                self.module(),
-            )
-        })
-    }
-
-    pub fn paths(&self) -> &wgpu::RenderPipeline {
-        self.paths.get_or_init(|| {
-            self.build(
-                "paths",
-                "vs_path",
-                "fs_path",
-                Some(&self.layouts.texture),
-                wgpu::PrimitiveTopology::TriangleStrip,
-                wgpu::ColorTargetState {
-                    format: self.key.surface_format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                },
-                1,
-                self.module(),
-            )
-        })
     }
 
     /// Upstream's guard (ZED-5G1): dual-source blending only when the device
@@ -331,7 +334,22 @@ impl WgpuPipelines {
         parse(&self.device, label, source)
     }
 
-    /// A pipeline that draws to the window's target with its blending.
+    /// The window's target with its blending.
+    fn color_target(&self) -> wgpu::ColorTargetState {
+        let blend = if self.premultiplied_alpha() {
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING
+        } else {
+            wgpu::BlendState::ALPHA_BLENDING
+        };
+        wgpu::ColorTargetState {
+            format: self.key.surface_format,
+            blend: Some(blend),
+            write_mask: wgpu::ColorWrites::ALL,
+        }
+    }
+
+    /// A pipeline that draws instances to the window's target with its
+    /// blending, tested against the depth the opaque pass wrote.
     fn build_color(
         &self,
         name: &str,
@@ -340,43 +358,34 @@ impl WgpuPipelines {
         textured: bool,
         module: &wgpu::ShaderModule,
     ) -> wgpu::RenderPipeline {
-        let blend = match self.key.alpha_mode {
-            wgpu::CompositeAlphaMode::PreMultiplied => {
-                wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING
-            }
-            _ => wgpu::BlendState::ALPHA_BLENDING,
-        };
         self.build(
             name,
             vs_entry,
             fs_entry,
+            &self.layouts.instances,
             textured.then_some(&self.layouts.texture),
-            wgpu::PrimitiveTopology::TriangleStrip,
-            wgpu::ColorTargetState {
-                format: self.key.surface_format,
-                blend: Some(blend),
-                write_mask: wgpu::ColorWrites::ALL,
-            },
-            1,
+            self.color_target(),
+            false,
             module,
         )
     }
 
+    /// Upstream's `create_pipeline`: every pipeline tests depth (greater is
+    /// nearer), and `depth_write_enabled` says whether it writes it.
     #[allow(clippy::too_many_arguments)]
     fn build(
         &self,
         name: &str,
         vs_entry: &str,
         fs_entry: &str,
+        data_layout: &wgpu::BindGroupLayout,
         texture_layout: Option<&wgpu::BindGroupLayout>,
-        topology: wgpu::PrimitiveTopology,
         color_target: wgpu::ColorTargetState,
-        sample_count: u32,
+        depth_write_enabled: bool,
         module: &wgpu::ShaderModule,
     ) -> wgpu::RenderPipeline {
         let started = std::time::Instant::now();
-        let mut bind_group_layouts =
-            vec![Some(&self.layouts.globals), Some(&self.layouts.instances)];
+        let mut bind_group_layouts = vec![Some(&self.layouts.globals), Some(data_layout)];
         bind_group_layouts.extend(texture_layout.map(Some));
         let pipeline_layout = self
             .device
@@ -404,7 +413,7 @@ impl WgpuPipelines {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
                 primitive: wgpu::PrimitiveState {
-                    topology,
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
                     cull_mode: None,
@@ -412,12 +421,14 @@ impl WgpuPipelines {
                     unclipped_depth: false,
                     conservative: false,
                 },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: crate::wgpu_renderer::DEPTH_FORMAT,
+                    depth_write_enabled: Some(depth_write_enabled),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
             });
