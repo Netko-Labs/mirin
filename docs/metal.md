@@ -652,9 +652,9 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
   says `"settle":true` too, for the `settle` simulation, `"rebase":true` for
   a field's `baseHash`, `"scroll":true` for a scroll view's offset,
-  `"imageError":true` for an image's `onError`, `"textAntialiasing":true`
-  for the line of that name, and `"opaqueSurface":true` for a surface's
-  `opaque`, section 4). A driver
+  `"imageError":true` for an image's `onError`, and `"textAntialiasing":true`
+  for the line of that name, section 4; `"opaqueSurface":true` too, for a
+  surface's `opaque`). A driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now
