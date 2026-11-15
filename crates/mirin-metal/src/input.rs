@@ -60,7 +60,14 @@ pub(crate) fn render_input(
             .overflow_hidden();
     }
     if props.padding > 0.0 {
-        element = element.p(px(props.padding));
+        // One line in a field of a set height is centered in it: padding
+        // above and below would only take the line's room (metal-ui's
+        // `h-8 px-3` is 12 px of padding in 32: 8 px for a 20 px line, cut).
+        element = if !props.multiline && props.height.is_some() {
+            element.px(px(props.padding))
+        } else {
+            element.p(px(props.padding))
+        };
     }
     // Line numbers take room at the text's left (`marks.rs`).
     let line_numbers = props
