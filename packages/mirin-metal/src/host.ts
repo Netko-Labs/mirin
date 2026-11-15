@@ -65,6 +65,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             nodeId: "root",
             patches: record.patches,
             ...(record.settle === true ? { settle: true } : {}),
+            ...(record.imageError === true ? { imageError: true } : {}),
           }
         : null;
     case "settled":
@@ -143,6 +144,10 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       };
       return { type: "runpress", nodeId, run, offset, modifiers };
     }
+    case "imageerror":
+      return typeof record.value === "string"
+        ? { type: "imageerror", nodeId, error: record.value }
+        : null;
     case "selection": {
       const { start, end, textHash } = record;
       if (typeof start !== "number" || typeof end !== "number" || start < 0 || end < start)

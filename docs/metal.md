@@ -249,6 +249,27 @@ patches change it in place, in order (section "Patches").
   method: while it (or nothing that takes text) has the keyboard, text input
   is off, so what is typed there never reaches one. The host names
   `MIRIN_METAL_IME` (`IME_MARKER`) for a driver checking for this.
+- `image`: `src` (an absolute path), `width`, `height`, `fill`,
+  `cornerRadius`, `cover`, `opacity`, `onError` (with an `id`). The engine
+  reads the file off the frame and decodes PNG, JPEG, GIF, WebP, BMP and
+  ICO by what its first bytes say, whatever its name; a file that is none
+  of those is taken for an SVG document, which is drawn at the size it
+  states and then scaled as a picture (soft when shown larger: `svg` nodes
+  draw markup sharp). Anything else is drawn as nothing: AVIF, HEIC and
+  TIFF (no decoder is built in), a file that is no picture, one that is
+  not there (tried 2026-11-15: `src/media/image_tests.rs`,
+  `bench/image-check.tsx` in `@mirinjs/metal`). An image with `onError`
+  then tells the driver, once for each `src` that fails:
+  `{"type":"imageerror","nodeId","value"}`, `value` being `no such file`,
+  `not a file`, `the file cannot be read` or `not an image the host can
+  decode` (`src/media.rs`: the engine asks an image for its stand-in when
+  loading failed, and that is when it is told). A host that does this says
+  `"imageError":true` in its `protocol` line (and names
+  `MIRIN_METAL_IMAGE_ERROR`, `IMAGE_ERROR_MARKER`); one from before refuses
+  a tree with `onError`, so a driver says it only to a host that said so.
+  A file that failed stays failed for the host's life: the engine keeps a
+  path's result, so a file written later under the same path is not read
+  again.
 - Raw keys and the wheel: a view with `onKeyDown` (and an `id`) takes the
   keyboard when it first appears and whenever it is pressed, and emits
   `{"type":"keydown","nodeId","key","text"?,"ctrl","alt","shift","meta",
@@ -456,7 +477,12 @@ sends it opaque with its alpha as a fade),
 and `TextInputDefaults`, a context whose value (`{ selectionColor }`) every
 `<TextInput>` below it takes unless it sets its own (a theme gives fields its
 selection color once), and
-`<ScrollView>` (a scrolling `<View>`).
+`<ScrollView>` (a scrolling `<View>`), and
+`<Image source resizeMode style onError>`: React Native's `onError`, called
+with `{ error }` when the host could not draw the file, so an app falls back
+without reading the file's bytes itself (an image that listens always has an
+id; the handler is said only to a host whose `protocol` event says
+`imageError`).
 
 ### Patches
 
@@ -468,7 +494,8 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
 - **Negotiation.** A host that takes patches says so on stdout as it starts,
   before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
   (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
-  says `"settle":true` too, for the `settle` simulation). A driver
+  says `"settle":true` too, for the `settle` simulation, and
+  `"imageError":true` for an image's `onError`). A driver
   patches only a host that announced a version it speaks; until then, and
   for a host that never announces (older ones), it sends the whole tree on
   every commit, as before. Switching, it sends the whole tree once more, now

@@ -165,6 +165,11 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       case "wheel":
         view(event.nodeId)?.onWheel?.({ dx: event.dx, dy: event.dy });
         break;
+      case "imageerror": {
+        const node = sync.instance(event.nodeId);
+        if (node?.kind === "image") node.props.onError?.({ error: event.error });
+        break;
+      }
       case "drop": {
         const { nodeId: _id, type: _type, ...info } = event;
         view(event.nodeId)?.onDrop?.(info);
@@ -175,7 +180,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "protocol":
         heard();
-        sync.hostPatches(event.patches);
+        sync.hostPatches(event.patches, { imageError: event.imageError === true });
         break;
       case "resync":
         sync.resync();

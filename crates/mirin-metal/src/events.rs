@@ -85,6 +85,8 @@ pub enum EventKind {
     Typing { typing: bool },
     /// The wheel or touchpad scrolled over a `view` with `onWheel`, in lines.
     Wheel { dx: f32, dy: f32 },
+    /// An `image` with `onError` could not be drawn: why, in a few words.
+    ImageError { reason: String },
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
     Resize,
     /// Files dragged over a `view` with `onDrop` (enter, over, leave), or
@@ -216,6 +218,7 @@ impl EventKind {
             EventKind::Visibility { .. } => "visibility",
             EventKind::Typing { .. } => "typing",
             EventKind::Wheel { .. } => "wheel",
+            EventKind::ImageError { .. } => "imageerror",
             EventKind::Resize => "resize",
             EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
@@ -249,6 +252,7 @@ impl EventKind {
             EventKind::Change { value }
             | EventKind::Submit { value }
             | EventKind::Key { value }
+            | EventKind::ImageError { reason: value }
             | EventKind::Resync { reason: value } => Some(value),
         }
     }
@@ -352,6 +356,15 @@ impl EventSender {
 
     pub(crate) fn wheel(&self, node_id: &str, dx: f32, dy: f32) {
         self.send(node_id, EventKind::Wheel { dx, dy });
+    }
+
+    pub(crate) fn image_error(&self, node_id: &str, reason: &str) {
+        self.send(
+            node_id,
+            EventKind::ImageError {
+                reason: reason.to_string(),
+            },
+        );
     }
 
     pub(crate) fn hover(&self, node_id: &str, hovered: bool) {

@@ -91,6 +91,9 @@ pub struct ImageProps {
     /// `cover` crops to fill the box; `contain` (default) letterboxes.
     pub cover: bool,
     pub opacity: Option<f32>,
+    /// Emit `imageerror` when the file cannot be drawn: it is not there, or
+    /// not an image the host decodes (`media.rs`; needs `id`).
+    pub on_error: bool,
 }
 
 /// Layout/appearance props for a `view` node (flexbox-flavored, like RN).

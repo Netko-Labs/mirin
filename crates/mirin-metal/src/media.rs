@@ -3,15 +3,18 @@
 //! is registered under a content-hash path the element can reference.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
 use sumi::{div, img, prelude::*, px, rgba, svg, AnyElement, AssetSource, ObjectFit, SharedString};
 
 use crate::tree::{parse_color, ImageProps, SvgProps};
+use crate::window::RootView;
 
 /// Prefix of the virtual asset paths that hold registered SVG markup.
 const SVG_PREFIX: &str = "mirin-metal/svg/";
@@ -77,7 +80,59 @@ pub(crate) fn render_svg(props: &SvgProps) -> AnyElement {
     element.into_any_element()
 }
 
-pub(crate) fn render_image(props: &ImageProps) -> AnyElement {
+/// In the host binary while an image that cannot be drawn tells the driver
+/// (`onError`); its `protocol` line says `"imageError":true`.
+pub const IMAGE_ERROR_MARKER: &str = "MIRIN_METAL_IMAGE_ERROR";
+
+/// The images whose failure the driver has heard of: each node's id, and
+/// the file it was then. An image is asked for its stand-in every frame it
+/// cannot be drawn; the driver hears once for each file.
+#[derive(Clone, Default)]
+pub(crate) struct ImageErrors(Rc<RefCell<HashMap<String, String>>>);
+
+/// Past this many, the ones whose nodes have left the tree are forgotten.
+const ERRORS_KEPT: usize = 256;
+
+impl ImageErrors {
+    /// Whether the failure of node `id`'s file `src` is news.
+    fn is_news(&self, id: &str, src: &str) -> bool {
+        let mut told = self.0.borrow_mut();
+        if told.get(id).is_some_and(|file| file == src) {
+            return false;
+        }
+        told.insert(id.to_owned(), src.to_owned());
+        true
+    }
+
+    /// Node `id` now shows `src`: a failure told of another file is behind it.
+    fn shows(&self, id: &str, src: &str) {
+        let mut told = self.0.borrow_mut();
+        if told.get(id).is_some_and(|file| file != src) {
+            told.remove(id);
+        }
+    }
+
+    /// Forget the nodes no longer in the tree, once there are many.
+    pub(crate) fn prune(&self, in_tree: impl Fn(&str) -> bool) {
+        let mut told = self.0.borrow_mut();
+        if told.len() > ERRORS_KEPT {
+            told.retain(|id, _| in_tree(id));
+        }
+    }
+}
+
+/// Why a file could not be drawn, in a few words: it is asked once the
+/// engine has failed to load it, so the file is looked at again only then.
+fn why(src: &str) -> &'static str {
+    match std::fs::metadata(src) {
+        Ok(file) if file.is_file() => "not an image the host can decode",
+        Ok(_) => "not a file",
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "no such file",
+        Err(_) => "the file cannot be read",
+    }
+}
+
+pub(crate) fn render_image(props: &ImageProps, view: &RootView) -> AnyElement {
     if props.src.is_empty() {
         return div().into_any_element();
     }
@@ -86,6 +141,24 @@ pub(crate) fn render_image(props: &ImageProps) -> AnyElement {
     } else {
         ObjectFit::Contain
     });
+    // An image that cannot be drawn is drawn as nothing, as before; the
+    // engine asks for this stand-in when loading it has failed (a file that
+    // is not there, or one it has no decoder for), which is when a driver
+    // that listens is told.
+    if let (true, Some(id)) = (props.on_error, props.id.clone()) {
+        view.image_errors.shows(&id, &props.src);
+        let (events, told, src) = (
+            view.events.clone(),
+            view.image_errors.clone(),
+            props.src.clone(),
+        );
+        element = element.with_fallback(move || {
+            if told.is_news(&id, &src) {
+                events.image_error(&id, why(&src));
+            }
+            div().into_any_element()
+        });
+    }
     if let Some(width) = props.width {
         element = element.w(px(width));
     }
@@ -103,6 +176,9 @@ pub(crate) fn render_image(props: &ImageProps) -> AnyElement {
     }
     element.into_any_element()
 }
+
+#[cfg(test)]
+mod image_tests;
 
 #[cfg(test)]
 mod tests {

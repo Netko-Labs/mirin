@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
-    HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar,
+    HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar, IMAGE_ERROR_MARKER,
     OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER, SETTLE_MARKER,
 };
 
@@ -505,12 +505,17 @@ fn main() {
         "{PATCH_MARKER}: patch protocol {PATCH_PROTOCOL}"
     ));
     mirin_metal::trace::log(format_args!("{SETTLE_MARKER}: the settle simulation"));
+    mirin_metal::trace::log(format_args!(
+        "{IMAGE_ERROR_MARKER}: an image that cannot be drawn tells the driver"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
         "patches": PATCH_PROTOCOL,
         // This host takes the `settle` simulation and answers `settled`.
         "settle": true,
+        // This host tells the driver of an image it cannot draw (`onError`).
+        "imageError": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and

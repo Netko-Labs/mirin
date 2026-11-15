@@ -25,6 +25,8 @@ export class TreeSync {
   /** What the host holds, by id: each node sent and not removed since. */
   private readonly nodes = new Map<string, HostNode>();
   private patching = false;
+  /** The host tells of images it cannot draw (its `protocol` line says `imageError`). */
+  private imageErrors = false;
   /** The next send is the whole tree (the first, after a resync, a new root). */
   private wholeNext = true;
   private root: HostInstance | null = null;
@@ -46,10 +48,19 @@ export class TreeSync {
     this.waiting = options.awaitHost === true;
   }
 
-  /** The host applies patches of `version`: send the whole tree with every id now, patches after. */
-  hostPatches(version: number): void {
+  /**
+   * The host applies patches of `version`: send the whole tree with every id
+   * now, patches after. One that says `imageError` is told which images
+   * listen for their failure.
+   */
+  hostPatches(version: number, says: { imageError?: boolean } = {}): void {
     const waited = this.waiting;
     this.waiting = false;
+    if (this.imageErrors !== (says.imageError === true)) {
+      this.imageErrors = says.imageError === true;
+      // A tree already sent said nothing of `onError`: it goes again when nothing below sends it.
+      if (!waited && (version !== PATCH_PROTOCOL || this.patching)) this.resync();
+    }
     if (version !== PATCH_PROTOCOL || this.patching) {
       if (waited) this.resync();
       return;
@@ -139,7 +150,7 @@ export class TreeSync {
     const wire =
       fields && kept && kept.head !== undefined && kept.headProps === kept.props
         ? kept.head
-        : headJson(node, parent, { ids: this.patching, root });
+        : headJson(node, parent, { ids: this.patching, root, imageErrors: this.imageErrors });
     if (fields) {
       if (kept) {
         kept.head = wire;
@@ -295,7 +306,11 @@ export class TreeSync {
   private setOp(node: HostNode, fresh: Set<HostNode>, ops: string[]): void {
     if (!this.holds(node) || fresh.has(node)) return;
     const parent = node.parent && node.parent.kind !== "root" ? node.parent : null;
-    const wire = headJson(node, parent, { ids: true, root: node === this.root });
+    const wire = headJson(node, parent, {
+      ids: true,
+      root: node === this.root,
+      imageErrors: this.imageErrors,
+    });
     if (node.kind === "input") this.followField(node);
     if (wire === node.wire) return;
     node.wire = wire;
@@ -305,7 +320,11 @@ export class TreeSync {
   /** A new subtree as JSON, now held by the host. */
   private freshJson(node: HostNode, parent: HostInstance, fresh: Set<HostNode>): string {
     fresh.add(node);
-    const wire = headJson(node, parent, { ids: true, root: false });
+    const wire = headJson(node, parent, {
+      ids: true,
+      root: false,
+      imageErrors: this.imageErrors,
+    });
     node.wire = wire;
     this.nodes.set(node.key, node);
     if (node.kind === "input") this.followField(node);

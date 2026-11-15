@@ -165,6 +165,8 @@ pub(crate) struct RootView {
     pub(crate) scrolls: HashMap<String, ScrollHandle>,
     /// When each scrollable node last scrolled, for its auto-hiding scroll bar (`scrollbar.rs`).
     pub(crate) scroll_activity: HashMap<String, crate::scrollbar::Activity>,
+    /// The images the driver was told could not be drawn (`media.rs`).
+    pub(crate) image_errors: crate::media::ImageErrors,
     /// Set while rendering a child of a view that scrolls along its
     /// direction: the child keeps its length there (render.rs).
     pub(crate) keeps_length: bool,
@@ -223,6 +225,7 @@ impl RootView {
             claims: crate::press::Claims::default(),
             scrolls: HashMap::new(),
             scroll_activity: HashMap::new(),
+            image_errors: crate::media::ImageErrors::default(),
             keeps_length: false,
             lists: HashMap::new(),
             key_targets: HashMap::new(),
@@ -304,6 +307,7 @@ impl RootView {
         if touched.contains(Touched::KEYS) {
             self.sync_key_targets(cx);
         }
+        self.image_errors.prune(|id| self.tree.contains(id));
         // A list's rows are copies: a change inside them (its generation) needs them again.
         let generation = self.tree.generation();
         if touched.contains(Touched::LISTS)
