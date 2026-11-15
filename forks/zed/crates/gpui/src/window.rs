@@ -1756,6 +1756,15 @@ pub(crate) fn cover_device(bounds: Bounds<Pixels>, scale_factor: f32) -> Bounds<
     )
 }
 
+/// mirin: the interior, in device pixels squared, below which a filled quad
+/// with rounded corners or a border is drawn as one primitive rather than as
+/// an interior and four strips (`Window::insert_quad`): 64 by 64. Measured
+/// on the stress bench, whose 750 cards in view (44 px wide, a 34 by 22
+/// interior) split into 3,750 quads cost every frame 3.5 M instructions
+/// more (a keystroke 7.7 M for 4.1 M): the scene of a copied drawing is
+/// copied primitive by primitive.
+const SMALL_QUAD_INTERIOR: f32 = 64. * 64.;
+
 fn default_bounds(
     active_window_bounds: Option<WindowBounds>,
     display: Option<&dyn PlatformDisplay>,
@@ -5632,6 +5641,17 @@ impl Window {
 
         if inner_bounds.is_empty() {
             self.next_frame.scene.insert_primitive(strip_quad);
+            return;
+        }
+
+        // mirin: a filled quad with a small interior is drawn whole, as
+        // before upstream split it. The split is five primitives for one, to
+        // take the interior out of the blended pass; for a small one that
+        // saves few pixels, and every primitive is copied in every frame
+        // that copies its retained subtree (`SMALL_QUAD_INTERIOR`).
+        let interior = inner_bounds.size;
+        if has_background && interior.width.0 * interior.height.0 < SMALL_QUAD_INTERIOR {
+            self.next_frame.scene.insert_primitive(quad);
             return;
         }
 

@@ -355,8 +355,7 @@ impl Scene {
             // mirin: a quad's strip too, and the operation keeps the order.
             if let Some(primitive) = self.paint_operations[index].primitive_mut() {
                 primitive.set_order(order);
-                let primitive = primitive.clone();
-                self.push_primitive(primitive, order);
+                self.push_primitive(index);
             }
         }
     }
@@ -433,53 +432,48 @@ impl Scene {
         }
 
         let kind = primitive.kind();
+        let index = self.paint_operations.len();
         if let Some(&layer) = self.layer_stack.last()
             && let Some(layer) = self.layers.get_mut(layer)
         {
             layer.bounds = layer.bounds.join(&clipped_bounds);
             layer.max_kind = layer.max_kind.max(kind);
             layer.max_shared_kind = layer.max_shared_kind.min(kind.max_shared_kind());
-            let index = self.paint_operations.len();
             match layer.primitives.last_mut() {
                 Some(range) if range.end == index => range.end += 1,
                 _ => layer.primitives.push(index..index + 1),
             }
+            self.paint_operations
+                .push(PaintOperation::of(primitive, strip, mask_id));
         } else {
             let order = self
                 .primitive_bounds
                 .insert(clipped_bounds, kind, kind.max_shared_kind());
             primitive.set_order(order);
-            self.push_primitive(primitive.clone(), order);
+            self.paint_operations
+                .push(PaintOperation::of(primitive, strip, mask_id));
+            self.push_primitive(index);
         }
-        self.paint_operations
-            .push(PaintOperation::of(primitive, strip, mask_id));
         true
     }
 
-    fn push_primitive(&mut self, primitive: Primitive, order: DrawOrder) {
+    /// Upstream's `push_primitive`; mirin: of the primitive where it is, with
+    /// the draw order it was given already in it (`Primitive::set_order`),
+    /// so it is copied once into its list: a frame that copies most of a
+    /// window puts every primitive through here.
+    fn push_primitive(&mut self, index: usize) {
+        let Some(primitive) = self.paint_operations[index].primitive() else {
+            return;
+        };
         match primitive {
-            Primitive::Shadow(shadow) => self.shadows.push(Shadow { order, ..shadow }),
-            Primitive::Quad(quad) => self.quads.push(Quad { order, ..quad }),
-            Primitive::Path(mut path) => {
-                path.order = order;
-                self.paths.push(path);
-            }
-            Primitive::Underline(underline) => {
-                self.underlines.push(Underline { order, ..underline })
-            }
-            Primitive::MonochromeSprite(sprite) => self
-                .monochrome_sprites
-                .push(MonochromeSprite { order, ..sprite }),
-            Primitive::SubpixelSprite(sprite) => self
-                .subpixel_sprites
-                .push(SubpixelSprite { order, ..sprite }),
-            Primitive::PolychromeSprite(sprite) => self
-                .polychrome_sprites
-                .push(PolychromeSprite { order, ..sprite }),
-            Primitive::Surface(mut surface) => {
-                surface.order = order;
-                self.surfaces.push(surface);
-            }
+            Primitive::Shadow(shadow) => self.shadows.push(*shadow),
+            Primitive::Quad(quad) => self.quads.push(*quad),
+            Primitive::Path(path) => self.paths.push(path.clone()),
+            Primitive::Underline(underline) => self.underlines.push(*underline),
+            Primitive::MonochromeSprite(sprite) => self.monochrome_sprites.push(*sprite),
+            Primitive::SubpixelSprite(sprite) => self.subpixel_sprites.push(*sprite),
+            Primitive::PolychromeSprite(sprite) => self.polychrome_sprites.push(*sprite),
+            Primitive::Surface(surface) => self.surfaces.push(surface.clone()),
         }
     }
 
@@ -667,10 +661,7 @@ impl Scene {
                     primitive.set_order(order);
                     match open.last() {
                         Some(layer) => in_layers.push((*layer, index)),
-                        None => {
-                            let primitive = primitive.clone();
-                            self.push_primitive(primitive, order);
-                        }
+                        None => self.push_primitive(index),
                     }
                 }
                 PaintOperation::StartLayer => {
@@ -686,10 +677,7 @@ impl Scene {
                         // Stable: a layer's primitives stay in sequence.
                         in_layers.sort_by_key(|(layer, _)| *layer);
                         for (_, index) in in_layers.drain(..) {
-                            if let Some(primitive) = self.paint_operations[index].primitive() {
-                                let primitive = primitive.clone();
-                                self.push_primitive(primitive.clone(), primitive.order());
-                            }
+                            self.push_primitive(index);
                         }
                     }
                 }
@@ -1200,10 +1188,17 @@ impl Primitive {
         }
     }
 
+    // mirin: inlined, and the matrix is looked at only for a sprite: a
+    // frame that copies most of a window asks this of every primitive.
+    #[inline]
     fn clipped_bounds(&self) -> Bounds<ScaledPixels> {
-        self.transformation()
-            .transform_bounds(*self.bounds())
-            .intersect(&self.content_mask().bounds)
+        let bounds = match self {
+            Primitive::MonochromeSprite(_) | Primitive::SubpixelSprite(_) => {
+                self.transformation().transform_bounds(*self.bounds())
+            }
+            _ => *self.bounds(),
+        };
+        bounds.intersect(&self.content_mask().bounds)
     }
 
     pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
