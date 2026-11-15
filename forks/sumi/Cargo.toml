@@ -91,21 +91,14 @@ hdrhistogram = { version = "7", default-features = false }
 heapless = "0.9.2"
 heck = "0.5"
 icu_segmenter = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
+# mirin: the formats a Metal app's images come in. Upstream also builds DDS,
+# OpenEXR, farbfeld, HDR, PNM, QOI, TGA and TIFF, and rayon for them.
 image = { version = "0.25.1", default-features = false, features = [
     "bmp",
-    "dds",
-    "exr",
-    "ff",
     "gif",
-    "hdr",
     "ico",
     "jpeg",
     "png",
-    "pnm",
-    "qoi",
-    "rayon",
-    "tga",
-    "tiff",
     "webp",
 ] }
 indexmap = { version = "2.7.0", features = ["serde"] }

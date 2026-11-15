@@ -187,11 +187,9 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
 impl Img {
     /// A list of all format extensions currently supported by this img element
     pub fn extensions() -> &'static [&'static str] {
-        // This is the list in [image::ImageFormat::from_extension] + `svg`
-        &[
-            "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",
-            "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
-        ]
+        // mirin: the formats the `image` crate is built with (the
+        // workspace manifest) + `svg`
+        &["jpg", "jpeg", "png", "gif", "webp", "bmp", "ico", "svg"]
     }
 
     /// Sets the image cache for the current node.
