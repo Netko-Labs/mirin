@@ -556,7 +556,17 @@ export interface TextInputProps extends AccessibilityProps {
    * `value` the app writes can always be sent.
    */
   selection?: TextSelection;
-  /** The caret moved or the selection changed (by keys, the pointer, or `selection`). */
+  /**
+   * The person or the field moved the caret or changed the selection: a key, a click or
+   * a drag, typing, the caret the field kept when it typed its keys again on a `value`
+   * the app wrote meanwhile, the caret at the end of a `value` set with no `selection`.
+   * Not called for a `selection` the app set and the field took as set (React Native on
+   * iOS does the same; on Android it calls it), so mirroring what it hears into
+   * `selection` is safe: the app's own caret never comes back as a move. A `selection`
+   * the field could not take as set (past the end of the text) is reported as where it
+   * went. A host whose `protocol` event does not say `noSelectionEcho` also reports
+   * the app's own `selection` back.
+   */
   onSelectionChange?: (selection: TextSelection) => void;
   /** Drawn behind selected text; defaults to the nearest `TextInputDefaults`, else a translucent blue. */
   selectionColor?: Color;
@@ -738,6 +748,8 @@ export type NativeEvent =
    * `selectionHash` from one that takes a `selection` with the hash of the
    * text it was made in, and drops one made in a text the field no longer
    * holds,
+   * `noSelectionEcho` from one that does not report back a `selection` the
+   * driver set (`onSelectionChange`),
    * `revisionRebase` from one that carries what was typed onto the value
    * of a new `valueRevision` too (older ones reset the field to it),
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
@@ -754,6 +766,7 @@ export type NativeEvent =
       activation?: boolean;
       rebase?: boolean;
       selectionHash?: boolean;
+      noSelectionEcho?: boolean;
       revisionRebase?: boolean;
       scroll?: boolean;
       imageError?: boolean;

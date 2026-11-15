@@ -3,6 +3,7 @@
 //! (`lib/field-texts.ts`): it says with each value which text its app set
 //! it over, and drops a change made on a text its app has since replaced.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{channel, Receiver};
 
@@ -60,6 +61,12 @@ struct Host {
     sent: Receiver<NativeUiEvent>,
     /// The `revision` the next tree says.
     revision: u64,
+    /// The driver listens for the selection (`onSelection`), and every key
+    /// typed reports the caret after its change, as a window's does.
+    listens: bool,
+    /// Events taken from `sent` and not asked for yet, by kind.
+    changed: RefCell<Vec<Change>>,
+    selected: RefCell<Vec<(usize, usize)>>,
 }
 
 impl Host {
@@ -70,7 +77,18 @@ impl Host {
             events: EventSender::new(tx, LayoutMap::default()),
             sent,
             revision: 0,
+            listens: false,
+            changed: RefCell::default(),
+            selected: RefCell::default(),
         };
+        host.tree(cx, value, None);
+        host
+    }
+
+    /// A field whose driver listens for the selection.
+    fn listening(cx: &mut TestAppContext, value: &str) -> Self {
+        let mut host = Self::new(cx, value);
+        host.listens = true;
         host.tree(cx, value, None);
         host
     }
@@ -93,6 +111,7 @@ impl Host {
             "value": value,
             "revision": self.revision,
             "onChange": true,
+            "onSelection": self.listens,
         });
         if let Some(base_hash) = base_hash {
             json["baseHash"] = serde_json::json!(base_hash);
@@ -118,7 +137,44 @@ impl Host {
         for key in text.chars() {
             assert!(state.field.commit(&key.to_string(), false));
             report_change(state, "line", &self.events);
+            if self.listens {
+                state.selection.report("line", &state.field, &self.events);
+            }
         }
+    }
+
+    /// The person puts the caret at char `at` (a click, an arrow key).
+    fn places(&mut self, at: usize) {
+        let state = self.inputs.get_mut("line").expect("the field");
+        state.field.place(at);
+        state.selection.report("line", &state.field, &self.events);
+    }
+
+    /// Sort what was sent since last asked into its kinds.
+    fn sort(&self) {
+        for event in self.sent.try_iter() {
+            match event.kind {
+                EventKind::Change {
+                    value,
+                    base_hash,
+                    text_hash,
+                } => self.changed.borrow_mut().push(Change {
+                    value,
+                    base_hash,
+                    text_hash,
+                }),
+                EventKind::Selection { start, end, .. } => {
+                    self.selected.borrow_mut().push((start, end));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The selections reported since last asked, oldest first.
+    fn selections(&self) -> Vec<(usize, usize)> {
+        self.sort();
+        self.selected.take()
     }
 
     fn text(&self) -> &str {
@@ -127,21 +183,8 @@ impl Host {
 
     /// The changes sent since last asked, oldest first.
     fn changes(&self) -> Vec<Change> {
-        self.sent
-            .try_iter()
-            .filter_map(|event| match event.kind {
-                EventKind::Change {
-                    value,
-                    base_hash,
-                    text_hash,
-                } => Some(Change {
-                    value,
-                    base_hash,
-                    text_hash,
-                }),
-                _ => None,
-            })
-            .collect()
+        self.sort();
+        self.changed.take()
     }
 }
 
@@ -459,4 +502,5 @@ fn typing_and_writes_that_cross_in_any_order_lose_no_key(cx: &mut TestAppContext
 }
 
 mod caret;
+mod echo;
 mod refusal;

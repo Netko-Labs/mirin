@@ -136,7 +136,63 @@ describe("a selection the app sets", () => {
   });
 });
 
+describe("a caret the app mirrors", () => {
+  test("is said once for a move the field reports, and not again when nothing comes back", async () => {
+    // An app that follows the field: what it hears goes into `selection`.
+    const seen: number[] = [];
+    function Mirror() {
+      const [caret, setCaret] = useState(4);
+      return createElement(
+        View,
+        null,
+        createElement(TextInput, {
+          value: "abcd",
+          testID: "line",
+          selection: { start: caret, end: caret },
+          onChangeText: () => {},
+          onSelectionChange: ({ end }: { end: number }) => {
+            seen.push(end);
+            setCaret(end);
+          },
+        }),
+        createElement(View, { testID: "home", onPress: () => setCaret(1) }),
+      );
+    }
+    const transport = fakeTransport();
+    const root = render(createElement(Mirror), transport);
+    await nextCommit();
+    transport.emit({ ...NAMES_SELECTIONS, noSelectionEcho: true } as NativeEvent);
+    const [id, home] = [root.nodeId("line") ?? "", root.nodeId("home") ?? ""];
+    const caret = () => line(root).selection?.end;
+    const trees = () => transport.sent.length;
+    // The app puts its caret at 1; the host takes it and says nothing.
+    transport.emit({ type: "press", nodeId: home });
+    expect(caret()).toBe(1);
+    // The person's move, reported before the host took that tree: mirrored once.
+    const before = trees();
+    transport.emit({ type: "selection", nodeId: id, start: 3, end: 3, textHash: textHash("abcd") });
+    expect(seen).toEqual([3]);
+    expect(caret()).toBe(3);
+    expect(trees()).toBe(before + 1);
+    root.unmount();
+  });
+});
+
 describe("parseNativeEvent", () => {
+  test("a host that does not report the driver's own selection says so", () => {
+    expect(
+      parseNativeEvent(
+        '{"type":"protocol","nodeId":"root","patches":1,"selectionHash":true,"noSelectionEcho":true}',
+      ),
+    ).toEqual({
+      type: "protocol",
+      nodeId: "root",
+      patches: 1,
+      selectionHash: true,
+      noSelectionEcho: true,
+    });
+  });
+
   test("a host that takes a selection's text says so", () => {
     expect(
       parseNativeEvent(
