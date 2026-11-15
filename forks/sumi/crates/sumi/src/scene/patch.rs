@@ -80,10 +80,14 @@ impl SceneList {
 #[derive(Default)]
 pub(super) struct Slots {
     /// Per paint operation: its primitive's index in the list of its kind.
+    /// Made when the scene is first patched (`slots`): a scene that is
+    /// built anew every frame never needs it.
     of_operation: Vec<u32>,
-    /// Per kind, per primitive pushed: the paint operation it came from,
-    /// in the order they were pushed (before the sort).
+    /// Per kind, per primitive: the paint operation it came from, in the
+    /// order they were pushed, then (`sorted`) in the order of the list.
     sources: [Vec<u32>; 8],
+    /// Scratch for `sorted`.
+    permuted: Vec<u32>,
     /// The scene's number since it was finished (0: not finished).
     generation: u64,
     patches: u64,
@@ -124,10 +128,9 @@ impl Slots {
         self.sources[kind as usize].push(operation as u32);
     }
 
-    /// The scene is about to be sorted: it has `operations` paint operations.
-    pub(super) fn begin_finish(&mut self, operations: usize) {
+    /// The scene is about to be sorted.
+    pub(super) fn begin_finish(&mut self) {
         self.of_operation.clear();
-        self.of_operation.resize(operations, NO_SLOT);
         self.generation = GENERATIONS.fetch_add(1, Ordering::Relaxed);
         self.patches = 0;
         self.damage.clear();
@@ -135,27 +138,43 @@ impl Slots {
         self.damage_from = 0;
     }
 
-    /// The list of `kind`, `len` long, was sorted: the primitive now at
-    /// `target` was pushed `source(target)`th.
-    pub(super) fn sorted(
-        &mut self,
-        kind: PrimitiveKind,
-        len: usize,
-        source: impl Fn(usize) -> usize,
-    ) {
-        let sources = &self.sources[kind as usize];
-        if sources.len() != len {
+    /// The list of `kind`, `len` long, is in the order it was pushed in.
+    pub(super) fn kept_order(&mut self, kind: PrimitiveKind, len: usize) {
+        if self.sources[kind as usize].len() != len {
             // Something was pushed past `Scene::push_primitive`: no slots,
             // so no patches of this scene.
             self.generation = 0;
+        }
+    }
+
+    /// The list of `kind` was sorted: the primitive now at `target` was
+    /// pushed `keys[target].1`th.
+    pub(super) fn sorted(&mut self, kind: PrimitiveKind, keys: &[(u64, u32)]) {
+        let sources = &mut self.sources[kind as usize];
+        if sources.len() != keys.len() {
+            self.generation = 0;
             return;
         }
-        for target in 0..len {
-            if let Some(slot) = sources
-                .get(source(target))
-                .and_then(|operation| self.of_operation.get_mut(*operation as usize))
-            {
-                *slot = target as u32;
+        self.permuted.clear();
+        self.permuted
+            .extend(keys.iter().map(|(_, source)| sources[*source as usize]));
+        std::mem::swap(sources, &mut self.permuted);
+    }
+
+    /// Where each paint operation's primitive is in the list of its kind,
+    /// for a scene of `operations` paint operations: worked out the first
+    /// time the scene is patched.
+    fn slots(&mut self, operations: usize) {
+        if self.of_operation.len() == operations {
+            return;
+        }
+        self.of_operation.clear();
+        self.of_operation.resize(operations, NO_SLOT);
+        for sources in &self.sources {
+            for (slot, operation) in sources.iter().enumerate() {
+                if let Some(of_operation) = self.of_operation.get_mut(*operation as usize) {
+                    *of_operation = slot as u32;
+                }
             }
         }
     }
@@ -194,9 +213,7 @@ impl Scene {
     /// Whether a patch of this scene can be begun: it was finished, and
     /// has no animation (whose sprite the clock moves in its list).
     pub(crate) fn patchable(&self) -> bool {
-        self.slots.generation != 0
-            && self.animations.is_empty()
-            && self.slots.of_operation.len() == self.paint_operations.len()
+        self.slots.generation != 0 && self.animations.is_empty()
     }
 
     /// Whether a patch is being made.
@@ -222,6 +239,7 @@ impl Scene {
         {
             return false;
         }
+        self.slots.slots(self.paint_operations.len());
         self.slots.patch = Some(Patch {
             end: range.end,
             cursor: range.start,

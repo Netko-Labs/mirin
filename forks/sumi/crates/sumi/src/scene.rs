@@ -832,7 +832,7 @@ impl Scene {
         // mirin: each paint operation is told where the sort leaves its
         // primitive (`patch`).
         let slots = &mut self.slots;
-        slots.begin_finish(self.paint_operations.len());
+        slots.begin_finish();
         use PrimitiveKind as Kind;
         sort_in_place(&mut self.shadows, keys, slots, Kind::Shadow, |shadow| {
             (shadow.order, 0)
@@ -924,7 +924,7 @@ fn sort_in_place<T: Copy>(
     key: impl Fn(&T) -> (u32, u32),
 ) {
     if primitives.is_sorted_by_key(&key) {
-        slots.sorted(kind, primitives.len(), |target| target);
+        slots.kept_order(kind, primitives.len());
         return;
     }
     keys.clear();
@@ -933,7 +933,7 @@ fn sort_in_place<T: Copy>(
         ((major as u64) << 32 | minor as u64, index as u32)
     }));
     keys.sort_unstable();
-    slots.sorted(kind, primitives.len(), |target| keys[target].1 as usize);
+    slots.sorted(kind, keys);
 
     // `keys[target].1` is the source index for `target`. Follow each cycle of that
     // permutation, marking visited slots by pointing them at themselves.
