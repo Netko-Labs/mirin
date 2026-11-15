@@ -66,6 +66,7 @@ interface InputNodeProps {
   flex?: number;
   autofocus?: boolean;
   revision?: number;
+  baseHash?: number;
   onChange?: boolean;
   onSubmit?: boolean;
   focusNextOnSubmit?: boolean;
@@ -117,6 +118,7 @@ interface ImageNode {
     cornerRadius?: number;
     cover?: boolean;
     opacity?: number;
+    onError?: boolean;
   };
 }
 
@@ -133,10 +135,17 @@ const WEIGHT: Record<NonNullable<TextStyle["fontWeight"]>, TextNodeProps["weight
   bold: "bold",
 };
 
-/** How heads are written: with an `id` on every node (a patching host), and as the root (which always fills the window). */
+/**
+ * How heads are written: with an `id` on every node (a patching host), as
+ * the root (which always fills the window), with `onScroll` said (a host
+ * that reports scroll offsets), and with an image's `onError` said (a host
+ * that tells of images it cannot draw).
+ */
 export interface HeadOptions {
   ids: boolean;
   root: boolean;
+  scrolls?: boolean;
+  imageErrors?: boolean;
 }
 
 /**
@@ -150,7 +159,9 @@ export function headJson(
   options: HeadOptions,
 ): string {
   // A view's head is written as text, from the fields it sets (`view-props.ts`).
-  if (node.kind === "view") return viewHeadJson(node.key, node.props, options.root);
+  if (node.kind === "view") {
+    return viewHeadJson(node.key, node.props, options.root, options.scrolls);
+  }
   return JSON.stringify(head(node, parent, options));
 }
 
@@ -172,7 +183,7 @@ function head(
     case "svg":
       return serializeSvg(node, id);
     case "image":
-      return serializeImage(node, id);
+      return serializeImage(node, id, options.imageErrors === true);
   }
 }
 
@@ -187,15 +198,24 @@ function serializeSvg(instance: SvgInstance, id: string | undefined): SvgNode {
   return { type: "svg", props };
 }
 
-function serializeImage(instance: ImageInstance, id: string | undefined): ImageNode {
+function serializeImage(
+  instance: ImageInstance,
+  id: string | undefined,
+  tellsErrors: boolean,
+): ImageNode {
   const { source, resizeMode, style = {} } = instance.props;
-  const props: ImageNode["props"] = id === undefined ? { src: source } : { id, src: source };
+  // An image that listens for its failure has an id for the host to name, patching or not.
+  const listens = tellsErrors && instance.props.onError !== undefined;
+  const named = listens ? instance.key : id;
+  const props: ImageNode["props"] =
+    named === undefined ? { src: source } : { id: named, src: source };
   if (style.width !== undefined) props.width = style.width;
   if (style.height !== undefined) props.height = style.height;
   if ((style.flex ?? 0) >= 1) props.fill = true;
   if (style.borderRadius !== undefined) props.cornerRadius = style.borderRadius;
   if (style.opacity !== undefined) props.opacity = style.opacity;
   if (resizeMode === "cover") props.cover = true;
+  if (listens) props.onError = true;
   return { type: "image", props };
 }
 
@@ -283,6 +303,7 @@ function inputProps(instance: InputInstance): InputNodeProps {
   if (input.secureTextEntry) props.secure = true;
   if (input.autoFocus) props.autofocus = true;
   if (input.valueRevision !== undefined) props.revision = input.valueRevision;
+  if (instance.base !== undefined) props.baseHash = instance.base;
   if (style.fontFamily === "monospace") props.mono = true;
   if (style.fontSize !== undefined) props.size = style.fontSize;
   if (style.color) props.color = style.color;

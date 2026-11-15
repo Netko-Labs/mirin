@@ -79,6 +79,8 @@ export interface ViewNodeProps {
   onContextMenu?: boolean;
   onKeyDown?: boolean;
   onWheel?: boolean;
+  onScroll?: boolean;
+  scrollThrottle?: number;
   dragFiles?: { paths: string[]; icon?: string; iconSize?: number };
   onDrop?: boolean;
   occlude?: boolean;
@@ -241,6 +243,8 @@ const ORDER = [
   "onContextMenu",
   "onKeyDown",
   "onWheel",
+  "onScroll",
+  "scrollThrottle",
   "dragFiles",
   "onDrop",
   "onPress",
@@ -544,9 +548,11 @@ function styleProps(style: ViewStyle): void {
 /**
  * A view's head, `{"type":"view","props":…}` without its children: its
  * style's fields, then what its other props say, in the order they have
- * always been written (`root`: it fills the window).
+ * always been written (`root`: it fills the window; `scrolls`: the host
+ * reports scroll offsets, so it is told of `onScroll`: an older one refuses
+ * a tree that names it).
  */
-export function viewHeadJson(id: string, props: ViewProps, root: boolean): string {
+export function viewHeadJson(id: string, props: ViewProps, root: boolean, scrolls = false): string {
   if (props.style) styleProps(props.style);
   let accessible = false;
   for (const key in props) {
@@ -588,6 +594,16 @@ export function viewHeadJson(id: string, props: ViewProps, root: boolean): strin
       case "onWheel":
         truthy(SLOT.onWheel, props.onWheel && true);
         break;
+      case "onScroll":
+        if (scrolls) truthy(SLOT.onScroll, props.onScroll && true);
+        break;
+      case "scrollEventThrottle": {
+        const ms = props.scrollEventThrottle;
+        if (scrolls && props.onScroll && typeof ms === "number" && ms > 0) {
+          put(SLOT.scrollThrottle, ms);
+        }
+        break;
+      }
       case "onDrop":
         truthy(SLOT.onDrop, props.onDrop && true);
         break;

@@ -1,6 +1,13 @@
 /** Internal host-instance tree the reconciler mutates between commits. */
 
-import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
+import type {
+  ImageProps,
+  SvgProps,
+  TextInputProps,
+  TextProps,
+  ViewHandle,
+  ViewProps,
+} from "../types.ts";
 import type { PropCounts } from "./commit-log.ts";
 
 /** What every host instance has: its identity, where it is, and its last head sent. */
@@ -38,6 +45,11 @@ export interface TextInstance extends InstanceBase {
 export interface InputInstance extends InstanceBase {
   kind: "input";
   props: TextInputProps;
+  /**
+   * The hash of the text the app set its `value` over (`lib/field-texts.ts`),
+   * sent as `baseHash` to a host that takes it.
+   */
+  base?: number;
 }
 
 /** A raw string/number child, e.g. the text inside `<Text>`. */
@@ -76,7 +88,61 @@ export interface Container {
   children: HostNode[];
   /** Invoked after each commit; the renderer serializes and sends from here. */
   onCommit: () => void;
+  /** Sends the host a scroll line for node `id` (`ViewNode`), after the tree that has it. */
+  scroll?: (id: string, line: string) => void;
 }
+
+/**
+ * A mounted `<View>`: what its `ref` holds. It is the instance itself (a
+ * `createPortal` target, as ever) with a `ViewHandle`'s methods, which ask
+ * the host through the root it is mounted in.
+ */
+export class ViewNode implements ViewInstance, ViewHandle {
+  readonly kind = "view";
+  key: string;
+  children: HostNode[] = [];
+  parent: HostParent | null = null;
+  slot = -1;
+  propCount = -1;
+  styleCount = -1;
+  wire?: string;
+  head?: string;
+  headProps?: object;
+
+  constructor(
+    public id: number,
+    public props: ViewProps,
+  ) {
+    this.key = String(id);
+  }
+
+  scrollTo(offset: { x?: number; y?: number }): void {
+    const at = (value: number | undefined): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : undefined;
+    const [x, y] = [at(offset.x), at(offset.y)];
+    if (x === undefined && y === undefined) return;
+    this.ask(JSON.stringify({ scrollTo: { id: this.key, x, y } }));
+  }
+
+  scrollToEnd(): void {
+    // Past any content: the view stops at its end.
+    const overflow = this.props.style?.overflow;
+    this.scrollTo(overflow === "scroll-x" ? { x: END } : { y: END });
+  }
+
+  scrollIntoView(): void {
+    this.ask(JSON.stringify({ scrollIntoView: { id: this.key } }));
+  }
+
+  private ask(line: string): void {
+    let parent: HostParent | null = this.parent;
+    while (parent && parent.kind !== "root") parent = parent.parent;
+    parent?.scroll?.(this.key, line);
+  }
+}
+
+/** An offset past the end of any content, for `scrollToEnd`. */
+const END = 1e9;
 
 /**
  * Where a child was last taken out of a list, and where one was last put

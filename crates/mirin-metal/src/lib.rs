@@ -40,6 +40,7 @@ mod press;
 mod render;
 mod retain;
 mod runs;
+mod scroll;
 mod scrollbar;
 mod selection;
 mod sim;
@@ -50,6 +51,7 @@ mod titlebar;
 pub mod toplevels;
 pub mod trace;
 mod tree;
+mod value;
 mod window;
 
 pub use access::{ACCESSIBLE_MARKER, APP_NAME_VAR};
@@ -57,12 +59,16 @@ pub use check::SETTLE_MARKER;
 pub use drive::{run, run_deferred, HostMessage, OPEN_MIN_SIZE_MARKER, RESIDENT_MARKER};
 pub use events::{EventKind, Modifiers, NativeUiEvent, PointerPhase};
 pub use focus::FOCUS_MARKER;
+pub use media::IMAGE_ERROR_MARKER;
 pub use patch::{parse_patch, PatchOp, PATCH_MARKER, PATCH_PROTOCOL};
+pub use scroll::{ScrollCommand, ScrollPosition, SCROLL_MARKER};
 pub use sim::{LayoutNode, SimCommand, ACTIVATION_MARKER};
 pub use surface::{parse_surface, Surface};
+pub use text_mode::{Antialiasing, TEXT_ANTIALIASING_MARKER};
 pub use titlebar::{Chrome, Controls, TitleBar};
 pub use tree::{
     parse_tree, Align, Direction, InputProps, InputRun, Justify, NodeSpec, SelectionRange,
     TextProps, ViewProps, Weight,
 };
+pub use value::REBASE_MARKER;
 pub use window::{DriverMessage, NativeUiOptions};

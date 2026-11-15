@@ -91,6 +91,9 @@ pub struct ImageProps {
     /// `cover` crops to fill the box; `contain` (default) letterboxes.
     pub cover: bool,
     pub opacity: Option<f32>,
+    /// Emit `imageerror` when the file cannot be drawn: it is not there, or
+    /// not an image the host decodes (`media.rs`; needs `id`).
+    pub on_error: bool,
 }
 
 /// Layout/appearance props for a `view` node (flexbox-flavored, like RN).
@@ -201,6 +204,12 @@ pub struct ViewProps {
     pub on_key_down: bool,
     /// Emit `wheel` with the scroll delta, in lines (needs `id`).
     pub on_wheel: bool,
+    /// Emit `scroll` when this scroll view's offset changes, whoever moved
+    /// it (`scroll.rs`; needs `scroll` or `scrollX`).
+    pub on_scroll: bool,
+    /// At most one `scroll` every this many ms; the offset the view ends on
+    /// is told when the wait is over. Absent or 0: one a frame.
+    pub scroll_throttle: Option<f32>,
     /// Pressing here and moving drags these files out (`drag.rs`): to any
     /// app's window that takes files, this one's included (needs `id`).
     pub drag_files: Option<DragFiles>,
@@ -345,6 +354,15 @@ pub struct InputProps {
     /// driver refused a change it was sent (a key it took for itself) and wants its text back.
     #[serde(default)]
     pub revision: u64,
+    /// What the field held, as far as the driver knew, when its app set this
+    /// `value`: that text's `events::text_hash`. The hash of `value` itself
+    /// says the value is the field's own text coming back; any other says
+    /// the app wrote it over that text, and what the field has typed into
+    /// that text since is carried onto the value (`field/rebase.rs`).
+    /// Without it (a driver from before it) a value the field didn't send
+    /// resets the buffer.
+    #[serde(default)]
+    pub base_hash: Option<u32>,
     #[serde(default)]
     pub placeholder: Option<String>,
     /// Enter inserts a newline; Ctrl/Cmd+Enter submits.
@@ -497,6 +515,7 @@ impl Default for InputProps {
             id: String::new(),
             value: String::new(),
             revision: 0,
+            base_hash: None,
             placeholder: None,
             multiline: false,
             secure: false,

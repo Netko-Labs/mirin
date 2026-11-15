@@ -28,6 +28,18 @@ pub(crate) struct PreparedVulkan {
     shaders: Option<sumi::Task<ParsedShaders>>,
 }
 
+/// Whether this process asked for subpixel text (`MIRIN_METAL_TEXT=subpixel`,
+/// which mirin-metal's host reads the same way; anything else is grays on
+/// Linux). The window's own pipelines do not ask: a subpixel pipeline parses
+/// its shaders when it is first made, if they were not parsed ahead.
+fn subpixel_text_asked() -> bool {
+    asks_for_subpixel(std::env::var("MIRIN_METAL_TEXT").ok().as_deref())
+}
+
+fn asks_for_subpixel(text: Option<&str>) -> bool {
+    text.map(str::trim) == Some("subpixel")
+}
+
 thread_local! {
     /// The work `prepare_vulkan` started, until a window takes it.
     static PREPARED: RefCell<Option<sumi::Task<Option<PreparedVulkan>>>> =
@@ -138,7 +150,10 @@ async fn prepare(
         .as_ref()
         .map(|(device, _, dual_source_blending, _)| {
             let device = device.clone();
-            let dual_source_blending = *dual_source_blending;
+            // The subpixel shaders only for a process that asked for
+            // subpixel text: one that draws in grays never uses them, and
+            // their module is 1 MB it would hold for as long as it lives.
+            let dual_source_blending = *dual_source_blending && subpixel_text_asked();
             executor.spawn(async move { ParsedShaders::parse(&device, dual_source_blending) })
         });
     log::info!(
@@ -182,4 +197,18 @@ async fn test_device(
         anyhow::bail!("surface configuration failed: {error}");
     }
     Ok((device, queue, dual_source_blending, color_texture_format))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::asks_for_subpixel;
+
+    #[test]
+    fn the_subpixel_shaders_are_parsed_ahead_only_when_subpixel_text_is_asked() {
+        assert!(asks_for_subpixel(Some("subpixel")));
+        assert!(asks_for_subpixel(Some(" subpixel\n")));
+        for other in [None, Some(""), Some("grayscale"), Some("lcd")] {
+            assert!(!asks_for_subpixel(other));
+        }
+    }
 }

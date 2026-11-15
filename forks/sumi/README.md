@@ -40,7 +40,9 @@ sumi is built through its one client. The crates are a cargo workspace of
 their own (`Cargo.toml` here holds their shared dependencies and lints), but
 `crates/mirin-metal` is what pins their versions (its `Cargo.lock`), repeats
 the workspace's `[patch.crates-io]` entries and adds mirin's forks of taffy,
-wgpu-hal, gpu-allocator and AccessKit:
+wgpu-hal, gpu-allocator and AccessKit. Any stable Rust from 1.98 builds
+it (Fedora 44's 1.99 does); there is no `rust-toolchain.toml` here, so
+nothing makes rustup or a packager's cargo fetch a toolchain:
 
 ```sh
 cd crates/mirin-metal

@@ -22,7 +22,8 @@ use crate::events::EventSender;
 use crate::field::{Field, Press};
 use crate::runs::{pressed, Units};
 use crate::tree::{InputProps, InputRun};
-use crate::window::{driver_resets, RootView};
+use crate::value::driver_resets;
+use crate::window::RootView;
 
 #[cfg(test)]
 mod tests;

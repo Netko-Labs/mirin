@@ -3,6 +3,7 @@
 
 use std::sync::mpsc;
 
+use crate::scroll::ScrollPosition;
 use crate::sim::{LayoutMap, LayoutNode};
 use crate::titlebar::Chrome;
 
@@ -22,8 +23,16 @@ pub enum EventKind {
     /// A `view` with `onPress` was clicked (or pressed from the keyboard),
     /// with the modifiers held.
     Press(Modifiers),
-    /// An `input`'s buffer changed; carries the full new value.
-    Change { value: String },
+    /// An `input`'s buffer changed; carries the full new value, its hash
+    /// (`text_hash`) and the hash of the text the edit was made on
+    /// (`base_hash`): a driver whose app has since replaced that text
+    /// knows the value is not an edit of its own. `None` when the host
+    /// can't say (the field was not reporting changes until now).
+    Change {
+        value: String,
+        base_hash: Option<u32>,
+        text_hash: u32,
+    },
     /// An `input` was submitted (Enter, or Ctrl/Cmd+Enter when multiline).
     Submit { value: String },
     /// A navigation key in an `input` with `onKey`: Escape, ArrowUp, ArrowDown.
@@ -85,6 +94,10 @@ pub enum EventKind {
     Typing { typing: bool },
     /// The wheel or touchpad scrolled over a `view` with `onWheel`, in lines.
     Wheel { dx: f32, dy: f32 },
+    /// A scroll view with `onScroll` stands somewhere else (`scroll.rs`).
+    Scroll(ScrollPosition),
+    /// An `image` with `onError` could not be drawn: why, in a few words.
+    ImageError { reason: String },
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
     Resize,
     /// Files dragged over a `view` with `onDrop` (enter, over, leave), or
@@ -216,6 +229,8 @@ impl EventKind {
             EventKind::Visibility { .. } => "visibility",
             EventKind::Typing { .. } => "typing",
             EventKind::Wheel { .. } => "wheel",
+            EventKind::Scroll(_) => "scroll",
+            EventKind::ImageError { .. } => "imageerror",
             EventKind::Resize => "resize",
             EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
@@ -240,15 +255,17 @@ impl EventKind {
             | EventKind::ContextMenu { .. }
             | EventKind::KeyDown(_)
             | EventKind::Wheel { .. }
+            | EventKind::Scroll(_)
             | EventKind::Resize
             | EventKind::Drop(_)
             | EventKind::Chrome(_)
             | EventKind::Frame
             | EventKind::Settled { .. }
             | EventKind::CloseRequest => None,
-            EventKind::Change { value }
+            EventKind::Change { value, .. }
             | EventKind::Submit { value }
             | EventKind::Key { value }
+            | EventKind::ImageError { reason: value }
             | EventKind::Resync { reason: value } => Some(value),
         }
     }
@@ -297,13 +314,19 @@ impl EventSender {
         self.send("root", EventKind::Typing { typing });
     }
 
-    pub(crate) fn change(&self, node_id: &str, value: &str) {
+    /// A field's text is now `value`, an edit of the text hashing to
+    /// `base_hash`; answers `value`'s own hash, the next edit's base.
+    pub(crate) fn change(&self, node_id: &str, value: &str, base_hash: Option<u32>) -> u32 {
+        let text_hash = text_hash(value);
         self.send(
             node_id,
             EventKind::Change {
                 value: value.to_string(),
+                base_hash,
+                text_hash,
             },
         );
+        text_hash
     }
 
     pub(crate) fn submit(&self, node_id: &str, value: &str) {
@@ -352,6 +375,19 @@ impl EventSender {
 
     pub(crate) fn wheel(&self, node_id: &str, dx: f32, dy: f32) {
         self.send(node_id, EventKind::Wheel { dx, dy });
+    }
+
+    pub(crate) fn scroll(&self, node_id: &str, position: ScrollPosition) {
+        self.send(node_id, EventKind::Scroll(position));
+    }
+
+    pub(crate) fn image_error(&self, node_id: &str, reason: &str) {
+        self.send(
+            node_id,
+            EventKind::ImageError {
+                reason: reason.to_string(),
+            },
+        );
     }
 
     pub(crate) fn hover(&self, node_id: &str, hovered: bool) {
