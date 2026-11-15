@@ -228,14 +228,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b09507a218cf6eb4ab0659883e54880cea3984e3dbaa4989b6cda3f8f8a97a5"
 dependencies = [
  "enumflags2",
- "futures-channel",
  "futures-util",
  "getrandom 0.4.1",
  "serde",
- "serde_repr",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
  "zbus",
 ]
 

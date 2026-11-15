@@ -190,17 +190,6 @@ impl DisplayConnection {
         dispatch!(self, connection => connection.read_from_clipboard(), headless => None)
     }
 
-    #[cfg(any(feature = "wayland", feature = "x11"))]
-    pub(crate) fn window_identifier(
-        &self,
-    ) -> futures::future::BoxFuture<'static, Option<ashpd::WindowIdentifier>> {
-        dispatch!(
-            self,
-            connection => Box::pin(connection.window_identifier()),
-            headless => Box::pin(std::future::ready(None))
-        )
-    }
-
     #[cfg(feature = "screen-capture")]
     pub(crate) fn is_screen_capture_supported(&self) -> bool {
         dispatch!(self, connection => connection.is_screen_capture_supported(), headless => false)

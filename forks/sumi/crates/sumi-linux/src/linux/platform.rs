@@ -8,23 +8,14 @@ use std::{
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use std::{
     ffi::OsString,
-    fs::File,
     io::Read as _,
-    os::fd::{AsFd, AsRawFd},
+    os::fd::AsRawFd,
     time::Duration,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use anyhow::ensure;
 use anyhow::{Context as _, anyhow};
-#[cfg(any(feature = "wayland", feature = "x11"))]
-use ashpd::{
-    desktop::{
-        Request,
-        inhibit::{InhibitFlags, InhibitOptions, InhibitProxy},
-    },
-    enumflags2::BitFlags,
-};
 use calloop::{EventLoop, LoopHandle, LoopSignal, channel::Sender};
 use futures::channel::oneshot;
 use sumi_util::{ResultExt as _, new_std_command};
@@ -54,10 +45,6 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
-const FILE_PICKER_PORTAL_MISSING: &str =
-    "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
 
 #[derive(Default)]
 pub(crate) struct PlatformHandlers {
@@ -676,31 +663,12 @@ impl Platform for LinuxPlatform {
         });
     }
 
-    #[cfg(not(any(feature = "wayland", feature = "x11")))]
+    // mirin: no portals but the settings one (file dialogs, opening a URI
+    // and inhibiting sleep went with them; Metal asks for none).
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
         Task::ready(Err(anyhow!(
-            "Idle sleep prevention for {reason:?} requires a Linux windowing backend"
+            "Idle sleep prevention for {reason:?} is not supported on Linux"
         )))
-    }
-
-    #[cfg(any(feature = "wayland", feature = "x11"))]
-    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
-        let executor = self.background_executor();
-        let (guard_tx, guard_rx) = oneshot::channel();
-        executor
-            .spawn({
-                let executor = executor.clone();
-                let reason = reason.to_owned();
-                async move {
-                    guard_tx
-                        .send(inhibit_idle_sleep(reason, executor).await)
-                        .ok();
-                }
-            })
-            .detach();
-        executor
-            .clone()
-            .spawn(async move { await_idle_sleep_prevention(guard_rx, &executor).await })
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -862,124 +830,20 @@ impl Platform for LinuxPlatform {
 
     fn prompt_for_paths(
         &self,
-        options: PathPromptOptions,
+        _options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         let (done_tx, done_rx) = oneshot::channel();
-
-        #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        let _ = (done_tx.send(Ok(None)), options);
-
-        #[cfg(any(feature = "wayland", feature = "x11"))]
-        let identifier = self.connection.borrow().window_identifier();
-
-        #[cfg(any(feature = "wayland", feature = "x11"))]
-        self.foreground_executor()
-            .spawn(async move {
-                let title = if options.directories {
-                    "Open Folder"
-                } else {
-                    "Open File"
-                };
-
-                let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
-                    .identifier(identifier.await)
-                    .modal(true)
-                    .title(title)
-                    .accept_label(options.prompt.as_ref().map(sumi::SharedString::as_str))
-                    .multiple(options.multiple)
-                    .directory(options.directories)
-                    .send()
-                    .await
-                {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let result = match err {
-                            ashpd::Error::PortalNotFound(_) => anyhow!(FILE_PICKER_PORTAL_MISSING),
-                            err => err.into(),
-                        };
-                        let _ = done_tx.send(Err(result));
-                        return;
-                    }
-                };
-
-                let result = match request.response() {
-                    Ok(response) => Ok(Some(
-                        response
-                            .uris()
-                            .iter()
-                            .filter_map(|uri: &ashpd::Uri| url::Url::parse(uri.as_str()).ok())
-                            .filter_map(|uri: url::Url| uri.to_file_path().ok())
-                            .collect::<Vec<_>>(),
-                    )),
-                    Err(ashpd::Error::Response(_)) => Ok(None),
-                    Err(e) => Err(e.into()),
-                };
-                let _ = done_tx.send(result);
-            })
-            .detach();
+        let _ = done_tx.send(Err(anyhow!("file dialogs are not supported on Linux")));
         done_rx
     }
 
     fn prompt_for_new_path(
         &self,
-        directory: &Path,
-        suggested_name: Option<&str>,
+        _directory: &Path,
+        _suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
-
-        #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        let _ = (done_tx.send(Ok(None)), directory, suggested_name);
-
-        #[cfg(any(feature = "wayland", feature = "x11"))]
-        let identifier = self.connection.borrow().window_identifier();
-
-        #[cfg(any(feature = "wayland", feature = "x11"))]
-        self.foreground_executor()
-            .spawn({
-                let directory = directory.to_owned();
-                let suggested_name = suggested_name.map(|s| s.to_owned());
-
-                async move {
-                    let mut request_builder =
-                        ashpd::desktop::file_chooser::SaveFileRequest::default()
-                            .identifier(identifier.await)
-                            .modal(true)
-                            .title("Save File")
-                            .current_folder(directory)
-                            .expect("pathbuf should not be nul terminated");
-
-                    if let Some(suggested_name) = suggested_name {
-                        request_builder = request_builder.current_name(suggested_name.as_str());
-                    }
-
-                    let request = match request_builder.send().await {
-                        Ok(request) => request,
-                        Err(err) => {
-                            let result = match err {
-                                ashpd::Error::PortalNotFound(_) => {
-                                    anyhow!(FILE_PICKER_PORTAL_MISSING)
-                                }
-                                err => err.into(),
-                            };
-                            let _ = done_tx.send(Err(result));
-                            return;
-                        }
-                    };
-
-                    let result = match request.response() {
-                        Ok(response) => Ok(response
-                            .uris()
-                            .first()
-                            .and_then(|uri: &ashpd::Uri| url::Url::parse(uri.as_str()).ok())
-                            .and_then(|uri: url::Url| uri.to_file_path().ok())),
-                        Err(ashpd::Error::Response(_)) => Ok(None),
-                        Err(e) => Err(e.into()),
-                    };
-                    let _ = done_tx.send(result);
-                }
-            })
-            .detach();
-
+        let _ = done_tx.send(Err(anyhow!("file dialogs are not supported on Linux")));
         done_rx
     }
 
@@ -1168,6 +1032,8 @@ async fn run_open_commands(
     false
 }
 
+// mirin: with the system's opener (xdg-open and its kin) alone; upstream fell
+// back to the OpenURI portal.
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn open_uri_internal(
     executor: BackgroundExecutor,
@@ -1175,32 +1041,12 @@ pub(super) fn open_uri_internal(
     activation_token: Option<String>,
     environment: GraphicalEnvironment,
 ) {
-    if let Some(uri) = ashpd::Uri::parse(uri).log_err() {
-        executor
-            .spawn(async move {
-                let opened = run_open_commands(
-                    uri.as_str().as_ref(),
-                    activation_token.as_deref(),
-                    &environment,
-                )
-                .await;
-                if !opened {
-                    match ashpd::desktop::open_uri::OpenFileRequest::default()
-                        .activation_token(activation_token.map(ashpd::ActivationToken::from))
-                        .send_uri(&uri)
-                        .await
-                        .and_then(|e| e.response())
-                    {
-                        Ok(()) => {}
-                        Err(ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)) => {}
-                        Err(e) => {
-                            log::error!("Failed to open with dbus: {}", e);
-                        }
-                    }
-                }
-            })
-            .detach();
-    }
+    let uri = uri.to_owned();
+    executor
+        .spawn(async move {
+            run_open_commands(uri.as_ref(), activation_token.as_deref(), &environment).await;
+        })
+        .detach();
 }
 
 #[cfg(any(feature = "x11", feature = "wayland"))]
@@ -1212,27 +1058,17 @@ pub(super) fn reveal_path_internal(
 ) {
     executor
         .spawn(async move {
-            if let Some(dir) = File::open(path.clone()).log_err() {
-                match ashpd::desktop::open_uri::OpenDirectoryRequest::default()
-                    .activation_token(activation_token.clone().map(ashpd::ActivationToken::from))
-                    .send(&dir.as_fd())
-                    .await
-                {
-                    Ok(_) => return,
-                    Err(e) => log::error!("Failed to open with dbus: {}", e),
-                }
-                let directory = if path.is_dir() {
-                    path.as_path()
-                } else {
-                    path.parent().unwrap_or(Path::new(""))
-                };
-                run_open_commands(
-                    directory.as_os_str(),
-                    activation_token.as_deref(),
-                    &environment,
-                )
-                .await;
-            }
+            let directory = if path.is_dir() {
+                path.as_path()
+            } else {
+                path.parent().unwrap_or(Path::new(""))
+            };
+            run_open_commands(
+                directory.as_os_str(),
+                activation_token.as_deref(),
+                &environment,
+            )
+            .await;
         })
         .detach();
 }
@@ -1668,56 +1504,6 @@ pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<sumi_wgpu::Comp
     })
 }
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
-async fn inhibit_idle_sleep(reason: String, executor: BackgroundExecutor) -> Result<ActivityGuard> {
-    let proxy = InhibitProxy::new()
-        .await
-        .context("Idle sleep prevention portal is unavailable")?;
-    let request = proxy
-        .inhibit(
-            None,
-            BitFlags::from(InhibitFlags::Suspend),
-            InhibitOptions::default().set_reason(reason.as_str()),
-        )
-        .await
-        .context("Failed to request idle sleep prevention")?;
-    request
-        .response()
-        .context("Idle sleep prevention request was rejected")?;
-    Ok(release_on_drop(request, executor))
-}
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
-fn release_on_drop(request: Request<()>, executor: BackgroundExecutor) -> ActivityGuard {
-    ActivityGuard::new(move || {
-        executor
-            .spawn(async move {
-                request
-                    .close()
-                    .await
-                    .context("Failed to release idle sleep prevention")
-                    .log_err();
-            })
-            .detach();
-    })
-}
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
-async fn await_idle_sleep_prevention(
-    guard_rx: oneshot::Receiver<Result<ActivityGuard>>,
-    executor: &BackgroundExecutor,
-) -> Result<ActivityGuard> {
-    match futures::future::select(guard_rx, executor.timer(Duration::from_secs(10))).await {
-        futures::future::Either::Left((Ok(result), _)) => result,
-        futures::future::Either::Left((Err(_), _)) => {
-            Err(anyhow!("Idle sleep prevention request was abandoned"))
-        }
-        futures::future::Either::Right(_) => Err(anyhow!(
-            "Idle sleep prevention acquisition timed out after 10 seconds"
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1793,98 +1579,6 @@ mod tests {
             zero,
             Point::new(px(5.0), px(5.1))
         ),);
-    }
-
-    #[cfg(any(feature = "wayland", feature = "x11"))]
-    mod idle_sleep_prevention {
-        use super::super::await_idle_sleep_prevention;
-        use anyhow::{Result, anyhow};
-        use futures::channel::oneshot;
-        use sumi::{ActivityGuard, TestAppContext};
-        use std::{
-            sync::{
-                Arc,
-                atomic::{AtomicUsize, Ordering::SeqCst},
-            },
-            time::Duration,
-        };
-
-        #[sumi::test]
-        async fn guard_passes_through_and_releases_on_drop(cx: &mut TestAppContext) {
-            let released = Arc::new(AtomicUsize::new(0));
-            let (guard_tx, guard_rx) = oneshot::channel();
-            assert!(guard_tx.send(Ok(release_guard(released.clone()))).is_ok());
-            let guard = await_idle_sleep_prevention(guard_rx, &cx.background_executor)
-                .await
-                .expect("acquisition should succeed");
-
-            assert_eq!(released.load(SeqCst), 0);
-            drop(guard);
-            assert_eq!(released.load(SeqCst), 1);
-        }
-
-        #[sumi::test]
-        async fn acquisition_error_passes_through(cx: &mut TestAppContext) {
-            let (guard_tx, guard_rx) = oneshot::channel::<Result<ActivityGuard>>();
-            assert!(guard_tx.send(Err(anyhow!("inhibition rejected"))).is_ok());
-            assert_eq!(
-                await_idle_sleep_prevention(guard_rx, &cx.background_executor)
-                    .await
-                    .err()
-                    .expect("acquisition should fail")
-                    .to_string(),
-                "inhibition rejected"
-            );
-        }
-
-        #[sumi::test]
-        async fn abandoned_acquisition_is_an_error(cx: &mut TestAppContext) {
-            let (guard_tx, guard_rx) = oneshot::channel::<Result<ActivityGuard>>();
-            drop(guard_tx);
-            assert_eq!(
-                await_idle_sleep_prevention(guard_rx, &cx.background_executor)
-                    .await
-                    .err()
-                    .expect("acquisition should fail")
-                    .to_string(),
-                "Idle sleep prevention request was abandoned"
-            );
-        }
-
-        #[sumi::test]
-        async fn late_guard_after_timeout_is_released(cx: &mut TestAppContext) {
-            let released = Arc::new(AtomicUsize::new(0));
-            let (guard_tx, guard_rx) = oneshot::channel();
-            let task = cx.background_executor.spawn({
-                let executor = cx.background_executor.clone();
-                async move { await_idle_sleep_prevention(guard_rx, &executor).await }
-            });
-            cx.run_until_parked();
-            cx.executor().advance_clock(Duration::from_secs(9));
-            cx.run_until_parked();
-            assert!(!guard_tx.is_canceled());
-            cx.executor().advance_clock(Duration::from_secs(1));
-            assert_eq!(
-                task.await
-                    .err()
-                    .expect("acquisition should time out")
-                    .to_string(),
-                "Idle sleep prevention acquisition timed out after 10 seconds"
-            );
-
-            assert!(guard_tx.is_canceled());
-            if let Err(Ok(guard)) = guard_tx.send(Ok(release_guard(released.clone()))) {
-                assert_eq!(released.load(SeqCst), 0);
-                drop(guard);
-            }
-            assert_eq!(released.load(SeqCst), 1);
-        }
-
-        fn release_guard(released: Arc<AtomicUsize>) -> ActivityGuard {
-            ActivityGuard::new(move || {
-                released.fetch_add(1, SeqCst);
-            })
-        }
     }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]

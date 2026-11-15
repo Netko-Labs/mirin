@@ -18,7 +18,7 @@ test-support = ["sumi/test-support"]
 wayland = [
     "dep:accesskit_unix",
     "sumi-wgpu",
-    "ashpd/wayland",
+    "ashpd",
 
     "calloop-wayland-source",
     "wayland-backend",

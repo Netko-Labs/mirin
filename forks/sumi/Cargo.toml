@@ -56,11 +56,10 @@ accesskit_macos = "0.26.0"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
 anyhow = "1.0.86"
+# mirin: the settings portal alone (appearance, cursor theme and size, button
+# layout). Upstream also builds the file chooser, OpenURI and inhibit portals.
 ashpd = { version = "0.13", default-features = false, features = [
     "async-io",
-    "inhibit",
-    "open_uri",
-    "file_chooser",
     "settings"
 ] }
 async-channel = { version = "2.5", default-features = false }
