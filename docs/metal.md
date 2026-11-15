@@ -524,11 +524,34 @@ patches change it in place, in order (section "Patches").
     there). So a list with `onScroll`, or one the driver has sent a
     `scrollTo` or a `scrollIntoView` into, counts the rows it has not laid
     out at the height of one it has (`list::estimate_rows`, GPUI's
-    `with_uniform_item_height`; again when rows come or its width
-    changes). Rows of one height, a file list's, are then counted exactly
-    and a far row is reached in one frame; rows of other heights by that
-    estimate, until they are laid out. Lists nobody reads or scrolls are
-    as they were.
+    `with_uniform_item_height`), once for a width. From then on its
+    length never falls behind its rows (2026-11-15; before, a row whose
+    props changed lost its height until it was laid out again, and a file
+    list changes rows whenever its selection does: Dashi's Files, wheeled
+    to 1200, said 0 after Select All, and a marquee's step to 98 landed at
+    722): a row that changes keeps the height it had, measured or
+    estimated, until it is laid out again (`list::invalidate_changed`,
+    GPUI's `remeasure_items` where a list nobody reads is spliced); rows
+    that come are counted, in the turn they come, at the height the others
+    were (`list::count_new`); rows that go take their heights with them.
+    Rows of one height, a file list's, are counted exactly, wherever the
+    list is sent. Rows of several heights: every row the list has laid out
+    counts at its own height, for good, so a list read from its start is
+    exact; rows it has never laid out count at the estimate, so an offset
+    past them is the estimate's (within the difference, times the rows
+    skipped), and as they are laid out the offset told moves to the truth
+    while what is drawn does not move at all (the list holds its place by
+    the row at its top, not by pixels). A row brought in by
+    `scrollIntoView` from far away is first placed by those estimates and,
+    once it and its neighbours are laid out, put at the edge it came by.
+    What it costs a list of 5,000 rows when one row's props change
+    (`list::tests::what_a_changed_row_costs_a_long_list`, release): 0.41
+    ms, as the splice before it (0.41 ms; 0.11 of it is finding the rows
+    that changed, by comparing them); no row is visited to count it. The
+    list's own copy of the rows now takes only the rows that changed (0.1
+    µs for one) where every tree copied all of them (2 ms). Counting every
+    row again, which this does only when rows come, is 0.12 ms. Lists
+    nobody reads or scrolls are as they were.
   - **The scroll bar** (`scrollbar.rs`) is an overlay, as on macOS: a thumb 6
     wide along the right edge (and the bottom, for `scrollX`), drawn over the
     content, with no room kept for it. It shows while the view scrolls and
@@ -3036,15 +3059,19 @@ bun bench/gates.ts <host> --reference=<host before the change>
   write, a `hide` the moment the window opened (before its first frame),
   `hide` and `open` in one write with a frame on screen, and five of them
   in one write; after each the host has to open a window and draw it, and
-  to have logged no error from its GPU layer.
+  to have logged no error from its GPU layer;
+- a scroll view and a long list tell their offset and take one
+  (`@mirinjs/metal`'s `bench/scroll-check.tsx`): the wheel, `scrollTo`,
+  `scrollIntoView`, and rows whose props change between and with the
+  scrolls, each against where the host painted the rows.
 
-21 checks, four at a time (`--jobs`), each in a nested compositor of its
+22 checks, four at a time (`--jobs`), each in a nested compositor of its
 own (`dashi-comp --backend winit --no-xwayland` on a private
 `DASHI_COMP_SOCKET`; the headless compositors cannot present on every
 machine). It prints a line a check and a summary, shows what a failed check
 said, and exits non-zero on any difference; `--only=<text>` runs the checks
 whose name has the text, `--logs=<dir>` keeps their output. Without
-`--reference` it runs the 15 scene checks and the window's two.
+`--reference` it runs the 15 scene checks, the window's two and the scroll check.
 
 The checks wait for nothing but the host: `layout-check.tsx` gives its
 hosts `MIRIN_METAL_CHECK=1` and after each step sends `settle`, lets React

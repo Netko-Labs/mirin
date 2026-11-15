@@ -14,6 +14,9 @@
  * - `<host>` kept warm shows its window again after every hide
  *   (`reopen.ts`), and outlives a layer surface hidden as it opens and
  *   opened as it hides (`hide-race.ts`).
+ * - A scroll view and a long list on `<host>` tell their offset and take
+ *   one, their rows changing meanwhile (`@mirinjs/metal`'s
+ *   `bench/scroll-check.tsx`).
  *
  * Prints a line per check and a summary, and exits non-zero when any check
  * found a difference or did not finish. `--only` runs the checks whose name
@@ -108,7 +111,7 @@ console.log(
 );
 process.exit(failed === 0 ? 0 : 1);
 
-/** The set: layouts against the reference, retained against not by scale, then the window's two. */
+/** The set: layouts against the reference, retained against not by scale, the window's two, then the scroll check. */
 function gateSet(host: string, reference: string | undefined): Check[] {
   const layouts = ["grid", "browser", "scroll", "scroll-fractional"];
   const against: Check[] = reference
@@ -138,7 +141,13 @@ function gateSet(host: string, reference: string | undefined): Check[] {
     args: [host, "--rounds=40", "--gpu-errors"],
     script: "hide-race.ts",
   };
-  return [...against, ...retained, reopen, hideRace];
+  // `@mirinjs/metal`'s check, beside what it checks; `scroll-check.ts` here runs it.
+  const scroll: Check = {
+    name: "scroll offset read and written, rows changing",
+    args: [host],
+    script: "scroll-check.ts",
+  };
+  return [...against, ...retained, reopen, hideRace, scroll];
 }
 
 /** Run the checks, `jobs` at a time; the results in the checks' order. */
