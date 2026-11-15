@@ -181,6 +181,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         sync.resync();
         break;
       case "layout":
+      case "settled":
       case "frame":
       case "close-request":
       case "visibility":
