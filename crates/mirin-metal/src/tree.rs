@@ -345,6 +345,15 @@ pub struct InputProps {
     /// driver refused a change it was sent (a key it took for itself) and wants its text back.
     #[serde(default)]
     pub revision: u64,
+    /// What the field held, as far as the driver knew, when its app set this
+    /// `value`: that text's `events::text_hash`. The hash of `value` itself
+    /// says the value is the field's own text coming back; any other says
+    /// the app wrote it over that text, and what the field has typed into
+    /// that text since is carried onto the value (`field/rebase.rs`).
+    /// Without it (a driver from before it) a value the field didn't send
+    /// resets the buffer.
+    #[serde(default)]
+    pub base_hash: Option<u32>,
     #[serde(default)]
     pub placeholder: Option<String>,
     /// Enter inserts a newline; Ctrl/Cmd+Enter submits.
@@ -497,6 +506,7 @@ impl Default for InputProps {
             id: String::new(),
             value: String::new(),
             revision: 0,
+            base_hash: None,
             placeholder: None,
             multiline: false,
             secure: false,

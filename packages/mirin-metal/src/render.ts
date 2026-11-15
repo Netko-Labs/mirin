@@ -113,7 +113,8 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         });
         break;
       case "change":
-        fields.typed(event.nodeId, event.value);
+        // Typed on a text the app has since replaced: the host reports it again, on the app's value.
+        if (!fields.typed(event.nodeId, event.value, event.baseHash, event.textHash)) break;
         input(event.nodeId)?.onChangeText?.(event.value);
         break;
       case "submit":
@@ -175,7 +176,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         break;
       case "protocol":
         heard();
-        sync.hostPatches(event.patches);
+        sync.hostPatches(event.patches, { rebase: event.rebase === true });
         break;
       case "resync":
         sync.resync();
