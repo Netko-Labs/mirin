@@ -1254,6 +1254,8 @@ mod tests {
             target_os = "freebsd"
         )) {
             assert!(!cx.update(|window, _| window.is_window_hovered()));
+        } else {
+            assert!(cx.update(|window, _| window.is_window_hovered()));
         }
         assert_eq!(frames(cx), 0);
     }
