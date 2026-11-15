@@ -97,7 +97,16 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       const { phase, x, y } = record;
       if (phase !== "down" && phase !== "move" && phase !== "up") return null;
       if (typeof x !== "number" || typeof y !== "number") return null;
-      return { type: "pointer", nodeId, phase, x, y, ...withBounds };
+      const modifiers = parseModifiers(record);
+      return {
+        type: "pointer",
+        nodeId,
+        phase,
+        x,
+        y,
+        ...withBounds,
+        ...(modifiers ? { modifiers } : {}),
+      };
     }
     case "resize":
       return bounds ? { type: "resize", nodeId, bounds } : null;
@@ -196,7 +205,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
   }
 }
 
-/** The modifiers a press or a right-click carries (`meta` is Super); undefined from an older host that sends none. */
+/** The modifiers a press, a right-click or a pointer phase carries (`meta` is Super); undefined from an older host that sends none. */
 function parseModifiers(record: Record<string, unknown>): Modifiers | undefined {
   const { shift, ctrl, alt, meta } = record;
   if ([shift, ctrl, alt, meta].every((held) => held === undefined)) return undefined;

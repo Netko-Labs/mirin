@@ -132,7 +132,12 @@ patches change it in place, in order (section "Patches").
   click fires `press` on the deepest `onPress` view under the pointer only,
   a right click fires `contextmenu` on the deepest `onContextMenu` view only,
   and a press starts a capture (`pointer`) on the deepest `onPointer` view
-  only. Ancestors with the same handler stay quiet, as on the web when every
+  only. Every phase of a capture (`down`, each `move`, `up`) says the
+  modifiers held, in the names a press uses (`shift`, `ctrl`, `alt`, `meta`;
+  `PointerInfo.modifiers`), and a modifier pressed or let go while the button
+  is down sends a `move` where the pointer is, so a drag's rule can change
+  without the pointer moving (since 2026-11-14; a host older than that says
+  none, and `modifiers` is then absent). Ancestors with the same handler stay quiet, as on the web when every
   handled press calls `stopPropagation`, and so does a view another is drawn
   over (an event block over a calendar's time slot). A press, a menu, and a
   capture are claimed separately (a slider inside a pressable card drags,

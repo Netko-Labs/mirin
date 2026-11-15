@@ -118,6 +118,19 @@ describe("parseNativeEvent", () => {
     expect(
       parseNativeEvent('{"type":"pointer","nodeId":"5","phase":"move","x":10,"y":20}'),
     ).toEqual({ type: "pointer", nodeId: "5", phase: "move", x: 10, y: 20 });
+    // A host that says the modifiers held says them on every phase; an older one says none.
+    expect(
+      parseNativeEvent(
+        '{"type":"pointer","nodeId":"5","phase":"down","x":10,"y":20,"shift":true,"ctrl":false,"alt":false,"meta":true}',
+      ),
+    ).toEqual({
+      type: "pointer",
+      nodeId: "5",
+      phase: "down",
+      x: 10,
+      y: 20,
+      modifiers: { shift: true, control: false, alt: false, super: true },
+    });
     expect(parseNativeEvent('{"type":"contextmenu","nodeId":"5","x":1,"y":2}')).toEqual({
       type: "contextmenu",
       nodeId: "5",

@@ -190,9 +190,16 @@ export interface PointerInfo {
   y: number;
   /** The view's painted bounds when the event fired. */
   bounds?: Bounds;
+  /**
+   * The modifier keys held at this phase (a ⇧-drag adds, a ❖-drag toggles).
+   * One pressed or let go while the button is down comes as a `move` where
+   * the pointer is. Absent from a host that does not say them (older than
+   * 2026-11-14): fall back to what a click says.
+   */
+  modifiers?: Modifiers;
 }
 
-/** The modifier keys held during a press or a right-click (`super` is the Super, ❖, key). */
+/** The modifier keys held during a press, a right-click or a pointer phase (`super` is the Super, ❖, key). */
 export interface Modifiers {
   shift: boolean;
   control: boolean;
@@ -390,7 +397,8 @@ export interface ViewProps extends AccessibilityProps {
   onLayout?: (bounds: Bounds) => void;
   /**
    * Press on this view, then every move and the release until the button
-   * lifts. The innermost `onPointer` view under the pointer captures it.
+   * lifts, each with the `modifiers` held. The innermost `onPointer` view
+   * under the pointer captures it.
    */
   onPointer?: (event: PointerInfo) => void;
   /** Right-click, in window pixels, with the modifiers held. Only the innermost `onContextMenu` view fires. */

@@ -329,7 +329,12 @@ fn render_view_content(
                     return;
                 }
                 view.dragging = Some(pointer_id.clone());
-                view.emit_pointer(&pointer_id, "down", event.position);
+                view.emit_pointer(
+                    &pointer_id,
+                    crate::events::PointerPhase::Down,
+                    event.position,
+                    event.modifiers,
+                );
             }),
         );
     }
