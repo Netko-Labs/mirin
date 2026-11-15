@@ -1,3 +1,6 @@
+// mirin: what was written of the scene drawn last (`upload.rs`).
+mod upload;
+
 use crate::wgpu_pipelines::{PipelineCache, PipelineKey, WgpuPipelines};
 use crate::{CompositorGpuHint, DeviceErrorState, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
@@ -135,6 +138,9 @@ pub struct WgpuSurfaceConfig {
 /// One frame allocation of instance data, ready to bind.
 struct InstanceBinding {
     bind_group: wgpu::BindGroup,
+    /// mirin: where the instances were written, in bytes into the instance
+    /// buffer (`upload.rs`).
+    offset: u64,
     /// Index of the allocation's first instance within the bound data. Always
     /// zero on the storage-buffer path, where the binding offset already
     /// positions the array; on the WebGL texture path the shader indexes the
@@ -231,6 +237,10 @@ struct WgpuRendererCore {
     dual_source_blending: bool,
     transient_attachments: bool,
     adapter_info: wgpu::AdapterInfo,
+    // mirin: what was written of the scene drawn last, and how many
+    // instance buffers there have been (one that grows is another).
+    uploaded: Option<upload::Uploaded>,
+    instance_buffers: u64,
     depth_texture: Option<DepthTexture>,
     /// mirin: what the pipelines in use were made for; `depth` says whether
     /// the window draws with a depth buffer yet (`DEPTH_BUFFER_QUADS`).
@@ -984,6 +994,8 @@ impl WgpuRendererCore {
             dual_source_blending,
             transient_attachments: context.supports_transient_attachments(),
             adapter_info: context.adapter.get_info(),
+            uploaded: None,
+            instance_buffers: 0,
             depth_texture: None,
             pipeline_key,
             #[cfg(any(test, feature = "test-support"))]
@@ -1079,21 +1091,36 @@ impl WgpuRendererCore {
         size: Size<DevicePixels>,
         clear_color: wgpu::Color,
     ) -> Result<wgpu::SubmissionIndex> {
-        let mut instance_offset = 0;
-        let instance_bindings = self
-            .write_instances(scene, &mut instance_offset)
-            .with_context(|| {
-                format!(
-                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} monochrome sprites, {} subpixel sprites, {} polychrome sprites",
-                    scene.paths.len(),
-                    scene.shadows.len(),
-                    scene.quads.len(),
-                    scene.underlines.len(),
-                    scene.monochrome_sprites.len(),
-                    scene.subpixel_sprites.len(),
-                    scene.polychrome_sprites.len(),
-                )
-            })?;
+        // mirin: the scene drawn last with a few primitives changed (a
+        // partial frame, or a frame presented again) has those written and
+        // keeps its bind groups and batches; any other is written whole.
+        let uploaded = self
+            .uploaded
+            .take()
+            .filter(|_| !self.uses_webgl_instance_data)
+            .and_then(|mut uploaded| self.write_damage(scene, &mut uploaded).then_some(uploaded));
+        let uploaded = match uploaded {
+            Some(uploaded) => uploaded,
+            None => {
+                let mut instance_offset = 0;
+                let instance_bindings = self
+                    .write_instances(scene, &mut instance_offset)
+                    .with_context(|| {
+                        format!(
+                            "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} monochrome sprites, {} subpixel sprites, {} polychrome sprites",
+                            scene.paths.len(),
+                            scene.shadows.len(),
+                            scene.quads.len(),
+                            scene.underlines.len(),
+                            scene.monochrome_sprites.len(),
+                            scene.subpixel_sprites.len(),
+                            scene.polychrome_sprites.len(),
+                        )
+                    })?;
+                upload::Uploaded::new(scene, instance_bindings, self.instance_buffers)
+            }
+        };
+        let instance_bindings = &uploaded.bindings;
         let depth = self.depth(scene);
         let depth_scale = quad_depth_scale(scene.quads.len());
         let globals = GlobalParams {
@@ -1110,7 +1137,7 @@ impl WgpuRendererCore {
             0,
             bytemuck::bytes_of(&globals),
         );
-        self.prepare_texture_bind_groups(scene);
+        self.prepare_texture_bind_groups(&uploaded.batches);
         let depth_view = if depth {
             self.ensure_depth_texture(size);
             let depth_texture = self.depth_texture.as_ref();
@@ -1169,7 +1196,7 @@ impl WgpuRendererCore {
             let viewport_height = size.height.0 as f32;
             let mut quad_cursor: u32 = 0;
             let mut path_tile_cursor = 0;
-            for batch in scene.batches() {
+            for batch in uploaded.batches.iter().cloned() {
                 // Quad shaders assign each quad its own depth.
                 // In every other batch type, the depth is fixed to the position of the quad cursor.
                 let (minimum_depth, maximum_depth) = if matches!(&batch, PrimitiveBatch::Quads(_)) {
@@ -1264,6 +1291,7 @@ impl WgpuRendererCore {
             .resources()
             .queue
             .submit(std::iter::once(encoder.finish()));
+        self.uploaded = Some(uploaded);
         Ok(submission)
     }
 
@@ -1366,13 +1394,13 @@ impl WgpuRendererCore {
             })
     }
 
-    fn prepare_texture_bind_groups(&mut self, scene: &Scene) {
+    fn prepare_texture_bind_groups(&mut self, batches: &[PrimitiveBatch]) {
         let mut texture_ids = SmallVec::<[AtlasTextureId; 8]>::new();
-        for batch in scene.batches() {
+        for batch in batches {
             let texture_id = match batch {
                 PrimitiveBatch::MonochromeSprites { texture_id, .. }
                 | PrimitiveBatch::SubpixelSprites { texture_id, .. }
-                | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
+                | PrimitiveBatch::PolychromeSprites { texture_id, .. } => *texture_id,
                 _ => continue,
             };
             if !texture_ids.contains(&texture_id) {
@@ -1578,6 +1606,7 @@ impl WgpuRendererCore {
             });
         Ok(InstanceBinding {
             bind_group,
+            offset: allocation.offset,
             first_instance: allocation.first_instance,
         })
     }
@@ -1642,6 +1671,7 @@ impl WgpuRendererCore {
         Ok(PathTileBinding {
             tiles: InstanceBinding {
                 bind_group,
+                offset: tiles.offset,
                 first_instance: tiles.first_instance,
             },
             paint_base: paints.first_instance,
@@ -1755,6 +1785,8 @@ impl WgpuRendererCore {
         // Bind groups created earlier in the frame keep the previous buffer or
         // texture alive, so allocations written before the grow remain valid;
         // only subsequent writes land in the new allocation.
+        // mirin: what was written is in a buffer that is no longer written to.
+        self.instance_buffers += 1;
         let uses_webgl_instance_data = self.uses_webgl_instance_data;
         let resources = self.resources_mut();
         if uses_webgl_instance_data {

@@ -1537,7 +1537,9 @@ impl<'a> Iterator for BatchIterator<'a> {
     }
 }
 
-#[derive(Debug)]
+// mirin: `Clone`, for a renderer that keeps a scene's batches while the
+// scene is only patched (`Scene::damage_since`).
+#[derive(Clone, Debug)]
 #[cfg_attr(
     all(
         any(target_os = "linux", target_os = "freebsd"),
