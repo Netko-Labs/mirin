@@ -326,3 +326,190 @@ fn reports_wait_out_their_throttle_and_the_last_offset_is_told() {
     assert_eq!(reporter.tell(at(40.0), start + ms(500)), None);
     assert!(told().is_empty());
 }
+
+/// A file list as Dashi's: `rows` rows 26 tall (those in `lit` selected,
+/// so their props differ) in a view 594 tall that tells its offset.
+fn files(rows: usize, lit: std::ops::Range<usize>) -> String {
+    let rows: Vec<String> = (0..rows)
+        .map(|row| {
+            let background = if lit.contains(&row) {
+                r##","background":"#1e3a8a""##
+            } else {
+                ""
+            };
+            format!(r#"{{"type":"view","props":{{"id":"row{row}","height":26{background}}}}}"#)
+        })
+        .collect();
+    format!(
+        r#"{{"type":"view","props":{{"id":"root","fill":true}},"children":[
+          {{"type":"view","props":{{"id":"rows","height":594,"scroll":true,"onScroll":true}},"children":[{}]}}]}}"#,
+        rows.join(",")
+    )
+}
+
+fn open_files(cx: &mut TestAppContext, rows: usize) -> (Page, &mut VisualTestContext) {
+    let (page, cx) = open(cx, &files(rows, 0..0));
+    cx.simulate_resize(size(px(400.0), px(700.0)));
+    for _ in 0..3 {
+        draw(cx);
+    }
+    page.told();
+    (page, cx)
+}
+
+impl Page {
+    /// The tree with rows `lit` selected, as one turn.
+    fn select(&self, cx: &mut VisualTestContext, rows: usize, lit: std::ops::Range<usize>) {
+        let tree = parse_tree(&files(rows, lit)).expect("tree");
+        cx.update(|_, cx| self.view.update(cx, |view, cx| view.set_tree(tree, cx)));
+    }
+}
+
+#[sumi::test]
+fn a_list_whose_rows_all_change_stays_where_it_was_and_says_so(cx: &mut TestAppContext) {
+    // Dashi's Files: wheeled to 1200, then Select All changes every row's props.
+    let (page, cx) = open_files(cx, 89);
+    wheel(cx, 1200.0);
+    draw(cx);
+    assert_eq!(page.told().last().map(|told| told.y), Some(1200.0));
+    page.select(cx, 89, 0..89);
+    for _ in 0..3 {
+        draw(cx);
+    }
+    // Nothing moved: nothing to tell, and the rows are where they were.
+    assert_eq!(page.told(), []);
+    assert_eq!(page.row(cx, 47).0, 47.0 * 26.0 - 1200.0);
+    // One more notch goes on from there.
+    wheel(cx, 60.0);
+    draw(cx);
+    assert_eq!(
+        page.told().last().map(|told| (told.y, told.content_height)),
+        Some((1260.0, 89.0 * 26.0))
+    );
+}
+
+#[sumi::test]
+fn a_list_sent_to_an_offset_in_the_turn_its_rows_change_lands_there(cx: &mut TestAppContext) {
+    // Dashi's marquee at the bottom edge: each step selects more rows and
+    // scrolls on, in one turn.
+    let (page, cx) = open_files(cx, 89);
+    page.to(cx, 91.0);
+    assert_eq!(page.told().last().map(|told| told.y), Some(91.0));
+    page.select(cx, 89, 3..27);
+    page.to(cx, 98.0);
+    assert_eq!(page.told().last().map(|told| told.y), Some(98.0));
+    assert_eq!(page.row(cx, 4).0, 4.0 * 26.0 - 98.0);
+    // And the simulation's scroll, from rows that changed again.
+    page.select(cx, 89, 3..40);
+    cx.update(|_, cx| {
+        let list = page.view.read(cx).lists["rows"].state.clone();
+        list.scroll_by(px(60.0));
+    });
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert_eq!(page.told().last().map(|told| told.y), Some(158.0));
+}
+
+#[sumi::test]
+fn rows_that_come_and_go_above_the_view_are_counted_in_the_same_turn(cx: &mut TestAppContext) {
+    let (page, cx) = open_files(cx, 89);
+    // The folder gains 300 files and the list is sent on, in one turn.
+    page.select(cx, 389, 0..0);
+    page.to(cx, 5200.0);
+    assert_eq!(
+        page.told().last().map(|told| (told.y, told.content_height)),
+        Some((5200.0, 389.0 * 26.0))
+    );
+    assert_eq!(page.row(cx, 200).0, 0.0);
+    // And loses most of them: the list ends where its rows do.
+    page.select(cx, 120, 0..0);
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert_eq!(
+        page.told().last().map(|told| (told.y, told.content_height)),
+        Some((120.0 * 26.0 - 594.0, 120.0 * 26.0))
+    );
+}
+
+/// Rows of two heights, 26 and 52 by turns (those in `lit` selected), in a
+/// view 594 tall that tells its offset.
+fn mixed(rows: usize, lit: std::ops::Range<usize>) -> String {
+    let rows: Vec<String> = (0..rows)
+        .map(|row| {
+            let height = if row % 2 == 0 { 26 } else { 52 };
+            let background = if lit.contains(&row) {
+                r##","background":"#1e3a8a""##
+            } else {
+                ""
+            };
+            format!(
+                r#"{{"type":"view","props":{{"id":"row{row}","height":{height}{background}}}}}"#
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"type":"view","props":{{"id":"root","fill":true}},"children":[
+          {{"type":"view","props":{{"id":"rows","height":594,"scroll":true,"onScroll":true}},"children":[{}]}}]}}"#,
+        rows.join(",")
+    )
+}
+
+#[sumi::test]
+fn rows_of_several_heights_never_jump_as_they_are_laid_out(cx: &mut TestAppContext) {
+    let (page, cx) = open(cx, &mixed(400, 0..0));
+    cx.simulate_resize(size(px(400.0), px(700.0)));
+    for _ in 0..3 {
+        draw(cx);
+    }
+    // Far down, past rows the list has only an estimate for: the row asked
+    // for is at the view's end.
+    page.show(cx, "row300");
+    assert_eq!(page.row(cx, 300), (568.0, 594.0));
+    page.told();
+    // Back up through them, a notch at a time. Each row is laid out as it
+    // comes and found to be 26 or 52, not the estimate: what shows moves by
+    // the notch and no more, and the offset told moves with it, never back.
+    let mut told = f32::MAX;
+    for _ in 0..10 {
+        let before = page.row(cx, 290).0;
+        wheel(cx, -30.0);
+        draw(cx);
+        draw(cx);
+        assert_eq!(page.row(cx, 290).0, before + 30.0);
+        if let Some(now) = page.told().last() {
+            assert!(now.y < told, "{} then {}", told, now.y);
+            told = now.y;
+        }
+    }
+    // Rows that were laid out keep their heights when their props change:
+    // selecting everything above the view moves nothing and tells nothing.
+    let at = page.row(cx, 290).0;
+    page.told();
+    let tree = parse_tree(&mixed(400, 0..270)).expect("tree");
+    cx.update(|_, cx| page.view.update(cx, |view, cx| view.set_tree(tree, cx)));
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert_eq!(page.row(cx, 290).0, at);
+    assert_eq!(page.told(), []);
+}
+
+#[sumi::test]
+fn rows_of_several_heights_scrolled_through_are_counted_as_they_are(cx: &mut TestAppContext) {
+    // A list read from its start, as a person scrolls it: every row above
+    // the view has been laid out, so the offset is exact whatever their heights.
+    let (page, cx) = open(cx, &mixed(400, 0..0));
+    cx.simulate_resize(size(px(400.0), px(700.0)));
+    for _ in 0..3 {
+        draw(cx);
+    }
+    for _ in 0..20 {
+        wheel(cx, 150.0);
+        draw(cx);
+    }
+    // 3000 down: rows 0 to 76 are 77 rows, 39 of 26 and 38 of 52, 2990 in all.
+    assert_eq!(page.told().last().map(|told| told.y), Some(3000.0));
+    assert_eq!(page.row(cx, 77).0, 2990.0 - 3000.0);
+}

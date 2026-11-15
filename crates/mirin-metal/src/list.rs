@@ -40,9 +40,10 @@ pub(crate) struct VirtualList {
     counted: Counted,
 }
 
-/// How wide a list was when its rows were last counted (`estimate_rows`):
-/// a list forgets every height when its width changes.
-pub(crate) type Counted = Rc<Cell<Option<f32>>>;
+/// How wide a list was when its rows were last counted (`estimate_rows`),
+/// and the height each row not laid out was counted at: a list forgets
+/// every height when its width changes.
+pub(crate) type Counted = Rc<Cell<Option<(f32, f32)>>>;
 
 /// Count the rows of a list not laid out yet at the height of one that is.
 /// A list knows a row's height only once it has laid it out, and counts the
@@ -53,9 +54,13 @@ pub(crate) type Counted = Rc<Cell<Option<f32>>>;
 /// height (a file list) are then counted exactly; others by that estimate
 /// until they are laid out. False until a row has been laid out to go by;
 /// `counted` says whether this call counted them.
-pub(crate) fn estimate_rows(state: &ListState, counted: &Cell<Option<f32>>) -> bool {
+///
+/// Counted once for a width: a row that changes afterwards keeps the height
+/// it had (`invalidate_changed`), and rows that come are counted as they do
+/// (`count_new`), so the list's length never falls behind its rows.
+pub(crate) fn estimate_rows(state: &ListState, counted: &Cell<Option<(f32, f32)>>) -> bool {
     let width = f32::from(state.viewport_bounds().size.width);
-    if counted.get() == Some(width) {
+    if counted.get().is_some_and(|(at, _)| at == width) {
         return false;
     }
     // The row under the first one in view has the gap above it, as most do.
@@ -68,8 +73,19 @@ pub(crate) fn estimate_rows(state: &ListState, counted: &Cell<Option<f32>>) -> b
     };
     // Rows already laid out keep their own height as their estimate.
     let _ = state.clone().with_uniform_item_height(row.size.height);
-    counted.set(Some(width));
+    counted.set(Some((width, f32::from(row.size.height))));
     true
+}
+
+/// Rows came into a list whose rows are counted: they are counted at the
+/// height the others were, now, so an offset asked for in the same turn is
+/// one in the whole list. (Every row is visited: a list knows no way to
+/// give a height to some. Rows come when a folder's listing changes, not
+/// when a selection does.)
+fn count_new(state: &ListState, counted: &Cell<Option<(f32, f32)>>) {
+    if let Some((_, height)) = counted.get() {
+        let _ = state.clone().with_uniform_item_height(px(height));
+    }
 }
 
 impl VirtualList {
@@ -225,19 +241,32 @@ pub(crate) fn sync(lists: &mut HashMap<String, VirtualList>, tree: &NodeSpec) {
     let mut found = Vec::new();
     collect(tree, &mut found);
     let mut next = HashMap::with_capacity(found.len());
-    for (id, rows, spacing) in found {
+    for (id, rows, spacing, listened) in found {
         let entry = match lists.remove(id) {
             Some(mut entry) => {
+                // A list whose driver reads its offset counts all its rows,
+                // as one it has scrolled does, from here on.
+                entry.estimates |= listened;
                 if entry.spacing == spacing {
-                    if invalidate_changed(&entry.state, &entry.rows, rows) {
-                        // The rows that came are counted again.
-                        entry.counted.set(None);
+                    let keeps = entry.estimates;
+                    if let Some(range) = invalidate_changed(&entry.state, &entry.rows, rows, keeps)
+                    {
+                        if keeps && range.came > range.went {
+                            count_new(&entry.state, &entry.counted);
+                        }
+                        // Only the rows that changed are copied: a selection
+                        // changes a few rows of a list of thousands.
+                        let from = range.start;
+                        Rc::make_mut(&mut entry.rows).splice(
+                            from..from + range.went,
+                            rows[from..from + range.came].iter().cloned(),
+                        );
                     }
                 } else {
                     entry.state.reset(rows.len());
                     entry.counted.set(None);
+                    entry.rows = Rc::new(rows.to_vec());
                 }
-                entry.rows = Rc::new(rows.to_vec());
                 entry.spacing = spacing;
                 entry
             }
@@ -247,7 +276,7 @@ pub(crate) fn sync(lists: &mut HashMap<String, VirtualList>, tree: &NodeSpec) {
                     state: ListState::new(rows.len(), ListAlignment::Top, px(OVERDRAW)),
                     rows: Rc::new(rows.to_vec()),
                     spacing,
-                    estimates: false,
+                    estimates: listened,
                     counted: Rc::default(),
                 }
             }
@@ -257,11 +286,15 @@ pub(crate) fn sync(lists: &mut HashMap<String, VirtualList>, tree: &NodeSpec) {
     *lists = next;
 }
 
-fn collect<'a>(node: &'a NodeSpec, out: &mut Vec<(&'a str, &'a [NodeSpec], Spacing)>) {
+/// A list found in the tree: its id, rows and spacing, and whether its
+/// driver listens to its offset (`onScroll`).
+type Found<'a> = (&'a str, &'a [NodeSpec], Spacing, bool);
+
+fn collect<'a>(node: &'a NodeSpec, out: &mut Vec<Found<'a>>) {
     if let NodeSpec::View { props, children } = node {
         if let (Some(id), Some((rows, spacing))) = (props.id.as_deref(), find_rows(props, children))
         {
-            out.push((id, rows, spacing));
+            out.push((id, rows, spacing, props.on_scroll));
             // Rows render through the list; nested lists inside rows are found
             // when walking the rows themselves.
             for row in rows {
@@ -275,13 +308,37 @@ fn collect<'a>(node: &'a NodeSpec, out: &mut Vec<(&'a str, &'a [NodeSpec], Spaci
     }
 }
 
-/// Splice the range between the unchanged head and tail of the rows, so
-/// cached heights survive for every row that did not change. Whether any
-/// row changed.
-fn invalidate_changed(state: &ListState, old: &[NodeSpec], new: &[NodeSpec]) -> bool {
+/// The rows a tree changed in a list: from row `start`, `went` of the old
+/// rows gave way to `came` new ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Changed {
+    start: usize,
+    went: usize,
+    came: usize,
+}
+
+/// Tell the list which rows changed: the range between the unchanged head
+/// and tail of the rows, so cached heights survive for every row that did
+/// not change. That range, when any did.
+///
+/// A changed row is laid out again when it next shows. Until then a list
+/// counts it as nothing (`ListState::splice`), which is no matter to a list
+/// a person scrolls. In one whose driver reads or sets its offset (`keeps`)
+/// it would be: a file list changes rows whenever its selection does, and
+/// every row above the view that lost its height would move the offset the
+/// list tells and the place a `scrollTo` lands (Dashi's Files: Select All at
+/// 1200 said 0, and a marquee's step to 98 landed at 722). There a changed
+/// row keeps the height it had until it is laid out again
+/// (`ListState::remeasure_items`), and only rows that are new have none.
+fn invalidate_changed(
+    state: &ListState,
+    old: &[NodeSpec],
+    new: &[NodeSpec],
+    keeps: bool,
+) -> Option<Changed> {
     let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
     if prefix == old.len() && old.len() == new.len() {
-        return false;
+        return None;
     }
     let room = old.len().min(new.len()) - prefix;
     let mut suffix = old
@@ -296,8 +353,23 @@ fn invalidate_changed(state: &ListState, old: &[NodeSpec], new: &[NodeSpec]) -> 
     if prefix == 0 && suffix > 0 && suffix == new.len().min(old.len()) {
         suffix -= 1;
     }
-    state.splice(prefix..old.len() - suffix, new.len() - prefix - suffix);
-    true
+    let (went, came) = (old.len() - prefix - suffix, new.len() - prefix - suffix);
+    if keeps {
+        // The rows that stand where others stood keep those heights; the
+        // rest of the old ones go, and the rest of the new ones come.
+        let stays = went.min(came);
+        state.remeasure_items(prefix..prefix + stays);
+        if went != came {
+            state.splice(prefix + stays..prefix + went, came - stays);
+        }
+    } else {
+        state.splice(prefix..prefix + went, came);
+    }
+    Some(Changed {
+        start: prefix,
+        went,
+        came,
+    })
 }
 
 /// Render a virtualized list inside its already-styled container. Padding
@@ -317,7 +389,7 @@ pub(crate) fn render_list(
     };
     // A list whose driver reads its offset, or has scrolled it, counts all
     // its rows, as soon as one is laid out (`scroll.rs`).
-    let counted = (props.on_scroll || entry.estimates).then(|| Rc::clone(&entry.counted));
+    let counted = entry.estimates.then(|| Rc::clone(&entry.counted));
     let rows = entry.rows.clone();
     let spacing = entry.spacing;
     let layout = view.layout.clone();
@@ -465,7 +537,12 @@ mod tests {
     #[test]
     fn unchanged_rows_keep_their_state() {
         let state = ListState::new(3, ListAlignment::Top, px(0.0));
-        invalidate_changed(&state, &rows(&["a", "b", "c"]), &rows(&["a", "b", "c"]));
+        invalidate_changed(
+            &state,
+            &rows(&["a", "b", "c"]),
+            &rows(&["a", "b", "c"]),
+            false,
+        );
         assert_eq!(state.item_count(), 3);
     }
 
@@ -476,15 +553,105 @@ mod tests {
             &state,
             &rows(&["a", "b", "c"]),
             &rows(&["a", "b", "c", "d"]),
+            false,
         );
         assert_eq!(state.item_count(), 4);
         invalidate_changed(
             &state,
             &rows(&["a", "b", "c", "d"]),
             &rows(&["b", "c", "d"]),
+            false,
         );
         assert_eq!(state.item_count(), 3);
-        invalidate_changed(&state, &rows(&["b", "c", "d"]), &rows(&["b", "x", "d"]));
+        invalidate_changed(
+            &state,
+            &rows(&["b", "c", "d"]),
+            &rows(&["b", "x", "d"]),
+            false,
+        );
         assert_eq!(state.item_count(), 3);
+    }
+
+    #[test]
+    fn a_list_holds_the_trees_rows_however_they_changed() {
+        let tree = |names: &[String]| {
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            view(scroll_view(), rows(&names))
+        };
+        let names = |range: std::ops::Range<usize>| -> Vec<String> {
+            range.map(|index| format!("row {index}")).collect()
+        };
+        let mut lists = HashMap::new();
+        let first = names(0..100);
+        sync(&mut lists, &tree(&first));
+        // A row in the middle changes, rows come at the end, rows leave the
+        // start, and everything changes at once.
+        let mut changed = first.clone();
+        changed[40] = "another".into();
+        let grown = [changed.clone(), names(100..130)].concat();
+        let shrunk = grown[20..].to_vec();
+        let other = names(500..570);
+        for now in [changed, grown, shrunk, other] {
+            sync(&mut lists, &tree(&now));
+            let list = &lists["list"];
+            let wanted: Vec<&str> = now.iter().map(String::as_str).collect();
+            assert_eq!(*list.rows, rows(&wanted));
+            assert_eq!(list.state.item_count(), now.len());
+        }
+    }
+
+    /// What a selection change costs a long list (`cargo test --release
+    /// --lib list::tests::what_a_changed_row_costs -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn what_a_changed_row_costs_a_long_list() {
+        const ROWS: usize = 5000;
+        let row = |index: usize, lit: bool| {
+            let props = ViewProps {
+                id: Some(format!("row{index}")),
+                height: Some(26.0),
+                background: lit.then(|| "#1e3a8a".to_string()),
+                ..ViewProps::default()
+            };
+            view(props, vec![text(&format!("note-{index}.txt"))])
+        };
+        let plain: Vec<NodeSpec> = (0..ROWS).map(|index| row(index, false)).collect();
+        let one: Vec<NodeSpec> = (0..ROWS).map(|index| row(index, index == 2500)).collect();
+        let all: Vec<NodeSpec> = (0..ROWS).map(|index| row(index, true)).collect();
+        let state = ListState::new(ROWS, ListAlignment::Top, px(OVERDRAW));
+        let _ = state.clone().with_uniform_item_height(px(26.0));
+        let time = |what: &str, run: &dyn Fn()| {
+            let rounds = 200;
+            let started = std::time::Instant::now();
+            for _ in 0..rounds {
+                run();
+            }
+            let micros = started.elapsed().as_secs_f64() * 1e6 / f64::from(rounds);
+            println!("{what}: {micros:.1} us");
+        };
+        time("compare 5000 rows, one changed (as before this)", &|| {
+            let prefix = plain.iter().zip(&one).take_while(|(a, b)| a == b).count();
+            std::hint::black_box(prefix);
+        });
+        time("one row changed: its height kept", &|| {
+            invalidate_changed(&state, &plain, &one, true);
+        });
+        time("one row changed: spliced, as a list nobody reads", &|| {
+            invalidate_changed(&state, &plain, &one, false);
+        });
+        time("every row changed: heights kept", &|| {
+            invalidate_changed(&state, &plain, &all, true);
+        });
+        time("every row counted again (a pass over all)", &|| {
+            let _ = state.clone().with_uniform_item_height(px(26.0));
+        });
+        time("every row copied for the list (as before this)", &|| {
+            std::hint::black_box(Rc::new(one.to_vec()));
+        });
+        let kept = std::cell::RefCell::new(Rc::new(plain.clone()));
+        time("the changed row copied into the list's rows", &|| {
+            Rc::make_mut(&mut kept.borrow_mut())
+                .splice(2500..2501, one[2500..2501].iter().cloned());
+        });
     }
 }

@@ -201,6 +201,9 @@ impl Reporter {
 pub(crate) struct Reveal {
     id: String,
     frames: u8,
+    /// A list brought its row in by index, from above it (`Some(true)`) or
+    /// from below: once the row is laid out it goes to the edge it came by.
+    came: Option<bool>,
 }
 
 /// How far to scroll (down or right; negative: up or left) so that the
@@ -248,7 +251,11 @@ impl RootView {
                     return;
                 }
                 self.reveals.retain(|reveal| reveal.id != id);
-                self.reveals.push(Reveal { id, frames: 0 });
+                self.reveals.push(Reveal {
+                    id,
+                    frames: 0,
+                    came: None,
+                });
             }
         }
         cx.notify();
@@ -287,7 +294,7 @@ impl RootView {
                 return true;
             }
             // Until a look moves nothing: what it moved is drawn by then.
-            self.reveal(&reveal.id) && reveal.frames < REVEAL_FRAMES
+            self.reveal(reveal) && reveal.frames < REVEAL_FRAMES
         });
         if !reveals.is_empty() {
             window.request_animation_frame();
@@ -295,8 +302,9 @@ impl RootView {
         self.reveals = reveals;
     }
 
-    /// Scroll the views around node `id` so it shows; whether any moved.
-    fn reveal(&mut self, id: &str) -> bool {
+    /// Scroll the views around the node so it shows; whether any moved.
+    fn reveal(&mut self, reveal: &mut Reveal) -> bool {
+        let id = reveal.id.as_str();
         let tree = Rc::clone(self.tree.tree());
         let mut around = Vec::new();
         if !ancestors(&tree, id, &mut around) {
@@ -311,7 +319,15 @@ impl RootView {
             if let Some(list) = self.lists.get_mut(view) {
                 match shown {
                     Some(bounds) => {
-                        let by = across(bounds, list.state.viewport_bounds()).1;
+                        let viewport = list.state.viewport_bounds();
+                        // A row brought in by index was placed by the
+                        // heights the list had for the rows around it,
+                        // which were estimates where it had laid none out:
+                        // now that they are, it goes to the edge it came by.
+                        let by = match reveal.came.take() {
+                            Some(from_above) => edge(bounds, viewport, from_above),
+                            None => across(bounds, viewport).1,
+                        };
                         if by != 0.0 {
                             list.state.scroll_by(px(by));
                             shown = Some(shifted(bounds, 0.0, by));
@@ -323,6 +339,7 @@ impl RootView {
                     None => {
                         list.estimate();
                         if let Some(row) = list.row_of(id) {
+                            reveal.came = Some(row <= list.state.logical_scroll_top().item_ix);
                             list.state.scroll_to_reveal_item(row);
                             moved = true;
                         }
@@ -374,6 +391,23 @@ fn across(bounds: Bounds<Pixels>, viewport: Bounds<Pixels>) -> (f32, f32) {
             viewport.bottom(),
         ),
     )
+}
+
+/// How far a list showing `viewport` scrolls down to put `bounds` at its
+/// top edge (a row that came from above) or its bottom one; a row longer
+/// than the list shows its start.
+fn edge(bounds: Bounds<Pixels>, viewport: Bounds<Pixels>, from_above: bool) -> f32 {
+    let to_top = f32::from(bounds.top() - viewport.top());
+    let by = if from_above {
+        to_top
+    } else {
+        f32::from(bounds.bottom() - viewport.bottom()).min(to_top)
+    };
+    if by.abs() < 0.5 {
+        0.0
+    } else {
+        by
+    }
 }
 
 /// `bounds` once what it is in has scrolled `right` and `down`.
