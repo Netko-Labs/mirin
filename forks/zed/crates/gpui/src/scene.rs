@@ -68,6 +68,9 @@ pub struct Scene {
     /// mirin: the content mask the window is drawing under, as given
     /// (`MaskNode`): every operation keeps it, for the mask map.
     pub(crate) mask_id: MaskId,
+    /// mirin: which primitives of a drawing being copied as one show
+    /// (`replay_as_one`), kept between copies for its room.
+    replay_shown: Vec<bool>,
 }
 
 /// mirin: what a retained subtree being drawn anew put in the scene: every
@@ -538,8 +541,8 @@ impl Scene {
     /// first primitives share the order under them where each of them could
     /// (`share`), a later primitive may share its last order where it could
     /// share with each of the last (`top`), and its primitives go into their
-    /// lists in the sequence they went in when it was drawn: those in a
-    /// layer when the outermost layer around them closes, layer by layer
+    /// lists in the sequence they went in when it was drawn: those of a
+    /// layer inside another when the outermost closes, layer by layer
     /// (`insert_layer`).
     fn replay_as_one(
         &mut self,
@@ -561,6 +564,9 @@ impl Scene {
             top: PrimitiveKind,
         }
         let mut unit: Option<Unit> = None;
+        // Which of its primitives show, in sequence, for the second pass.
+        let mut shown = std::mem::take(&mut self.replay_shown);
+        shown.clear();
         // mirin: where it was, each shows as it did.
         let moved = placing.by.is_some();
         for operation in operations {
@@ -573,6 +579,7 @@ impl Scene {
             if let Primitive::MonochromeSprite(sprite) = primitive
                 && prev_scene.animation(sprite).is_some()
             {
+                self.replay_shown = shown;
                 return false;
             }
             let was = primitive.clipped_bounds();
@@ -582,37 +589,39 @@ impl Scene {
                 was
             };
             if was.is_empty() != now.is_empty() {
+                self.replay_shown = shown;
                 return false;
             }
+            shown.push(!now.is_empty());
             if now.is_empty() {
                 continue;
             }
             let (order, kind) = (primitive.order(), primitive.kind());
             let share = kind.max_shared_kind();
-            unit = Some(match unit {
-                Some(unit) => Unit {
-                    bounds: unit.bounds.union(&now),
-                    first: unit.first.min(order),
-                    last: unit.last.max(order),
-                    share: match order.cmp(&unit.first) {
-                        Ordering::Less => share,
-                        Ordering::Equal => unit.share.min(share),
-                        Ordering::Greater => unit.share,
-                    },
-                    top: match order.cmp(&unit.last) {
-                        Ordering::Greater => kind,
-                        Ordering::Equal => unit.top.max(kind),
-                        Ordering::Less => unit.top,
-                    },
-                },
-                None => Unit {
-                    bounds: now,
-                    first: order,
-                    last: order,
-                    share,
-                    top: kind,
-                },
-            });
+            match &mut unit {
+                Some(unit) => {
+                    unit.bounds = unit.bounds.union(&now);
+                    match order.cmp(&unit.first) {
+                        Ordering::Less => (unit.first, unit.share) = (order, share),
+                        Ordering::Equal => unit.share = unit.share.min(share),
+                        Ordering::Greater => {}
+                    }
+                    match order.cmp(&unit.last) {
+                        Ordering::Greater => (unit.last, unit.top) = (order, kind),
+                        Ordering::Equal => unit.top = unit.top.max(kind),
+                        Ordering::Less => {}
+                    }
+                }
+                None => {
+                    unit = Some(Unit {
+                        bounds: now,
+                        first: order,
+                        last: order,
+                        share,
+                        top: kind,
+                    })
+                }
+            }
         }
         let rebase = unit.map(|unit| {
             let base = self.primitive_bounds.insert_spanning(
@@ -629,12 +638,18 @@ impl Scene {
         // placing it and handing it on made four or five (a copied frame's
         // largest single cost on the stress app).
         self.paint_operations.reserve(operations.len());
-        // The layers open in the drawing, each by the number it was opened
-        // as, and what shows in them, to go into its list when the outermost
-        // closes: the number of its layer, and its operation here.
+        // How deep in the drawing's layers the copy is, the number of the
+        // layer it is in (as they open), and what shows in a layer inside
+        // another, to go into its list when the outermost closes: the
+        // number of its layer, and its operation here. What an outermost
+        // layer draws goes into its list at once: upstream puts it there
+        // before what the layers inside it draw, whichever was painted
+        // first, and after everything painted before the layer opened.
+        let mut depth = 0u32;
+        let mut opened = 0u32;
         let mut open: SmallVec<[u32; 4]> = SmallVec::new();
-        let mut opened = 0;
-        let mut in_layers: Vec<(u32, usize)> = Vec::new();
+        let mut nested: Vec<(u32, usize)> = Vec::new();
+        let mut shows = shown.iter().copied();
         for operation in operations {
             match operation {
                 PaintOperation::Primitive(..) | PaintOperation::Strip(..) => {
@@ -652,37 +667,53 @@ impl Scene {
                     if let Some(reach) = self.reach.as_mut().filter(|_| !placing.absorbed) {
                         reach.take_in(primitive, strip, false);
                     }
-                    let shows = !primitive.clipped_bounds().is_empty();
                     // Hidden as it was: kept, unshown.
+                    let shows = shows.next().unwrap_or(false);
                     let Some((base, first)) = rebase.filter(|_| shows) else {
                         continue;
                     };
-                    let order = base + (primitive.order() - first);
-                    primitive.set_order(order);
-                    match open.last() {
-                        Some(layer) => in_layers.push((*layer, index)),
-                        None => self.push_primitive(index),
+                    primitive.set_order(base + (primitive.order() - first));
+                    if depth > 1 {
+                        nested.push((open.last().copied().unwrap_or(0), index));
+                        continue;
+                    }
+                    match primitive {
+                        Primitive::Shadow(shadow) => self.shadows.push(*shadow),
+                        Primitive::Quad(quad) => self.quads.push(*quad),
+                        Primitive::Path(path) => self.paths.push(path.clone()),
+                        Primitive::Underline(underline) => self.underlines.push(*underline),
+                        Primitive::MonochromeSprite(sprite) => {
+                            self.monochrome_sprites.push(*sprite)
+                        }
+                        Primitive::SubpixelSprite(sprite) => self.subpixel_sprites.push(*sprite),
+                        Primitive::PolychromeSprite(sprite) => {
+                            self.polychrome_sprites.push(*sprite)
+                        }
+                        Primitive::Surface(surface) => self.surfaces.push(surface.clone()),
                     }
                 }
                 PaintOperation::StartLayer => {
                     // Its primitives carry its order already.
+                    depth += 1;
                     open.push(opened);
                     opened += 1;
                     self.paint_operations.push(PaintOperation::StartLayer);
                 }
                 PaintOperation::EndLayer => {
+                    depth = depth.saturating_sub(1);
                     open.pop();
                     self.paint_operations.push(PaintOperation::EndLayer);
-                    if open.is_empty() && !in_layers.is_empty() {
+                    if depth == 0 && !nested.is_empty() {
                         // Stable: a layer's primitives stay in sequence.
-                        in_layers.sort_by_key(|(layer, _)| *layer);
-                        for (_, index) in in_layers.drain(..) {
+                        nested.sort_by_key(|(layer, _)| *layer);
+                        for (_, index) in nested.drain(..) {
                             self.push_primitive(index);
                         }
                     }
                 }
             }
         }
+        self.replay_shown = shown;
         true
     }
 
