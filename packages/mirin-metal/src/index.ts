@@ -19,6 +19,7 @@ export type {
   DropInfo,
   GridPlacement,
   GridTrack,
+  ImageErrorInfo,
   ImageProps,
   KeyDownInfo,
   LayoutNode,

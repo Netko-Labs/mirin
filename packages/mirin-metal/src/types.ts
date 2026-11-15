@@ -639,9 +639,29 @@ export interface SvgProps {
   opacity?: number;
 }
 
+/** Why an image could not be drawn (React Native's image error, without the `nativeEvent` around it). */
+export interface ImageErrorInfo {
+  /** "no such file", "not a file", "the file cannot be read", or "not an image the host can decode". */
+  error: string;
+}
+
 export interface ImageProps {
-  /** Absolute path to a local image file. */
+  /**
+   * Absolute path to a local image file: PNG, JPEG, GIF, WebP, BMP, ICO, or
+   * an SVG document (drawn at its own size and scaled as a picture, so one
+   * shown larger than it says is soft; `<Svg>` draws markup sharp). Any other
+   * format (AVIF, HEIC, TIFF) is drawn as nothing: see `onError`.
+   */
   source: string;
+  /**
+   * The file could not be drawn: it is not there, or not an image the host
+   * decodes, whatever its name says. Called once for each `source` that
+   * fails, after the host has tried to load it; the image is drawn as
+   * nothing, so the app shows what it has instead (another file, a glyph).
+   * Needs a host whose `protocol` event says `imageError`; an older one is
+   * not told of the handler, and never calls it.
+   */
+  onError?: (event: ImageErrorInfo) => void;
   resizeMode?: "cover" | "contain";
   style?: {
     width?: number;
@@ -703,9 +723,10 @@ export type NativeEvent =
    * than patches never sends it, and gets the whole tree every commit.
    * `settle` is true from a host that takes the `settle` simulation, and
    * `rebase` from one that takes a field's `baseHash` (the text its `value`
-   * was set over) and carries what was typed meanwhile onto the value, and
+   * was set over) and carries what was typed meanwhile onto the value,
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
-   * takes `scrollTo` and `scrollIntoView` (`ViewHandle`).
+   * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), and `imageError`
+   * from one that says when an image cannot be drawn (`onError`).
    */
   | {
       type: "protocol";
@@ -714,6 +735,7 @@ export type NativeEvent =
       settle?: boolean;
       rebase?: boolean;
       scroll?: boolean;
+      imageError?: boolean;
     }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),
@@ -738,6 +760,8 @@ export type NativeEvent =
       width: number;
       height: number;
     }
+  /** An image with `onError` could not be drawn: why. */
+  | { type: "imageerror"; nodeId: string; error: string }
   | ({ type: "drop"; nodeId: string } & DropInfo)
   | { type: "resize"; nodeId: string; bounds: Bounds }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] }

@@ -96,6 +96,8 @@ pub enum EventKind {
     Wheel { dx: f32, dy: f32 },
     /// A scroll view with `onScroll` stands somewhere else (`scroll.rs`).
     Scroll(ScrollPosition),
+    /// An `image` with `onError` could not be drawn: why, in a few words.
+    ImageError { reason: String },
     /// A `view` with `onLayout` was painted with new bounds (in `bounds`).
     Resize,
     /// Files dragged over a `view` with `onDrop` (enter, over, leave), or
@@ -228,6 +230,7 @@ impl EventKind {
             EventKind::Typing { .. } => "typing",
             EventKind::Wheel { .. } => "wheel",
             EventKind::Scroll(_) => "scroll",
+            EventKind::ImageError { .. } => "imageerror",
             EventKind::Resize => "resize",
             EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
@@ -262,6 +265,7 @@ impl EventKind {
             EventKind::Change { value, .. }
             | EventKind::Submit { value }
             | EventKind::Key { value }
+            | EventKind::ImageError { reason: value }
             | EventKind::Resync { reason: value } => Some(value),
         }
     }
@@ -375,6 +379,15 @@ impl EventSender {
 
     pub(crate) fn scroll(&self, node_id: &str, position: ScrollPosition) {
         self.send(node_id, EventKind::Scroll(position));
+    }
+
+    pub(crate) fn image_error(&self, node_id: &str, reason: &str) {
+        self.send(
+            node_id,
+            EventKind::ImageError {
+                reason: reason.to_string(),
+            },
+        );
     }
 
     pub(crate) fn hover(&self, node_id: &str, hovered: bool) {

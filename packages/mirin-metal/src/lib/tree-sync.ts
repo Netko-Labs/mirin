@@ -32,6 +32,8 @@ export interface HostSays {
   rebase?: boolean;
   /** It reports scroll offsets (`onScroll`) and takes `scrollTo` and `scrollIntoView`. */
   scroll?: boolean;
+  /** It says when an image cannot be drawn (`onError`). */
+  imageError?: boolean;
 }
 
 export class TreeSync {
@@ -44,6 +46,8 @@ export class TreeSync {
   private scrolls = false;
   /** Scroll commands asked for while the first tree is held: they go after it. */
   private held: string[] = [];
+  /** The host tells of images it cannot draw (its `protocol` line says `imageError`). */
+  private imageErrors = false;
   /** The next send is the whole tree (the first, after a resync, a new root). */
   private wholeNext = true;
   private root: HostInstance | null = null;
@@ -70,15 +74,21 @@ export class TreeSync {
    * now, patches after. What else its `protocol` line says (`says`) decides
    * what it is told: one that says `rebase`, which text each field's value
    * was set over, from the next value set; one that says `scroll`, which
-   * views listen to their offset, and it takes scroll commands.
+   * views listen to their offset, and it takes scroll commands; one that
+   * says `imageError`, which images listen for their failure.
    */
   hostPatches(version: number, says: HostSays = {}): void {
     const waited = this.waiting;
     this.waiting = false;
     this.stamps = says.rebase === true;
-    if (this.scrolls !== (says.scroll === true)) {
-      this.scrolls = says.scroll === true;
-      // Heads written for a host that was not told of `onScroll` are not this one's.
+    const scrolls = says.scroll === true;
+    const imageErrors = says.imageError === true;
+    if (this.scrolls !== scrolls || this.imageErrors !== imageErrors) {
+      this.scrolls = scrolls;
+      this.imageErrors = imageErrors;
+      // Heads written for a host that was not told of `onScroll` are not
+      // this one's, and a tree already sent said nothing of either handler:
+      // it goes again when nothing below sends it.
       const root = rootOf(this.container);
       if (root) forgetHeads(root);
       if (!waited && (version !== PATCH_PROTOCOL || this.patching)) this.resync();
@@ -198,7 +208,12 @@ export class TreeSync {
     const wire =
       fields && kept && kept.head !== undefined && kept.headProps === kept.props
         ? kept.head
-        : headJson(node, parent, { ids: this.patching, root, scrolls: this.scrolls });
+        : headJson(node, parent, {
+            ids: this.patching,
+            root,
+            scrolls: this.scrolls,
+            imageErrors: this.imageErrors,
+          });
     if (fields) {
       if (kept) {
         kept.head = wire;
@@ -353,6 +368,7 @@ export class TreeSync {
       ids: true,
       root: node === this.root,
       scrolls: this.scrolls,
+      imageErrors: this.imageErrors,
     });
     if (wire === node.wire) return;
     node.wire = wire;
@@ -363,7 +379,12 @@ export class TreeSync {
   private freshJson(node: HostNode, parent: HostInstance, fresh: Set<HostNode>): string {
     fresh.add(node);
     if (node.kind === "input") this.followField(node);
-    const wire = headJson(node, parent, { ids: true, root: false, scrolls: this.scrolls });
+    const wire = headJson(node, parent, {
+      ids: true,
+      root: false,
+      scrolls: this.scrolls,
+      imageErrors: this.imageErrors,
+    });
     node.wire = wire;
     this.nodes.set(node.key, node);
     if (node.kind !== "view") return wire;

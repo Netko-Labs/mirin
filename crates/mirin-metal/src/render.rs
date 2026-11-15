@@ -49,7 +49,7 @@ pub(crate) fn render_node(
         NodeSpec::Text { props, children } => render_text(props, children),
         NodeSpec::Input { props } => render_input(props, view, window, cx),
         NodeSpec::Svg { props } => render_svg(props),
-        NodeSpec::Image { props } => render_image(props),
+        NodeSpec::Image { props } => render_image(props, view),
     }
 }
 

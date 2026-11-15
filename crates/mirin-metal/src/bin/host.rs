@@ -12,8 +12,8 @@ use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
     HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface, TitleBar,
-    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER,
-    SCROLL_MARKER, SETTLE_MARKER,
+    IMAGE_ERROR_MARKER, OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, REBASE_MARKER,
+    RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -574,6 +574,9 @@ fn main() {
     mirin_metal::trace::log(format_args!(
         "{SCROLL_MARKER}: a scroll view's offset, read and written"
     ));
+    mirin_metal::trace::log(format_args!(
+        "{IMAGE_ERROR_MARKER}: an image that cannot be drawn tells the driver"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
@@ -586,6 +589,8 @@ fn main() {
         // This host reports a scroll view's offset (`onScroll`) and takes
         // `scrollTo` and `scrollIntoView` lines (`scroll.rs`).
         "scroll": true,
+        // This host tells the driver of an image it cannot draw (`onError`).
+        "imageError": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and

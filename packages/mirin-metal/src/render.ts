@@ -176,6 +176,11 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
           layoutMeasurement: { width: event.width, height: event.height },
         });
         break;
+      case "imageerror": {
+        const node = sync.instance(event.nodeId);
+        if (node?.kind === "image") node.props.onError?.({ error: event.error });
+        break;
+      }
       case "drop": {
         const { nodeId: _id, type: _type, ...info } = event;
         view(event.nodeId)?.onDrop?.(info);
@@ -189,6 +194,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         sync.hostPatches(event.patches, {
           rebase: event.rebase === true,
           scroll: event.scroll === true,
+          imageError: event.imageError === true,
         });
         break;
       case "resync":

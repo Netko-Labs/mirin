@@ -59,6 +59,7 @@ pub use check::SETTLE_MARKER;
 pub use drive::{run, run_deferred, HostMessage, OPEN_MIN_SIZE_MARKER, RESIDENT_MARKER};
 pub use events::{EventKind, Modifiers, NativeUiEvent, PointerPhase};
 pub use focus::FOCUS_MARKER;
+pub use media::IMAGE_ERROR_MARKER;
 pub use patch::{parse_patch, PatchOp, PATCH_MARKER, PATCH_PROTOCOL};
 pub use scroll::{ScrollCommand, ScrollPosition, SCROLL_MARKER};
 pub use sim::{LayoutNode, SimCommand};
