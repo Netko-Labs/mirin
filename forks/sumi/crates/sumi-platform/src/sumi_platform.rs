@@ -3,9 +3,6 @@
 
 pub use sumi::Platform;
 
-#[cfg(target_family = "wasm")]
-pub use sumi_web::WebBackendPreference;
-
 use std::rc::Rc;
 
 /// Returns a background executor for the current platform.
@@ -34,34 +31,9 @@ pub fn linux(allowed_modes: sumi::WindowingModes) -> sumi::Application {
     sumi::Application::with_platform(sumi_linux::linux_platform(allowed_modes))
 }
 
-#[cfg(target_family = "wasm")]
-pub fn application_with_web_backend(backend_preference: WebBackendPreference) -> sumi::Application {
-    let platform = Rc::new(sumi_web::WebPlatform::new_with_backend(
-        true,
-        backend_preference,
-    ));
-    sumi::Application::with_platform(platform)
-}
-
-/// Unlike `application`, this function returns a single-threaded web application.
-#[cfg(target_family = "wasm")]
-pub fn single_threaded_web() -> sumi::Application {
-    let platform = Rc::new(sumi_web::WebPlatform::new(false));
-    sumi::Application::with_platform(platform)
-}
-
-/// Initializes panic hooks and logging for the web platform.
-/// Call this before running the application in a wasm_bindgen entrypoint.
-#[cfg(target_family = "wasm")]
-pub fn web_init() {
-    console_error_panic_hook::set_once();
-    sumi_web::init_logging();
-}
-
 /// Returns the default [`Platform`] for the current OS.
 pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     cfg_select! {
-        target_os = "ios" => sumi_ios::current_platform(headless),
         target_os = "macos" => Rc::new(sumi_macos::MacPlatform::new(headless)),
         target_os = "windows" => Rc::new(
             sumi_windows::WindowsPlatform::new(headless)
@@ -71,34 +43,11 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
             any(target_os = "linux", target_os = "freebsd"),
             not(target_env = "ohos")
         ) => sumi_linux::current_platform(headless),
-        target_family = "wasm" => {
-            let _ = headless;
-            Rc::new(sumi_web::WebPlatform::new_with_backend(
-                true,
-                sumi_web::WebBackendPreference::Auto,
-            ))
-        },
     }
-}
-
-/// Returns the current platform's text system for benchmark contexts, built once per
-/// thread and shared by every context on it.
-///
-/// `#[sumi::bench]` creates a context for every Criterion routine call. Building a whole
-/// platform each time only to take its text system leaks the platform's threads on Linux
-/// (a 20-worker dispatcher and a timer thread per call), which slows every later
-/// benchmark in the process.
-#[cfg(feature = "bench-support")]
-pub fn bench_text_system() -> std::sync::Arc<dyn sumi::PlatformTextSystem> {
-    thread_local! {
-        static TEXT_SYSTEM: std::sync::Arc<dyn sumi::PlatformTextSystem> =
-            current_platform(true).text_system();
-    }
-    TEXT_SYSTEM.with(|text_system| text_system.clone())
 }
 
 /// Returns a new [`HeadlessRenderer`] for the current platform, if available.
-#[cfg(any(feature = "bench-support", feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub fn current_headless_renderer() -> anyhow::Result<Option<Box<dyn sumi::PlatformHeadlessRenderer>>>
 {
     #[cfg(target_os = "macos")]

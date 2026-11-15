@@ -5,7 +5,7 @@ use sumi::{
     AtlasTextureId, Bounds, ContentMask, DevicePixels, PaintSurface, PaintedPath, PrimitiveBatch,
     ScaledPixels, Scene, Size, quad_depth, quad_depth_scale, size,
 };
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use objc2_core_foundation::{CFRetained, CGSize};
@@ -27,7 +27,7 @@ use objc2_metal::{
     MTLResourceOptions, MTLStorageMode, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
     MTLTextureUsage, MTLViewport,
 };
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(any(test, feature = "test-support"))]
 use objc2_metal::{MTLBlitCommandEncoder, MTLOrigin, MTLRegion, MTLSize};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use parking_lot::Mutex;
@@ -146,7 +146,7 @@ pub struct MetalRenderer {
     core_video_texture_cache: CFRetained<CVMetalTextureCache>,
     /// Offscreen render target reused across `render_scene` calls when
     /// rendering headlessly without reading pixels back.
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     headless_render_target: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
 }
 
@@ -218,7 +218,7 @@ impl MetalRenderer {
     ///
     /// This renderer can render scenes to images without requiring a CAMetalLayer,
     /// window, or AppKit. Use `render_scene_to_image()` to render scenes.
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new_headless(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Result<Self> {
         let device = Self::create_device()?;
         Self::new_internal(device, None, true, instance_buffer_pool)
@@ -401,7 +401,7 @@ impl MetalRenderer {
             instance_buffer_pool,
             sprite_atlas,
             core_video_texture_cache,
-            #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+            #[cfg(any(test, feature = "test-support"))]
             headless_render_target: None,
         })
     }
@@ -623,7 +623,7 @@ impl MetalRenderer {
     ///
     /// This is the primary method for headless rendering. It creates an offscreen
     /// texture, renders the scene to it, and returns the pixel data as an RGBA image.
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn render_scene_to_image(
         &mut self,
         scene: &Scene,
@@ -640,7 +640,7 @@ impl MetalRenderer {
 
     /// Renders a scene into a new offscreen texture of `size` and reads it
     /// back, without presenting anything.
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             anyhow::bail!("Invalid size for render_offscreen: {:?}", size);
@@ -693,7 +693,7 @@ impl MetalRenderer {
     /// encoding, instance buffer writes, command submission) and is used by
     /// headless benchmark rendering, where the produced pixels are never
     /// inspected.
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()> {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             anyhow::bail!("Invalid size for render_scene: {:?}", size);
@@ -1324,7 +1324,7 @@ fn new_command_encoder_for_texture(
     Ok(command_encoder)
 }
 
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(any(test, feature = "test-support"))]
 fn read_texture_to_image(texture: &ProtocolObject<dyn MTLTexture>) -> Result<RgbaImage> {
     let width = texture.width() as u32;
     let height = texture.height() as u32;
@@ -1636,12 +1636,12 @@ pub struct SurfaceBounds {
     pub content_mask: ContentMask<ScaledPixels>,
 }
 
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub struct MetalHeadlessRenderer {
     renderer: MetalRenderer,
 }
 
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(any(test, feature = "test-support"))]
 impl MetalHeadlessRenderer {
     pub fn new() -> Result<Self> {
         let instance_buffer_pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
@@ -1650,7 +1650,7 @@ impl MetalHeadlessRenderer {
     }
 }
 
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(any(test, feature = "test-support"))]
 impl sumi::PlatformHeadlessRenderer for MetalHeadlessRenderer {
     fn render_scene_to_image(
         &mut self,

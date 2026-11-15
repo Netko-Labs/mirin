@@ -7,7 +7,6 @@ use scheduler::{
     Clock, LocalExecutor, Priority, Scheduler, SessionId, Task, TestScheduler, Timer,
     spawn_dedicated_thread,
 };
-#[cfg(not(target_family = "wasm"))]
 use std::task::{Context, Poll};
 use std::{
     any::Any,
@@ -66,7 +65,6 @@ impl PlatformScheduler {
 }
 
 impl Scheduler for PlatformScheduler {
-    #[cfg(not(target_family = "wasm"))]
     fn block(
         &self,
         _session_id: Option<SessionId>,
@@ -189,7 +187,7 @@ impl Clock for PlatformClock {
     }
 }
 
-#[cfg(all(test, not(target_family = "wasm")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::RunnableVariant;

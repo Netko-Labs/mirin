@@ -71,9 +71,8 @@ impl VisualTestAppContext {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-        let http_client = http_client::FakeHttpClient::with_404_response();
 
-        let app = App::new_app(platform.clone(), asset_source, http_client);
+        let app = App::new_app(platform.clone(), asset_source);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -357,7 +356,7 @@ impl VisualTestAppContext {
         predicate: impl Fn(&T) -> bool,
         timeout: Duration,
     ) -> Result<()> {
-        let start = web_time::Instant::now();
+        let start = std::time::Instant::now();
         loop {
             {
                 let app = self.app.borrow();

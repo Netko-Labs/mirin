@@ -8,7 +8,7 @@ use collections::HashMap;
 use core::str;
 use sumi::{Capslock, GraphicalEnvironment};
 use sumi_util::ResultExt as _;
-use http_client::Url;
+use url::Url;
 use log::Level;
 use smallvec::SmallVec;
 use std::{

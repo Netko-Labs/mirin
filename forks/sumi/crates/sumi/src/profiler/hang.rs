@@ -15,11 +15,8 @@ use std::time::Duration;
 use scheduler::Instant;
 use serde::Serialize;
 
-#[cfg(not(target_family = "wasm"))]
 mod monitor;
-#[cfg(not(target_family = "wasm"))]
 pub(crate) use monitor::HangMonitor;
-#[cfg(not(target_family = "wasm"))]
 pub use monitor::{HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason};
 
 /// Version of the power/visibility-aware measurement rules.

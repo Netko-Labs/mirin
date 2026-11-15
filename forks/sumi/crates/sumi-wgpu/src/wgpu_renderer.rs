@@ -8,7 +8,6 @@ use sumi::{
     Scene, Size, get_gamma_correction_ratios, quad_depth, quad_depth_scale,
 };
 use log::warn;
-#[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use smallvec::SmallVec;
 use std::cell::RefCell;
@@ -237,10 +236,7 @@ struct WgpuRendererCore {
     /// the window draws with a depth buffer yet (`DEPTH_BUFFER_QUADS`).
     pipeline_key: PipelineKey,
     /// Read by the headless renderer to create its render target.
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
+    #[cfg(any(test, feature = "test-support"))]
     target_format: wgpu::TextureFormat,
     max_texture_size: u32,
 }
@@ -306,7 +302,6 @@ impl WgpuRenderer {
     /// # Safety
     /// The caller must ensure that the window handle remains valid for the lifetime
     /// of the returned renderer.
-    #[cfg(not(target_family = "wasm"))]
     pub fn new<W>(
         gpu_context: GpuContext,
         window: &W,
@@ -357,30 +352,6 @@ impl WgpuRenderer {
             compositor_gpu,
             atlas,
         )
-    }
-
-    #[cfg(target_family = "wasm")]
-    pub fn new_from_canvas(
-        context: &WgpuContext,
-        canvas: &web_sys::HtmlCanvasElement,
-        config: WgpuSurfaceConfig,
-    ) -> anyhow::Result<Self> {
-        let surface = context
-            .instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?;
-        Self::new_from_surface(context, surface, config)
-    }
-
-    #[cfg(target_family = "wasm")]
-    #[allow(clippy::arc_with_non_send_sync)]
-    pub fn new_from_surface(
-        context: &WgpuContext,
-        surface: wgpu::Surface<'static>,
-        config: WgpuSurfaceConfig,
-    ) -> anyhow::Result<Self> {
-        let atlas = Arc::new(WgpuAtlas::from_context(context));
-        Self::new_internal(None, context, surface, config, false, None, atlas)
     }
 
     /// Returns the surface configuration for `config`, along with the transparent and
@@ -812,16 +783,6 @@ impl WgpuRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) -> bool {
-        #[cfg(target_family = "wasm")]
-        if self.device_lost() {
-            if matches!(self.state, RendererState::Ready { .. }) {
-                log::error!(
-                    "Browser graphics context was lost; rendering has stopped. Reload the page to recover."
-                );
-                self.unconfigure_surface();
-            }
-            return false;
-        }
 
         // Bail out early if the surface has been unconfigured (e.g. during
         // Android background/rotation transitions).  Attempting to acquire
@@ -1023,10 +984,7 @@ impl WgpuRendererCore {
             adapter_info: context.adapter.get_info(),
             depth_texture: None,
             pipeline_key,
-            #[cfg(all(
-                not(target_family = "wasm"),
-                any(test, feature = "bench-support", feature = "test-support")
-            ))]
+            #[cfg(any(test, feature = "test-support"))]
             target_format,
             max_texture_size,
         }
@@ -1843,7 +1801,6 @@ impl WgpuRenderer {
     /// create the adapter and device (i.e. from the [`WgpuContext`]).  Using a
     /// different instance will cause a "Device does not exist" panic because
     /// the wgpu device is bound to its originating instance.
-    #[cfg(not(target_family = "wasm"))]
     pub fn replace_surface<W: HasWindowHandle>(
         &mut self,
         window: &W,
@@ -1919,7 +1876,6 @@ impl WgpuRenderer {
     /// This method coordinates recovery across multiple windows:
     /// - The first window to call this will recreate the shared context
     /// - Subsequent windows will adopt the already-recovered context
-    #[cfg(not(target_family = "wasm"))]
     pub fn recover<W>(&mut self, window: &W) -> anyhow::Result<()>
     where
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
@@ -1997,19 +1953,13 @@ impl WgpuRenderer {
     }
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(any(test, feature = "test-support"))]
 struct HeadlessRenderTarget {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(any(test, feature = "test-support"))]
 impl HeadlessRenderTarget {
     fn size(&self) -> Size<DevicePixels> {
         Size {
@@ -2019,10 +1969,7 @@ impl HeadlessRenderTarget {
     }
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(any(test, feature = "test-support"))]
 pub struct WgpuHeadlessRenderer {
     context: WgpuContext,
     core: WgpuRendererCore,
@@ -2030,10 +1977,7 @@ pub struct WgpuHeadlessRenderer {
     observed_error_generation: u64,
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(any(test, feature = "test-support"))]
 impl WgpuHeadlessRenderer {
     pub fn new() -> anyhow::Result<Self> {
         let (context, target_format) = WgpuContext::new_headless()?;
@@ -2239,10 +2183,7 @@ impl WgpuHeadlessRenderer {
     }
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(any(test, feature = "test-support"))]
 impl sumi::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
     fn render_scene_to_image(
         &mut self,
@@ -2266,7 +2207,6 @@ fn instance_range(range: Range<usize>) -> Range<u32> {
     range.start as u32..range.end as u32
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn create_surface(
     instance: &wgpu::Instance,
     raw_window_handle: raw_window_handle::RawWindowHandle,
@@ -2277,7 +2217,6 @@ fn create_surface(
 
 /// mirin: `create_surface` on an instance made without a display (a prepared
 /// one, `wgpu_prepare.rs`), which takes the window's.
-#[cfg(not(target_family = "wasm"))]
 fn create_surface_with_display(
     instance: &wgpu::Instance,
     raw_display_handle: Option<raw_window_handle::RawDisplayHandle>,
@@ -2296,7 +2235,6 @@ fn create_surface_with_display(
 /// mirin: the GPU context and the window's surface, on Vulkan alone when it
 /// has an adapter that draws to the window, else on Vulkan and GL as
 /// upstream asks (`WgpuContext::vulkan_instance` says why).
-#[cfg(not(target_family = "wasm"))]
 fn create_context_vulkan_first<W>(
     window: &W,
     raw_window_handle: raw_window_handle::RawWindowHandle,

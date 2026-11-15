@@ -20,19 +20,13 @@ workspace = true
 [features]
 default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
-    "bench_metrics?/test-support",
     "collections/test-support",
-    "http_client/test-support",
     "wayland",
     "x11",
     "proptest",
     "dep:futures-concurrency",
     "dep:postage",
-    "dep:web-time",
 ]
-bench-support = ["profiler", "dep:criterion", "dep:bench_metrics"]
-# Preserve the published feature name while consumers migrate to `bench-support`.
-bench = ["bench-support"]
 inspector = ["sumi-macros/inspector"]
 # Tracks every entity handle so tests can assert nothing leaked. Also enabled
 # by setting `GPUI_LEAK_DETECTION` when building; see `build.rs`.
@@ -67,15 +61,12 @@ backtrace.workspace = true
 bitflags.workspace = true
 
 collections.workspace = true
-bench_metrics = { workspace = true, optional = true }
-criterion = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["add", "add_assign", "mul", "mul_assign", "not"] }
 etagere.workspace = true
 futures.workspace = true
 futures-concurrency = { workspace = true, optional = true }
 sumi-macros.workspace = true
 sumi-shared-string.workspace = true
-http_client.workspace = true
 icu_segmenter.workspace = true
 image.workspace = true
 inventory.workspace = true
@@ -125,36 +116,20 @@ spin.workspace = true
 tiny-skia-path = "0.11"
 url.workspace = true
 uuid = { workspace = true, features = ["v4"] }
-web-time = { workspace = true, optional = true }
 heapless.workspace = true
-
-[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-async-channel.workspace = true
-
-[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 async-channel = { workspace = true, features = ["std"] }
-
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true
 
-[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "ios"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
 async-tungstenite = { workspace = true, optional = true }
 dioxus-cli-config = { version = "=0.7.10", optional = true }
 dioxus-devtools-types = { version = "=0.7.10", optional = true }
 smol = { workspace = true, optional = true }
 subsecond = { version = "=0.7.10", optional = true }
 
-[target.'cfg(target_family = "wasm")'.dependencies]
-getrandom = { version = "0.3.4", features = ["wasm_js"] }
-uuid = { workspace = true, features = ["js"] }
-
-
-[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation.workspace = true
 objc2-core-video = { workspace = true, features = ["CVPixelBuffer"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-log.workspace = true
 objc2 = { workspace = true, optional = true }
 objc2-metal = { version = "0.3", optional = true }
 
@@ -179,128 +154,20 @@ collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 futures-concurrency.workspace = true
 postage = { workspace = true, features = ["blocking"] }
-web-time.workspace = true
 sumi-platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 sumi-util.workspace = true
 lyon_extra = "1.1.0"
 rand = { workspace = true, default-features = true }
 scheduler = { workspace = true, features = ["test-support"] }
-util_macros.workspace = true
 
-[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
-http_client = { workspace = true, features = ["test-support"] }
 proptest.workspace = true
-reqwest_client = { workspace = true, features = ["test-support"] }
-
-[target.'cfg(target_family = "wasm")'.dev-dependencies]
-sumi-web.workspace = true
-wasm-bindgen.workspace = true
-web-sys.workspace = true
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }
 
 [package.metadata.cargo-shear]
 ignored = [
-    "getrandom",
     "objc2",
     "objc2-metal",
 ]
-ignored-paths = ["src/_ownership_and_data_flow.rs", "benches/focus_cleanup.rs"]
-
-[[example]]
-name = "hello_world"
-path = "examples/hello_world.rs"
-
-[[example]]
-name = "move_entity_between_windows"
-path = "examples/move_entity_between_windows.rs"
-
-[[example]]
-name = "image"
-path = "examples/image/image.rs"
-
-[[example]]
-name = "input"
-path = "examples/input.rs"
-
-[[example]]
-name = "on_window_close_quit"
-path = "examples/on_window_close_quit.rs"
-
-[[example]]
-name = "window_movable"
-path = "examples/window_movable.rs"
-
-[[example]]
-name = "opacity"
-path = "examples/opacity.rs"
-
-[[example]]
-name = "pattern"
-path = "examples/pattern.rs"
-
-[[example]]
-name = "set_menus"
-path = "examples/set_menus.rs"
-
-[[example]]
-name = "system_notifications"
-path = "examples/system_notifications.rs"
-
-
-[[example]]
-name = "shadow"
-path = "examples/shadow.rs"
-
-[[example]]
-name = "svg"
-path = "examples/svg/svg.rs"
-
-[[example]]
-name = "tab_stop"
-path = "examples/tab_stop.rs"
-
-[[example]]
-name = "text"
-path = "examples/text.rs"
-
-[[example]]
-name = "text_wrapper"
-path = "examples/text_wrapper.rs"
-
-[[example]]
-name = "tree"
-path = "examples/tree.rs"
-
-[[example]]
-name = "uniform_list"
-path = "examples/uniform_list.rs"
-
-[[example]]
-name = "window_shadow"
-path = "examples/window_shadow.rs"
-
-[[example]]
-name = "grid_layout"
-path = "examples/grid_layout.rs"
-
-[[example]]
-name = "list_example"
-path = "examples/list_example.rs"
-
-[[example]]
-name = "mouse_pressure"
-path = "examples/mouse_pressure.rs"
-
-[[example]]
-name = "a11y"
-path = "examples/a11y.rs"
-
-[[example]]
-name = "view_example"
-path = "examples/view_example/view_example_main.rs"
-
-[[example]]
-name = "toggle_headless"
-path = "examples/toggle_headless.rs"
+ignored-paths = ["src/_ownership_and_data_flow.rs"]

@@ -97,7 +97,6 @@ pub trait Scheduler: Send + Sync {
     /// Returns `true` if the future completed, `false` if it timed out.
     /// The future is passed as a pinned mutable reference so the caller
     /// retains ownership and can continue polling or return it on timeout.
-    #[cfg(not(target_family = "wasm"))]
     fn block(
         &self,
         session_id: Option<SessionId>,
@@ -220,21 +219,10 @@ where
 
 fn spawn_dedicated_os_thread(session_id: SessionId, thread_body: impl FnOnce() + Send + 'static) {
     let thread_name = format!("spawn_dedicated session {:?}", session_id);
-    #[cfg(not(target_family = "wasm"))]
     std::thread::Builder::new()
         .name(thread_name)
         .spawn(thread_body)
         .expect("failed to spawn dedicated thread");
-    #[cfg(all(target_family = "wasm", feature = "wasm-threads"))]
-    wasm_thread::Builder::new()
-        .name(thread_name)
-        .spawn(thread_body)
-        .expect("failed to spawn dedicated thread");
-    #[cfg(all(target_family = "wasm", not(feature = "wasm-threads")))]
-    {
-        let _ = (thread_name, thread_body);
-        panic!("spawn_dedicated on wasm requires the scheduler crate's `wasm-threads` feature");
-    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]

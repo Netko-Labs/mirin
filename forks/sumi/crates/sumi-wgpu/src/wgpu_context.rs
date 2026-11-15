@@ -1,8 +1,5 @@
-#[cfg(not(target_family = "wasm"))]
 use crate::{WgpuRenderer, WgpuSurfaceConfig};
-#[cfg(not(target_family = "wasm"))]
 use anyhow::Context as _;
-#[cfg(not(target_family = "wasm"))]
 use sumi_util::ResultExt;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -92,38 +89,6 @@ pub enum WgpuBackend {
     Native(wgpu::Backend),
 }
 
-#[cfg(target_family = "wasm")]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum WebBackendPreference {
-    #[default]
-    Auto,
-    WebGpu,
-    WebGl,
-}
-
-#[cfg(target_family = "wasm")]
-pub struct PreparedWebGraphics {
-    pub context: WgpuContext,
-    pub surface: wgpu::Surface<'static>,
-}
-
-/// wgpu-core refuses to create a surface when neither the instance nor the surface
-/// target carries a display handle, and `SurfaceTarget::Canvas` always passes `None`.
-/// The WebGL2 backend never reads the handle (WebGPU bypasses wgpu-core entirely), so
-/// a unit web display handle on the instance satisfies the check.
-#[cfg(target_family = "wasm")]
-#[derive(Debug)]
-struct WebDisplaySource;
-
-#[cfg(target_family = "wasm")]
-impl raw_window_handle::HasDisplayHandle for WebDisplaySource {
-    fn display_handle(
-        &self,
-    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
-        Ok(raw_window_handle::DisplayHandle::web())
-    }
-}
-
 /// mirin: the size of the first block of GPU memory that small resources
 /// share, and of the largest. Host blocks (what `Queue::write_buffer` and
 /// `write_texture` stage through) are half of each.
@@ -137,7 +102,6 @@ pub struct CompositorGpuHint {
 }
 
 impl WgpuContext {
-    #[cfg(not(target_family = "wasm"))]
     pub fn new(
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
@@ -147,7 +111,6 @@ impl WgpuContext {
         Self::new_with_options(instance, surface, config, compositor_gpu, false)
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub fn new_rejecting_software(
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
@@ -157,7 +120,6 @@ impl WgpuContext {
         Self::new_with_options(instance, surface, config, compositor_gpu, true)
     }
 
-    #[cfg(not(target_family = "wasm"))]
     fn new_with_options(
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
@@ -189,10 +151,7 @@ impl WgpuContext {
         ))
     }
 
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn new_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
         // Creating a device takes tens of milliseconds, and benchmarks create a headless
         // renderer for every window they open, so the process shares one device until it
@@ -211,10 +170,7 @@ impl WgpuContext {
         Ok(created)
     }
 
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
+    #[cfg(any(test, feature = "test-support"))]
     fn create_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
         let instance = Self::instance(None);
         let device_id_filter = Self::device_id_filter();
@@ -235,14 +191,6 @@ impl WgpuContext {
 
                     match Self::create_device(&adapter).await {
                         Ok((device, queue, dual_source_blending, color_texture_format)) => {
-                            #[cfg(feature = "bench-support")]
-                            if adapter_info.device_type == wgpu::DeviceType::Cpu {
-                                log::error!(
-                                    "Headless renderer selected software adapter {:?}; \
-                                     benchmark results measure CPU software rendering, not hardware GPU rendering",
-                                    adapter_info.name
-                                );
-                            }
                             return Ok((
                                 adapter,
                                 device,
@@ -277,10 +225,7 @@ impl WgpuContext {
         ))
     }
 
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
+    #[cfg(any(test, feature = "test-support"))]
     /// Both candidates are 8-bit RGBA-ordered or BGRA-ordered formats: headless readback
     /// copies rows as 4 bytes per pixel and only swizzles, so no other formats may be added
     /// here without updating it.
@@ -300,7 +245,6 @@ impl WgpuContext {
         })
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn from_native_adapter_and_device(
         instance: wgpu::Instance,
         adapter: wgpu::Adapter,
@@ -331,7 +275,6 @@ impl WgpuContext {
         }
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn device_id_filter() -> Option<u32> {
         match std::env::var("ZED_DEVICE_ID") {
             Ok(value) => parse_pci_id(&value)
@@ -348,100 +291,7 @@ impl WgpuContext {
     }
 
     pub fn supports_transient_attachments(&self) -> bool {
-        #[cfg(target_family = "wasm")]
-        if self.backend == WgpuBackend::BrowserWebGpu {
-            // wgpu passes usage bits straight to the browser without knowing
-            // whether it recognizes this one.
-            return js_sys::Reflect::get(&js_sys::global(), &"GPUTextureUsage".into())
-                .and_then(|usage| js_sys::Reflect::has(&usage, &"TRANSIENT_ATTACHMENT".into()))
-                .unwrap_or(false);
-        }
         true
-    }
-
-    #[cfg(target_family = "wasm")]
-    pub async fn new_web(
-        canvas: &web_sys::HtmlCanvasElement,
-        preference: WebBackendPreference,
-    ) -> anyhow::Result<PreparedWebGraphics> {
-        Self::new_web_with_backend(canvas, preference).await
-    }
-
-    #[cfg(target_family = "wasm")]
-    #[allow(clippy::arc_with_non_send_sync)]
-    async fn new_web_with_backend(
-        canvas: &web_sys::HtmlCanvasElement,
-        preference: WebBackendPreference,
-    ) -> anyhow::Result<PreparedWebGraphics> {
-        let backends = match preference {
-            WebBackendPreference::Auto => wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
-            WebBackendPreference::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
-            WebBackendPreference::WebGl => wgpu::Backends::GL,
-        };
-        let descriptor = wgpu::InstanceDescriptor {
-            backends,
-            flags: wgpu::InstanceFlags::default(),
-            backend_options: wgpu::BackendOptions::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: Some(Box::new(WebDisplaySource)),
-        };
-        let instance = if preference == WebBackendPreference::Auto {
-            wgpu::util::new_instance_with_webgpu_detection(descriptor).await
-        } else {
-            wgpu::Instance::new(descriptor)
-        };
-        let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            .map_err(|error| {
-                anyhow::anyhow!("Failed to create browser graphics surface: {error}")
-            })?;
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-                apply_limit_buckets: false,
-            })
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!(
-                    "Failed to request a {preference:?} adapter compatible with the canvas: {error}"
-                )
-            })?;
-        let adapter_info = adapter.get_info();
-        let backend = match adapter_info.backend {
-            wgpu::Backend::BrowserWebGpu => WgpuBackend::BrowserWebGpu,
-            wgpu::Backend::Gl => WgpuBackend::Gl,
-            backend => {
-                anyhow::bail!(
-                    "Browser graphics initialization selected unexpected backend {backend:?}"
-                )
-            }
-        };
-
-        let (device, queue, dual_source_blending, color_texture_format) =
-            Self::create_device(&adapter).await?;
-        let errors = DeviceErrorState::install(&device);
-        log::info!(
-            "Browser graphics initialized: requested={preference:?}, selected={backend:?}, \
-             adapter={:?}, limits={:?}, dual_source_blending={dual_source_blending}",
-            adapter_info.name,
-            device.limits(),
-        );
-
-        let context = Self {
-            instance,
-            adapter,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-            backend,
-            dual_source_blending,
-            color_texture_format,
-            errors,
-            pipeline_cache: Default::default(),
-        };
-        Ok(PreparedWebGraphics { context, surface })
     }
 
     pub(crate) async fn create_device(
@@ -462,17 +312,6 @@ impl WgpuContext {
         }
 
         let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
-        #[cfg(target_family = "wasm")]
-        let required_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
-            wgpu::Limits::downlevel_webgl2_defaults()
-                .using_resolution(adapter.limits())
-                .using_alignment(adapter.limits())
-        } else {
-            wgpu::Limits::downlevel_defaults()
-                .using_resolution(adapter.limits())
-                .using_alignment(adapter.limits())
-        };
-        #[cfg(not(target_family = "wasm"))]
         let required_limits = wgpu::Limits::downlevel_defaults()
             .using_resolution(adapter.limits())
             .using_alignment(adapter.limits());
@@ -505,7 +344,6 @@ impl WgpuContext {
         ))
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
         Self::instance_with_backends(display, wgpu::Backends::VULKAN | wgpu::Backends::GL)
     }
@@ -516,14 +354,12 @@ impl WgpuContext {
     /// ~30 ms of each start, for an adapter Vulkan wins whenever it has one.
     /// [`Self::instance`] (Vulkan and GL) is the fallback when Vulkan finds
     /// no adapter that can draw to the window.
-    #[cfg(not(target_family = "wasm"))]
     pub fn vulkan_instance(
         display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>,
     ) -> wgpu::Instance {
         Self::instance_with_backends(display, wgpu::Backends::VULKAN)
     }
 
-    #[cfg(not(target_family = "wasm"))]
     fn instance_with_backends(
         display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>,
         backends: wgpu::Backends,
@@ -562,7 +398,6 @@ impl WgpuContext {
     /// adapters may report surface compatibility via get_capabilities() but fail when actually
     /// configuring (e.g., NVIDIA reporting Vulkan Wayland support but failing because the
     /// Wayland compositor runs on the Intel GPU).
-    #[cfg(not(target_family = "wasm"))]
     async fn select_adapter_and_device(
         instance: &wgpu::Instance,
         device_id_filter: Option<u32>,
@@ -657,7 +492,6 @@ impl WgpuContext {
     /// 3. Device type (Discrete > Integrated > Other > Virtual > Cpu).
     ///    "Other" ranks above "Virtual" because OpenGL seems to count as "Other".
     /// 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
-    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn sort_adapters(
         adapters: &mut [wgpu::Adapter],
         device_id_filter: Option<u32>,
@@ -705,7 +539,6 @@ impl WgpuContext {
 
     /// Try to use an adapter with a surface by creating a device and testing configuration.
     /// Returns the device and queue if successful, allowing them to be reused.
-    #[cfg(not(target_family = "wasm"))]
     pub(crate) async fn try_adapter_with_surface(
         adapter: &wgpu::Adapter,
         surface: &wgpu::Surface<'_>,
@@ -746,12 +579,6 @@ impl WgpuContext {
         let required_usages = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let bgra_features = adapter.get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm);
         let rgba_features = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba8Unorm);
-        #[cfg(target_family = "wasm")]
-        if adapter.get_info().backend == wgpu::Backend::Gl
-            && rgba_features.allowed_usages.contains(required_usages)
-        {
-            return Ok(wgpu::TextureFormat::Rgba8Unorm);
-        }
         if bgra_features.allowed_usages.contains(required_usages) {
             return Ok(wgpu::TextureFormat::Bgra8Unorm);
         }
@@ -813,7 +640,6 @@ impl WgpuContext {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
     let mut id = id.trim();
 

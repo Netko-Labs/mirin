@@ -331,7 +331,7 @@ impl ThreadedDispatcher {
         ran_any
     }
 
-    #[cfg(any(test, feature = "bench-support"))]
+    #[cfg(test)]
     pub(crate) fn run_until_with_frames<R>(
         &self,
         mut ready: impl FnMut() -> Option<R>,
@@ -397,7 +397,7 @@ impl ThreadedDispatcher {
     /// Whether no main-thread work is queued, no background or timer
     /// runnables are queued or running, and no armed timer is due. Timers
     /// that aren't due yet are ignored, as in [`Self::run_until_idle`].
-    #[cfg(any(test, feature = "bench-support"))]
+    #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
         !self.main_queue_has_work() && !self.has_due_timer() && *self.idle.inflight.lock() == 0
     }

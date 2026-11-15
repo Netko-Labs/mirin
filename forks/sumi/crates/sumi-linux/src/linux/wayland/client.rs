@@ -21,7 +21,7 @@ use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
 use sumi_util::ResultExt as _;
-use http_client::Url;
+use url::Url;
 use smallvec::SmallVec;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;

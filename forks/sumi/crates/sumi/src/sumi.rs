@@ -3,19 +3,10 @@
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 
 pub extern crate accesskit;
-pub extern crate http_client;
 #[cfg(any(test, feature = "test-support"))]
 pub extern crate proptest;
 /// Subsecond entry points for hot-patching callbacks outside GPUI's render boundaries.
-#[cfg(all(
-    feature = "hot-reload",
-    any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "windows",
-        target_os = "ios"
-    )
-))]
+#[cfg(all(feature = "hot-reload", any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub extern crate subsecond;
 
 extern crate self as sumi;
@@ -48,7 +39,6 @@ mod path_winding;
 mod platform;
 mod platform_scheduler;
 mod scene;
-mod shared_uri;
 mod spring;
 mod style;
 mod styled;
@@ -68,24 +58,17 @@ pub use debug_overlay::*;
 
 #[cfg(gpui_hot_reload)]
 mod hot_reload;
-#[cfg(any(
-    test,
-    target_os = "windows",
-    target_os = "linux",
-    target_family = "wasm",
-    feature = "test-support",
-    feature = "bench-support"
-))]
+#[cfg(any(test, target_os = "windows", target_os = "linux", feature = "test-support"))]
 pub mod queue;
 
-#[cfg(any(test, feature = "bench-support"))]
+#[cfg(test)]
 pub mod randomized_element_tree;
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 mod bench;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 mod seeds;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub use seeds::calculate_seeds;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -109,7 +92,7 @@ pub mod private {
     pub use serde_json;
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 
 pub use accesskit::{Action as AccessibleAction, Orientation, Role, Toggled};
@@ -126,7 +109,7 @@ pub use geometry::*;
 pub use gestures::*;
 pub use global::*;
 pub use sumi_macros::{
-    AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
+    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
 };
 pub use sumi_shared_string::*;
 pub use sumi_util::arc_cow::ArcCow;
@@ -140,7 +123,6 @@ pub use platform::*;
 pub use profiler::*;
 pub use refineable::*;
 pub use scene::*;
-pub use shared_uri::*;
 pub use spring::*;
 pub use style::*;
 pub use styled::*;
@@ -152,7 +134,6 @@ pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub use window::*;
 
-#[cfg(not(target_family = "wasm"))]
 pub use pollster::block_on;
 
 pub(crate) use arena::*;

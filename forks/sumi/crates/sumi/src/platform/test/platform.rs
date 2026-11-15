@@ -219,23 +219,14 @@ impl TestPlatform {
                     target_os = "windows" => { crate::OperatingSystem::Windows }
                     target_os = "linux" => { crate::OperatingSystem::Linux }
                     target_os = "freebsd" => { crate::OperatingSystem::FreeBsd }
-                    target_os = "ios" => { crate::OperatingSystem::Ios }
-                    target_os = "android" => { crate::OperatingSystem::Android }
-                    target_family = "wasm" => {
-                        // Browser tests must supply the host OS with set_platform_info.
-                        crate::OperatingSystem::Unknown
-                    }
                     _ => { compile_error!("unsupported test platform operating system") }
                 },
                 target: std::cfg_select! {
-                    target_family = "wasm" => { crate::PlatformTarget::Web }
                     any(
                         target_os = "macos",
                         target_os = "windows",
                         target_os = "linux",
-                        target_os = "freebsd",
-                        target_os = "ios",
-                        target_os = "android"
+                        target_os = "freebsd"
                     ) => { crate::PlatformTarget::Native }
                     _ => { compile_error!("unsupported test platform target") }
                 },

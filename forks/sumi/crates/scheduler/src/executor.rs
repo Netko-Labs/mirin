@@ -119,7 +119,6 @@ impl LocalExecutor {
         Task(TaskState::Spawned(task))
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
         use std::cell::Cell;
 
@@ -137,7 +136,6 @@ impl LocalExecutor {
 
     /// Block until the future completes or timeout occurs.
     /// Returns Ok(output) if completed, Err(future) if timed out.
-    #[cfg(not(target_family = "wasm"))]
     pub fn block_with_timeout<Fut: Future>(
         &self,
         timeout: Duration,

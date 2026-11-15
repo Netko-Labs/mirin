@@ -14,7 +14,6 @@ doctest = false
 
 [features]
 default = ["sumi/default"]
-bench-support = ["sumi/bench-support", "sumi-apple/bench-support"]
 test-support = ["sumi/test-support", "sumi-apple/test-support"]
 runtime_shaders = ["sumi-apple/runtime_shaders"]
 font-kit = ["sumi-apple/font-kit"]

@@ -1,4 +1,4 @@
-use crate::{App, EntityId, SharedString, SharedUri, Task};
+use crate::{App, EntityId, SharedString, Task};
 use collections::FxHashSet;
 use futures::{Future, TryFutureExt};
 
@@ -69,18 +69,10 @@ impl<T: Clone + Send + 'static> CachedLoad<T> {
 /// An enum representing
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Resource {
-    /// This resource is at a given URI
-    Uri(SharedUri),
     /// This resource is at a given path in the file system
     Path(Arc<Path>),
     /// This resource is embedded in the application binary
     Embedded(SharedString),
-}
-
-impl From<SharedUri> for Resource {
-    fn from(value: SharedUri) -> Self {
-        Self::Uri(value)
-    }
 }
 
 impl From<PathBuf> for Resource {
