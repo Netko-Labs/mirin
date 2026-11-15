@@ -37,6 +37,14 @@ fn a_new_value_from_the_driver_wins() {
     assert!(driver_resets(&mut echoes, "ABC"));
 }
 
+/// The app's caret in a tree (`selection`, nothing selected): where, and
+/// the hash of the text it was made in (`None`: a driver that doesn't say).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Caret {
+    at: usize,
+    made_in: Option<u32>,
+}
+
 /// A `change` as it crosses to the driver.
 #[derive(Debug, Clone, PartialEq)]
 struct Change {
@@ -66,12 +74,34 @@ impl Host {
 
     /// A tree arrives with the field's `value`, set over the text hashing to `base_hash`.
     fn tree(&mut self, cx: &mut TestAppContext, value: &str, base_hash: Option<u32>) {
+        self.tree_with(cx, value, base_hash, None);
+    }
+
+    /// And with the app's `caret`, when it sends one.
+    fn tree_with(
+        &mut self,
+        cx: &mut TestAppContext,
+        value: &str,
+        base_hash: Option<u32>,
+        caret: Option<Caret>,
+    ) {
         let mut json = serde_json::json!({ "id": "line", "value": value, "onChange": true });
         if let Some(base_hash) = base_hash {
             json["baseHash"] = serde_json::json!(base_hash);
         }
+        if let Some(caret) = caret {
+            json["selection"] = serde_json::json!({ "start": caret.at, "end": caret.at });
+            if let Some(made_in) = caret.made_in {
+                json["selection"]["textHash"] = serde_json::json!(made_in);
+            }
+        }
         let props: InputProps = serde_json::from_value(json).expect("input props");
         cx.update(|cx| sync_input(&mut self.inputs, &self.events, &props, cx));
+    }
+
+    /// Where the field's caret is (a char index).
+    fn caret(&self) -> usize {
+        self.inputs["line"].field.cursor
     }
 
     /// The person types `text` at the caret, a key at a time.
@@ -131,6 +161,15 @@ impl Driver {
         self.holds = value.to_owned();
         self.value = value.to_owned();
         Some((value.to_owned(), Some(base_hash)))
+    }
+
+    /// The app's caret at `at` in its text, named as the driver names it:
+    /// made in what the field holds, as far as it can tell.
+    fn caret(&self, at: usize) -> Caret {
+        Caret {
+            at,
+            made_in: Some(text_hash(&self.holds)),
+        }
     }
 
     /// A change arrives: the text the app hears, unless it was made on a
@@ -307,63 +346,80 @@ impl Dice {
     }
 }
 
-#[sumi::test]
-fn typing_and_writes_that_cross_in_any_order_lose_no_key(cx: &mut TestAppContext) {
-    // The person types letters while the app's keypad writes digits, and
-    // the trees and the events cross as they like. When all have arrived
-    // the two hold the same text, with every key in it once.
-    let mut dice = Dice(0x5eed);
-    for round in 0..300 {
-        let mut host = Host::new(cx, "");
-        let mut driver = Driver::new("");
-        let mut trees: VecDeque<(String, Option<u32>)> = VecDeque::new();
-        let mut events: VecDeque<Change> = VecDeque::new();
-        let mut keys = String::new();
-        let (mut letters, mut digits) = ('a'..='h', '1'..='8');
-        let mut steps = 0;
-        loop {
-            let typing = letters.clone().next().is_some() || digits.clone().next().is_some();
-            if !typing && trees.is_empty() && events.is_empty() {
-                break;
+/// One round of typing and writes crossing as the dice say: the person
+/// types letters while the app's keypad writes digits at the end of its
+/// text, and the trees and the events cross as they like until all have
+/// arrived. With `carets`, every tree says the app's caret, at the end of
+/// its text. Answers the field's text, the app's, and the keys pressed.
+fn crossing(cx: &mut TestAppContext, dice: &mut Dice, carets: bool) -> (String, String, String) {
+    let mut host = Host::new(cx, "");
+    let mut driver = Driver::new("");
+    let mut trees: VecDeque<(String, Option<u32>, Option<Caret>)> = VecDeque::new();
+    let mut events: VecDeque<Change> = VecDeque::new();
+    let mut keys = String::new();
+    let (mut letters, mut digits) = ('a'..='h', '1'..='8');
+    // The app sets `value`: the tree that says so, when it is news.
+    let write = |driver: &mut Driver, value: &str| {
+        let (value, base) = driver.sets(value)?;
+        let caret = carets.then(|| driver.caret(value.chars().count()));
+        Some((value, base, caret))
+    };
+    let mut steps = 0;
+    loop {
+        let typing = letters.clone().next().is_some() || digits.clone().next().is_some();
+        if !typing && trees.is_empty() && events.is_empty() {
+            break;
+        }
+        steps += 1;
+        assert!(steps < 10_000, "a round never came to rest");
+        match dice.roll(4) {
+            0 => {
+                if let Some(letter) = letters.next() {
+                    host.types(&letter.to_string());
+                    events.extend(host.changes());
+                    keys.push(letter);
+                }
             }
-            steps += 1;
-            assert!(steps < 10_000, "round {round} never came to rest");
-            match dice.roll(4) {
-                0 => {
-                    if let Some(letter) = letters.next() {
-                        host.types(&letter.to_string());
-                        events.extend(host.changes());
-                        keys.push(letter);
-                    }
+            1 => {
+                if let Some(digit) = digits.next() {
+                    let value = format!("{}{digit}", driver.value);
+                    trees.extend(write(&mut driver, &value));
+                    keys.push(digit);
                 }
-                1 => {
-                    if let Some(digit) = digits.next() {
-                        let value = format!("{}{digit}", driver.value);
-                        trees.extend(driver.sets(&value));
-                        keys.push(digit);
-                    }
+            }
+            2 => {
+                if let Some((value, base, caret)) = trees.pop_front() {
+                    host.tree_with(cx, &value, base, caret);
+                    events.extend(host.changes());
                 }
-                2 => {
-                    if let Some((value, base)) = trees.pop_front() {
-                        host.tree(cx, &value, base);
-                        events.extend(host.changes());
-                    }
-                }
-                _ => {
-                    if let Some(change) = events.pop_front() {
-                        // The app shows what it hears.
-                        if let Some(text) = driver.hears(&change) {
-                            trees.extend(driver.sets(&text));
-                        }
+            }
+            _ => {
+                if let Some(change) = events.pop_front() {
+                    // The app shows what it hears.
+                    if let Some(text) = driver.hears(&change) {
+                        trees.extend(write(&mut driver, &text));
                     }
                 }
             }
         }
-        assert_eq!(host.text(), driver.value, "round {round}");
-        let mut held: Vec<char> = host.text().chars().collect();
+    }
+    (host.text().to_owned(), driver.value, keys)
+}
+
+#[sumi::test]
+fn typing_and_writes_that_cross_in_any_order_lose_no_key(cx: &mut TestAppContext) {
+    // When all have arrived the two hold the same text, with every key in
+    // it once.
+    let mut dice = Dice(0x5eed);
+    for round in 0..300 {
+        let (field, app, keys) = crossing(cx, &mut dice, false);
+        assert_eq!(field, app, "round {round}");
+        let mut held: Vec<char> = field.chars().collect();
         let mut typed: Vec<char> = keys.chars().collect();
         held.sort_unstable();
         typed.sort_unstable();
-        assert_eq!(held, typed, "round {round}: {:?}", host.text());
+        assert_eq!(held, typed, "round {round}: {field:?}");
     }
 }
+
+mod caret;

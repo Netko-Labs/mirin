@@ -616,6 +616,9 @@ fn main() {
         // This host takes a field's `baseHash` and carries what was typed
         // onto a value written meanwhile (`field/rebase.rs`).
         "rebase": true,
+        // And a `selection`'s `textHash`: one made in a text the field no
+        // longer holds is dropped (`selection.rs`).
+        "selectionHash": true,
         // This host reports a scroll view's offset (`onScroll`) and takes
         // `scrollTo` and `scrollIntoView` lines (`scroll.rs`).
         "scroll": true,

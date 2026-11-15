@@ -193,6 +193,7 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         heard();
         sync.hostPatches(event.patches, {
           rebase: event.rebase === true,
+          selectionHash: event.selectionHash === true,
           scroll: event.scroll === true,
           imageError: event.imageError === true,
         });

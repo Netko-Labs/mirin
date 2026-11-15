@@ -544,7 +544,11 @@ export interface TextInputProps extends AccessibilityProps {
   /**
    * Controlled caret and selection, as React Native's: offsets into `value` (JavaScript
    * string indices). When it changes, or the native buffer is reset, the field selects
-   * it; `start` is where the selection begins and `end` where the caret is.
+   * it; `start` is where the selection begins and `end` where the caret is. One set
+   * while keys the app has not heard of yet were typed is not taken: its offsets are
+   * into the text the app knew, and the caret stays with what was typed (which
+   * `onChangeText` and `onSelectionChange` then report). So a caret at the end of a
+   * `value` the app writes can always be sent.
    */
   selection?: TextSelection;
   /** The caret moved or the selection changed (by keys, the pointer, or `selection`). */
@@ -726,6 +730,9 @@ export type NativeEvent =
    * window simulations,
    * `rebase` from one that takes a field's `baseHash` (the text its `value`
    * was set over) and carries what was typed meanwhile onto the value,
+   * `selectionHash` from one that takes a `selection` with the hash of the
+   * text it was made in, and drops one made in a text the field no longer
+   * holds,
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
    * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), `imageError` from
    * one that says when an image cannot be drawn (`onError`),
@@ -739,6 +746,7 @@ export type NativeEvent =
       settle?: boolean;
       activation?: boolean;
       rebase?: boolean;
+      selectionHash?: boolean;
       scroll?: boolean;
       imageError?: boolean;
       textAntialiasing?: boolean;

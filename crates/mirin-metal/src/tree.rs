@@ -483,10 +483,20 @@ pub struct InputRun {
 /// indices). `start` is where it began, `end` where the caret is; equal, the
 /// caret alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SelectionRange {
     pub start: usize,
     pub end: usize,
+    /// The text the driver's app made this selection in: what the field
+    /// held, as far as the driver knew, when the app set it (that text's
+    /// `events::text_hash`, as a reported selection carries). A field that
+    /// holds another text by the time the tree arrives (it typed meanwhile,
+    /// or carried its typing onto the tree's `value`) leaves its caret
+    /// where it is (`selection.rs`). Without it (a driver from before it)
+    /// only a selection that comes with a value the field rebased is
+    /// known to be late.
+    #[serde(default)]
+    pub text_hash: Option<u32>,
 }
 
 /// A range washed behind a field's text: UTF-16 offsets into its text, as

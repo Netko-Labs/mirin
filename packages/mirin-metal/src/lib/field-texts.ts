@@ -15,9 +15,15 @@
  *   (`baseHash` on the node, to a host that takes it), so the host tells
  *   its own text coming back from an app's write, and carries what was
  *   typed meanwhile onto a write: it reports that as a change made on the
- *   app's value, which is the one that reaches the app.
+ *   app's value, which is the one that reaches the app;
+ * - a selection the app sets goes out with the hash of the text it was made
+ *   in (`textHash` on it, to a host that takes it): what the field held as
+ *   far as the driver knew, the new value when the app wrote one with it.
+ *   A field that holds another text by then (keys the app had not heard of)
+ *   does not take it: the caret stays with what was typed.
  */
 
+import type { TextSelection } from "../types.ts";
 import { textHash } from "./text-hash.ts";
 
 interface FieldText {
@@ -30,6 +36,8 @@ interface FieldText {
   revision: number | undefined;
   /** What `value` went out with: the hash of the text it was set over. */
   base: number | undefined;
+  /** The app's selection in the last tree, and the hash of the text it was made in. */
+  selection: { start: number; end: number; madeIn: number } | undefined;
 }
 
 export class FieldTexts {
@@ -54,7 +62,14 @@ export class FieldTexts {
   ): number | undefined {
     const known = this.byId.get(id);
     if (!known) {
-      this.byId.set(id, { text: value, hash: null, value, revision, base: undefined });
+      this.byId.set(id, {
+        text: value,
+        hash: null,
+        value,
+        revision,
+        base: undefined,
+        selection: undefined,
+      });
       return undefined;
     }
     if (known.value === value && known.revision === revision) return known.base;
@@ -72,6 +87,26 @@ export class FieldTexts {
     known.value = value;
     known.revision = revision;
     return known.base;
+  }
+
+  /**
+   * A field goes out with this `selection` (after `field` took its value):
+   * answers the hash of the text the app made it in, which is what the
+   * field holds as far as the driver knows. The same for as long as the
+   * selection stays: only a new one is the app's news.
+   */
+  selected(id: string, selection: TextSelection | undefined): number | undefined {
+    const known = this.byId.get(id);
+    if (!known || !selection) {
+      if (known) known.selection = undefined;
+      return undefined;
+    }
+    const { start, end } = selection;
+    if (known.selection?.start !== start || known.selection.end !== end) {
+      known.hash ??= textHash(known.text);
+      known.selection = { start, end, madeIn: known.hash };
+    }
+    return known.selection.madeIn;
   }
 
   /** The field left the tree. */

@@ -204,8 +204,10 @@ patches change it in place, in order (section "Patches").
   the text its app last set or heard: the field held that text only until
   the app's value arrived, and reports the typing again on it. So the two
   end with the same text and no key lost, in either order
-  (`value::tests`, 300 seeded crossings; `bench/field-crossing.tsx` in
-  `@mirinjs/metal` against a real window). Without `baseHash` on the node
+  (`value::tests`, 300 seeded crossings, and 300 more with the app's caret
+  in every tree; `bench/field-crossing.tsx` in `@mirinjs/metal` against a
+  real window, with the app saying no caret, its caret at the line's end
+  and inside it). Without `baseHash` on the node
   (a driver from before it) the host does as it did: a value it reported
   itself is a late echo, any other resets and drops what was typed. A host
   that does all this says `"rebase":true` in its `protocol` line (and
@@ -248,9 +250,32 @@ patches change it in place, in order (section "Patches").
   code units, `events::text_hash`), and sets it
   through `selection` (`start` where it begins, `end` where the caret goes):
   a different `selection` in a later tree selects it, except one the field
-  reported itself (a late echo, kept as `change` values are). The host
+  reported itself (a late echo, kept as `change` values are) and one made
+  in a text the field no longer holds. The app makes its `selection` in
+  the text it knows, and a field that typed meanwhile holds another: the
+  offsets are not into it, and a caret put there would be in front of the
+  keys just typed (a keypad wrote "12 +" with its caret at the end while
+  "3*4" was typed: the next key landed before the 3). So a `selection`
+  says which text it was made in, as a reported one does:
+  `{"start","end","textHash"}`, the hash of what the field held as far as
+  the driver knew when its app set it (the tree's `value` when the app
+  wrote one in the same turn; the same hash for as long as the selection
+  stays). A field whose text hashes otherwise leaves its caret where it
+  is, and that `selection` is dropped for good, as the driver drops a
+  `change` made on a text its app replaced: the field has reported its
+  typing and its caret, and the app's next `selection` is made knowing
+  them. This covers a rebase (the caret stays with what was typed again,
+  `value::tests::caret`) and a `selection` the app moves without writing
+  while a key it has not heard of is typed. A reset still selects the
+  tree's `selection`, named or not; a field without `onChange` takes any
+  (its driver hears no edits and cannot name its text); and with no
+  `textHash` (a driver from before it) only the `selection` that comes
+  with a `value` the field rebased is dropped, the rest as before. A host
+  that takes it says `"selectionHash":true` in its `protocol` line; one
+  from before refuses a `selection` with a `textHash`, so a driver sends
+  it only to a host that said so. The host
   names `MIRIN_METAL_SELECTION` (`SELECTION_MARKER`) for a driver checking
-  for this.
+  for a caret and selection at all.
   Highlights and line numbers (`src/marks.rs`): `highlights` washes each
   range (UTF-16 offsets into the text, as `selection`'s) in its own color
   behind the glyphs, under the selection, whether or not the field has the
@@ -600,7 +625,11 @@ in a text the app has since replaced, which arrives late, is not passed on:
 `lib/field-texts.ts` follows what each field holds, from its `change` events
 and the values the app sets, and checks the event's `textHash` against it;
 the exported `textHash(text)` hashes as the host does, for a stand-in host in
-an app's checks), `onChangeText` (never called with a text typed on a value the
+an app's checks; and a `selection` the app sets goes out with the hash of the
+text it was made in, to a host that said `selectionHash`, so one set while
+keys the app had not heard of were typed is not taken and the caret stays
+behind them: an app can say its caret with every text it writes, at its end
+too), `onChangeText` (never called with a text typed on a value the
 app has since replaced: `lib/field-texts.ts` drops a `change` whose `baseHash`
 is not the text the field holds as far as the driver knows, and every field's
 node says which text its `value` was set over, to a host that said `rebase`;
@@ -657,7 +686,8 @@ node stress bench a card's highlight is ~0.2 KB instead of 1.3 MB (5b).
   before anything else: `{"type":"protocol","nodeId":"root","patches":1}`
   (`PATCH_PROTOCOL`; the binary also names `MIRIN_METAL_PATCHES`; the line
   says `"settle":true` too, for the `settle` simulation, `"rebase":true` for
-  a field's `baseHash`, `"scroll":true` for a scroll view's offset,
+  a field's `baseHash`, `"selectionHash":true` for a `selection`'s
+  `textHash`, `"scroll":true` for a scroll view's offset,
   `"imageError":true` for an image's `onError`, and `"textAntialiasing":true`
   for the line of that name, section 4; `"opaqueSurface":true` too, for a
   surface's `opaque`). A driver
