@@ -79,8 +79,10 @@ merge: the crates were then moved here, renamed (`gpui` is `sumi`,
 
 `sumi/` keeps the shape a cargo workspace needs: the root `Cargo.toml` (the
 crates inherit their edition, dependencies and lints from it; it was zed's
-root manifest, cut to what these crates use), `rust-toolchain.toml`, and
-`crates/<name>`. If sumi pins another taffy, replace `taffy-next/` as any
+root manifest, cut to what these crates use) and `crates/<name>`. It has
+no `rust-toolchain.toml` (zed's named 1.98.1): sumi builds with the stable
+Rust on the `PATH`, and a file naming another makes rustup download it, in
+CI and for a packager who builds with the distribution's. If sumi pins another taffy, replace `taffy-next/` as any
 fork is synced, and repeat any new `[patch.crates-io]` entry of
 `sumi/Cargo.toml` in `crates/mirin-metal/Cargo.toml` (a workspace's patches
 do not reach a dependent outside it).

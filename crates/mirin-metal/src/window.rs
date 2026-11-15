@@ -18,15 +18,14 @@ use crate::list::VirtualList;
 use crate::patch::{Applied, Document, PatchError, PatchOp, Touched};
 use crate::pointer::capture_root;
 use crate::render::{record_root_bounds, render_node};
+use crate::scroll::ScrollCommand;
 use crate::selection::SelectionState;
 use crate::sim::{LayoutMap, SimCommand};
 use crate::surface::Surface;
 use crate::text_mode::Antialiasing;
 use crate::titlebar::TitleBar;
 use crate::tree::{collect_inputs, collect_key_ids, collect_scroll_ids, NodeSpec};
-
-/// Unechoed `change` values kept per input (see `InputState::echoes`).
-const MAX_ECHOES: usize = 64;
+use crate::value::sync_input;
 
 /// Options for the alpha native-UI window. All fields have sensible defaults.
 #[derive(Debug, Clone)]
@@ -96,30 +95,13 @@ pub enum DriverMessage {
     /// an app that needs more room while it shows more (a sidebar). It does
     /// not resize the window; send a size too.
     MinSize(f32, f32),
+    /// Scroll a view to an offset, or a node into view (`{"scrollTo": …}`,
+    /// `{"scrollIntoView": …}`; `scroll.rs`), after the trees sent before it.
+    Scroll(ScrollCommand),
     /// Antialias text in grays or by subpixels from here on
     /// (`{"textAntialiasing": …}`, `text_mode.rs`): a shown window is drawn
     /// again whole, and the next one opens so.
     TextAntialiasing(Antialiasing),
-}
-
-/// Whether a new driver `value` resets the buffer. A value the renderer sent
-/// itself (a late echo, possibly skipping older ones) does not; anything else
-/// does, and forgets the pending echoes.
-pub(crate) fn driver_resets<T, V>(echoes: &mut VecDeque<T>, value: &V) -> bool
-where
-    T: PartialEq<V>,
-    V: ?Sized,
-{
-    match echoes.iter().position(|sent| sent == value) {
-        Some(echoed) => {
-            echoes.drain(..=echoed);
-            false
-        }
-        None => {
-            echoes.clear();
-            true
-        }
-    }
 }
 
 /// Renderer-owned editing state of one `input` node.
@@ -137,6 +119,10 @@ pub(crate) struct InputState {
     pub(crate) echoes: VecDeque<String>,
     /// The driver's `revision` the buffer was last reset at.
     pub(crate) revision: u64,
+    /// The hash of the text the driver last heard of or set (`value.rs`):
+    /// what the next `change` says it was typed on. `None` while the field
+    /// reports no changes.
+    pub(crate) text_hash: Option<u32>,
     /// Set by the tree sync when the node is new and asked for `autofocus`.
     pub(crate) wants_focus: bool,
     /// Where the caret was last told to an input method (`ime.rs`).
@@ -170,6 +156,14 @@ pub(crate) struct RootView {
     pub(crate) scrolls: HashMap<String, ScrollHandle>,
     /// When each scrollable node last scrolled, for its auto-hiding scroll bar (`scrollbar.rs`).
     pub(crate) scroll_activity: HashMap<String, crate::scrollbar::Activity>,
+    /// What the driver last heard of each scroll view with `onScroll` (`scroll.rs`).
+    pub(crate) scroll_reports: HashMap<String, crate::scroll::Reports>,
+    /// Nodes the driver asked into view, until a frame has drawn them (`scroll.rs`).
+    pub(crate) reveals: Vec<crate::scroll::Reveal>,
+    /// The tree's generation as the last frame rendered it.
+    pub(crate) drawn_generation: u64,
+    /// The images the driver was told could not be drawn (`media.rs`).
+    pub(crate) image_errors: crate::media::ImageErrors,
     /// How often the text's antialiasing changed under this window: part of
     /// every retained subtree's version, so each is drawn anew after a
     /// change instead of keeping glyphs of the other kind (`retain.rs`).
@@ -232,6 +226,10 @@ impl RootView {
             claims: crate::press::Claims::default(),
             scrolls: HashMap::new(),
             scroll_activity: HashMap::new(),
+            scroll_reports: HashMap::new(),
+            reveals: Vec::new(),
+            drawn_generation: u64::MAX,
+            image_errors: crate::media::ImageErrors::default(),
             text_epoch: 0,
             keeps_length: false,
             lists: HashMap::new(),
@@ -314,6 +312,7 @@ impl RootView {
         if touched.contains(Touched::KEYS) {
             self.sync_key_targets(cx);
         }
+        self.image_errors.prune(|id| self.tree.contains(id));
         // A list's rows are copies: a change inside them (its generation) needs them again.
         let generation = self.tree.generation();
         if touched.contains(Touched::LISTS)
@@ -332,6 +331,7 @@ impl RootView {
             collect_scroll_ids(&self.tree, &mut ids);
             self.scrolls.retain(|id, _| ids.contains(id));
             self.scroll_activity.retain(|id, _| ids.contains(id));
+            self.scroll_reports.retain(|id, _| ids.contains(id));
         }
     }
 
@@ -370,20 +370,6 @@ impl RootView {
                 });
         }
         self.key_targets.retain(|id, _| ids.contains(id));
-    }
-
-    /// Tell the driver a field's text changed (`change`), and expect it back.
-    pub(crate) fn report_change(&mut self, id: &str) {
-        let Some(state) = self.inputs.get_mut(id) else {
-            return;
-        };
-        self.events.change(id, &state.field.buffer);
-        // Expect it back; a driver that never echoes (or transforms the
-        // text) only ever keeps a few.
-        if state.echoes.len() >= MAX_ECHOES {
-            state.echoes.pop_front();
-        }
-        state.echoes.push_back(state.field.buffer.clone());
     }
 
     /// Move focus from the field `from` to the next (`+1`) or previous
@@ -493,6 +479,8 @@ impl Render for RootView {
         let started = std::time::Instant::now();
         let counted = crate::counters::read();
         self.idle.frame_drawn(cx);
+        // By where the last frame painted them, before this one moves anything.
+        self.reveal_pending(window);
         self.layout.begin_frame();
         self.layout.set_scale(window.scale_factor());
         if self.drop_target.is_some() && !cx.has_active_drag() {
@@ -632,83 +620,5 @@ fn dump_scene(path: &std::path::Path, digest: u64, drawn: &[String]) {
         .open(path);
     if let Ok(mut file) = file {
         let _ = writeln!(file, "frame {digest:016x}\n{}", drawn.join("\n"));
-    }
-}
-
-/// Create the editing state of a field new to the tree, or bring an existing
-/// one in line with its props: a new `value` (not an echo) or `revision`
-/// resets the buffer, a new `selection` selects.
-fn sync_input(
-    inputs: &mut HashMap<String, InputState>,
-    events: &EventSender,
-    spec: &crate::tree::InputProps,
-    cx: &mut App,
-) {
-    match inputs.get_mut(&spec.id) {
-        Some(state) => {
-            let mut reset = false;
-            if state.revision != spec.revision {
-                state.revision = spec.revision;
-                state.field.reset(&spec.value);
-                state.synced_value = spec.value.clone();
-                state.echoes.clear();
-                reset = true;
-            } else if state.synced_value != spec.value {
-                if driver_resets(&mut state.echoes, spec.value.as_str()) {
-                    state.field.reset(&spec.value);
-                    reset = true;
-                }
-                state.synced_value = spec.value.clone();
-            }
-            let field = &mut state.field;
-            state.selection.sync(field, spec, reset, events);
-        }
-        None => {
-            let mut field = Field::new(&spec.value);
-            let selection = SelectionState::new(&mut field, spec);
-            inputs.insert(
-                spec.id.clone(),
-                InputState {
-                    focus: cx.focus_handle(),
-                    field,
-                    synced_value: spec.value.clone(),
-                    echoes: VecDeque::new(),
-                    revision: spec.revision,
-                    wants_focus: spec.autofocus,
-                    caret_reported: CaretReported::default(),
-                    selection,
-                    scroll: Rc::default(),
-                },
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::driver_resets;
-    use std::collections::VecDeque;
-
-    fn sent(values: &[&str]) -> VecDeque<String> {
-        values.iter().map(|value| value.to_string()).collect()
-    }
-
-    #[test]
-    fn late_echoes_never_reset_the_buffer() {
-        // Typed "abc" faster than the driver answers; its "a" arrives last.
-        let mut echoes = sent(&["a", "ab", "abc"]);
-        assert!(!driver_resets(&mut echoes, "a"));
-        assert_eq!(echoes, sent(&["ab", "abc"]));
-        // A driver that batches may skip straight to the newest.
-        assert!(!driver_resets(&mut echoes, "abc"));
-        assert!(echoes.is_empty());
-    }
-
-    #[test]
-    fn a_new_value_from_the_driver_wins() {
-        let mut echoes = sent(&["pass"]);
-        assert!(driver_resets(&mut echoes, ""));
-        assert!(echoes.is_empty());
-        assert!(driver_resets(&mut echoes, "ABC"));
     }
 }
