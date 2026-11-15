@@ -1260,6 +1260,54 @@ mod tests {
         assert_eq!(frames(cx), 0);
     }
 
+    #[sumi::test]
+    fn a_check_makes_its_window_inactive_and_active_again(cx: &mut sumi::TestAppContext) {
+        let drawn = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = drawn.clone();
+        let (view, cx) = cx.add_window_view(|_, _| Fades {
+            left: 0,
+            drawn: counted,
+        });
+        let frames = |cx: &mut sumi::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                if window.is_dirty() {
+                    window.draw(cx).clear(cx);
+                }
+            });
+            drawn.replace(0)
+        };
+        let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let told = heard.clone();
+        cx.update(|window, _| window.set_platform_input_ignored(true));
+        let _watch = view.update_in(cx, |_, window, cx| {
+            cx.observe_window_activation(window, move |_, window, _| {
+                told.borrow_mut().push(window.is_window_active());
+            })
+        });
+        frames(cx);
+
+        // The `deactivate` and `activate` window simulations.
+        let simulate = |cx: &mut sumi::VisualTestContext, active| {
+            cx.update(|window, cx| window.simulate_active_status(active, cx));
+        };
+        simulate(cx, false);
+        assert!(!cx.update(|window, _| window.is_window_active()));
+        assert_eq!(frames(cx), 1, "drawn again, inactive");
+        // The compositor's word still is not heard: the check's holds.
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        assert!(!cx.update(|window, _| window.is_window_active()));
+        assert_eq!(frames(cx), 0);
+        // Saying what it already is draws nothing.
+        simulate(cx, false);
+        assert_eq!(frames(cx), 0);
+        simulate(cx, true);
+        assert!(cx.update(|window, _| window.is_window_active()));
+        assert_eq!(frames(cx), 1, "drawn again, active");
+        assert_eq!(*heard.borrow(), [false, true]);
+    }
+
     fn patch(json: &str) -> HostMessage {
         HostMessage::Driver(DriverMessage::Patch(
             crate::patch::parse_patch(json).expect("test patch parses"),

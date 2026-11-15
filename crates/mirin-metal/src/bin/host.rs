@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
-    HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar,
+    HostMessage, NativeUiEvent, NativeUiOptions, SimCommand, Surface, TitleBar, ACTIVATION_MARKER,
     OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, RESIDENT_MARKER, SETTLE_MARKER,
 };
 
@@ -505,12 +505,17 @@ fn main() {
         "{PATCH_MARKER}: patch protocol {PATCH_PROTOCOL}"
     ));
     mirin_metal::trace::log(format_args!("{SETTLE_MARKER}: the settle simulation"));
+    mirin_metal::trace::log(format_args!(
+        "{ACTIVATION_MARKER}: a window made active or not by simulation"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
         "patches": PATCH_PROTOCOL,
         // This host takes the `settle` simulation and answers `settled`.
         "settle": true,
+        // And the `activate` and `deactivate` window simulations.
+        "activation": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and

@@ -306,6 +306,16 @@ patches change it in place, in order (section "Patches").
   reader's focus), and `{"kind":"move","id"}` / `{"kind":"move","x","y"}`
   moves the pointer there through GPUI's real mouse dispatch, so
   `hoverBackground` and `onHover` respond (`hover` only reports `onHover`).
+  `{"kind":"window","action":"deactivate"}` makes the window count as not
+  the active one, as when another window takes the keyboard, and
+  `"activate"` as active again (`Window::simulate_active_status` in sumi):
+  the window is drawn again, a focus ring shows only in an active one, and
+  a screen reader hears the change. A simulation that changes nothing draws
+  nothing; outside check mode the compositor's next word replaces it. A
+  host that takes the two says `"activation":true` in its `protocol` line
+  (and its binary names `MIRIN_METAL_ACTIVATION`); one from before logs
+  `sim window: unknown action` and stays as it was. (`"zoom"` and
+  `"minimize"` are the title bar's.)
   `{"kind":"settle"}` is answered with
   `{"type":"settled","nodeId":"root","quiet":true}` once the window has
   settled: every tree, patch, size and simulation sent before it is applied
@@ -334,7 +344,8 @@ patches change it in place, in order (section "Patches").
   whether the pointer is over it are the platform's word too and are not
   heard: the window counts as active, with no pointer over it, for as long
   as the check lasts (a focus ring shows, as in a window a person is
-  using). A compositor gives and takes the keyboard when it likes, for one
+  using), unless the check itself says otherwise: the `deactivate` and
+  `activate` window simulations are how a check sees an inactive window. A compositor gives and takes the keyboard when it likes, for one
   when a second window opens beside the first, and each such change drew
   the window again: `scene browser @1.25` then found one frame more in one
   host than in the other, 4 runs of 6 in Dashi's VM, with the frame each

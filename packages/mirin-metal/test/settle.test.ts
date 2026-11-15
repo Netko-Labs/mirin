@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { spawnNativeHost } from "../src/host.ts";
+import { parseNativeEvent, spawnNativeHost } from "../src/host.ts";
 import type { NativeEvent } from "../src/types.ts";
 
 /** A stand-in host: says `word`, keeps the first line it is sent, answers `answer`. */
@@ -48,4 +48,16 @@ test("a host from before settle does not say it, and an answer without quiet is 
     '{"type":"settled","nodeId":"root"}',
   );
   expect(events).toEqual([{ type: "protocol", nodeId: "root", patches: 1 }]);
+});
+
+test("a host that takes a simulated activation says so", () => {
+  expect(
+    parseNativeEvent(
+      '{"type":"protocol","nodeId":"root","patches":1,"settle":true,"activation":true}',
+    ),
+  ).toEqual({ type: "protocol", nodeId: "root", patches: 1, settle: true, activation: true });
+  // One from before says nothing of it, and anything but `true` is not a yes.
+  expect(
+    parseNativeEvent('{"type":"protocol","nodeId":"root","patches":1,"activation":"yes"}'),
+  ).toEqual({ type: "protocol", nodeId: "root", patches: 1 });
 });

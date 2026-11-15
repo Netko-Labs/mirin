@@ -58,7 +58,7 @@ pub use drive::{run, run_deferred, HostMessage, OPEN_MIN_SIZE_MARKER, RESIDENT_M
 pub use events::{EventKind, Modifiers, NativeUiEvent, PointerPhase};
 pub use focus::FOCUS_MARKER;
 pub use patch::{parse_patch, PatchOp, PATCH_MARKER, PATCH_PROTOCOL};
-pub use sim::{LayoutNode, SimCommand};
+pub use sim::{LayoutNode, SimCommand, ACTIVATION_MARKER};
 pub use surface::{parse_surface, Surface};
 pub use titlebar::{Chrome, Controls, TitleBar};
 pub use tree::{

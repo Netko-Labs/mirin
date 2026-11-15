@@ -65,6 +65,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             nodeId: "root",
             patches: record.patches,
             ...(record.settle === true ? { settle: true } : {}),
+            ...(record.activation === true ? { activation: true } : {}),
           }
         : null;
     case "settled":

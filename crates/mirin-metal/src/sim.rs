@@ -64,7 +64,12 @@ pub enum SimCommand {
         y: Option<f32>,
     },
     /// Window management the user would do with the title bar: `zoom`
-    /// toggles maximized, `minimize` minimizes.
+    /// toggles maximized, `minimize` minimizes. And what the compositor
+    /// would do: `deactivate` makes the window count as not the active one
+    /// (another window took the keyboard) and `activate` as active again,
+    /// so a check, whose window is otherwise always active, can see how an
+    /// inactive one draws. A host that takes those two names
+    /// `ACTIVATION_MARKER`.
     Window { action: String },
     /// Scroll the scrollable node `id` down by `dy` pixels (negative scrolls
     /// up) and right by `dx` (negative scrolls left; a virtualized list
@@ -92,6 +97,10 @@ fn half() -> f32 {
     0.5
 }
 
+/// Named by a host binary that takes the `activate` and `deactivate` window
+/// simulations; its `protocol` line says `"activation": true` too.
+pub const ACTIVATION_MARKER: &str = "MIRIN_METAL_ACTIVATION";
+
 /// Painted bounds of one id'd node, in window pixels.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutNode {
@@ -118,6 +127,8 @@ pub(crate) enum SimAction {
     Move(Point<Pixels>),
     Zoom,
     Minimize,
+    /// The window counts as the active one, or as not.
+    Activate(bool),
     /// A scroll by (across, down) pixels.
     Scroll(ScrollTarget, (f32, f32)),
 }
@@ -275,6 +286,8 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
         SimCommand::Window { action } => match action.as_str() {
             "zoom" => Some(SimAction::Zoom),
             "minimize" => Some(SimAction::Minimize),
+            "activate" => Some(SimAction::Activate(true)),
+            "deactivate" => Some(SimAction::Activate(false)),
             other => {
                 eprintln!("[mirin-metal] sim window: unknown action {other:?}");
                 None
@@ -317,6 +330,7 @@ pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Wind
             window.zoom_window();
         }
         SimAction::Minimize => window.minimize_window(),
+        SimAction::Activate(active) => window.simulate_active_status(active, cx),
         SimAction::Scroll(ScrollTarget::View(handle), (dx, dy)) => {
             // GPUI offsets are negative once scrolled: content moves up.
             let offset = handle.offset();
@@ -397,6 +411,21 @@ fn parse_keystroke(source: &str) -> Result<sumi::Keystroke, impl std::fmt::Debug
 #[cfg(test)]
 mod command_tests {
     use super::SimCommand;
+
+    #[test]
+    fn a_window_is_made_inactive_and_active_by_name() {
+        for action in ["deactivate", "activate"] {
+            let command: SimCommand =
+                serde_json::from_str(&format!(r#"{{"kind":"window","action":"{action}"}}"#))
+                    .unwrap();
+            assert_eq!(
+                command,
+                SimCommand::Window {
+                    action: action.into()
+                }
+            );
+        }
+    }
 
     #[test]
     fn a_focus_names_its_element() {
