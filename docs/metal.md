@@ -77,6 +77,12 @@ that, not for a single demo app:
   GPUI fork and the alpha host (`MIRIN_METAL_SURFACE`, section 6), and so do
   session-lock surfaces (`{ role: "lock" }`, unlocked only by `unlock()`);
   popups and per-output surfaces do not yet.
+  A desktop surface is drawn at the rate it is patched whether or not it has
+  the keyboard: the engine holds a window that is not the active one to 30
+  frames a second (`WindowOptions::inactive_frame_interval`), and a layer
+  surface that takes no keyboard is never active, so the host lifts that
+  limit for layer and lock surfaces (`surface.rs`, `with_role`). An app's
+  window in the background keeps it. `bench/inactive-rate.tsx` shows it.
 - **System-wide concerns.** Theming, fonts, input methods, and accessibility
   should come from the session, not each app. Inter-app IPC and the shell's
   APIs belong in a shared surface, not app-private code.

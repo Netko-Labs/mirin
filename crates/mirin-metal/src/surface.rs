@@ -121,9 +121,17 @@ pub(crate) fn with_role(
     };
     #[cfg(not(target_os = "linux"))]
     let kind = sumi::WindowKind::Normal;
+    // A desktop surface is never the active window (most take no keyboard),
+    // and the engine draws an inactive window at 30 frames a second at most:
+    // a Dock sliding in, a banner, a menu bar's clock were held to that.
+    let inactive_frame_interval = match surface {
+        Some(_) => None,
+        None => options.inactive_frame_interval,
+    };
     WindowOptions {
         kind,
         display_id: screen.or(options.display_id),
+        inactive_frame_interval,
         ..options
     }
 }
