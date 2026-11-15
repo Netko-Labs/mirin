@@ -442,6 +442,9 @@ struct DragState<DataOffer = wl_data_offer::WlDataOffer, Window = WaylandWindowS
     window: Option<Window>,
     position: Point<Pixels>,
     uri_read_generation: u64,
+    // mirin: an offer this window takes nothing from (no file in it), told
+    // so and kept until the drag leaves, when it is destroyed.
+    refused: Option<DataOffer>,
 }
 
 impl<DataOffer, Window> DragState<DataOffer, Window> {
@@ -462,11 +465,20 @@ impl<DataOffer, Window> DragState<DataOffer, Window> {
 trait FileDragDataOffer {
     fn finish(&self);
     fn destroy(&self);
+    // mirin: tell the source nothing of this offer is taken.
+    fn refuse(&self, serial: u32);
 }
 
 impl FileDragDataOffer for wl_data_offer::WlDataOffer {
     fn finish(&self) {
         wl_data_offer::WlDataOffer::finish(self);
+    }
+
+    // mirin: no action and no type, as GTK refuses a drag: the compositor
+    // then ends the drag at the drop with `wl_data_source.cancelled`.
+    fn refuse(&self, serial: u32) {
+        self.set_actions(DndAction::empty(), DndAction::empty());
+        self.accept(serial, None);
     }
 
     fn destroy(&self) {
@@ -479,8 +491,30 @@ where
     DataOffer: FileDragDataOffer + Clone,
     Window: Clone,
 {
+    // mirin: a drag with no file for this window. An offer accepted and
+    // then destroyed left its source without an end: the compositor said
+    // the drop was performed and nothing after (a GTK source's drag never
+    // ended). Refused, the source hears `cancelled` at the drop.
+    fn refuse(&mut self, generation: u64, data_offer: DataOffer, serial: u32) {
+        if !self.is_uri_read_current(generation) {
+            data_offer.destroy();
+            return;
+        }
+        data_offer.refuse(serial);
+        if let Some(earlier) = self.refused.replace(data_offer) {
+            earlier.destroy();
+        }
+    }
+
+    fn drop_refused(&mut self) {
+        if let Some(refused) = self.refused.take() {
+            refused.destroy();
+        }
+    }
+
     fn handle_leave(&mut self) -> Option<(Window, PlatformInput)> {
         self.invalidate_uri_read();
+        self.drop_refused(); // mirin:
         let window = self.window.clone()?;
         let data_offer = self.data_offer.clone()?;
         data_offer.destroy();
@@ -491,6 +525,7 @@ where
 
     fn handle_drop(&mut self) -> Option<(Window, PlatformInput)> {
         self.invalidate_uri_read();
+        self.drop_refused(); // mirin:
         let window = self.window.clone()?;
         let data_offer = self.data_offer.clone()?;
         data_offer.finish();
@@ -537,6 +572,8 @@ pub(crate) enum DataSourceKind {
 pub(crate) struct ExternalDrag {
     source: wl_data_source::WlDataSource,
     bytes: Vec<u8>,
+    // mirin: the paths as plain text, for a target that asks for text.
+    text: Vec<u8>,
     window: WaylandWindowStatePtr,
     // mirin: a drag `start_file_drag` began: its icon's surface and buffer,
     // kept until it ends, and no `FileDropEvent::Ended` to the window, whose
@@ -566,6 +603,18 @@ fn file_uri_list(paths: &FileDragPaths) -> String {
             list.push_str("\r\n");
             list
         })
+}
+
+// mirin: the dragged paths as text: one a line, as they are (not URLs), so
+// a terminal or an editor gets what a person would type.
+fn file_path_text(paths: &FileDragPaths) -> String {
+    paths
+        .entries()
+        .iter()
+        .filter(|(path, _)| path.is_absolute())
+        .map(|(path, _)| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub struct ClickState {
@@ -766,6 +815,12 @@ impl WaylandClientStatePtr {
         let source =
             data_device_manager.create_data_source(&state.globals.qh, DataSourceKind::Drag);
         source.offer(FILE_LIST_MIME_TYPE.to_string());
+        // mirin: and the paths as text, as GTK's and Qt's file drags offer
+        // them: a terminal or a text field that takes no file list gets the
+        // path. A target that takes files asks for the list.
+        for mime_type in TEXT_MIME_TYPES {
+            source.offer(mime_type.to_string());
+        }
         source.set_actions(actions);
         // mirin: the icon, drawn into a buffer of its own surface.
         let qh = state.globals.qh.clone();
@@ -803,6 +858,7 @@ impl WaylandClientStatePtr {
         state.external_drag = Some(ExternalDrag {
             source,
             bytes: uri_list.into_bytes(),
+            text: file_path_text(paths).into_bytes(), // mirin:
             window,
             icon,
             gpui_drag,
@@ -1203,6 +1259,7 @@ impl WaylandConnection {
                 window: None,
                 position: Point::default(),
                 uri_read_generation: 0,
+                refused: None,
             },
             external_drag: None,
             click: ClickState {
@@ -3022,6 +3079,21 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     };
                     let uri_read_generation = state.drag.begin_uri_read();
 
+                    // mirin: accepted here, with this drag's serial, and only
+                    // an offer that has a file list. Upstream accepted at
+                    // every `offer` event that named the type (a clipboard's
+                    // too), with the serial of the drag before.
+                    let offers_files = state
+                        .data_offers
+                        .iter()
+                        .find(|offer| offer.inner.id() == data_offer.id())
+                        .is_none_or(|offer| offer.has_mime_type(FILE_LIST_MIME_TYPE));
+                    if !offers_files {
+                        state.drag.refuse(uri_read_generation, data_offer, serial);
+                        return;
+                    }
+                    data_offer.accept(serial, Some(FILE_LIST_MIME_TYPE.to_string()));
+
                     const ACTIONS: DndAction = DndAction::Copy;
                     data_offer.set_actions(ACTIONS, ACTIONS);
 
@@ -3066,16 +3138,18 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 .collect();
                             let position = Point::new(x.into(), y.into());
 
-                            // Prevent dropping text from other programs.
-                            if paths.is_empty() {
-                                data_offer.destroy();
-                                return;
-                            }
                             let Some(client) = this.0.upgrade() else {
                                 data_offer.destroy();
                                 return;
                             };
                             let mut state = client.borrow_mut();
+                            // Prevent dropping text from other programs.
+                            // mirin: by refusing it (a link is a list with
+                            // no file), not by destroying what was accepted.
+                            if paths.is_empty() {
+                                state.drag.refuse(uri_read_generation, data_offer, serial);
+                                return;
+                            }
                             let input = state.drag.complete_uri_read(
                                 uri_read_generation,
                                 data_offer,
@@ -3139,14 +3213,9 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
 
         if let wl_data_offer::Event::Offer { mime_type } = event {
-            // Drag and drop
-            if mime_type == FILE_LIST_MIME_TYPE {
-                let serial = state.serial_tracker.get(SerialKind::DataDevice);
-                let mime_type = mime_type.clone();
-                data_offer.accept(serial.as_raw(), Some(mime_type));
-            }
-
-            // Clipboard
+            // mirin: a drag's offer is accepted when the drag enters a
+            // window (`wl_data_device::Event::Enter`), not here.
+            // Clipboard, and what a drag offers
             if let Some(offer) = state
                 .data_offers
                 .iter_mut()
@@ -3209,11 +3278,16 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
             (DataSourceKind::Clipboard, wl_data_source::Event::Cancelled) => {
                 data_source.destroy();
             }
-            (DataSourceKind::Drag, wl_data_source::Event::Send { fd, .. }) => {
+            (DataSourceKind::Drag, wl_data_source::Event::Send { mime_type, fd }) => {
                 let Some(external_drag) = state.external_drag.as_ref() else {
                     return;
                 };
-                let bytes = external_drag.bytes.clone();
+                // mirin: the list, or the paths as text when text is asked.
+                let bytes = if TEXT_MIME_TYPES.contains(&mime_type.as_str()) {
+                    external_drag.text.clone()
+                } else {
+                    external_drag.bytes.clone()
+                };
                 state.clipboard.send_bytes(fd, bytes);
             }
             (
@@ -3390,6 +3464,7 @@ mod tests {
         name: &'static str,
         finished: Rc<Cell<bool>>,
         destroyed: Rc<Cell<bool>>,
+        refused: Rc<Cell<Option<u32>>>,
     }
 
     impl FakeDataOffer {
@@ -3398,6 +3473,7 @@ mod tests {
                 name,
                 finished: Rc::new(Cell::new(false)),
                 destroyed: Rc::new(Cell::new(false)),
+                refused: Rc::new(Cell::new(None)),
             }
         }
     }
@@ -3405,6 +3481,10 @@ mod tests {
     impl FileDragDataOffer for FakeDataOffer {
         fn finish(&self) {
             self.finished.set(true);
+        }
+
+        fn refuse(&self, serial: u32) {
+            self.refused.set(Some(serial));
         }
 
         fn destroy(&self) {
@@ -3418,6 +3498,7 @@ mod tests {
             window: None,
             position: Point::default(),
             uri_read_generation: 0,
+            refused: None,
         }
     }
 
@@ -3510,6 +3591,63 @@ mod tests {
         assert!(!data_offer_b.destroyed.get());
         assert_eq!(drag.data_offer.as_ref().map(|offer| offer.name), Some("B"));
         assert_eq!(drag.window, Some("window B"));
+    }
+
+    // mirin: a drag with no file in it (a link, text).
+    #[test]
+    fn a_drag_without_files_is_refused_and_destroyed_when_it_leaves() {
+        let mut drag = drag_state();
+        let link = FakeDataOffer::new("link");
+        let generation = drag.begin_uri_read();
+        drag.refuse(generation, link.clone(), 21);
+
+        // Told so with the drag's serial, and kept: destroying an offer
+        // that was accepted left the source without an end.
+        assert_eq!(link.refused.get(), Some(21));
+        assert!(!link.destroyed.get());
+        assert!(drag.data_offer.is_none());
+        assert!(drag.window.is_none());
+
+        // No window heard of it, and none hears of its going.
+        assert!(drag.handle_leave().is_none());
+        assert!(link.destroyed.get());
+        assert!(!link.finished.get());
+    }
+
+    #[test]
+    fn a_refused_drag_that_is_dropped_anyway_reaches_no_window() {
+        let mut drag = drag_state();
+        let link = FakeDataOffer::new("link");
+        let generation = drag.begin_uri_read();
+        drag.refuse(generation, link.clone(), 21);
+
+        assert!(drag.handle_drop().is_none());
+        assert!(link.destroyed.get());
+        assert!(!link.finished.get());
+    }
+
+    #[test]
+    fn a_refusal_that_comes_after_the_drag_left_only_destroys_the_offer() {
+        let mut drag = drag_state();
+        let link = FakeDataOffer::new("link");
+        let generation = drag.begin_uri_read();
+        assert!(drag.handle_leave().is_none());
+        drag.refuse(generation, link.clone(), 21);
+
+        assert_eq!(link.refused.get(), None);
+        assert!(link.destroyed.get());
+        assert!(drag.refused.is_none());
+    }
+
+    #[test]
+    fn the_dragged_paths_as_text_are_one_a_line() {
+        let paths = FileDragPaths::new([
+            (PathBuf::from("/tmp/first"), false),
+            (PathBuf::from("relative/path"), false),
+            (PathBuf::from("/tmp/nested directory"), true),
+        ]);
+        assert_eq!(file_path_text(&paths), "/tmp/first\n/tmp/nested directory");
+        assert!(file_path_text(&FileDragPaths::default()).is_empty());
     }
 
     #[derive(Default)]

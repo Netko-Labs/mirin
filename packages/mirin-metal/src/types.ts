@@ -263,6 +263,44 @@ export interface WheelInfo {
   dy: number;
 }
 
+/**
+ * Where a scroll view stands, as React Native's scroll event says it (without
+ * the `nativeEvent` around it): how far it is scrolled from its content's
+ * start, how large the content is, and how large the view is, in px.
+ */
+export interface ScrollInfo {
+  /** Never negative, and whole or not as the view is scrolled (a touchpad scrolls by parts of a pixel). */
+  contentOffset: { x: number; y: number };
+  contentSize: { width: number; height: number };
+  layoutMeasurement: { width: number; height: number };
+}
+
+/**
+ * What a `<View>`'s (or `<ScrollView>`'s) `ref` holds, besides being a
+ * `createPortal` target: `const list = useRef<ViewHandle>(null)`. The methods
+ * need a host whose `protocol` event says `scroll`; on an older one they do
+ * nothing.
+ */
+export interface ViewHandle {
+  /**
+   * Scroll this scroll view to an offset from its content's start, in px
+   * (React Native's `scrollTo`, without `animated`: it jumps). An axis left
+   * out stays where it is, and the view keeps the offset in its range, so
+   * `onScroll` says where it ended.
+   */
+  scrollTo(offset: { x?: number; y?: number }): void;
+  /** Scroll this scroll view to its end: the bottom, or the right edge of one that only scrolls across. */
+  scrollToEnd(): void;
+  /**
+   * Scroll every scroll view around this view the least that shows it whole
+   * (the DOM's `scrollIntoView({ block: "nearest", inline: "nearest" })`):
+   * nothing when it already shows, to its start when it is longer than the
+   * view. A view that came with this commit is shown once it is drawn, and a
+   * row a long list has not laid out yet is brought in too.
+   */
+  scrollIntoView(): void;
+}
+
 /** Painted bounds of a node in window pixels. */
 export interface Bounds {
   x: number;
@@ -335,7 +373,10 @@ export type AccessibilityRole =
   | "search";
 
 export interface ViewProps extends AccessibilityProps {
-  /** Receives the mounted host instance (usable as a `createPortal` target). */
+  /**
+   * Receives the mounted host instance: a `createPortal` target and a
+   * `ViewHandle` (`scrollTo`, `scrollToEnd`, `scrollIntoView`).
+   */
   ref?: Ref<unknown>;
   style?: ViewStyle;
   /**
@@ -412,6 +453,21 @@ export interface ViewProps extends AccessibilityProps {
   /** The wheel or touchpad scrolled over this view, in lines. */
   onWheel?: (event: WheelInfo) => void;
   /**
+   * A scroll view's offset changed, whoever moved it: the wheel, its scroll
+   * bar, `scrollTo`, `scrollIntoView`, or its content getting shorter. At
+   * most once a frame; a view that was never scrolled is at 0, 0 and says
+   * nothing. On a view that scrolls (`<ScrollView>`, `overflow: "scroll"`),
+   * a long list included; needs a host whose `protocol` event says `scroll`
+   * (an older one is not told of the handler, and never calls it).
+   */
+  onScroll?: (event: ScrollInfo) => void;
+  /**
+   * At most one `onScroll` every this many ms (React Native's name). The
+   * offset the view ends on is always told, once the wait is over. 0 or
+   * absent: every frame it moved.
+   */
+  scrollEventThrottle?: number;
+  /**
    * Drag these files out of the window: a press here and a move of a few
    * pixels starts it, and any app's window that takes files gets them (this
    * one's `onDrop` views included). A click without moving is still a press.
@@ -432,7 +488,15 @@ export interface TextProps {
 }
 
 export interface TextInputProps extends AccessibilityProps {
-  /** Controlled value; a change resets the native buffer. */
+  /**
+   * Controlled value. Setting the text the field last reported leaves the
+   * native buffer alone; any other value replaces it. Keys typed before
+   * the field took such a value (the app wrote as the person typed) are not
+   * lost: the field types them again into the value and reports the result
+   * through `onChangeText`, which never hears a text typed on a value the
+   * app has since replaced (a host from before 2026-11-15 resets instead,
+   * and reports what was typed on the old text).
+   */
   value: string;
   /**
    * Bump it to reset the native buffer to `value` even when `value` didn't change: after
@@ -621,7 +685,16 @@ export interface LayoutNode {
 export type NativeEvent =
   /** `modifiers` is absent from a host older than `MIRIN_METAL_FOCUS`. */
   | { type: "press"; nodeId: string; bounds?: Bounds; modifiers?: Modifiers }
-  | { type: "change"; nodeId: string; value: string }
+  /**
+   * A field's text after an edit. `baseHash` names the text the edit was
+   * made on and `textHash` the value itself (`textHash()` of each; a host
+   * from before 2026-11-15 says neither). `render` passes `onChangeText`
+   * only a change made on what the app last set or heard; one typed on a
+   * text the app has since replaced is dropped, and the host, once it takes
+   * the app's value, reports the typing carried onto it. A listener on the
+   * transport hears every one.
+   */
+  | { type: "change"; nodeId: string; value: string; baseHash?: number; textHash?: number }
   | { type: "submit"; nodeId: string; value: string }
   | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
   /** `textHash` names the text the offsets are into (lib/text-hash.ts); an older host leaves it out. */
@@ -649,13 +722,19 @@ export type NativeEvent =
    * starts): `render` then sends only what each commit changed. A host older
    * than patches never sends it, and gets the whole tree every commit.
    * `settle` is true from a host that takes the `settle` simulation, and
-   * `imageError` from one that says when an image cannot be drawn (`onError`).
+   * `rebase` from one that takes a field's `baseHash` (the text its `value`
+   * was set over) and carries what was typed meanwhile onto the value,
+   * `scroll` from one that reports a scroll view's offset (`onScroll`) and
+   * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), and `imageError`
+   * from one that says when an image cannot be drawn (`onError`).
    */
   | {
       type: "protocol";
       nodeId: "root";
       patches: number;
       settle?: boolean;
+      rebase?: boolean;
+      scroll?: boolean;
       imageError?: boolean;
     }
   /**
@@ -670,6 +749,17 @@ export type NativeEvent =
   /** A patch didn't apply (`reason`): the host wants the whole tree, and drops patches until it comes. */
   | { type: "resync"; nodeId: "root"; reason: string }
   | ({ type: "wheel"; nodeId: string } & WheelInfo)
+  /** A scroll view with `onScroll` stands somewhere else: its offset, its content's size and its own. */
+  | {
+      type: "scroll";
+      nodeId: string;
+      x: number;
+      y: number;
+      contentWidth: number;
+      contentHeight: number;
+      width: number;
+      height: number;
+    }
   /** An image with `onError` could not be drawn: why. */
   | { type: "imageerror"; nodeId: string; error: string }
   | ({ type: "drop"; nodeId: string } & DropInfo)

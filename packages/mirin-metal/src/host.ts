@@ -65,6 +65,8 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             nodeId: "root",
             patches: record.patches,
             ...(record.settle === true ? { settle: true } : {}),
+            ...(record.rebase === true ? { rebase: true } : {}),
+            ...(record.scroll === true ? { scroll: true } : {}),
             ...(record.imageError === true ? { imageError: true } : {}),
           }
         : null;
@@ -144,6 +146,24 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       };
       return { type: "runpress", nodeId, run, offset, modifiers };
     }
+    case "scroll": {
+      const { x, y, contentWidth, contentHeight, width, height } = record;
+      const numbers = [x, y, contentWidth, contentHeight, width, height];
+      if (!numbers.every((value) => typeof value === "number" && Number.isFinite(value))) {
+        return null;
+      }
+      const [left, top, wide, tall, viewWidth, viewHeight] = numbers as number[];
+      return {
+        type: "scroll",
+        nodeId,
+        x: left as number,
+        y: top as number,
+        contentWidth: wide as number,
+        contentHeight: tall as number,
+        width: viewWidth as number,
+        height: viewHeight as number,
+      };
+    }
     case "imageerror":
       return typeof record.value === "string"
         ? { type: "imageerror", nodeId, error: record.value }
@@ -156,10 +176,20 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
         ? { type: "selection", nodeId, start, end, textHash }
         : { type: "selection", nodeId, start, end };
     }
-    case "change":
+    case "change": {
+      const { value, baseHash, textHash } = record;
+      if (typeof value !== "string") return null;
+      return {
+        type: "change",
+        nodeId,
+        value,
+        ...(typeof baseHash === "number" ? { baseHash } : {}),
+        ...(typeof textHash === "number" ? { textHash } : {}),
+      };
+    }
     case "submit":
       return typeof record.value === "string"
-        ? { type: record.type, nodeId, value: record.value }
+        ? { type: "submit", nodeId, value: record.value }
         : null;
     case "keydown":
     case "windowkey": {

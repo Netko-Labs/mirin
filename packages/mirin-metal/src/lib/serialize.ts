@@ -66,6 +66,7 @@ interface InputNodeProps {
   flex?: number;
   autofocus?: boolean;
   revision?: number;
+  baseHash?: number;
   onChange?: boolean;
   onSubmit?: boolean;
   focusNextOnSubmit?: boolean;
@@ -136,12 +137,14 @@ const WEIGHT: Record<NonNullable<TextStyle["fontWeight"]>, TextNodeProps["weight
 
 /**
  * How heads are written: with an `id` on every node (a patching host), as
- * the root (which always fills the window), and with an image's `onError`
- * said (a host that tells of images it cannot draw).
+ * the root (which always fills the window), with `onScroll` said (a host
+ * that reports scroll offsets), and with an image's `onError` said (a host
+ * that tells of images it cannot draw).
  */
 export interface HeadOptions {
   ids: boolean;
   root: boolean;
+  scrolls?: boolean;
   imageErrors?: boolean;
 }
 
@@ -156,7 +159,9 @@ export function headJson(
   options: HeadOptions,
 ): string {
   // A view's head is written as text, from the fields it sets (`view-props.ts`).
-  if (node.kind === "view") return viewHeadJson(node.key, node.props, options.root);
+  if (node.kind === "view") {
+    return viewHeadJson(node.key, node.props, options.root, options.scrolls);
+  }
   return JSON.stringify(head(node, parent, options));
 }
 
@@ -298,6 +303,7 @@ function inputProps(instance: InputInstance): InputNodeProps {
   if (input.secureTextEntry) props.secure = true;
   if (input.autoFocus) props.autofocus = true;
   if (input.valueRevision !== undefined) props.revision = input.valueRevision;
+  if (instance.base !== undefined) props.baseHash = instance.base;
   if (style.fontFamily === "monospace") props.mono = true;
   if (style.fontSize !== undefined) props.size = style.fontSize;
   if (style.color) props.color = style.color;

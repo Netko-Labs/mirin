@@ -398,6 +398,81 @@ needs another way than removal: how the binary is laid out and mapped (code
 that runs kept together, the rest never touched), which is a build
 question, not an engine one.
 
+**Stripped.** The sizes above are of unstripped builds, and so is "13.2 MB
+smaller": both ends of that table are sumi. A package ships the host
+stripped, and beside the engine before sumi (blade) the stripped host is not
+smaller at all. Release builds on one machine, `strip` 2.46:
+
+| Host | Unstripped (bytes) | Stripped (bytes) | Code, `.text` | `.rodata` |
+| --- | --- | --- | --- | --- |
+| Before sumi (`host-main`, the 0.2.2 build at step 1's base) | 33,556,464 | 25,511,592 | 19,069,794 | 1,715,144 |
+| sumi before step 3 (`host-sync2`) | 46,074,528 | 34,990,728 | 25,475,138 | 2,721,656 |
+| sumi, `main` at `a3778f2` (2026-11-15) | 33,682,480 | 25,594,248 | 18,421,010 | 2,160,288 |
+
+So step 3 took 9.4 MB off the stripped host, and what ships is 0.08 MB
+(0.3%) larger than the host before sumi: 0.65 MB less code, 0.45 MB more
+read-only data, 0.26 MB more unwind tables and relocations. Dashi's
+package measured 26.5 MB against 25.5 MB with its own build flags; the
+order is the same. The 8 MB between unstripped and stripped is the symbol
+table; there is no debug info in either.
+
+**An idle host against the engine before sumi (2026-11-15).** Dashi saw
+about 4 MB more RSS a host at rest (six shell hosts, 156.7 MB to 179.3 MB).
+Measured here on radv: each host in turn in one nested compositor, a layer
+surface with a line of text (a shell host) and a deferred host that never
+opens (a host kept warm), `/proc/<pid>/smaps` six seconds after the start,
+three rounds interleaved under the bench lock, medians, MB:
+
+| | Before sumi | `main` | Difference |
+| --- | --- | --- | --- |
+| With a surface: RSS | 61.4 | 65.4 | +4.0 |
+| – anonymous (heap and `mmap`) | 8.3 | 10.1 | +1.8 |
+| – the host's own file, code | 14.1 | 15.5 | +1.4 |
+| – the host's own file, read-only data | 3.0 | 3.9 | +0.9 |
+| – every other library (LLVM 24.7, the driver, glibc, …) | 36.0 | 35.9 | −0.1 |
+| Kept warm, no window: RSS | 53.7 | 58.9 | +5.3 |
+| – anonymous | 7.0 | 9.3 | +2.3 |
+
+Two things, then. **The file** is 2.3 MB of it: more of the host's own code
+and read-only data is resident (naga and wgpu-core against blade's thinner
+layer), though the file is the same size. Those pages are the page cache's:
+every host of one binary shares them, so six hosts pay them once, and the
+kernel takes them back under pressure. Their count also moves by a
+megabyte from one start to the next with nothing changed. **Anonymous
+memory** is the part each host really pays, 1.8 to 2.3 MB more, and it is
+all in one place: a 2.7 MB malloc arena of the background thread that
+prepares the GPU context (`wgpu_prepare.rs`), where the device and the
+parsed shaders are allocated, against a main heap 1.1 MB smaller.
+
+Is it the prepared GPU context? In part. With the preparation switched off
+(a build with an environment switch, for this measurement only) a host with
+a surface holds 1.6 MB less (65.2 to 63.7 MB; anonymous 10.1 to 8.9): the
+same objects are then allocated on the main thread, in the heap everything
+else reuses. A host kept warm without it is 18 MB, since it has loaded no
+driver, which is the 40 MB a warm host exists to have ready. The
+preparation stays: it is 20 ms of a start.
+
+What was cheap, and is done: **the subpixel shaders are parsed ahead only
+for a host that asked for subpixel text** (`MIRIN_METAL_TEXT=subpixel`).
+Every host parsed both shader sets as it started and kept both modules for
+as long as it lived, and a host that draws text in grays, which is the
+default, never used the second. Without it a host holds 1.05 MB less
+anonymous memory, with a surface (10.10 to 9.05 MB) and kept warm (9.30 to
+8.25), in every one of three interleaved rounds, and spends 4 ms less of a
+background thread at each start; a subpixel host parses them ahead as
+before, and a subpixel pipeline in a host that did not ask parses them when
+it is first made. With one binary and the switch alone, RSS went from 64.8
+to 63.6 MB with a surface and from 58.8 to 57.9 kept warm.
+
+What is left, 0.7 to 1.3 MB of anonymous memory a host over the engine
+before sumi, is the device and the first shader module in that thread's
+arena. `GLIBC_TUNABLES=glibc.malloc.arena_max=1` in a host's environment
+puts them in the main heap and gives back another 0.5 to 0.6 MB (8.55 MB
+with a surface, 7.62 kept warm, against 8.3 and 7.0 before sumi). It is
+not set by the host: one arena means every thread's allocations take one
+lock, and nobody has measured a frame with it. A launcher that wants the
+memory can set it for its hosts, and should measure first.
+
 **What a removal means for an app.**
 
 - An image in a dropped format fails to decode, as an unknown file does.
