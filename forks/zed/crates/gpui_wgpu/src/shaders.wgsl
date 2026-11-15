@@ -84,7 +84,8 @@ struct GlobalParams {
     depth_scale: f32,
     quad_count: u32,
     premultiplied_alpha: u32,
-    pad: u32,
+    // mirin: upstream's `pad`: the frame has no depth buffer.
+    no_depth: u32,
 }
 
 struct GammaParams {
@@ -552,8 +553,11 @@ fn quad_depth(quad_id: u32) -> f32 {
 }
 
 // Opaque rectangles are drawn by the opaque pass instead of the quad pass.
+// mirin: none without a depth buffer (`globals.no_depth`), where the quad
+// pass draws them as it draws any quad.
 fn is_opaque_rectangle(quad: Quad) -> bool {
-    return quad.background.tag == 0u
+    return globals.no_depth == 0u
+        && quad.background.tag == 0u
         && quad.background.solid.a >= 1.0
         && !has_rounded_corners(quad.corner_radii)
         && !has_border(quad.border_widths);

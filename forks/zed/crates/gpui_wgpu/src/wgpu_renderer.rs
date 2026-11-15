@@ -22,6 +22,13 @@ const MAX_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
 /// doubles in the frame that outgrows it (`grow_instance_data`), so a large
 /// window reaches its size in its first frame and a small one keeps this.
 const INITIAL_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024;
+/// mirin: the quads a frame has before its window gets a depth buffer
+/// (`WgpuRendererCore::depth`). Upstream gives every window one, to skip
+/// what opaque quads hide: four bytes a pixel, which for an 800 by 600
+/// window spills the first 2 MiB block of GPU memory into a 4 MiB one, and
+/// a pipeline more to build before the first frame. A frame of a few quads
+/// has little hidden under them to skip.
+const DEPTH_BUFFER_QUADS: usize = 128;
 
 const INSTANCE_TEXTURE_TEXEL_SIZE: u64 = 16;
 
@@ -69,7 +76,9 @@ struct GlobalParams {
     depth_scale: f32,
     quad_count: u32,
     premultiplied_alpha: u32,
-    pad: u32,
+    // mirin: upstream's `pad`: whether the frame is drawn without a depth
+    // buffer, so the quad pass draws the opaque rectangles too.
+    no_depth: u32,
 }
 
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -224,6 +233,9 @@ struct WgpuRendererCore {
     transient_attachments: bool,
     adapter_info: wgpu::AdapterInfo,
     depth_texture: Option<DepthTexture>,
+    /// mirin: what the pipelines in use were made for; `depth` says whether
+    /// the window draws with a depth buffer yet (`DEPTH_BUFFER_QUADS`).
+    pipeline_key: PipelineKey,
     /// Read by the headless renderer to create its render target.
     #[cfg(all(
         not(target_family = "wasm"),
@@ -898,15 +910,14 @@ impl WgpuRendererCore {
         // mirin: pipelines and layouts from the context's cache, built on first use.
         let pipeline_cache = context.pipeline_cache().clone();
         let bind_group_layouts = pipeline_cache.layouts(&device, uses_webgl_instance_data);
-        let pipelines = pipeline_cache.pipelines(
-            &device,
-            PipelineKey {
-                surface_format: target_format,
-                alpha_mode,
-                dual_source_blending,
-                uses_webgl_instance_data,
-            },
-        );
+        let pipeline_key = PipelineKey {
+            surface_format: target_format,
+            alpha_mode,
+            dual_source_blending,
+            uses_webgl_instance_data,
+            depth: false,
+        };
+        let pipelines = pipeline_cache.pipelines(&device, pipeline_key);
         let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("atlas_sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1011,6 +1022,7 @@ impl WgpuRendererCore {
             transient_attachments: context.supports_transient_attachments(),
             adapter_info: context.adapter.get_info(),
             depth_texture: None,
+            pipeline_key,
             #[cfg(all(
                 not(target_family = "wasm"),
                 any(test, feature = "bench-support", feature = "test-support")
@@ -1030,15 +1042,30 @@ impl WgpuRendererCore {
         alpha_mode: wgpu::CompositeAlphaMode,
     ) {
         // mirin: the other set from the cache; nothing is built until drawn.
-        self.resources.pipelines = self.pipeline_cache.pipelines(
-            &self.resources.device,
-            PipelineKey {
-                surface_format,
-                alpha_mode,
-                dual_source_blending: self.dual_source_blending,
-                uses_webgl_instance_data: self.uses_webgl_instance_data,
-            },
-        );
+        self.pipeline_key = PipelineKey {
+            surface_format,
+            alpha_mode,
+            ..self.pipeline_key
+        };
+        self.resources.pipelines = self
+            .pipeline_cache
+            .pipelines(&self.resources.device, self.pipeline_key);
+    }
+
+    /// mirin: whether this frame is drawn with a depth buffer: from the
+    /// first frame that has `DEPTH_BUFFER_QUADS` quads on, for as long as
+    /// the window lives (the set of pipelines that test depth is taken from
+    /// the cache then, and built as it is drawn with). Before that the pass
+    /// has no depth attachment, the opaque pass is not drawn and the quad
+    /// pass draws every quad, as before upstream had a depth buffer.
+    fn depth(&mut self, scene: &Scene) -> bool {
+        if !self.pipeline_key.depth && scene.quads.len() >= DEPTH_BUFFER_QUADS {
+            self.pipeline_key.depth = true;
+            self.resources.pipelines = self
+                .pipeline_cache
+                .pipelines(&self.resources.device, self.pipeline_key);
+        }
+        self.pipeline_key.depth
     }
 
     fn resources_mut(&mut self) -> &mut WgpuResources {
@@ -1107,6 +1134,7 @@ impl WgpuRendererCore {
                     scene.polychrome_sprites.len(),
                 )
             })?;
+        let depth = self.depth(scene);
         let depth_scale = quad_depth_scale(scene.quads.len());
         let globals = GlobalParams {
             viewport_size: [size.width.0 as f32, size.height.0 as f32],
@@ -1115,7 +1143,7 @@ impl WgpuRendererCore {
             depth_scale,
             quad_count: scene.quads.len() as u32,
             premultiplied_alpha: self.resources().pipelines.premultiplied_alpha() as u32,
-            pad: 0,
+            no_depth: !depth as u32,
         };
         self.resources().queue.write_buffer(
             &self.resources().globals_buffer,
@@ -1123,12 +1151,13 @@ impl WgpuRendererCore {
             bytemuck::bytes_of(&globals),
         );
         self.prepare_texture_bind_groups(scene);
-        self.ensure_depth_texture(size);
-        let depth_view = &self
-            .depth_texture
-            .as_ref()
-            .context("depth texture missing")?
-            .view;
+        let depth_view = if depth {
+            self.ensure_depth_texture(size);
+            let depth_texture = self.depth_texture.as_ref();
+            Some(&depth_texture.context("depth texture missing")?.view)
+        } else {
+            None
+        };
         // Quads are written first, so their instance indices are their
         // indices in `scene.quads` on both transports, which the quad depths
         // rely on.
@@ -1153,24 +1182,28 @@ impl WgpuRendererCore {
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
+                depth_stencil_attachment: depth_view.map(|view| {
+                    wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0.0),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }
                 }),
                 ..Default::default()
             });
             pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
 
-            self.draw_instances(
-                &instance_bindings.quads,
-                self.resources().pipelines.opaque_quads(),
-                instance_range(0..scene.quads.len()),
-                &mut pass,
-            );
+            if depth {
+                self.draw_instances(
+                    &instance_bindings.quads,
+                    self.resources().pipelines.opaque_quads(),
+                    instance_range(0..scene.quads.len()),
+                    &mut pass,
+                );
+            }
 
             let viewport_width = size.width.0 as f32;
             let viewport_height = size.height.0 as f32;

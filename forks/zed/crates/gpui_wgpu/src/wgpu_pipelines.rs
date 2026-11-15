@@ -20,6 +20,9 @@ pub(crate) struct PipelineKey {
     pub alpha_mode: wgpu::CompositeAlphaMode,
     pub dual_source_blending: bool,
     pub uses_webgl_instance_data: bool,
+    /// Whether the pass they draw in has a depth attachment
+    /// (`wgpu_renderer.rs`'s `DEPTH_BUFFER_QUADS`): they test it then.
+    pub depth: bool,
 }
 
 /// The pipelines of a context, one set per [`PipelineKey`], and what they
@@ -370,8 +373,9 @@ impl WgpuPipelines {
         )
     }
 
-    /// Upstream's `create_pipeline`: every pipeline tests depth (greater is
-    /// nearer), and `depth_write_enabled` says whether it writes it.
+    /// Upstream's `create_pipeline`: with a depth buffer every pipeline tests
+    /// depth (greater is nearer), and `depth_write_enabled` says whether it
+    /// writes it.
     #[allow(clippy::too_many_arguments)]
     fn build(
         &self,
@@ -421,7 +425,7 @@ impl WgpuPipelines {
                     unclipped_depth: false,
                     conservative: false,
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
+                depth_stencil: self.key.depth.then(|| wgpu::DepthStencilState {
                     format: crate::wgpu_renderer::DEPTH_FORMAT,
                     depth_write_enabled: Some(depth_write_enabled),
                     depth_compare: Some(wgpu::CompareFunction::Greater),

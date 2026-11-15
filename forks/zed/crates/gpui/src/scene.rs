@@ -1211,25 +1211,22 @@ impl Primitive {
         }
     }
 
-    fn transformation(&self) -> TransformationMatrix {
-        match self {
-            Primitive::MonochromeSprite(sprite) => sprite.transformation,
-            Primitive::SubpixelSprite(sprite) => sprite.transformation,
-            _ => TransformationMatrix::unit(),
-        }
-    }
-
     // mirin: inlined, and the matrix is looked at only for a sprite: a
     // frame that copies most of a window asks this of every primitive.
-    #[inline]
+    #[inline(always)]
     fn clipped_bounds(&self) -> Bounds<ScaledPixels> {
-        let bounds = match self {
-            Primitive::MonochromeSprite(_) | Primitive::SubpixelSprite(_) => {
-                self.transformation().transform_bounds(*self.bounds())
-            }
-            _ => *self.bounds(),
+        let (bounds, mask) = match self {
+            Primitive::MonochromeSprite(sprite) => (
+                sprite.transformation.transform_bounds(sprite.bounds),
+                &sprite.content_mask,
+            ),
+            Primitive::SubpixelSprite(sprite) => (
+                sprite.transformation.transform_bounds(sprite.bounds),
+                &sprite.content_mask,
+            ),
+            _ => (*self.bounds(), self.content_mask()),
         };
-        bounds.intersect(&self.content_mask().bounds)
+        bounds.intersect(&mask.bounds)
     }
 
     pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
@@ -1676,6 +1673,7 @@ impl TransformationMatrix {
     }
 
     /// The smallest bounds that contain `bounds` once it is transformed.
+    #[inline] // mirin: asked of every sprite a copied drawing has
     pub(crate) fn transform_bounds(&self, bounds: Bounds<ScaledPixels>) -> Bounds<ScaledPixels> {
         if *self == Self::unit() {
             return bounds;
