@@ -791,8 +791,20 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   to the text's (Medium text over a family with Regular and Bold only) is
   passed over by cosmic-text, which then takes the nearest weight of any
   family that has the character. It was so before sumi too.
-- Tests: `crates/mirin-metal/tests/text_weight.rs`, with two small fonts
-  cut from Noto Sans (`tests/fonts/`).
+- **Emoji are drawn** (2026-11-15). Noto Color Emoji as Fedora ships it
+  (`Noto-COLRv1.ttf`) holds COLRv1 glyphs: paint graphs of gradients,
+  transforms, clips and composited layers. swash draws colour bitmaps and
+  COLRv0's flat layers, not those, so every emoji was shaped and then drawn
+  as nothing, on the gpui 0.2.2 build too. `sumi-wgpu`'s `color_glyph.rs`
+  draws them: skrifa walks the paint graph and tiny-skia paints it (both
+  were in the tree already, for cosmic-text and for SVG), into the same
+  image a colour glyph from swash arrives as. A sweep gradient is drawn as
+  one flat colour (tiny-skia 0.11 has none; Noto's emoji use none). A font
+  is taken for an emoji font by its PostScript name, `NotoColorEmoji`, as
+  upstream does: another colour font (Twemoji) is still drawn as plain
+  outlines or not at all.
+- Tests: `crates/mirin-metal/tests/text_weight.rs` and `tests/emoji.rs`,
+  with small fonts cut from Noto Sans and Noto Color Emoji (`tests/fonts/`).
 
 ### Unified title bar (Dashi)
 

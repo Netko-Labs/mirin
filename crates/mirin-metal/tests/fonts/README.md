@@ -13,3 +13,11 @@ they are never mistaken for Noto Sans:
 
 `make.py` made them, with fontTools:
 `python make.py '/usr/share/fonts/google-noto-vf/NotoSans[wght].ttf' .`
+
+`MirinTestEmoji.ttf`, family "Mirin Test Emoji", is for `tests/emoji.rs`:
+one glyph, U+1F600, cut from Noto Color Emoji's COLRv1 build
+(`Noto-COLRv1.ttf`, Google, SIL Open Font License 1.1, the same text as
+`OFL.txt` under its own notice, "Copyright 2022 Google Inc.", which the
+font's name table keeps). Its PostScript name is still "NotoColorEmoji":
+that is how sumi knows an emoji font. `make_emoji.py` made it:
+`python make_emoji.py /usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf .`

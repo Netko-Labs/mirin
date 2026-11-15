@@ -754,6 +754,22 @@ impl CosmicTextSystemState {
         let font_ref = loaded_font.font().as_swash(); // mirin: font()
         let pixel_size = f32::from(params.font_size);
 
+        // mirin: a COLRv1 glyph (Noto Color Emoji as Fedora ships it), which
+        // swash does not draw: its three sources below all came to nothing
+        // and every emoji was blank (`color_glyph.rs`).
+        if params.is_emoji
+            && let Some(face) = self.font_system.db().face(loaded_font.id)
+            && let Some(image) = crate::color_glyph::render(
+                loaded_font.font().data(),
+                face.index,
+                params.glyph_id.0.try_into()?,
+                pixel_size * params.scale_factor,
+                &loaded_font.coords,
+            )
+        {
+            return Ok(image);
+        }
+
         let subpixel_offset = Vector::new(
             params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
             params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
