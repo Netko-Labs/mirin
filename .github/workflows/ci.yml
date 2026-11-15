@@ -138,11 +138,13 @@ jobs:
           - name: Linux x64
             os: ubuntu-24.04
             # sumi's Linux platform: fontconfig and FreeType for text, xcb and
-            # xkbcommon for X11 and keyboards, Wayland's client library.
+            # xkbcommon for X11 and keyboards, Wayland's client library. Mesa's
+            # software Vulkan is the device sumi's atlas tests draw on.
             install-build-tools: >-
               sudo apt-get update && sudo apt-get install -y
               libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev
               libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
+              mesa-vulkan-drivers
           - name: macOS arm64
             os: macos-15
             install-build-tools: "true"
@@ -162,7 +164,9 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: metal-${{ matrix.name }}
-          workspaces: crates/mirin-metal -> target
+          workspaces: |
+            crates/mirin-metal -> target
+            forks/sumi -> target
 
       - name: Install build tools
         run: ${{ matrix.install-build-tools }}
@@ -183,6 +187,17 @@ jobs:
         run: |
           cargo clippy --locked --all-targets --no-default-features -- -D warnings
           cargo test --locked --no-default-features
+
+      # The engine's own unit tests, from its workspace (forks/sumi, with a
+      # lockfile of its own): what Zed wrote for the crates sumi came from
+      # and what mirin added in them. The doc tests are left out (five
+      # minutes for 99 examples of upstream's).
+      - name: sumi's own tests
+        if: runner.os == 'Linux'
+        working-directory: forks/sumi
+        run: |
+          cargo fmt --all --check
+          cargo test --locked --workspace --lib --tests
 
   security:
     name: Dependency security

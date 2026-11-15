@@ -5685,7 +5685,13 @@ mod tests {
         assert_eq!(focused, Some(item_b.id));
     }
 
+    // mirin: upstream rounds a length before layout, so 4.25 px of padding is
+    // 4 and the child fits. sumi lays out with lengths as authored
+    // (`AbsoluteLength::to_taffy`, for Dashi's apps at 1.25 and 1.5): the
+    // content is 50.5 px in a 50 px box and scrolls by the half pixel, as in
+    // a browser. Kept, not run, for the day that is decided otherwise.
     #[sumi::test]
+    #[ignore = "mirin: lengths go to layout as authored, so 4.25 px of padding overflows by 0.5 px"]
     fn test_fractional_padding_does_not_make_a_fitting_container_scrollable(
         cx: &mut TestAppContext,
     ) {

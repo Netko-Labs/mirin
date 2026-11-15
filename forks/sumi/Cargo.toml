@@ -258,6 +258,9 @@ calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee
 # Avoid panicking when a failed EGL call reports EGL_SUCCESS.
 # https://github.com/timothee-haudebourg/khronos-egl/pull/37
 khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+# mirin's taffy, as crates/mirin-metal patches it in: sumi's layout calls
+# what only the fork has, so the crates' own tests need it to build.
+taffy = { path = "../taffy-next" }
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow" }

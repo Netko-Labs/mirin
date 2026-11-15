@@ -831,7 +831,11 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   draws them: skrifa walks the paint graph and tiny-skia paints it (both
   were in the tree already, for cosmic-text and for SVG), into the same
   image a colour glyph from swash arrives as. A sweep gradient is drawn as
-  one flat colour (tiny-skia 0.11 has none; Noto's emoji use none). A font
+  one flat colour, the mean of its stops (tiny-skia 0.11 has none). Noto's
+  emoji use none: of the 4,012 colour glyphs in Fedora's `Noto-COLRv1.ttf`
+  (google-noto-color-emoji-fonts 20260921) not one reaches a
+  `PaintSweepGradient`, counted with fontTools over every glyph's paint
+  graph, so the flat colour is only ever another font's. A font
   is taken for an emoji font by its PostScript name, `NotoColorEmoji`, as
   upstream does: another colour font (Twemoji) is still drawn as plain
   outlines or not at all.
@@ -2599,10 +2603,11 @@ The engine and the forks live at the repository root (`forks/sumi`, `forks/taffy
 `forks/wgpu`, `forks/gpu-allocator`, `forks/accesskit_unix`,
 `forks/accesskit_atspi_common`, `forks/accesskit_consumer`;
 `forks/README.md` explains the upstream branches and `forks/sumi/README.md`
-the engine). The unit tests inside sumi's crates were written against zed's
-whole workspace and do not run from here; what mirin changed in it is
-tested through this crate (`src/retain/gpui_tests.rs` and the render
-tests). The AccessKit adapter fork's tests build it alone with this crate's
+the engine). The unit tests inside sumi's crates run from its own
+workspace (`cd forks/sumi && cargo test --locked --workspace --lib
+--tests`, 620 of them; `forks/sumi/README.md`), and CI's `metal` job runs
+them; most of what mirin changed in the engine is tested through this
+crate (`src/retain/gpui_tests.rs` and the render tests). The AccessKit adapter fork's tests build it alone with this crate's
 lockfile (`cd ../../forks/accesskit_unix`, `cp
 ../../crates/mirin-metal/Cargo.lock .`,
 `CARGO_TARGET_DIR=../../crates/mirin-metal/target/accesskit-alone cargo

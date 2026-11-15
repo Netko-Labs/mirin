@@ -8,10 +8,13 @@
 //! walks the paint graph and tiny-skia draws what it says, into the image
 //! the text system hands on as it does swash's.
 //!
-//! Not drawn as the font says: a sweep gradient is one flat colour (tiny-skia
-//! 0.11 has none; Noto's emoji use a handful), and a radial gradient whose
-//! inner circle is neither a point nor concentric with the outer starts at a
-//! point.
+//! Not drawn as the font says: a sweep gradient is one flat colour, the mean
+//! of its stops (tiny-skia 0.11 has none), and a radial gradient whose inner
+//! circle is neither a point nor concentric with the outer starts at a
+//! point. Noto's emoji use no sweep gradient: none of the 4,012 colour glyphs
+//! of Fedora's `Noto-COLRv1.ttf` (google-noto-color-emoji-fonts 20260921)
+//! reaches a `PaintSweepGradient` or its variable form, so every one of them
+//! is drawn as the font says; the flat colour is for another font's.
 
 use skrifa::{
     FontRef, GlyphId, MetadataProvider,

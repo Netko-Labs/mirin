@@ -1755,8 +1755,9 @@ mod tests {
             font_id,
         }];
 
+        // mirin: `state()`, where upstream's tuple struct had `.0`.
         let missing_glyphs = text_system
-            .0
+            .state()
             .read()
             .missing_glyphs(text, &runs, [0, "x".len()]);
 

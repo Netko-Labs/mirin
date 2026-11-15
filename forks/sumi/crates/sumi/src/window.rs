@@ -8960,6 +8960,8 @@ mod tests {
         time::Duration,
     };
 
+    use super::{PlacedGlyphX, place_glyph_x};
+
     // mirin: `Window::paint_line_glyph`.
     #[test]
     fn a_glyph_of_a_line_moved_by_whole_device_pixels_keeps_its_variant() {

@@ -1,6 +1,6 @@
 # Test fonts
 
-Two fonts for `tests/text_weight.rs`, each a few glyphs cut from Noto Sans
+Fonts for `tests/text_weight.rs`, each a few glyphs cut from Noto Sans
 (`NotoSans[wght].ttf`, The Noto Project Authors, SIL Open Font License 1.1:
 `OFL.txt`). They are modified versions under the same license, renamed so
 they are never mistaken for Noto Sans:
@@ -13,6 +13,15 @@ they are never mistaken for Noto Sans:
 
 `make.py` made them, with fontTools:
 `python make.py '/usr/share/fonts/google-noto-vf/NotoSans[wght].ttf' .`
+
+`MirinTestWeights-Thin.ttf` and `MirinTestWeights-Regular.ttf`, family
+"Mirin Test Weights", are the static case for the same test: one family in
+two files, a weight each, with "m" and "w", cut from Noto Sans's static
+files (the same project and license) and named as those are (the Thin's
+own family is "Mirin Test Weights Thin" with the style "Regular"; its
+typographic family and style say "Mirin Test Weights", "Thin").
+`make_weights.py` made them:
+`python make_weights.py /usr/share/fonts/google-noto/NotoSans-Thin.ttf /usr/share/fonts/google-noto/NotoSans-Regular.ttf .`
 
 `MirinTestEmoji.ttf`, family "Mirin Test Emoji", is for `tests/emoji.rs`:
 one glyph, U+1F600, cut from Noto Color Emoji's COLRv1 build

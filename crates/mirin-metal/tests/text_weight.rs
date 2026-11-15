@@ -1,8 +1,10 @@
 //! A variable font is drawn at the weight the text asks for: as a fallback
 //! (how Chinese, Japanese and Korean reach the screen: Noto Sans CJK is one
 //! variable face whose default is Thin, and it was drawn Thin) and as a
-//! text's own family. Through sumi's real text system on Linux, with the
-//! fonts of `tests/fonts`.
+//! text's own family. And a family in separate files, one a weight (Thin
+//! and Regular), gives the file of the weight asked, by name and as a
+//! fallback, whichever file was read first. Through sumi's real text system
+//! on Linux, with the fonts of `tests/fonts`.
 #![cfg(target_os = "linux")]
 
 use std::borrow::Cow;
@@ -156,4 +158,83 @@ fn a_variable_fallback_is_drawn_at_the_weight_of_the_text() {
     let drawn = ink(&text_system, fallback, w);
     assert_eq!(drawn, by_name(400.0));
     assert!(drawn < by_name(700.0), "{drawn} at 400 against the default");
+}
+
+const THIN: &[u8] = include_bytes!("fonts/MirinTestWeights-Thin.ttf");
+const WEIGHTS_REGULAR: &[u8] = include_bytes!("fonts/MirinTestWeights-Regular.ttf");
+
+/// A text system with "Mirin Test Static" ("m") and a family of two static
+/// files, "Mirin Test Weights" ("m" and "w"): Thin and Regular, given in `order`.
+fn static_weights(order: [&'static [u8]; 2]) -> CosmicTextSystem {
+    let text_system = CosmicTextSystem::new_without_system_fonts("Mirin Test Static");
+    text_system
+        .add_fonts(vec![
+            Cow::Borrowed(STATIC),
+            Cow::Borrowed(order[0]),
+            Cow::Borrowed(order[1]),
+        ])
+        .expect("the test fonts load");
+    text_system
+}
+
+#[test]
+fn a_family_of_static_files_gives_the_file_of_the_weight_asked() {
+    for order in [[THIN, WEIGHTS_REGULAR], [WEIGHTS_REGULAR, THIN]] {
+        let text_system = static_weights(order);
+        let id = |weight| {
+            text_system
+                .font_id(&weighted("Mirin Test Weights", weight))
+                .expect("the family resolves")
+        };
+        let (thin, regular) = (id(100.0), id(400.0));
+        assert_ne!(thin, regular);
+        for (font_id, weight) in [(thin, 100.0), (regular, 400.0)] {
+            assert_eq!(
+                text_system.font_weight_and_style(font_id).unwrap(),
+                (FontWeight(weight), FontStyle::Normal)
+            );
+        }
+        // Between and past the files, one of them, as CSS picks: lighter
+        // first for a weight under 400, and no weight is made up.
+        assert_eq!(id(200.0), thin);
+        assert_eq!(id(300.0), thin);
+        assert_eq!(id(700.0), regular);
+        let drawn = |font_id| {
+            let glyphs = glyphs(&text_system, "w", font_id);
+            assert_eq!(glyphs.len(), 1);
+            assert_eq!(glyphs[0].0, font_id, "the glyph is this file's");
+            ink(&text_system, font_id, glyphs[0].1)
+        };
+        assert!(drawn(thin) < drawn(regular), "Thin is less ink");
+    }
+}
+
+#[test]
+fn a_fallback_of_static_files_is_the_file_of_the_weight_of_the_text() {
+    for order in [[THIN, WEIGHTS_REGULAR], [WEIGHTS_REGULAR, THIN]] {
+        let text_system = static_weights(order);
+        let by_name = |weight| {
+            text_system
+                .font_id(&weighted("Mirin Test Weights", weight))
+                .unwrap()
+        };
+        // "Mirin Test Static" has "m" and no "w": the "w" falls back to the
+        // family of two files. Regular text gets the Regular file, whichever
+        // file the system read first (Thin sorts first in a font directory).
+        let primary = text_system.font_id(&font("Mirin Test Static")).unwrap();
+        let glyphs = glyphs(&text_system, "mw", primary);
+        assert_eq!(glyphs.len(), 2, "{glyphs:?}");
+        let (fallback, w) = glyphs[1];
+        assert_ne!(fallback, primary);
+        assert_eq!(
+            text_system.font_weight_and_style(fallback).unwrap(),
+            (FontWeight(400.0), FontStyle::Normal),
+            "the fallback is the file of the text's weight"
+        );
+        assert_eq!(
+            ink(&text_system, fallback, w),
+            ink(&text_system, by_name(400.0), w)
+        );
+        assert!(ink(&text_system, fallback, w) > ink(&text_system, by_name(100.0), w));
+    }
 }
