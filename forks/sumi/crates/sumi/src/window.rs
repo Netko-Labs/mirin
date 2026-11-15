@@ -4390,7 +4390,7 @@ impl Window {
         }
 
         let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
-        let root_size = { { self.viewport_size } };
+        let root_size = self.viewport_size;
 
         // Layout all root elements. Like the root element on the web, which
         // stretches to fill the viewport unless explicitly sized, window roots

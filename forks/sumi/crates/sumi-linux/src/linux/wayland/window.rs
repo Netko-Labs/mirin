@@ -38,7 +38,7 @@ use wayland_protocols::ext::session_lock::v1::client::{
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 // mirin: Dashi's unified title bar.
-use crate::linux::wayland::dashi_chrome::dashi_chrome_v1;
+use crate::linux::wayland::dashi;
 use crate::linux::{Globals, Output, PendingActivation, WaylandClientStatePtr, get_window};
 use sumi::{
     AnyWindowHandle, Bounds, Capslock, Corners, Decorations, DevicePixels, ExternalDragPayload,
@@ -338,13 +338,9 @@ impl WaylandSurfaceState {
             .titlebar
             .as_ref()
             .is_some_and(|titlebar| titlebar.appears_transparent)
-            .then_some(globals.dashi_chrome.as_ref())
+            .then_some(globals.title_bar_manager.as_ref())
             .flatten()
-            .map(|manager| {
-                let chrome = manager.get_chrome(&toplevel, &globals.qh, surface.id());
-                chrome.set_style(dashi_chrome_v1::Style::Unified);
-                chrome
-            });
+            .map(|manager| dashi::TitleBar::unified(manager, &toplevel, &globals.qh, surface.id()));
 
         Ok(WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
             xdg_surface,
@@ -362,7 +358,7 @@ pub struct WaylandXdgSurfaceState {
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     dialog: Option<XdgDialogV1>,
     // mirin: set when the window asked Dashi for the unified title bar.
-    chrome: Option<dashi_chrome_v1::DashiChromeV1>,
+    chrome: Option<dashi::TitleBar>,
 }
 
 pub struct WaylandLayerSurfaceState {
@@ -1479,19 +1475,10 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    // mirin: the compositor's traffic-light area (`controls`); an empty
-    // rectangle means none (standard style, or unified was not honored).
-    pub fn handle_chrome_event(&self, event: dashi_chrome_v1::Event) {
-        let dashi_chrome_v1::Event::Controls {
-            x,
-            y,
-            width,
-            height,
-        } = event;
-        let controls = (width > 0 && height > 0).then(|| Bounds {
-            origin: sumi::point(px(x as f32), px(y as f32)),
-            size: size(px(width as f32), px(height as f32)),
-        });
+    // mirin: the compositor's traffic-light area over a unified title bar
+    // (`dashi.rs`), or none.
+    #[cfg_attr(not(feature = "dashi"), allow(dead_code))]
+    pub(super) fn set_chrome_controls(&self, controls: Option<Bounds<Pixels>>) {
         {
             let mut state = self.state.borrow_mut();
             if state.chrome_controls == controls {

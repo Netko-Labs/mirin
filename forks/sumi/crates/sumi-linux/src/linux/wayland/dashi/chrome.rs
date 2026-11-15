@@ -1,8 +1,7 @@
 // mirin: the client side of Dashi's private dashi-chrome-v1 protocol, so an
 // app can put its own content in the title bar ("unified" chrome). The XML is
-// a copy of dashi/comp/protocols/dashi-chrome-v1.xml (and of
-// forks/gpui/protocols/); keep them in sync. Generated the way
-// wayland-protocols' own bindings are.
+// a copy of dashi/comp/protocols/dashi-chrome-v1.xml; keep them in sync.
+// Generated the way wayland-protocols' own bindings are.
 #![allow(dead_code, non_camel_case_types, unused_unsafe, unused_variables)]
 #![allow(non_upper_case_globals, non_snake_case, unused_imports)]
 #![allow(missing_docs, clippy::all)]

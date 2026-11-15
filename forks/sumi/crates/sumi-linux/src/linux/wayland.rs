@@ -1,7 +1,7 @@
 mod client;
 mod clipboard;
 mod cursor;
-mod dashi_chrome; // mirin: Dashi's unified title bar.
+mod dashi; // mirin: Dashi's own protocols, behind the `dashi` feature.
 mod display;
 mod drag_icon; // mirin: a file drag's icon.
 mod popup;

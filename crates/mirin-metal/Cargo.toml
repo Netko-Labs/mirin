@@ -51,6 +51,12 @@ sumi = { path = "../../forks/sumi/crates/sumi", default-features = false, featur
 accesskit_consumer = "0.39"
 
 [features]
+default = ["dashi"]
+# Dashi's own Wayland protocols in the engine (the unified title bar,
+# forks/sumi/crates/sumi-linux/src/linux/wayland/dashi.rs). Off, the host is
+# for a plain Wayland or X11 desktop: a window with a transparent title bar
+# keeps the compositor's, as it does today on any compositor but Dashi.
+dashi = ["sumi-platform/dashi"]
 profiling = ["dep:pprof"]
 
 # mirin's forks (forks/README.md), each with its changes in a MIRIN.md.

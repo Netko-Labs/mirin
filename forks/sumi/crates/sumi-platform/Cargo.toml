@@ -17,6 +17,8 @@ font-kit = ["sumi-macos/font-kit"]
 test-support = ["sumi/test-support", "sumi-macos/test-support", "sumi-windows/test-support", "sumi-wgpu/test-support"]
 runtime_shaders = ["sumi-macos/runtime_shaders"]
 wayland = ["sumi-linux/wayland"]
+# mirin: Dashi's own Wayland protocols (sumi-linux's `dashi` module).
+dashi = ["sumi-linux/dashi"]
 x11 = ["sumi-linux/x11"]
 
 [dependencies]

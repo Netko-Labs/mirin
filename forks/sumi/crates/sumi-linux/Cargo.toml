@@ -27,7 +27,6 @@ wayland = [
     "wayland-protocols",
     "wayland-protocols-plasma",
     "wayland-protocols-wlr",
-    "wayland-scanner",
     "dep:image",
     "dep:resvg",
     "filedescriptor",
@@ -36,6 +35,9 @@ wayland = [
     "sumi/wayland",
     "uuid/v5",
 ]
+# mirin: Dashi's own Wayland protocols (src/linux/wayland/dashi.rs): the
+# unified title bar. Off, a window is what it is on any other compositor.
+dashi = ["wayland", "dep:wayland-scanner"]
 x11 = [
     "dep:accesskit_unix",
     "sumi-wgpu",
@@ -99,7 +101,8 @@ wayland-protocols-wlr = { version = "0.3.9", features = [
     "client",
 ], optional = true }
 # mirin: generates the client side of Dashi's private dashi-chrome-v1 protocol
-# (protocols/dashi-chrome-v1.xml). Already in the tree through wayland-protocols.
+# (protocols/dashi-chrome-v1.xml), for the `dashi` feature. Already in the
+# tree through wayland-protocols.
 wayland-scanner = { version = "0.31", optional = true }
 # mirin: a file drag's icon (`start_file_drag`), drawn from a PNG, JPEG or SVG
 # file as gpui draws images and icons.
