@@ -317,7 +317,7 @@ fn open_window(
     let window = match opened {
         Ok(window) => window,
         Err(error) => {
-            eprintln!("[mirin-metal] failed to open window: {error}");
+            eprintln!("[mirin-metal] failed to open window: {error:#}");
             return None;
         }
     };

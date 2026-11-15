@@ -2706,15 +2706,20 @@ bun bench/gates.ts <host> --reference=<host before the change>
 - layouts, `<host>` against the reference: `layout-check.tsx` on `grid`,
   `browser`, `scroll` and `scroll-fractional`;
 - retained against `MIRIN_METAL_RETAIN=0` with `--scene`, at
-  `MIRIN_METAL_SCALE` 1, 1.25 and 1.5: those four and `across`.
+  `MIRIN_METAL_SCALE` 1, 1.25 and 1.5: those four and `across`;
+- a host kept warm opens its window again after a hide, twenty times
+  (`reopen.ts`): every open after the first makes a new surface on the GPU
+  context the first one made. A host whose context came from the one
+  prepared as it connected once failed here ("failed to open window: Failed
+  to create surface"), which is how Dashi's launcher did not appear.
 
-19 checks, four at a time (`--jobs`), each in a nested compositor of its
+20 checks, four at a time (`--jobs`), each in a nested compositor of its
 own (`dashi-comp --backend winit --no-xwayland` on a private
 `DASHI_COMP_SOCKET`; the headless compositors cannot present on every
 machine). It prints a line a check and a summary, shows what a failed check
 said, and exits non-zero on any difference; `--only=<text>` runs the checks
 whose name has the text, `--logs=<dir>` keeps their output. Without
-`--reference` it runs the 15 scene checks.
+`--reference` it runs the 15 scene checks and the window's.
 
 The checks wait for nothing but the host: `layout-check.tsx` gives its
 hosts `MIRIN_METAL_CHECK=1` and after each step sends `settle`, lets React

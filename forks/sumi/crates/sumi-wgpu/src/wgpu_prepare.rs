@@ -90,7 +90,7 @@ impl WgpuContext {
             });
             match tested {
                 Ok((device, queue, dual_source_blending, color_texture_format)) => {
-                    let context = Self::from_native_adapter_and_device(
+                    let mut context = Self::from_native_adapter_and_device(
                         instance,
                         adapter,
                         device,
@@ -98,6 +98,10 @@ impl WgpuContext {
                         dual_source_blending,
                         color_texture_format,
                     );
+                    // `prepare` made the instance before the platform had
+                    // connected, so it holds no display: the surfaces of
+                    // this context's later windows bring their own.
+                    context.instance_lacks_display = true;
                     if let Some(shaders) = prepared_shaders {
                         context.pipeline_cache().seed_shaders(shaders);
                     }

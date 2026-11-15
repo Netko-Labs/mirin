@@ -18,6 +18,9 @@ pub struct WgpuContext {
     errors: Arc<DeviceErrorState>,
     /// mirin: the pipelines of this context's windows, built on first use.
     pipeline_cache: Arc<crate::wgpu_pipelines::PipelineCache>,
+    /// mirin: the instance was made before there was a display to give it
+    /// (`wgpu_prepare.rs`), so every surface on it names its window's.
+    pub(crate) instance_lacks_display: bool,
 }
 
 /// Errors reported by wgpu's device-wide callbacks.
@@ -272,6 +275,7 @@ impl WgpuContext {
             color_texture_format,
             errors,
             pipeline_cache: Default::default(),
+            instance_lacks_display: false,
         }
     }
 
