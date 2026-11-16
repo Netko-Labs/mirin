@@ -402,4 +402,6 @@ mod gpui_tests;
 #[cfg(test)]
 mod scene_tests;
 #[cfg(test)]
+mod table_tests;
+#[cfg(test)]
 mod tests;
