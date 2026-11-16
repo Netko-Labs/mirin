@@ -778,7 +778,13 @@ primitives, listeners, cursor styles, element state keys and line layouts
 are taken out of the last frame and put back at the end of the frame
 before the one it shows again in, from where it is copied like any moved
 drawing. A drawing on upstream carries its masks in its primitives, so
-nothing needs renumbering but its dispatch nodes.
+nothing needs renumbering but its dispatch nodes. While it is parked, the
+records of the retained subtrees inside it stay as they were when it was
+parked: a drawing around it that is copied elsewhere moves only the
+records of what it carries (`each_told_drawn`). Moving those records too
+put a name, copied back out of its parked cell, rows away from its row
+(Dashi's Activity Monitor re-sorting while it scrolled;
+`retain/table_tests.rs`).
 
 **Building onto kept nodes (step 4, core).** A clean subtree that can't be
 copied is built again with every layout request answered by the node it

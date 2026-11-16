@@ -262,6 +262,29 @@ fn each_told<F: FnMut(&mut Drawn)>(drawn: &mut Drawn, f: &mut F) {
     }
 }
 
+/// `each_told`, but not into the records inside one left out of the frame
+/// (no drawing in it): what is inside one is in its parked drawing, which a
+/// copy of the drawing around it does not carry. It keeps them as they were
+/// when it was parked, and `unpark` puts it back with its own record as it
+/// was then.
+// mirin: a name cell left out of a row kept its name's record, and a move
+// of the row shifted that record but not the parked drawing; the name, put
+// back and copied by its record, landed rows away (Dashi's Activity Monitor
+// while it re-sorted and scrolled).
+fn each_told_drawn<F: FnMut(&mut Drawn)>(drawn: &mut Drawn, f: &mut F) {
+    let told = drawn.take_carried();
+    for record in &drawn.nested {
+        let mut inside = record.borrow_mut();
+        if let Some(told) = &told {
+            told.tell(&mut inside);
+        }
+        f(&mut inside);
+        if inside.prepaint.is_some() {
+            each_told_drawn(&mut inside, f);
+        }
+    }
+}
+
 struct RetainedState {
     version: u64,
     /// Its taffy subtree's root, kept across frames.
@@ -898,7 +921,7 @@ impl RetainedState {
         drawn.carry_prepaint(&old.start, &start, pointer);
         drawn.prepaint = Some(start..end);
         if let Some((by, by_layout, old_mask)) = moved {
-            each_told(&mut drawn, &mut |nested| {
+            each_told_drawn(&mut drawn, &mut |nested| {
                 nested.shift(by, by_layout, scale, (old_mask, &mask));
             });
             drawn.shift(by, by_layout, scale, (old_mask, &mask));
