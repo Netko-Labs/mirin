@@ -1386,7 +1386,10 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   which isn't read twice. A focused combo box points at the selected option
   as its active descendant, so the selection is announced as it moves while
   the keyboard stays in the field; a live region is announced when it
-  changes. Node ids are hashes of the elements' ids, stable across trees.
+  changes. A view with an expanded state is expandable and expanded or
+  collapsed (AT-SPI `EXPANDABLE`, `EXPANDED`, `COLLAPSED`), and when it can
+  be pressed it takes `expand` or `collapse`, which press it; a `dialog` is
+  modal. Node ids are hashes of the elements' ids, stable across trees.
 - **A field's text.** Every field publishes its text as AccessKit text runs
   (`access/text.rs`), so AT-SPI gives it `Text` and `EditableText`: an agent,
   Orca or dictation reads its words (`GetText`), the caret
@@ -1426,7 +1429,10 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   (`ACCESSIBLE_MARKER`); a host without it rejects a tree with `access` props
   (unknown fields are refused), so a driver greps the binary before it sends
   them, as it does for `MIRIN_METAL_RESIDENT`. `MIRIN_METAL_ACCESSIBLE=0`
-  turns the tree off. `MIRIN_METAL_APP_NAME` needs no check: a host from
+  turns the tree off; `MIRIN_METAL_ACCESS_CHECK=1` compares every update
+  with a tree made from nothing and reports, on stderr, what can be pressed
+  or focused and has no name (no label, no words under it; a field with
+  neither a label nor a placeholder). `MIRIN_METAL_APP_NAME` needs no check: a host from
   before it ignores the variable. A host whose fields publish their text
   names `MIRIN_METAL_FIELD_TEXT` and says `"fieldText": true` in its
   `protocol` line.

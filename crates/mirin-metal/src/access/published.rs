@@ -281,6 +281,12 @@ impl Published {
         kept.is_some_and(|kept| kept.element.as_deref() == Some(element))
     }
 
+    /// The elements a screen reader can press or focus but has no name
+    /// for (`names.rs`).
+    pub(crate) fn nameless(&self) -> Vec<String> {
+        super::names::nameless(&self.kept)
+    }
+
     /// Whether nothing is kept (nothing handed over yet, or forgotten).
     pub(crate) fn is_empty(&self) -> bool {
         self.window.is_none()

@@ -426,6 +426,11 @@ impl Screen {
         nodes_of(self.heard.as_ref()?).remove(&id.0)
     }
 
+    /// The elements that can be pressed or focused and have no name.
+    pub(super) fn nameless(&self) -> Vec<String> {
+        self.published.nameless()
+    }
+
     /// How many nodes are frames now.
     pub(super) fn frames(&self) -> usize {
         let heard = self.heard.as_ref().expect("an update was heard");

@@ -94,7 +94,10 @@ impl Targets {
             _ => None,
         };
         match action {
-            Action::Click => self.press.get(&node).map(|id| Request::Click(id)),
+            // Opening or closing a disclosure is its press.
+            Action::Click | Action::Expand | Action::Collapse => {
+                self.press.get(&node).map(|id| Request::Click(id))
+            }
             Action::Focus => self.focus.get(&node).map(|id| Request::Focus(id)),
             Action::SetValue => Some(Request::SetText(self.edit.get(&node)?, text()?)),
             Action::ReplaceSelectedText => {
@@ -260,6 +263,17 @@ pub(crate) fn view_node(props: &ViewProps, role: Role) -> Node {
     }
     if props.on_press {
         node.add_action(Action::Click);
+        // A pressable view with an expanded state opens or closes by its
+        // press: AT-SPI's `expand` or `collapse`, whichever it would do.
+        match props.access.as_ref().and_then(|access| access.expanded) {
+            Some(false) => node.add_action(Action::Expand),
+            Some(true) => node.add_action(Action::Collapse),
+            None => {}
+        }
+    }
+    // A dialog holds the keyboard until it is answered (AT-SPI `MODAL`).
+    if role == Role::Dialog {
+        node.set_modal();
     }
     // A focusable view with the keyboard is the focus (`focus/`).
     if props.focusable {
@@ -496,6 +510,29 @@ mod tests {
         );
         // Focusable but not pressable: still a node, so the focus has one.
         assert_eq!(find(&built, node_id("group")).role(), Role::Group);
+    }
+
+    #[test]
+    fn a_disclosure_opens_and_closes_by_its_press_and_a_dialog_is_modal() {
+        let tree = parse_tree(
+            r#"{"type":"view","props":{"id":"1"},"children":[
+                {"type":"view","props":{"id":"more","onPress":true,"access":{"label":"More","expanded":false}}},
+                {"type":"view","props":{"id":"less","onPress":true,"access":{"label":"Less","expanded":true}}},
+                {"type":"view","props":{"id":"ask","access":{"role":"dialog","label":"Delete?"}}}
+            ]}"#,
+        )
+        .unwrap();
+        let built = build(&tree, &facts(&LayoutMap::default(), None));
+        let more = find(&built, node_id("more"));
+        assert_eq!(more.is_expanded(), Some(false));
+        assert!(more.supports_action(Action::Expand));
+        assert!(!more.supports_action(Action::Collapse));
+        assert!(find(&built, node_id("less")).supports_action(Action::Collapse));
+        assert_eq!(
+            built.targets.request(Action::Expand, node_id("more"), None),
+            Some(Request::Click("more"))
+        );
+        assert!(find(&built, node_id("ask")).is_modal());
     }
 
     #[test]

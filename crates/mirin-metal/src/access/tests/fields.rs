@@ -212,3 +212,18 @@ fn a_fields_text_is_offered_for_editing() {
         }
     }
 }
+
+#[test]
+fn what_can_be_pressed_or_focused_without_a_name_is_found() {
+    let mut screen = Screen::new(
+        r#"{"type":"view","props":{"id":"1"},"children":[
+            {"type":"view","props":{"id":"close","onPress":true},"children":[{"type":"svg","props":{"markup":"<svg/>"}}]},
+            {"type":"view","props":{"id":"ok","onPress":true},"children":[{"type":"view","props":{"id":"in"},"children":[{"type":"text","children":["OK"]}]}]},
+            {"type":"view","props":{"id":"x","onPress":true,"access":{"label":"Close"}}},
+            {"type":"input","props":{"id":"bare","value":"words are not a name"}},
+            {"type":"input","props":{"id":"named","value":"","placeholder":"Search"}}
+        ]}"#,
+    );
+    screen.update();
+    assert_eq!(screen.nameless(), ["bare", "close"]);
+}

@@ -21,10 +21,12 @@
 //! `appName` option), else by its first window's title: what Orca says for
 //! the app, never the host binary's file name.
 
+mod act;
 mod follow;
 mod fragment;
 #[cfg(target_os = "linux")]
 mod linux;
+mod names;
 mod place;
 mod published;
 #[cfg(not(target_os = "linux"))]
@@ -62,7 +64,8 @@ pub const APP_NAME_VAR: &str = "MIRIN_METAL_APP_NAME";
 
 /// `MIRIN_METAL_ACCESS_CHECK=1`: after every update the kept tree is
 /// compared with one made from nothing, and a difference is reported on
-/// stderr (for trying a change to `published.rs` on a real app).
+/// stderr (for trying a change to `published.rs` on a real app); so is a
+/// node that can be pressed or focused but has no name (`names.rs`).
 const CHECK_VAR: &str = "MIRIN_METAL_ACCESS_CHECK";
 
 /// What a screen reader calls the app: the driver's name for it, else the
@@ -112,32 +115,6 @@ impl Built {
     }
 }
 
-/// What a screen reader's or an agent's request does, as the window's
-/// simulated input (`sim.rs`): it goes where the person's would.
-fn command_for(request: tree::Request) -> SimCommand {
-    match request {
-        tree::Request::Click(id) => SimCommand::Click {
-            id: Some(id.to_owned()),
-            x: None,
-            y: None,
-        },
-        tree::Request::Focus(id) => SimCommand::Focus { id: id.to_owned() },
-        tree::Request::SetText(id, text) => SimCommand::SetText {
-            id: id.to_owned(),
-            text,
-        },
-        tree::Request::InsertText(id, text) => SimCommand::InsertText {
-            id: id.to_owned(),
-            text,
-        },
-        tree::Request::Select(id, anchor, focus) => SimCommand::SelectChars {
-            id: id.to_owned(),
-            anchor,
-            focus,
-        },
-    }
-}
-
 /// One window's accessibility tree and where it is published.
 pub(crate) struct Accessibility {
     title: String,
@@ -153,6 +130,8 @@ pub(crate) struct Accessibility {
     publisher: Publisher,
     /// `CHECK_VAR`: every update is compared with a tree made from nothing.
     checked: bool,
+    /// The nameless elements last reported (`CHECK_VAR`): each set once.
+    nameless: Vec<String>,
 }
 
 impl Accessibility {
@@ -175,7 +154,7 @@ impl Accessibility {
                 let command = targets.lock().ok().and_then(|targets| {
                     let (action, node) = (request.action, request.target_node);
                     let asked = targets.request(action, node, request.data.as_ref());
-                    asked.map(command_for)
+                    asked.map(act::command_for)
                 });
                 if let Some(command) = command {
                     act(command);
@@ -198,6 +177,7 @@ impl Accessibility {
             window_active: None,
             publisher: Publisher::new(press, wake),
             checked: std::env::var(CHECK_VAR).is_ok_and(|value| value == "1"),
+            nameless: Vec::new(),
         })
     }
 
@@ -281,6 +261,7 @@ impl Accessibility {
         ));
         if self.checked {
             self.check(tree, &facts);
+            self.report_nameless();
         }
         self.last = Some(now);
     }
@@ -295,6 +276,20 @@ impl Accessibility {
         if let Ok(mut targets) = self.targets.lock() {
             *targets = tree::Targets::default();
         }
+    }
+
+    /// What can be pressed or focused and has no name (`CHECK_VAR`), each
+    /// time that changes.
+    fn report_nameless(&mut self) {
+        let nameless = self.published.nameless();
+        if !nameless.is_empty() && self.nameless != nameless {
+            eprintln!(
+                "[mirin-metal] access check: {} pressable or focusable nodes have no name: {}",
+                nameless.len(),
+                nameless.join(", ")
+            );
+        }
+        self.nameless = nameless;
     }
 
     /// The kept tree against one made from nothing (`CHECK_VAR`).
