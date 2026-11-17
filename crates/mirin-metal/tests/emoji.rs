@@ -80,3 +80,58 @@ fn an_emoji_falls_back_to_the_colour_font_and_is_drawn_in_colour() {
     assert_eq!(low_alpha, 255);
     assert_ne!(top_green, low_green, "the face is shaded");
 }
+
+const SYMBOLS: &[u8] = include_bytes!("fonts/MirinTestSymbols-Regular.ttf");
+
+/// The font each glyph of `text` is drawn from, and whether it is an emoji,
+/// with a text font that has U+1F610 ahead of the colour font: in the run's
+/// fallback chain, as Noto Sans Symbols is ahead of Noto Color Emoji in
+/// cosmic-text's list on Linux.
+fn faces(text: &str) -> (Vec<(sumi::FontId, bool)>, sumi::FontId) {
+    let text_system = CosmicTextSystem::new_without_system_fonts("Mirin Test Static");
+    text_system
+        .add_fonts(vec![
+            Cow::Borrowed(STATIC),
+            Cow::Borrowed(SYMBOLS),
+            Cow::Borrowed(EMOJI),
+        ])
+        .expect("the test fonts load");
+    let mut with_symbols = font("Mirin Test Static");
+    with_symbols.fallbacks = Some(sumi::FontFallbacks::from_fonts(vec![
+        "Mirin Test Symbols".to_string()
+    ]));
+    let primary = text_system.font_id(&with_symbols).unwrap();
+    let run = FontRun {
+        len: text.len(),
+        font_id: primary,
+    };
+    let layout = text_system.layout_line(text, px(32.0), &[run]);
+    let glyphs = layout
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| (run.font_id, glyph.is_emoji)))
+        .collect();
+    (glyphs, primary)
+}
+
+#[test]
+fn an_emoji_with_emoji_presentation_is_drawn_from_the_colour_font_before_a_text_font() {
+    // U+1F610 NEUTRAL FACE: Noto Sans Symbols has it as an outline, and was
+    // found first; it is an emoji by default, so the colour font draws it.
+    let (glyphs, primary) = faces("m\u{1F610}m");
+    assert_eq!(glyphs.len(), 3);
+    assert_eq!(glyphs[0], (primary, false));
+    assert!(glyphs[1].1, "the face is the colour font's: {glyphs:?}");
+    assert_eq!(glyphs[2], (primary, false));
+    // With U+FE0F it is the same.
+    let (glyphs, _) = faces("\u{1F610}\u{FE0F}");
+    assert!(glyphs[0].1, "{glyphs:?}");
+}
+
+#[test]
+fn a_text_presentation_selector_keeps_the_text_font() {
+    // U+FE0E asks for text: the outline from the text font.
+    let (glyphs, primary) = faces("\u{1F610}\u{FE0E}");
+    assert!(!glyphs[0].1, "{glyphs:?}");
+    assert_ne!(glyphs[0].0, primary);
+}
