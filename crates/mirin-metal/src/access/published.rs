@@ -12,9 +12,12 @@
 //!   push from above leaves alone: the layout names the nodes and groups
 //!   whose place did change (`layout::Changes`), and only those are placed
 //!   again and go in the update when they differ.
-//! - **The keyboard.** What is typed in the focused field and the option a
-//!   focused combo box points at are laid over that one node, so moving the
-//!   focus or typing rebuilds nothing.
+//! - **The keyboard.** What is typed in the focused field, its caret and
+//!   selection, and the option a focused combo box points at are laid over
+//!   that one node, so moving the focus or typing rebuilds nothing.
+//! - **A field's text.** Every field's text is runs under its node
+//!   (`text.rs`), made from its value as handed over; only the runs that
+//!   differ from the field's last ones go in an update.
 //!
 //! A node is in an update only when it differs from the one last handed
 //! over. Nodes that left the tree are never named: AccessKit drops what is
@@ -27,7 +30,8 @@ use accesskit::{Action, Affine, Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate
 use super::follow::Frames;
 use super::fragment::Fragment;
 use super::place::Placement;
-use super::tree::{node_id, Facts, Targets, ROOT};
+use super::text::{self, Laid};
+use super::tree::{hidden, node_id, Facts, Targets, ROOT};
 use super::walk::Walk;
 use crate::layout::LayoutMap;
 use crate::patch::Document;
@@ -47,16 +51,18 @@ pub(super) struct Kept {
     pub(super) space: Option<u64>,
     pub(super) frame: Option<u64>,
     pub(super) place: Placement,
-    /// A field whose words are published (never a password's): with the
-    /// keyboard, what is typed stands for the driver's value.
-    pub(super) typed: bool,
+    /// A field: its text is published as runs, and with the keyboard what
+    /// is typed stands for the driver's value (a bullet a character in a
+    /// password field).
+    pub(super) field: bool,
     /// The update that last made it.
     pub(super) stamp: u64,
 }
 
 impl Kept {
-    /// The node handed over: its element's, at its bounds, under `overlay`.
-    fn node(&self, overlay: Option<&Overlay>) -> Node {
+    /// The node `id` handed over: its element's, at its bounds, under
+    /// `overlay`; a field's with its text runs, which are laid out too.
+    fn node(&self, id: NodeId, overlay: Option<&Overlay>) -> (Node, Option<Laid>) {
         let mut node = self.base.clone();
         if let Some(bounds) = self.place.bounds {
             node.set_bounds(bounds);
@@ -72,7 +78,16 @@ impl Kept {
                 node.set_active_descendant(active);
             }
         }
-        node
+        let laid = self.field.then(|| {
+            let selection = overlay.and_then(|overlay| overlay.selection);
+            let laid = text::lay(id, node.value().unwrap_or_default(), selection);
+            node.set_children(laid.ids());
+            if let Some(selection) = laid.selection {
+                node.set_text_selection(selection);
+            }
+            laid
+        });
+        (node, laid)
     }
 }
 
@@ -87,6 +102,8 @@ struct Overlay {
     node: NodeId,
     /// What is typed in the field.
     value: Option<String>,
+    /// Its selection, from the anchor to the caret (chars).
+    selection: Option<(usize, usize)>,
     /// The selected option a combo box points at.
     active: Option<NodeId>,
 }
@@ -114,6 +131,8 @@ pub(crate) struct Published {
     /// The window's fragment, over the tree's; none before the first update.
     window: Option<Fragment>,
     overlay: Option<Overlay>,
+    /// Each field's text runs as last handed over.
+    texts: HashMap<NodeId, Laid>,
     stamp: u64,
 }
 
@@ -158,11 +177,21 @@ impl Published {
             (takes && kept.element.as_deref() == Some(element)).then_some((id, kept))
         });
         let overlay = focused.and_then(|(node, kept)| {
-            let value = facts.typed.filter(|_| kept.typed).map(str::to_owned);
+            let secure = kept.base.role() == Role::PasswordInput;
+            let typed = facts.typed.filter(|_| kept.field);
+            let value = typed.map(|typed| {
+                if secure {
+                    hidden(typed)
+                } else {
+                    typed.to_owned()
+                }
+            });
+            let selection = facts.selection.filter(|_| value.is_some());
             let active = selected.filter(|_| kept.base.role() == Role::EditableComboBox);
             (value.is_some() || active.is_some()).then_some(Overlay {
                 node,
                 value,
+                selection,
                 active,
             })
         });
@@ -175,9 +204,10 @@ impl Published {
         changed.sort_unstable_by_key(|id| id.0);
         changed.dedup();
 
-        if let Ok(mut targets) = targets.lock() {
-            for id in gone {
-                targets.forget(id);
+        let mut targets = targets.lock().ok();
+        if let Some(targets) = targets.as_mut() {
+            for id in &gone {
+                targets.forget(*id);
             }
             for id in &changed {
                 if let Some(kept) = self.kept.get(id) {
@@ -185,10 +215,24 @@ impl Published {
                 }
             }
         }
-        let nodes = changed
-            .into_iter()
-            .filter_map(|id| Some((id, self.node(id)?)))
-            .collect();
+        for id in &gone {
+            self.texts.remove(id);
+        }
+        let mut nodes = Vec::with_capacity(changed.len());
+        for id in changed {
+            let Some((node, laid)) = self.laid_node(id) else {
+                continue;
+            };
+            nodes.push((id, node));
+            if let Some(laid) = laid {
+                if let Some(targets) = targets.as_mut() {
+                    let starts = laid.starts.iter().copied();
+                    targets.set_runs(id, laid.ids().into_iter().zip(starts));
+                }
+                self.hand_over_runs(id, laid, &mut nodes);
+            }
+        }
+        drop(targets);
         let info = first.then(|| {
             let mut info = TreeInfo::new(ROOT);
             info.toolkit_name = Some("mirin metal".into());
@@ -208,8 +252,26 @@ impl Published {
 
     /// The node `id` as handed over.
     fn node(&self, id: NodeId) -> Option<Node> {
+        self.laid_node(id).map(|(node, _)| node)
+    }
+
+    /// The node `id` as handed over, and a field's text runs.
+    fn laid_node(&self, id: NodeId) -> Option<(Node, Option<Laid>)> {
         let overlay = self.overlay.as_ref().filter(|overlay| overlay.node == id);
-        Some(self.kept.get(&id)?.node(overlay))
+        Some(self.kept.get(&id)?.node(id, overlay))
+    }
+
+    /// Field `field`'s runs go in the update where they differ from its
+    /// last ones (a run beyond the text's end leaves with the field's
+    /// children).
+    fn hand_over_runs(&mut self, field: NodeId, laid: Laid, nodes: &mut Vec<(NodeId, Node)>) {
+        let before = self.texts.get(&field);
+        for (index, run) in laid.runs.iter().enumerate() {
+            if before.and_then(|before| before.runs.get(index)) != Some(run) {
+                nodes.push(run.clone());
+            }
+        }
+        self.texts.insert(field, laid);
     }
 
     /// Whether node `id` stands for element `element` (it is not only a frame).
@@ -217,6 +279,12 @@ impl Published {
     pub(crate) fn stands_for(&self, id: NodeId, element: &str) -> bool {
         let kept = self.kept.get(&id);
         kept.is_some_and(|kept| kept.element.as_deref() == Some(element))
+    }
+
+    /// The elements a screen reader can press or focus but has no name
+    /// for (`names.rs`).
+    pub(crate) fn nameless(&self) -> Vec<String> {
+        super::names::nameless(&self.kept)
     }
 
     /// Whether nothing is kept (nothing handed over yet, or forgotten).

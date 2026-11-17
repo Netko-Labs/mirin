@@ -107,9 +107,29 @@ pub(super) struct Screen {
     pub(super) layout: LayoutMap,
     focused: Option<String>,
     typed: Option<String>,
+    /// The focused field's selection, from its anchor to the caret (chars).
+    selection: Option<(usize, usize)>,
     published: Published,
     targets: Mutex<Targets>,
     heard: Option<Tree>,
+}
+
+/// A node's text as a screen reader reads it (character offsets).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct HeardText {
+    pub(super) text: String,
+    pub(super) count: usize,
+    pub(super) caret: Option<usize>,
+    /// The selection's start and end, ordered.
+    pub(super) selection: Option<(usize, usize)>,
+}
+
+/// The node `id` at or under `node`.
+fn find_node<'a>(node: NodeRef<'a>, id: NodeId) -> Option<NodeRef<'a>> {
+    if node.locate().0 == id {
+        return Some(node);
+    }
+    node.children().find_map(|child| find_node(child, id))
 }
 
 /// What one update took: nodes made from their elements, nodes handed over.
@@ -157,6 +177,7 @@ impl Screen {
             layout: LayoutMap::default(),
             focused: None,
             typed: None,
+            selection: None,
             published: Published::default(),
             targets: Mutex::default(),
             heard: None,
@@ -233,6 +254,45 @@ impl Screen {
     pub(super) fn focus(&mut self, id: Option<&str>, typed: Option<&str>) {
         self.focused = id.map(str::to_owned);
         self.typed = typed.map(str::to_owned);
+        self.selection = typed.map(|typed| {
+            let end = typed.chars().count();
+            (end, end)
+        });
+    }
+
+    /// The focused field's selection moves: from `anchor` to the caret at `focus`.
+    pub(super) fn select(&mut self, anchor: usize, focus: usize) {
+        self.selection = Some((anchor, focus));
+    }
+
+    /// Where a screen reader's request on node `node` goes.
+    pub(super) fn targets(&self) -> std::sync::MutexGuard<'_, Targets> {
+        self.targets.lock().expect("nothing else holds the targets")
+    }
+
+    /// What node `id` says through AccessKit's `Text`, as AT-SPI asks it
+    /// (`accesskit_atspi_common`'s `GetText`, `CaretOffset`,
+    /// `CharacterCount`, `GetSelection`): none without text runs.
+    pub(super) fn text(&self, id: NodeId) -> Option<HeardText> {
+        let heard = self.heard.as_ref()?;
+        let state = heard.state();
+        let node = find_node(state.root(), id)?;
+        if !node.supports_text_ranges() {
+            return None;
+        }
+        let range = node.document_range();
+        let selection = node.text_selection().map(|selection| {
+            let (start, end) = (selection.start(), selection.end());
+            (start.to_global_usv_index(), end.to_global_usv_index())
+        });
+        Some(HeardText {
+            text: range.text(),
+            count: range.end().to_global_usv_index(),
+            caret: node
+                .text_selection_focus()
+                .map(|focus| focus.to_global_usv_index()),
+            selection,
+        })
     }
 
     /// A frame: every painted element records its bounds in what draws it,
@@ -311,6 +371,7 @@ impl Screen {
             retained: &|id| retained.get(id).copied(),
             focused: self.focused.as_deref(),
             typed: self.typed.as_deref(),
+            selection: self.selection,
         };
         let update = self.published.update(&self.document, &facts, &self.targets);
         let took = Took {
@@ -363,6 +424,11 @@ impl Screen {
 
     pub(super) fn heard(&self, id: NodeId) -> Option<Node> {
         nodes_of(self.heard.as_ref()?).remove(&id.0)
+    }
+
+    /// The elements that can be pressed or focused and have no name.
+    pub(super) fn nameless(&self) -> Vec<String> {
+        self.published.nameless()
     }
 
     /// How many nodes are frames now.
