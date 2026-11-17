@@ -456,7 +456,10 @@ patches change it in place, in order (section "Patches").
   scrolls a scroll view down and across (`dx`, optional) or a virtualized
   list down, `{"kind":"focus","id"}` gives
   a field or `focusable` view the keyboard without pressing it (a screen
-  reader's focus), and `{"kind":"move","id"}` / `{"kind":"move","x","y"}`
+  reader's focus), `{"kind":"settext","id","text"}` puts `text` in a field
+  in place of all it holds and `{"kind":"inserttext","id","text"}` in place
+  of its selection, as typing it would (`onChangeText`; the keyboard stays
+  where it is; a host with `"fieldText": true`), and `{"kind":"move","id"}` / `{"kind":"move","x","y"}`
   moves the pointer there through GPUI's real mouse dispatch, so
   `hoverBackground` and `onHover` respond (`hover` only reports `onHover`).
   `{"kind":"window","action":"deactivate"}` makes the window count as not
@@ -1305,7 +1308,8 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   bounds, which field has the keyboard, and what is typed in it (the buffer,
   not the driver's lagging value; never a password field's), and brought in
   line after each paint in which the element tree, painted bounds, the
-  focus, the typed text, or the window's focus changed.
+  focus, the typed text, its caret or selection, or the window's focus
+  changed.
 - **What it costs.** Nothing while the session has accessibility off, and
   what changed while it is on.
   - *Who listens.* AccessKit's adapter joins the accessibility bus when
@@ -1412,11 +1416,33 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   which isn't read twice. A focused combo box points at the selected option
   as its active descendant, so the selection is announced as it moves while
   the keyboard stays in the field; a live region is announced when it
-  changes. Node ids are hashes of the elements' ids, stable across trees.
+  changes. A view with an expanded state is expandable and expanded or
+  collapsed (AT-SPI `EXPANDABLE`, `EXPANDED`, `COLLAPSED`), and when it can
+  be pressed it takes `expand` or `collapse`, which press it; a `dialog` is
+  modal. Node ids are hashes of the elements' ids, stable across trees.
+- **A field's text.** Every field publishes its text as AccessKit text runs
+  (`access/text.rs`), so AT-SPI gives it `Text` and `EditableText`: an agent,
+  Orca or dictation reads its words (`GetText`), the caret
+  (`CaretOffset`), the selection (`GetSelection`) and the length
+  (`CharacterCount`), and hears `text-changed` and `text-caret-moved`. One
+  run a line, ending with its line break (a line past 255 characters goes on
+  in runs on the same line: a run's word starts are bytes); a character is a
+  Unicode scalar value, as the field's caret moves; a word starts at a
+  non-space after a space. The field with the keyboard reads what is typed,
+  with its caret and selection; another reads the driver's value and has no
+  caret. A password field publishes a bullet a character: whether it is
+  filled, and how much, never what. Only the runs that changed are handed
+  over. Runs have no bounds of their own yet (no caret rectangle).
 - **Actions.** A screen reader's press is a simulated click on that element
   (`sim.rs`), the same path the person's click takes. Its focus gives a
   field or `focusable` view the keyboard (`{"kind":"focus"}`) and never
-  presses it.
+  presses it. A field's text is set as typing it would be (`edit.rs`: the
+  same cleaning, `onChangeText` fired, then the selection reported), the
+  keyboard staying where it is: `SetTextContents` (AccessKit's `SetValue`)
+  replaces it whole, `InsertText` and `DeleteText` select the range and
+  replace it (`ReplaceSelectedText`; answered by mirin's AccessKit forks,
+  upstream's says not supported), and `SetCaretOffset` / `SetSelection`
+  move the caret and the selection (`SetTextSelection`).
 - **The application.** The AT-SPI application is named by the driver
   (`MIRIN_METAL_APP_NAME`, `appName` on `spawnNativeHost`), else by the
   first window's title, never the host binary's file name (AccessKit's
@@ -1433,11 +1459,18 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
   (`ACCESSIBLE_MARKER`); a host without it rejects a tree with `access` props
   (unknown fields are refused), so a driver greps the binary before it sends
   them, as it does for `MIRIN_METAL_RESIDENT`. `MIRIN_METAL_ACCESSIBLE=0`
-  turns the tree off. `MIRIN_METAL_APP_NAME` needs no check: a host from
-  before it ignores the variable.
-- **Not yet.** Text navigation inside a field (caret, selection, words), a
-  tree for macOS and Windows (AccessKit has adapters for both), tables and
-  sliders' values, and scrolling a node into view on request.
+  turns the tree off; `MIRIN_METAL_ACCESS_CHECK=1` compares every update
+  with a tree made from nothing and reports, on stderr, what can be pressed
+  or focused and has no name (no label, no words under it; a field with
+  neither a label nor a placeholder). `MIRIN_METAL_APP_NAME` needs no check: a host from
+  before it ignores the variable. A host whose fields publish their text
+  names `MIRIN_METAL_FIELD_TEXT` and says `"fieldText": true` in its
+  `protocol` line.
+- **Not yet.** Where each character of a field is (character positions:
+  a magnifier following the caret, `GetCharacterExtents`), text attributes,
+  a label's text as runs, a tree for macOS and Windows (AccessKit has
+  adapters for both), tables and sliders' values, and scrolling a node into
+  view on request.
 
 ### macOS
 

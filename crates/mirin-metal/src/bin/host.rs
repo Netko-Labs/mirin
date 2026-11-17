@@ -12,8 +12,9 @@ use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
     HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface, TitleBar,
-    ACTIVATION_MARKER, IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER, OPEN_MIN_SIZE_MARKER,
-    PATCH_MARKER, PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
+    ACTIVATION_MARKER, FIELD_TEXT_MARKER, IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER,
+    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER,
+    SCROLL_MARKER, SETTLE_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -583,6 +584,9 @@ fn main() {
     mirin_metal::trace::log(format_args!(
         "{OPAQUE_SURFACE_MARKER}: a surface opened opaque when the driver says it is"
     ));
+    mirin_metal::trace::log(format_args!(
+        "{FIELD_TEXT_MARKER}: a field's text over AT-SPI, and the settext and inserttext simulations"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
@@ -611,6 +615,10 @@ fn main() {
         // This host opens a surface that says `"opaque":true` opaque
         // (`surface.rs`); one from before refuses that surface.
         "opaqueSurface": true,
+        // This host publishes a field's text to screen readers and agents
+        // (AT-SPI `Text`, `EditableText`) and takes the `settext` and
+        // `inserttext` simulations (`edit.rs`).
+        "fieldText": true,
         // This host draws a run's `mono` (a run's own family) and takes a
         // field's `shiftTabKey` (Shift+Tab to the driver, `onShiftTab`); one
         // from before refuses a tree with either.

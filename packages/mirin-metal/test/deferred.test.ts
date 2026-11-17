@@ -74,3 +74,12 @@ test("a host that opens a surface opaque says so", () => {
     ),
   ).toEqual({ type: "protocol", nodeId: "root", patches: 1, runFont: true, shiftTabKey: true });
 });
+
+test("a host whose fields publish their text says so", () => {
+  expect(
+    parseNativeEvent('{"type":"protocol","nodeId":"root","patches":1,"fieldText":true}'),
+  ).toEqual({ type: "protocol", nodeId: "root", patches: 1, fieldText: true });
+  expect(
+    parseNativeEvent('{"type":"protocol","nodeId":"root","patches":1,"fieldText":"yes"}'),
+  ).toEqual({ type: "protocol", nodeId: "root", patches: 1 });
+});

@@ -6,10 +6,11 @@
 
 use serde::Deserialize;
 use sumi::{
-    point, px, App, FocusHandle, Keystroke, ListState, Modifiers, Pixels, Point, ScrollHandle,
-    Window,
+    point, px, App, Entity, FocusHandle, Keystroke, ListState, Modifiers, Pixels, Point,
+    ScrollHandle, Window,
 };
 
+use crate::edit::FieldEdit;
 use crate::events::{EventSender, Modifiers as Held, PointerPhase};
 pub(crate) use crate::layout::LayoutMap;
 use crate::tree::NodeSpec;
@@ -85,6 +86,25 @@ pub enum SimCommand {
     /// Give the keyboard to field or `focusable` view `id`, pressing nothing
     /// (a screen reader's focus).
     Focus { id: String },
+    /// Put `text` in field `id` in place of all it holds, as typing it
+    /// would (`edit.rs`): the driver hears a `change`, the caret goes to the
+    /// end, and the keyboard stays where it is. An agent's or a screen
+    /// reader's `SetTextContents`. A host that takes it names
+    /// `FIELD_TEXT_MARKER`.
+    SetText { id: String, text: String },
+    /// Put `text` in field `id` in place of its selection (at the caret
+    /// when nothing is selected), as typing it would.
+    InsertText { id: String, text: String },
+    /// Select field `id`'s chars from `anchor` to `focus` (the caret): a
+    /// screen reader's caret or selection, asked for in the field's text
+    /// runs. Never a driver's (its selections are UTF-16, `selection` on
+    /// the input).
+    #[serde(skip)]
+    SelectChars {
+        id: String,
+        anchor: usize,
+        focus: usize,
+    },
     /// Answer with a `settled` event once the window has settled: every
     /// tree, patch and simulation sent before this is applied, a frame with
     /// them is drawn, and the window waits for no other (no view is dirty,
@@ -131,6 +151,8 @@ pub(crate) enum SimAction {
     Activate(bool),
     /// A scroll by (across, down) pixels.
     Scroll(ScrollTarget, (f32, f32)),
+    /// A field's text or selection set (`edit.rs`).
+    Edit(String, FieldEdit),
 }
 
 /// What a simulated scroll moves: a plain scroll view or a virtualized list.
@@ -281,6 +303,11 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
                 (*dx, *dy),
             ))
         }
+        SimCommand::SetText { id, text } => edit(view, id, FieldEdit::Set(text.clone())),
+        SimCommand::InsertText { id, text } => edit(view, id, FieldEdit::Insert(text.clone())),
+        SimCommand::SelectChars { id, anchor, focus } => {
+            edit(view, id, FieldEdit::Select(*anchor, *focus))
+        }
         // Never performed: the window's driver waits it out (`drive.rs`).
         SimCommand::Settle => None,
         SimCommand::Window { action } => match action.as_str() {
@@ -296,9 +323,30 @@ pub(crate) fn resolve(command: &SimCommand, view: &RootView) -> Option<SimAction
     }
 }
 
-/// Dispatch a resolved action with the window leased but not the view.
-pub(crate) fn perform(action: SimAction, events: &EventSender, window: &mut Window, cx: &mut App) {
+/// An edit of field `id`, when there is one.
+fn edit(view: &RootView, id: &str, edit: FieldEdit) -> Option<SimAction> {
+    if !view.inputs.contains_key(id) {
+        eprintln!("[mirin-metal] sim edit: no field with id {id:?}");
+        return None;
+    }
+    Some(SimAction::Edit(id.to_owned(), edit))
+}
+
+/// Dispatch a resolved action with the window leased but not the view;
+/// `root` is the view, for what changes it (an edit).
+pub(crate) fn perform(
+    action: SimAction,
+    events: &EventSender,
+    root: Option<&Entity<RootView>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     match action {
+        SimAction::Edit(id, edit) => {
+            if let Some(root) = root {
+                root.update(cx, |view, cx| view.edit_field(&id, edit, cx));
+            }
+        }
         SimAction::Focus(handle) => window.focus(&handle, cx),
         SimAction::Press(id) => events.press(&id, Held::default()),
         SimAction::Keystrokes(keystrokes) => {
@@ -431,6 +479,24 @@ mod command_tests {
     fn a_focus_names_its_element() {
         let command: SimCommand = serde_json::from_str(r#"{"kind":"focus","id":"save"}"#).unwrap();
         assert_eq!(command, SimCommand::Focus { id: "save".into() });
+    }
+
+    #[test]
+    fn a_field_is_set_or_inserted_into_by_name_but_never_selected_in_chars() {
+        let set: SimCommand =
+            serde_json::from_str(r#"{"kind":"settext","id":"name","text":"Alex"}"#).unwrap();
+        assert_eq!(
+            set,
+            SimCommand::SetText {
+                id: "name".into(),
+                text: "Alex".into()
+            }
+        );
+        let insert: SimCommand =
+            serde_json::from_str(r#"{"kind":"inserttext","id":"name","text":" Kim"}"#).unwrap();
+        assert!(matches!(insert, SimCommand::InsertText { .. }));
+        let chars = r#"{"kind":"selectchars","id":"name","anchor":0,"focus":1}"#;
+        assert!(serde_json::from_str::<SimCommand>(chars).is_err());
     }
 
     #[test]

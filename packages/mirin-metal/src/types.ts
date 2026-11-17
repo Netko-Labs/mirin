@@ -769,8 +769,10 @@ export type NativeEvent =
    * one that says when an image cannot be drawn (`onError`),
    * `opaqueSurface` from one that opens a surface that says `opaque` so,
    * `runFont` from one that draws a `TextRun`'s `fontFamily` (an older host
-   * refuses a tree with it), and `shiftTabKey` from one that takes a
-   * field's `onShiftTab` (an older host refuses that field).
+   * refuses a tree with it), `shiftTabKey` from one that takes a field's
+   * `onShiftTab` (an older host refuses that field), and `fieldText` from
+   * one whose fields publish their text to screen readers and agents and
+   * that takes the `settext` and `inserttext` simulations.
    */
   | {
       type: "protocol";
@@ -785,6 +787,7 @@ export type NativeEvent =
       scroll?: boolean;
       imageError?: boolean;
       opaqueSurface?: boolean;
+      fieldText?: boolean;
       runFont?: boolean;
       shiftTabKey?: boolean;
     }
@@ -850,6 +853,15 @@ export type SimCommand =
   | { kind: "scroll"; id: string; dy: number; dx?: number }
   /** Give the keyboard to a field or `focusable` view, pressing nothing (a screen reader's focus). */
   | { kind: "focus"; id: string }
+  /**
+   * Put `text` in field `id` in place of all it holds (`settext`) or of its
+   * selection (`inserttext`), as typing it would: `onChangeText` fires and
+   * the keyboard stays where it is (an agent's or a screen reader's
+   * `SetTextContents` and `InsertText`). Only a host whose `protocol` event
+   * says `fieldText: true` takes them.
+   */
+  | { kind: "settext"; id: string; text: string }
+  | { kind: "inserttext"; id: string; text: string }
   /**
    * Ask for a `settled` event once the window has settled: everything sent
    * before this (trees, patches, sizes, simulations) is applied, a frame

@@ -342,6 +342,17 @@ impl NodeWrapper<'_> {
         if state.is_modal() {
             atspi_state.insert(State::Modal);
         }
+        // mirin: a node with an expanded state can be expanded, and is
+        // expanded or collapsed (AccessKit had no state for it, so a
+        // disclosure read as a plain button).
+        if let Some(expanded) = state.data().is_expanded() {
+            atspi_state.insert(State::Expandable);
+            atspi_state.insert(if expanded {
+                State::Expanded
+            } else {
+                State::Collapsed
+            });
+        }
         if let Some(selected) = state.is_selected() {
             if !state.is_disabled() {
                 atspi_state.insert(State::Selectable);
@@ -443,7 +454,25 @@ impl NodeWrapper<'_> {
     }
 
     fn supports_action(&self) -> bool {
-        self.0.is_clickable(&filter)
+        // mirin: any action the node takes (`action_list`).
+        !self.action_list().is_empty()
+    }
+
+    // mirin: the actions a node takes, in the order AT-SPI numbers them:
+    // `click`, then `expand` and `collapse` (AccessKit offered only a click,
+    // so a disclosure's way to open said nothing of opening).
+    fn action_list(&self) -> Vec<(&'static str, Action)> {
+        let mut actions = Vec::new();
+        if self.0.is_clickable(&filter) {
+            actions.push(("click", Action::Click));
+        }
+        if self.0.supports_action(Action::Expand, &filter) {
+            actions.push(("expand", Action::Expand));
+        }
+        if self.0.supports_action(Action::Collapse, &filter) {
+            actions.push(("collapse", Action::Collapse));
+        }
+        actions
     }
 
     fn supports_component(&self) -> bool {
@@ -522,19 +551,22 @@ impl NodeWrapper<'_> {
         }
     }
 
+    // mirin: counted and named from `action_list`.
     fn n_actions(&self) -> i32 {
-        if self.0.is_clickable(&filter) { 1 } else { 0 }
+        self.action_list().len() as i32
     }
 
     fn get_action_name(&self, index: i32) -> String {
-        if index != 0 {
-            return String::new();
-        }
-        String::from(if self.0.is_clickable(&filter) {
-            "click"
-        } else {
-            ""
-        })
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| self.action_list().get(index).copied())
+            .map_or_else(String::new, |(name, _)| name.to_owned())
+    }
+
+    // mirin: the action at AT-SPI's `index`.
+    fn action_at(&self, index: i32) -> Option<Action> {
+        let index = usize::try_from(index).ok()?;
+        self.action_list().get(index).map(|(_, action)| *action)
     }
 
     fn raw_bounds_and_transform(&self) -> (Option<Rect>, Affine) {
@@ -1157,11 +1189,12 @@ impl PlatformNode {
     }
 
     pub fn do_action(&self, index: i32) -> Result<bool> {
-        if index != 0 {
+        // mirin: the action at `index` of the node's list, not always a click.
+        let Some(action) = self.resolve(|node| Ok(NodeWrapper(&node).action_at(index)))? else {
             return Ok(false);
-        }
+        };
         self.do_action_internal(self.id, |_, _, target_node, target_tree| ActionRequest {
-            action: Action::Click,
+            action,
             target_tree,
             target_node,
             data: None,
@@ -1273,6 +1306,51 @@ impl PlatformNode {
                 target_tree,
                 target_node,
                 data: Some(ActionData::Value(value.into())),
+            });
+            Ok(true)
+        })
+    }
+
+    // mirin: EditableText's InsertText and DeleteText, which AccessKit's
+    // adapter answered as not supported: the range is selected
+    // (`SetTextSelection`) and replaced (`ReplaceSelectedText`), two
+    // requests the provider takes in order. Offsets are characters, as in
+    // `Text`; an end of -1 is the text's end.
+    pub fn insert_text(&self, position: i32, text: &str) -> Result<bool> {
+        self.replace_text(position, position, text)
+    }
+
+    // mirin: see `insert_text`.
+    pub fn delete_text(&self, start_offset: i32, end_offset: i32) -> Result<bool> {
+        self.replace_text(start_offset, end_offset, "")
+    }
+
+    // mirin: see `insert_text`.
+    fn replace_text(&self, start_offset: i32, end_offset: i32, text: &str) -> Result<bool> {
+        self.resolve_for_text_with_context(|node, tree, context| {
+            if node.is_read_only() || !node.is_text_input() {
+                return Ok(false);
+            }
+            let (start_offset, end_offset) = if end_offset != -1 && end_offset < start_offset {
+                (end_offset, start_offset)
+            } else {
+                (start_offset, end_offset)
+            };
+            let range = text_range_from_offsets(&node, start_offset, end_offset)
+                .ok_or(Error::IndexOutOfRange)?;
+            let (target_node, target_tree) =
+                tree.state().locate_node(node.id()).ok_or(Error::Defunct)?;
+            context.do_action(ActionRequest {
+                action: Action::SetTextSelection,
+                target_tree,
+                target_node,
+                data: Some(ActionData::SetTextSelection(range.to_text_selection())),
+            });
+            context.do_action(ActionRequest {
+                action: Action::ReplaceSelectedText,
+                target_tree,
+                target_node,
+                data: Some(ActionData::Value(text.into())),
             });
             Ok(true)
         })

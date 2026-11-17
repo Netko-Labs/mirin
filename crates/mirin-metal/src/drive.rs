@@ -908,9 +908,10 @@ impl Drive {
             return true;
         }
         let any_window: sumi::AnyWindowHandle = window.into();
-        let dispatched = any_window.update(cx, |_root, window, cx| {
+        let dispatched = any_window.update(cx, |root, window, cx| {
+            let root = root.downcast::<RootView>().ok();
             for action in actions {
-                sim::perform(action, &events, window, cx);
+                sim::perform(action, &events, root.as_ref(), window, cx);
             }
         });
         dispatched.is_ok()

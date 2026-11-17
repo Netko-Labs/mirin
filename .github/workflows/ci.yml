@@ -210,7 +210,10 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Audit Bun dependencies
-        run: bun audit
+        # GHSA-fc5q-39xc-vjpf (picomatch ReDoS, every version up to 4.0.7, no fix published yet)
+        # reaches only the docs site and the examples (vite, fumadocs), never a published package.
+        # Remove this ignore when picomatch publishes a fix.
+        run: bun audit --ignore=GHSA-fc5q-39xc-vjpf
 
       - name: Audit Rust dependencies
         uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2

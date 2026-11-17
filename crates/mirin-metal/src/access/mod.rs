@@ -21,22 +21,25 @@
 //! `appName` option), else by its first window's title: what Orca says for
 //! the app, never the host binary's file name.
 
+mod act;
 mod follow;
 mod fragment;
 #[cfg(target_os = "linux")]
 mod linux;
+mod names;
 mod place;
 mod published;
 #[cfg(not(target_os = "linux"))]
 mod silent;
 #[cfg(test)]
 mod tests;
+mod text;
 mod tree;
 mod walk;
 
 use std::sync::{Arc, Mutex};
 
-use accesskit::{Action, NodeId};
+use accesskit::ActionRequest;
 
 #[cfg(target_os = "linux")]
 use self::linux::{name_app, Publisher};
@@ -61,7 +64,8 @@ pub const APP_NAME_VAR: &str = "MIRIN_METAL_APP_NAME";
 
 /// `MIRIN_METAL_ACCESS_CHECK=1`: after every update the kept tree is
 /// compared with one made from nothing, and a difference is reported on
-/// stderr (for trying a change to `published.rs` on a real app).
+/// stderr (for trying a change to `published.rs` on a real app); so is a
+/// node that can be pressed or focused but has no name (`names.rs`).
 const CHECK_VAR: &str = "MIRIN_METAL_ACCESS_CHECK";
 
 /// What a screen reader calls the app: the driver's name for it, else the
@@ -73,11 +77,18 @@ fn app_name(given: Option<&str>, title: &str) -> Option<String> {
     given.or(titled).map(str::to_owned)
 }
 
+/// Named by a host binary whose fields publish their text (AT-SPI `Text`
+/// and `EditableText`, `text.rs`) and that takes the `settext` and
+/// `inserttext` simulations.
+pub const FIELD_TEXT_MARKER: &str = "MIRIN_METAL_FIELD_TEXT";
+
 /// The field with the keyboard, and what is typed in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Focused {
     pub id: String,
     pub text: Option<String>,
+    /// A field's selection, from its anchor to the caret, in chars of `text`.
+    pub selection: Option<(usize, usize)>,
 }
 
 /// What the tree was last brought in line with; the same again changes
@@ -119,6 +130,8 @@ pub(crate) struct Accessibility {
     publisher: Publisher,
     /// `CHECK_VAR`: every update is compared with a tree made from nothing.
     checked: bool,
+    /// The nameless elements last reported (`CHECK_VAR`): each set once.
+    nameless: Vec<String>,
 }
 
 impl Accessibility {
@@ -137,16 +150,11 @@ impl Accessibility {
         let targets: Arc<Mutex<tree::Targets>> = Arc::default();
         let press = {
             let targets = Arc::clone(&targets);
-            move |action: Action, node: NodeId| {
+            move |request: ActionRequest| {
                 let command = targets.lock().ok().and_then(|targets| {
-                    targets.request(action, node).map(|request| match request {
-                        tree::Request::Click(id) => SimCommand::Click {
-                            id: Some(id.to_owned()),
-                            x: None,
-                            y: None,
-                        },
-                        tree::Request::Focus(id) => SimCommand::Focus { id: id.to_owned() },
-                    })
+                    let (action, node) = (request.action, request.target_node);
+                    let asked = targets.request(action, node, request.data.as_ref());
+                    asked.map(act::command_for)
                 });
                 if let Some(command) = command {
                     act(command);
@@ -159,7 +167,7 @@ impl Accessibility {
             name_app(name);
         }
         crate::trace::log(format_args!(
-            "{ACCESSIBLE_MARKER}: publishing {title:?} for {name:?}"
+            "{ACCESSIBLE_MARKER}: publishing {title:?} for {name:?} ({FIELD_TEXT_MARKER})"
         ));
         Some(Self {
             title: title.to_owned(),
@@ -169,6 +177,7 @@ impl Accessibility {
             window_active: None,
             publisher: Publisher::new(press, wake),
             checked: std::env::var(CHECK_VAR).is_ok_and(|value| value == "1"),
+            nameless: Vec::new(),
         })
     }
 
@@ -218,6 +227,7 @@ impl Accessibility {
                 .focused
                 .as_ref()
                 .and_then(|focused| focused.text.as_deref()),
+            selection: now.focused.as_ref().and_then(|focused| focused.selection),
         };
         let (published, targets) = (&mut self.published, &self.targets);
         let signals = self.publisher.signals();
@@ -251,6 +261,7 @@ impl Accessibility {
         ));
         if self.checked {
             self.check(tree, &facts);
+            self.report_nameless();
         }
         self.last = Some(now);
     }
@@ -265,6 +276,20 @@ impl Accessibility {
         if let Ok(mut targets) = self.targets.lock() {
             *targets = tree::Targets::default();
         }
+    }
+
+    /// What can be pressed or focused and has no name (`CHECK_VAR`), each
+    /// time that changes.
+    fn report_nameless(&mut self) {
+        let nameless = self.published.nameless();
+        if !nameless.is_empty() && self.nameless != nameless {
+            eprintln!(
+                "[mirin-metal] access check: {} pressable or focusable nodes have no name: {}",
+                nameless.len(),
+                nameless.join(", ")
+            );
+        }
+        self.nameless = nameless;
     }
 
     /// The kept tree against one made from nothing (`CHECK_VAR`).

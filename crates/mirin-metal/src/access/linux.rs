@@ -18,8 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use accesskit::{
-    Action, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, NodeId,
-    TreeUpdate,
+    Action, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, TreeUpdate,
 };
 use accesskit_unix::Adapter;
 
@@ -50,12 +49,20 @@ impl<W: Fn() + Send> ActivationHandler for Activation<W> {
 
 struct Actions<F>(F);
 
-impl<F: Fn(Action, NodeId) + Send> ActionHandler for Actions<F> {
+impl<F: Fn(ActionRequest) + Send> ActionHandler for Actions<F> {
     fn do_action(&mut self, request: ActionRequest) {
-        // A press, or moving the keyboard; the targets decide what each one
-        // does to which node (`tree::Targets::request`).
-        if matches!(request.action, Action::Click | Action::Focus) {
-            (self.0)(request.action, request.target_node);
+        // A press, moving the keyboard, or a field's text or selection; the
+        // targets decide what each one does to which node
+        // (`tree::Targets::request`).
+        let handled = [
+            Action::Click,
+            Action::Focus,
+            Action::SetValue,
+            Action::ReplaceSelectedText,
+            Action::SetTextSelection,
+        ];
+        if handled.contains(&request.action) {
+            (self.0)(request);
         }
     }
 }
@@ -92,7 +99,7 @@ impl Publisher {
     /// node; `wake` is called when the adapter wants the tree. Both run on
     /// the adapter's thread.
     pub(crate) fn new(
-        act: impl Fn(Action, NodeId) + Send + 'static,
+        act: impl Fn(ActionRequest) + Send + 'static,
         wake: impl Fn() + Send + 'static,
     ) -> Self {
         let listening: Arc<Listening> = Arc::default();

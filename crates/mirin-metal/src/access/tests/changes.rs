@@ -38,7 +38,8 @@ pub(super) fn text(id: &str, words: &str) -> String {
 fn an_update_carries_only_what_changed() {
     let mut screen = Screen::new(LAUNCHER);
     let first = screen.update();
-    assert_eq!(first.sent, 12, "the first tree is whole");
+    // Twelve nodes, and the two fields' text runs.
+    assert_eq!(first.sent, 14, "the first tree is whole");
     assert_eq!(screen.update().sent, 0, "nothing changed");
 
     // A text's words: its label alone.
@@ -168,9 +169,9 @@ fn the_keyboard_moves_and_types() {
     assert_eq!(heard.role(), Role::EditableComboBox);
     assert_eq!(heard.active_descendant(), Some(node_id("r1")));
 
-    // Typing: the field alone, with the typed words (the driver's lag).
+    // Typing: the field and its line, with the typed words (the driver's lag).
     screen.focus(Some("field"), Some("wi"));
-    assert_eq!(screen.update(), Took { built: 1, sent: 1 });
+    assert_eq!(screen.update(), Took { built: 1, sent: 2 });
     assert_eq!(screen.heard(field).unwrap().value(), Some("wi"));
 
     // The selection moves under it: the options and what the field points at.
@@ -185,17 +186,23 @@ fn the_keyboard_moves_and_types() {
         Some(node_id("r2"))
     );
 
-    // A focusable view takes it: the field says the driver's value again.
+    // A focusable view takes it: the field (and its line) says the
+    // driver's value again.
     screen.focus(Some("r3"), None);
-    assert_eq!(screen.update().sent, 1);
+    assert_eq!(screen.update().sent, 2);
     let heard = screen.heard(field).unwrap();
     assert_eq!(heard.value(), Some("w"));
     assert_eq!(heard.active_descendant(), None);
 
-    // A password field's words are never published, typed or not.
+    // A password field's words are never published, typed or not: only
+    // how many there are (the field and its line, one bullet longer).
     screen.focus(Some("pw"), Some("hunter2!"));
-    assert_eq!(screen.update().sent, 0);
-    assert_eq!(screen.heard(node_id("pw")).unwrap().value(), None);
+    assert_eq!(screen.update().sent, 2);
+    let bullets = "\u{2022}".repeat(8);
+    assert_eq!(
+        screen.heard(node_id("pw")).unwrap().value(),
+        Some(bullets.as_str())
+    );
 
     // The focused row leaves the tree: the window has the focus.
     screen.patch(r#"{"op":"remove","id":"r3"}"#);

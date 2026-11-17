@@ -378,6 +378,7 @@ impl RootView {
             return Some(Focused {
                 id: id.clone(),
                 text: Some(state.field.buffer.clone()),
+                selection: Some(state.field.ends()),
             });
         }
         self.key_targets
@@ -388,6 +389,7 @@ impl RootView {
             .map(|id| Focused {
                 id: id.to_owned(),
                 text: None,
+                selection: None,
             })
     }
 
