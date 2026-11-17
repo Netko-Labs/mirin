@@ -122,13 +122,48 @@ export interface ViewStyle {
   focusRingColor?: Color;
 }
 
+/** A text's weight: CSS's numbers and names. */
+export type FontWeight =
+  | "normal"
+  | "100"
+  | "200"
+  | "300"
+  | "400"
+  | "500"
+  | "600"
+  | "700"
+  | "800"
+  | "900"
+  | FontWeightName;
+
+/** A weight by name, as the host takes it. */
+export type FontWeightName =
+  | "thin"
+  | "extralight"
+  | "light"
+  | "medium"
+  | "semibold"
+  | "bold"
+  | "extrabold"
+  | "black";
+
 /** Appearance for a `<Text>`. */
 export interface TextStyle {
   color?: Color;
   fontSize?: number;
-  fontWeight?: "normal" | "500" | "600" | "700" | "medium" | "semibold" | "bold";
-  /** `"monospace"` picks the system monospace family; anything else is the default. */
-  fontFamily?: "monospace" | "default";
+  /**
+   * CSS's nine weights, by number or name. Lighter than `normal` and heavier
+   * than `bold` need a host whose `protocol` event says `fontWeights` (an
+   * older one refuses the tree); a family without the face draws the nearest.
+   */
+  fontWeight?: FontWeight;
+  /**
+   * `"monospace"` picks the system monospace family; `"display"` the display
+   * cut of the sans family (Inter Display where installed, for numbers and
+   * titles at 20 px and up; needs a host that says `displayFont`); anything
+   * else is the default.
+   */
+  fontFamily?: "monospace" | "display" | "default";
   opacity?: number;
   textAlign?: "left" | "center" | "right";
   fontStyle?: "normal" | "italic";
@@ -475,9 +510,54 @@ export interface ViewProps extends AccessibilityProps {
   dragFiles?: DragFiles;
   /** Files dragged over this view or dropped on it. */
   onDrop?: (event: DropInfo) => void;
+  /**
+   * The view's opacity in a loop (a tag that breathes), drawn by the host a
+   * few steps a second, never every frame; it stands still at `to` under
+   * Reduce Motion (`NativeHostTransport.setReduceMotion`). Multiplies the
+   * style's `opacity`. Needs a host whose `protocol` event says `pulse` (an
+   * older one refuses the tree).
+   */
+  pulse?: Pulse;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
   children?: ReactNode;
+}
+
+/** A view's breathing (`ViewProps.pulse`). */
+export interface Pulse {
+  /** The faintest it gets, 0–1 (0.4 unless given). */
+  from?: number;
+  /** The fullest, and where it stands under Reduce Motion, 0–1 (1 unless given). */
+  to?: number;
+  /** One breath, down and up, in ms (2000 unless given; 400 at least). */
+  periodMs?: number;
+  /** Steps a second, 1–10 (4 unless given). */
+  fps?: number;
+}
+
+/**
+ * A row or field of dots drawn by the host in one paint, with no view per
+ * dot: progress, a history, a picture in dots. `count` across, `rows` down,
+ * centres `pitch` apart, each `radius` round; the first `lit` in `color`,
+ * the rest in `unlitColor` (not drawn without it); `head` one dot in
+ * `headColor` (a ring with `headRing`). `cells` says each dot instead,
+ * row by row: `0` unlit, `1` lit, `2` a ring. At most 4096 dots are drawn.
+ * Needs a host whose `protocol` event says `dots` (an older one refuses
+ * the tree).
+ */
+export interface DotsProps {
+  count: number;
+  rows?: number;
+  pitch: number;
+  radius: number;
+  lit?: number;
+  color?: Color;
+  unlitColor?: Color;
+  head?: number;
+  headColor?: Color;
+  headRing?: boolean;
+  cells?: string;
+  opacity?: number;
 }
 
 export interface TextProps {
@@ -626,7 +706,8 @@ export interface TextRun {
   color?: Color;
   /** A wash behind the text (code, a search match). */
   backgroundColor?: Color;
-  fontWeight?: "normal" | "medium" | "semibold" | "bold";
+  /** Past `normal`–`bold` needs a host that says `fontWeights`. */
+  fontWeight?: "normal" | FontWeightName;
   fontStyle?: "normal" | "italic";
   textDecorationLine?: "none" | "underline" | "line-through";
   /** Draws every paragraph the run is in at this size (a heading); a line has one size. */
@@ -772,7 +853,11 @@ export type NativeEvent =
    * refuses a tree with it), `shiftTabKey` from one that takes a field's
    * `onShiftTab` (an older host refuses that field), and `fieldText` from
    * one whose fields publish their text to screen readers and agents and
-   * that takes the `settext` and `inserttext` simulations.
+   * that takes the `settext` and `inserttext` simulations. `fontWeights`
+   * from one that draws all nine weights (thin to black), `displayFont` from
+   * one that takes `fontFamily: "display"`, `dots` from one that draws
+   * `<Dots>`, and `pulse` from one that takes a view's `pulse` and
+   * `setReduceMotion`: an older host refuses a tree with any of them.
    */
   | {
       type: "protocol";
@@ -790,6 +875,10 @@ export type NativeEvent =
       fieldText?: boolean;
       runFont?: boolean;
       shiftTabKey?: boolean;
+      fontWeights?: boolean;
+      displayFont?: boolean;
+      dots?: boolean;
+      pulse?: boolean;
     }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),
@@ -947,6 +1036,12 @@ export interface NativeHostTransport extends NativeTransport {
    * `MIRIN_METAL_RESIDENT`). Not a close: `onClose` doesn't fire.
    */
   hide(): void;
+  /**
+   * Turn Reduce Motion on or off for the host: pulsing views (`pulse`)
+   * stand still while it is on. Kept across `hide()` and `open()`. A host
+   * whose `protocol` event does not say `pulse` refuses the line (on stderr).
+   */
+  setReduceMotion(reduce: boolean): void;
 }
 
 /** What a window is: what `open()` takes for a host spawned deferred. */

@@ -8,7 +8,14 @@
 import { createContext } from "react";
 import type ReactReconciler from "react-reconciler";
 import { DefaultEventPriority, NoEventPriority } from "react-reconciler/constants";
-import { IMAGE_TYPE, INPUT_TYPE, SVG_TYPE, TEXT_TYPE, VIEW_TYPE } from "../components.ts";
+import {
+  DOTS_TYPE,
+  IMAGE_TYPE,
+  INPUT_TYPE,
+  SVG_TYPE,
+  TEXT_TYPE,
+  VIEW_TYPE,
+} from "../components.ts";
 
 const TEXT_TYPE_NAME: string = TEXT_TYPE;
 const warnedHosts = new Set<string>();
@@ -18,7 +25,14 @@ function warnUnknownHost(type: string): void {
   console.warn(`[mirin-metal] unknown host type "${type}" rendered as a view`);
 }
 
-import type { ImageProps, SvgProps, TextInputProps, TextProps, ViewProps } from "../types.ts";
+import type {
+  DotsProps,
+  ImageProps,
+  SvgProps,
+  TextInputProps,
+  TextProps,
+  ViewProps,
+} from "../types.ts";
 import { logDirty, logMutation, noteChildren, sameProps } from "./commit-log.ts";
 import type {
   Container,
@@ -35,8 +49,9 @@ type HostType =
   | typeof TEXT_TYPE
   | typeof INPUT_TYPE
   | typeof SVG_TYPE
-  | typeof IMAGE_TYPE;
-type HostProps = ViewProps | TextProps | TextInputProps | SvgProps | ImageProps;
+  | typeof IMAGE_TYPE
+  | typeof DOTS_TYPE;
+type HostProps = ViewProps | TextProps | TextInputProps | SvgProps | ImageProps | DotsProps;
 /** Sentinel: React requires a non-null host context even when unused. */
 type HostContext = Record<string, never>;
 const HOST_CONTEXT: HostContext = {};
@@ -99,6 +114,7 @@ export const hostConfig: HostConfig = {
     if (type === INPUT_TYPE) return { kind: "input", props: props as TextInputProps, ...base };
     if (type === SVG_TYPE) return { kind: "svg", props: props as SvgProps, ...base };
     if (type === IMAGE_TYPE) return { kind: "image", props: props as ImageProps, ...base };
+    if (type === DOTS_TYPE) return { kind: "dots", props: props as DotsProps, ...base };
     if (type === TEXT_TYPE_NAME) {
       // Its own text takes a string's id, as the node React no longer makes for it did.
       if (ownText(props as TextProps) !== null) nextTextId += 1;

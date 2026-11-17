@@ -131,9 +131,30 @@ patches change it in place, in order (section "Patches").
   content size, CSS `flex-grow`), `shrink`, `fill`, `center`, `align` (`start|center|end|stretch`), `justify`
   (`start|center|end|between`), `background`, `hoverBackground`, `cornerRadius`,
   `borderWidth` (1 or 2), `borderColor`, `scroll` (vertical), `scrollX`, `clip`, `opacity`,
-  `onPress`, `onScroll` and `scrollThrottle` (a scroll view's offset, "Scroll views" below). `id` is required for `onPress`, `hoverBackground`, and `scroll`
+  `onPress`, `onScroll` and `scrollThrottle` (a scroll view's offset, "Scroll views" below),
+  `pulse` (`{"from","to","periodMs","fps"}`: the view's opacity in a loop,
+  below). `id` is required for `onPress`, `hoverBackground`, and `scroll`
   (GPUI keeps per-element state for those); the TypeScript side sends one for
   every node.
+- `pulse` (`src/pulse.rs`): the view's opacity goes from `to` (1) down to
+  `from` (0.4) and back over `periodMs` (2000, at least 400) as a cosine,
+  multiplying `opacity`: a tag that breathes. It is worked out from the
+  clock as the window renders, held for a whole step (`fps`, 4 a second,
+  1 to 10), and the window asks to render again at the next step with one
+  timer for all its pulses, never with `request_animation_frame`: a
+  breathing tag costs 2 to 10 frames a second, not the display's rate, and
+  nothing is drawn between steps. Every pulse keeps time from the host's
+  start, so two with one period breathe together. A pulsing view is never
+  part of a retained subtree (`retain.rs` `pure_view`: its drawing changes
+  with no new content). Reduce Motion stands every pulse still at `to` and
+  asks for no frame: a `{"reduceMotion":true}` stdin line (`false` to turn
+  it off; `setReduceMotion()` on the transport), or
+  `MIRIN_METAL_REDUCE_MOTION=1` as the host starts (`reduceMotion` in
+  `spawnNativeHost`'s options); it is the host's, kept across a resident
+  host's hide and open. Under a check (`MIRIN_METAL_CHECK=1`) pulses stand
+  still too, so its frames settle. A host that does this says
+  `"pulse":true` in its `protocol` line (names `MIRIN_METAL_PULSE`); one
+  from before refuses a tree with `pulse` and the line.
 - Presses go to the innermost view that handles them, and stop there: a left
   click fires `press` on the deepest `onPress` view under the pointer only,
   a right click fires `contextmenu` on the deepest `onContextMenu` view only,
@@ -156,8 +177,37 @@ patches change it in place, in order (section "Patches").
   order, so the first view to claim a press is the innermost, topmost one,
   and the claims reset in each press's capture phase.
 - `text`: string children plus `color`, `size`, `weight`
-  (`normal|medium|semibold|bold`), `mono` (system monospace via `fc-match`),
-  `truncate`, `opacity`.
+  (`thin|extralight|light|normal|medium|semibold|bold|extrabold|black`, CSS's
+  100 to 900), `mono` (system monospace via `fc-match`), `display` (the
+  display cut: `Inter Display` when fontconfig has that family,
+  `MIRIN_METAL_DISPLAY_FONT` overriding it, the sans family otherwise; `mono`
+  wins), `truncate`, `opacity`. The text system finds the face nearest the
+  weight and draws a variable face at any weight on its axis (sumi's
+  `cosmic_text_system.rs`); until 2026-11-17 the protocol took only `normal`
+  to `bold`, so Inter Light or Thin was never asked for and a light number
+  came out Regular (`src/fonts.rs`). A host that takes all nine says
+  `"fontWeights":true` in its `protocol` line and one that takes `display`
+  says `"displayFont":true` (names `MIRIN_METAL_FONT_WEIGHTS`,
+  `MIRIN_METAL_DISPLAY_FONT`); one from before refuses a tree with either, so
+  a driver sends them only to a host that said so. `@mirinjs/metal` takes
+  `fontWeight` as `"100"`–`"900"` or the names, and `fontFamily: "display"`.
+- `dots`: a row or field of dots drawn in one paint, no element per dot
+  (`src/dots.rs`): `count` across, `rows` down (1), centres `pitch` apart,
+  each `radius` round; the first `lit` (row by row) in `color` (white), the
+  rest in `unlitColor` (not drawn without it); `head`, one dot in
+  `headColor` (`color`), a ring with `headRing`; `cells`, one character a
+  dot (`0` unlit, `1` lit, `2` a ring in `color`), wins over `lit`;
+  `opacity`, `id`. Its box is `(count - 1) × pitch + 2 × radius` by the same
+  of its rows; at most 4096 dots are drawn (`MAX_DOTS`), the box shrinking
+  to them. A canvas paints a quad per dot (a ring is a quad with a border
+  of a third of the radius, 1–2 px), so a 60-dot timer row is one node
+  whose lit count changing is one prop and one paint; as views it was 60
+  elements built and laid out each frame, and as an SVG mask it was parsed
+  and rasterised again on every change (Dashi's Inks, 2026-11-17). A host
+  that draws it says `"dots":true` in its `protocol` line (names
+  `MIRIN_METAL_DOTS`); one from before refuses a tree with it.
+  `@mirinjs/metal`: `<Dots count pitch radius lit color unlitColor head
+  headColor headRing cells opacity />`.
 - `input`: `id` (required), `value`, `placeholder`, `multiline`, `secure`
   (bullets instead of text), `mono`, `size`,
   `color`, `placeholderColor`, `background`, `padding`, `cornerRadius`,

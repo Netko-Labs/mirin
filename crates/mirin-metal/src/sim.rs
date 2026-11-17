@@ -416,9 +416,10 @@ fn describe(node: &NodeSpec, id: &str) -> String {
                 .find(|text| text != "absent")
                 .unwrap_or_else(|| "absent".to_string())
         }
-        NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {
-            "absent".to_string()
-        }
+        NodeSpec::Text { .. }
+        | NodeSpec::Svg { .. }
+        | NodeSpec::Image { .. }
+        | NodeSpec::Dots { .. } => "absent".to_string(),
         NodeSpec::Input { props } => {
             if props.id == id {
                 "input".to_string()
@@ -439,7 +440,8 @@ fn pressable(node: &NodeSpec, id: &str) -> bool {
         NodeSpec::Text { .. }
         | NodeSpec::Input { .. }
         | NodeSpec::Svg { .. }
-        | NodeSpec::Image { .. } => false,
+        | NodeSpec::Image { .. }
+        | NodeSpec::Dots { .. } => false,
     }
 }
 

@@ -431,6 +431,32 @@ function forgetHeads(node: HostNode): void {
 }
 
 /** The mounted root: the container's first host instance. */
-function rootOf(container: Container): HostInstance | null {
-  return container.children.find((child): child is HostInstance => child.kind !== "raw") ?? null;
+/**
+ * How many roots each container had when it was last warned of: a warning
+ * is said once for each count, not on every commit.
+ */
+const warnedRoots = new WeakMap<Container, number>();
+
+/**
+ * The tree's root: the container's first instance. A host draws one tree,
+ * so any root after it is not drawn; that is said once (`console.warn`,
+ * with the count) whenever the count of roots changes past one, instead of
+ * the other roots going without a word (a lock screen's second root, its
+ * Glance, was never drawn and nothing said why). Wrap them in one `<View>`.
+ */
+export function rootOf(container: Container): HostInstance | null {
+  let first: HostInstance | null = null;
+  let roots = 0;
+  for (const child of container.children) {
+    if (child.kind === "raw") continue;
+    first ??= child;
+    roots += 1;
+  }
+  if (roots > 1 && warnedRoots.get(container) !== roots) {
+    console.warn(
+      `@mirinjs/metal: render() was given ${roots} root elements; only the first is drawn. Wrap them in one <View>.`,
+    );
+  }
+  warnedRoots.set(container, roots);
+  return first;
 }

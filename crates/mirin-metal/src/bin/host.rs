@@ -12,9 +12,9 @@ use mirin_metal::toplevels::{self, ToplevelCommand, ToplevelUpdate, Toplevels};
 use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
     HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface, TitleBar,
-    ACTIVATION_MARKER, FIELD_TEXT_MARKER, IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER,
-    OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL, REBASE_MARKER, RESIDENT_MARKER,
-    SCROLL_MARKER, SETTLE_MARKER,
+    ACTIVATION_MARKER, DISPLAY_FONT_MARKER, DOTS_MARKER, FIELD_TEXT_MARKER, FONT_WEIGHTS_MARKER,
+    IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER, OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL,
+    PULSE_MARKER, REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -160,6 +160,18 @@ fn parse_host_line(line: &str) -> Result<HostLine, String> {
             return Err("\"unlock\" must be true".into());
         }
         return Ok(HostLine::Window(DriverMessage::Unlock));
+    }
+    // Reduce Motion turned on or off: pulsing views stand still (`pulse.rs`).
+    if line.trim_start().starts_with("{\"reduceMotion\"") {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct ReduceMotionLine {
+            reduce_motion: bool,
+        }
+        let parsed: ReduceMotionLine = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        return Ok(HostLine::Window(DriverMessage::ReduceMotion(
+            parsed.reduce_motion,
+        )));
     }
     if line.trim_start().starts_with("{\"title\"") {
         #[derive(serde::Deserialize)]
@@ -587,6 +599,15 @@ fn main() {
     mirin_metal::trace::log(format_args!(
         "{FIELD_TEXT_MARKER}: a field's text over AT-SPI, and the settext and inserttext simulations"
     ));
+    mirin_metal::trace::log(format_args!(
+        "{FONT_WEIGHTS_MARKER}: texts in all nine weights; {DISPLAY_FONT_MARKER}: a text's display cut"
+    ));
+    mirin_metal::trace::log(format_args!(
+        "{DOTS_MARKER}: a row or field of dots in one paint"
+    ));
+    mirin_metal::trace::log(format_args!(
+        "{PULSE_MARKER}: a view's opacity in a loop, still under reduceMotion"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
@@ -624,6 +645,15 @@ fn main() {
         // from before refuses a tree with either.
         "runFont": true,
         "shiftTabKey": true,
+        // This host draws all nine weights, thin to black (`fonts.rs`), and
+        // a text's `display` cut; one from before refuses a tree with either.
+        "fontWeights": true,
+        "displayFont": true,
+        // This host draws `dots` nodes in one paint (`dots.rs`).
+        "dots": true,
+        // This host loops a view's opacity (`pulse`) a few steps a second and
+        // takes the `reduceMotion` line (`pulse.rs`).
+        "pulse": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and
@@ -993,6 +1023,20 @@ mod window_size_tests {
         assert!(parse_host_line(r#"{"minSize":{"width":498,"height":0}}"#).is_err());
         assert!(parse_host_line(r#"{"minSize":{"width":498}}"#).is_err());
         assert!(parse_host_line(r#"{"minSize":{"width":498,"height":440,"depth":1}}"#).is_err());
+    }
+
+    #[test]
+    fn the_driver_turns_reduce_motion_on_and_off() {
+        assert!(matches!(
+            parse_host_line(r#"{"reduceMotion":true}"#),
+            Ok(HostLine::Window(DriverMessage::ReduceMotion(true)))
+        ));
+        assert!(matches!(
+            parse_host_line(r#"{"reduceMotion":false}"#),
+            Ok(HostLine::Window(DriverMessage::ReduceMotion(false)))
+        ));
+        assert!(parse_host_line(r#"{"reduceMotion":1}"#).is_err());
+        assert!(parse_host_line(r#"{"reduceMotion":true,"fps":2}"#).is_err());
     }
 
     #[test]

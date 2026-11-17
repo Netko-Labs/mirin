@@ -1,5 +1,14 @@
 export { useWindowChrome } from "./chrome.ts";
-export { Image, ScrollView, Svg, Text, TextInput, TextInputDefaults, View } from "./components.ts";
+export {
+  Dots,
+  Image,
+  ScrollView,
+  Svg,
+  Text,
+  TextInput,
+  TextInputDefaults,
+  View,
+} from "./components.ts";
 export {
   type HeadlessDisplay,
   type HeadlessDisplayOptions,
@@ -15,8 +24,11 @@ export type {
   Bounds,
   Color,
   Dimension,
+  DotsProps,
   DragFiles,
   DropInfo,
+  FontWeight,
+  FontWeightName,
   GridPlacement,
   GridTrack,
   ImageErrorInfo,
@@ -32,6 +44,7 @@ export type {
   NativeWindowOptions,
   PointerInfo,
   PressInfo,
+  Pulse,
   RunPressInfo,
   ScrollInfo,
   SimCommand,

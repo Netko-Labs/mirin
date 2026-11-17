@@ -12,12 +12,9 @@
 
 use std::ops::Range;
 
-use sumi::{
-    px, rgba, FontStyle, FontWeight, HighlightStyle, Hsla, Pixels, StrikethroughStyle,
-    UnderlineStyle,
-};
+use sumi::{px, rgba, FontStyle, HighlightStyle, Hsla, Pixels, StrikethroughStyle, UnderlineStyle};
 
-use crate::tree::{parse_color, InputRun, Weight};
+use crate::tree::{parse_color, InputRun};
 
 /// Runs past this many are not drawn (the driver is a trust boundary).
 pub(crate) const MAX_RUNS: usize = 8192;
@@ -148,12 +145,7 @@ fn highlight(run: &InputRun) -> HighlightStyle {
     HighlightStyle {
         color,
         background_color: parsed(&run.background).map(|color| rgba(color).into()),
-        font_weight: run.weight.map(|weight| match weight {
-            Weight::Normal => FontWeight::NORMAL,
-            Weight::Medium => FontWeight::MEDIUM,
-            Weight::Semibold => FontWeight::SEMIBOLD,
-            Weight::Bold => FontWeight::BOLD,
-        }),
+        font_weight: run.weight.map(crate::fonts::font_weight),
         font_style: run.italic.then_some(FontStyle::Italic),
         underline: run.underline.then_some(UnderlineStyle {
             thickness: px(1.0),

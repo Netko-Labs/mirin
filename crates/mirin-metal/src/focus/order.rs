@@ -106,7 +106,10 @@ impl Order {
                 selected: false,
                 ring: context.ring,
             }),
-            NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
+            NodeSpec::Text { .. }
+            | NodeSpec::Svg { .. }
+            | NodeSpec::Image { .. }
+            | NodeSpec::Dots { .. } => {}
         }
     }
 
