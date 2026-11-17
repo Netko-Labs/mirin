@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use accesskit::{Action, Live, Node, NodeId, Role, Toggled};
+use accesskit::{Action, ActionData, Live, Node, NodeId, Role, TextPosition, Toggled};
 
 use crate::layout::LayoutMap;
 use crate::tree::{AccessProps, InputProps, ViewProps};
@@ -42,6 +42,9 @@ pub(crate) struct Facts<'a> {
     /// What is in it now, when it is a field (the renderer's buffer; the
     /// driver's value lags).
     pub typed: Option<&'a str>,
+    /// Its caret and selection, when it is a field: from the anchor to the
+    /// caret, in chars of `typed`.
+    pub selection: Option<(usize, usize)>,
 }
 
 /// Where a screen reader's action on a node goes.
@@ -51,6 +54,11 @@ pub(crate) struct Targets {
     press: HashMap<NodeId, String>,
     /// Node → the element id that takes the keyboard (focusable views and fields).
     focus: HashMap<NodeId, String>,
+    /// Node → the field whose text an action sets.
+    edit: HashMap<NodeId, String>,
+    /// A field's node → its text runs and the char each starts at
+    /// (`text.rs`): where a selection asked for in runs is in the field.
+    runs: HashMap<NodeId, Vec<(NodeId, usize)>>,
 }
 
 /// What a screen reader's action does to an element.
@@ -60,18 +68,60 @@ pub(crate) enum Request<'a> {
     Click(&'a str),
     /// Give it the keyboard, pressing nothing.
     Focus(&'a str),
+    /// Put this text in the field in place of all it holds, as typing would.
+    SetText(&'a str, String),
+    /// Put this text in the field in place of its selection, as typing would.
+    InsertText(&'a str, String),
+    /// Select the field's chars from the first to the second (the caret).
+    Select(&'a str, usize, usize),
 }
 
 impl Targets {
-    /// What `action` on `node` does: a click clicks a pressable node, a focus
-    /// moves the keyboard to a field or focusable view. Focusing a button
-    /// never presses it.
-    pub(crate) fn request(&self, action: Action, node: NodeId) -> Option<Request<'_>> {
+    /// What `action` (with `data`) on `node` does: a click clicks a
+    /// pressable node, a focus moves the keyboard to a field or focusable
+    /// view, never pressing it. A field's text is set whole (`SetValue`:
+    /// AT-SPI's `SetTextContents`) or in place of its selection
+    /// (`ReplaceSelectedText`), and its selection set in its runs
+    /// (`SetTextSelection`: the caret, a selection).
+    pub(crate) fn request(
+        &self,
+        action: Action,
+        node: NodeId,
+        data: Option<&ActionData>,
+    ) -> Option<Request<'_>> {
+        let text = || match data {
+            Some(ActionData::Value(text)) => Some(text.to_string()),
+            _ => None,
+        };
         match action {
             Action::Click => self.press.get(&node).map(|id| Request::Click(id)),
             Action::Focus => self.focus.get(&node).map(|id| Request::Focus(id)),
+            Action::SetValue => Some(Request::SetText(self.edit.get(&node)?, text()?)),
+            Action::ReplaceSelectedText => {
+                Some(Request::InsertText(self.edit.get(&node)?, text()?))
+            }
+            Action::SetTextSelection => {
+                let Some(ActionData::SetTextSelection(selection)) = data else {
+                    return None;
+                };
+                let field = self.edit.get(&node)?;
+                let runs = self.runs.get(&node)?;
+                let char_at = |position: TextPosition| {
+                    let (_, start) = runs.iter().find(|(run, _)| *run == position.node)?;
+                    Some(start + position.character_index)
+                };
+                let (anchor, focus) = (char_at(selection.anchor)?, char_at(selection.focus)?);
+                Some(Request::Select(field, anchor, focus))
+            }
             _ => None,
         }
+    }
+
+    /// Field node `field`'s runs are these now, starting at these chars.
+    pub(crate) fn set_runs(&mut self, field: NodeId, runs: impl Iterator<Item = (NodeId, usize)>) {
+        let kept = self.runs.entry(field).or_default();
+        kept.clear();
+        kept.extend(runs);
     }
 
     /// `node` is `element` now, or no element's (text, the window): what it
@@ -80,6 +130,7 @@ impl Targets {
         let actions = [
             (&mut self.press, Action::Click),
             (&mut self.focus, Action::Focus),
+            (&mut self.edit, Action::SetValue),
         ];
         for (targets, action) in actions {
             match element.filter(|_| node.supports_action(action)) {
@@ -98,6 +149,8 @@ impl Targets {
     pub(crate) fn forget(&mut self, node: NodeId) {
         self.press.remove(&node);
         self.focus.remove(&node);
+        self.edit.remove(&node);
+        self.runs.remove(&node);
     }
 }
 
@@ -240,8 +293,9 @@ pub(crate) fn text_node(words: String) -> Node {
     node
 }
 
-/// A field's node with the driver's value, before its bounds. A password
-/// field's words are never published.
+/// A field's node with the driver's value, before its bounds and its text
+/// runs (`text.rs`). A password field's words are never published: its
+/// value is a bullet a character, so its length is.
 pub(crate) fn field_node(props: &InputProps) -> Node {
     let access = props.access.as_deref();
     let role = match access.and_then(|access| access.role.as_deref()) {
@@ -260,12 +314,22 @@ pub(crate) fn field_node(props: &InputProps) -> Node {
             node.set_label(placeholder);
         }
     }
-    if !props.secure {
+    if props.secure {
+        node.set_value(hidden(&props.value));
+    } else {
         node.set_value(props.value.clone());
     }
     node.add_action(Action::Focus);
     node.add_action(Action::Click);
+    node.add_action(Action::SetValue);
+    node.add_action(Action::ReplaceSelectedText);
+    node.add_action(Action::SetTextSelection);
     node
+}
+
+/// What a secure field publishes for `text`: a bullet a character.
+pub(crate) fn hidden(text: &str) -> String {
+    "\u{2022}".repeat(text.chars().count())
 }
 
 /// The window's node: named by its title, over the tree's top nodes.
@@ -294,6 +358,7 @@ mod tests {
             retained: &|_| None,
             focused,
             typed: (focused == Some("field")).then_some("wi"),
+            selection: (focused == Some("field")).then_some((2, 2)),
         }
     }
 
@@ -359,11 +424,11 @@ mod tests {
         assert_eq!(first.is_selected(), Some(true));
         assert!(first.children().is_empty(), "its label stands for its text");
         assert_eq!(
-            built.targets.request(Action::Click, node_id("r2")),
+            built.targets.request(Action::Click, node_id("r2"), None),
             Some(Request::Click("r2"))
         );
         assert_eq!(
-            built.targets.request(Action::Focus, node_id("field")),
+            built.targets.request(Action::Focus, node_id("field"), None),
             Some(Request::Focus("field"))
         );
         assert_eq!(find(&built, node_id("note")).live(), Some(Live::Polite));
@@ -392,7 +457,11 @@ mod tests {
         assert_eq!(ok.children().len(), 1);
         let password = find(&built, node_id("pw"));
         assert_eq!(password.role(), Role::PasswordInput);
-        assert_eq!(password.value(), None, "a password is never published");
+        assert_eq!(
+            password.value(),
+            Some("\u{2022}".repeat(7).as_str()),
+            "a password is never published: only its length"
+        );
         assert_eq!(password.label(), Some("Password"));
         assert_eq!(built.update.focus, ROOT);
         assert_eq!(find(&built, ROOT).children().len(), 3);
@@ -413,16 +482,16 @@ mod tests {
         assert_eq!(save.role(), Role::Button);
         assert!(save.supports_action(Action::Focus));
         assert_eq!(
-            built.targets.request(Action::Focus, node_id("save")),
+            built.targets.request(Action::Focus, node_id("save"), None),
             Some(Request::Focus("save")),
             "focusing a button gives it the keyboard and never presses it"
         );
         assert_eq!(
-            built.targets.request(Action::Click, node_id("save")),
+            built.targets.request(Action::Click, node_id("save"), None),
             Some(Request::Click("save"))
         );
         assert_eq!(
-            built.targets.request(Action::Focus, node_id("group")),
+            built.targets.request(Action::Focus, node_id("group"), None),
             Some(Request::Focus("group"))
         );
         // Focusable but not pressable: still a node, so the focus has one.

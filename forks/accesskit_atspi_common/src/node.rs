@@ -1278,6 +1278,51 @@ impl PlatformNode {
         })
     }
 
+    // mirin: EditableText's InsertText and DeleteText, which AccessKit's
+    // adapter answered as not supported: the range is selected
+    // (`SetTextSelection`) and replaced (`ReplaceSelectedText`), two
+    // requests the provider takes in order. Offsets are characters, as in
+    // `Text`; an end of -1 is the text's end.
+    pub fn insert_text(&self, position: i32, text: &str) -> Result<bool> {
+        self.replace_text(position, position, text)
+    }
+
+    // mirin: see `insert_text`.
+    pub fn delete_text(&self, start_offset: i32, end_offset: i32) -> Result<bool> {
+        self.replace_text(start_offset, end_offset, "")
+    }
+
+    // mirin: see `insert_text`.
+    fn replace_text(&self, start_offset: i32, end_offset: i32, text: &str) -> Result<bool> {
+        self.resolve_for_text_with_context(|node, tree, context| {
+            if node.is_read_only() || !node.is_text_input() {
+                return Ok(false);
+            }
+            let (start_offset, end_offset) = if end_offset != -1 && end_offset < start_offset {
+                (end_offset, start_offset)
+            } else {
+                (start_offset, end_offset)
+            };
+            let range = text_range_from_offsets(&node, start_offset, end_offset)
+                .ok_or(Error::IndexOutOfRange)?;
+            let (target_node, target_tree) =
+                tree.state().locate_node(node.id()).ok_or(Error::Defunct)?;
+            context.do_action(ActionRequest {
+                action: Action::SetTextSelection,
+                target_tree,
+                target_node,
+                data: Some(ActionData::SetTextSelection(range.to_text_selection())),
+            });
+            context.do_action(ActionRequest {
+                action: Action::ReplaceSelectedText,
+                target_tree,
+                target_node,
+                data: Some(ActionData::Value(text.into())),
+            });
+            Ok(true)
+        })
+    }
+
     pub fn n_anchors(&self) -> Result<i32> {
         self.resolve(|node| if node.url().is_some() { Ok(1) } else { Ok(0) })
     }

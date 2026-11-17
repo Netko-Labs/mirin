@@ -19,6 +19,7 @@ mod counters;
 mod drag;
 mod drive;
 mod edges;
+mod edit;
 mod events;
 mod field;
 mod focus;
@@ -54,7 +55,7 @@ mod tree;
 mod value;
 mod window;
 
-pub use access::{ACCESSIBLE_MARKER, APP_NAME_VAR};
+pub use access::{ACCESSIBLE_MARKER, APP_NAME_VAR, FIELD_TEXT_MARKER};
 pub use check::SETTLE_MARKER;
 pub use drive::{run, run_deferred, HostMessage, OPEN_MIN_SIZE_MARKER, RESIDENT_MARKER};
 pub use events::{EventKind, Modifiers, NativeUiEvent, PointerPhase};

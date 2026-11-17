@@ -77,7 +77,7 @@ impl<'a> Walk<'a> {
         id: NodeId,
         base: Node,
         element: Option<&str>,
-        typed: bool,
+        field: bool,
         frame: Option<u64>,
     ) {
         self.built += 1;
@@ -92,13 +92,13 @@ impl<'a> Walk<'a> {
                     && kept.place.bounds == place.bounds
                     && kept.place.offset == place.offset
                     && kept.element.as_deref() == element
-                    && kept.typed == typed;
+                    && kept.field == field;
                 let was = kept.frame;
                 (kept.space, kept.frame, kept.place) = (space, frame, place);
                 if !same {
                     kept.base = base;
                     kept.element = element.map(Box::from);
-                    kept.typed = typed;
+                    kept.field = field;
                     self.changed.push(id);
                 }
                 was
@@ -110,7 +110,7 @@ impl<'a> Walk<'a> {
                     space,
                     frame,
                     place,
-                    typed,
+                    field,
                     stamp,
                 });
                 self.changed.push(id);
@@ -220,13 +220,7 @@ impl<'a> Walk<'a> {
             }
             NodeSpec::Input { props } => {
                 let id = node_id(&props.id);
-                self.keep(
-                    id,
-                    tree::field_node(props),
-                    Some(&props.id),
-                    !props.secure,
-                    None,
-                );
+                self.keep(id, tree::field_node(props), Some(&props.id), true, None);
                 making.placed = true;
                 making.own.push(id);
                 out.push(id);

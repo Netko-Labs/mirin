@@ -1,7 +1,7 @@
 //! Where no adapter publishes the tree yet (macOS, Windows): nobody
 //! listens, so nothing is built.
 
-use accesskit::{Action, NodeId, TreeUpdate};
+use accesskit::{ActionRequest, TreeUpdate};
 
 pub(crate) fn name_app(_name: &str) {}
 
@@ -9,7 +9,7 @@ pub(crate) struct Publisher;
 
 impl Publisher {
     pub(crate) fn new(
-        _act: impl Fn(Action, NodeId) + Send + 'static,
+        _act: impl Fn(ActionRequest) + Send + 'static,
         _wake: impl Fn() + Send + 'static,
     ) -> Self {
         Self

@@ -31,12 +31,13 @@ mod published;
 mod silent;
 #[cfg(test)]
 mod tests;
+mod text;
 mod tree;
 mod walk;
 
 use std::sync::{Arc, Mutex};
 
-use accesskit::{Action, NodeId};
+use accesskit::ActionRequest;
 
 #[cfg(target_os = "linux")]
 use self::linux::{name_app, Publisher};
@@ -73,11 +74,18 @@ fn app_name(given: Option<&str>, title: &str) -> Option<String> {
     given.or(titled).map(str::to_owned)
 }
 
+/// Named by a host binary whose fields publish their text (AT-SPI `Text`
+/// and `EditableText`, `text.rs`) and that takes the `settext` and
+/// `inserttext` simulations.
+pub const FIELD_TEXT_MARKER: &str = "MIRIN_METAL_FIELD_TEXT";
+
 /// The field with the keyboard, and what is typed in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Focused {
     pub id: String,
     pub text: Option<String>,
+    /// A field's selection, from its anchor to the caret, in chars of `text`.
+    pub selection: Option<(usize, usize)>,
 }
 
 /// What the tree was last brought in line with; the same again changes
@@ -101,6 +109,32 @@ impl Built {
             && self.focused == other.focused
             && self.window_active == other.window_active
             && self.title == other.title
+    }
+}
+
+/// What a screen reader's or an agent's request does, as the window's
+/// simulated input (`sim.rs`): it goes where the person's would.
+fn command_for(request: tree::Request) -> SimCommand {
+    match request {
+        tree::Request::Click(id) => SimCommand::Click {
+            id: Some(id.to_owned()),
+            x: None,
+            y: None,
+        },
+        tree::Request::Focus(id) => SimCommand::Focus { id: id.to_owned() },
+        tree::Request::SetText(id, text) => SimCommand::SetText {
+            id: id.to_owned(),
+            text,
+        },
+        tree::Request::InsertText(id, text) => SimCommand::InsertText {
+            id: id.to_owned(),
+            text,
+        },
+        tree::Request::Select(id, anchor, focus) => SimCommand::SelectChars {
+            id: id.to_owned(),
+            anchor,
+            focus,
+        },
     }
 }
 
@@ -137,16 +171,11 @@ impl Accessibility {
         let targets: Arc<Mutex<tree::Targets>> = Arc::default();
         let press = {
             let targets = Arc::clone(&targets);
-            move |action: Action, node: NodeId| {
+            move |request: ActionRequest| {
                 let command = targets.lock().ok().and_then(|targets| {
-                    targets.request(action, node).map(|request| match request {
-                        tree::Request::Click(id) => SimCommand::Click {
-                            id: Some(id.to_owned()),
-                            x: None,
-                            y: None,
-                        },
-                        tree::Request::Focus(id) => SimCommand::Focus { id: id.to_owned() },
-                    })
+                    let (action, node) = (request.action, request.target_node);
+                    let asked = targets.request(action, node, request.data.as_ref());
+                    asked.map(command_for)
                 });
                 if let Some(command) = command {
                     act(command);
@@ -159,7 +188,7 @@ impl Accessibility {
             name_app(name);
         }
         crate::trace::log(format_args!(
-            "{ACCESSIBLE_MARKER}: publishing {title:?} for {name:?}"
+            "{ACCESSIBLE_MARKER}: publishing {title:?} for {name:?} ({FIELD_TEXT_MARKER})"
         ));
         Some(Self {
             title: title.to_owned(),
@@ -218,6 +247,7 @@ impl Accessibility {
                 .focused
                 .as_ref()
                 .and_then(|focused| focused.text.as_deref()),
+            selection: now.focused.as_ref().and_then(|focused| focused.selection),
         };
         let (published, targets) = (&mut self.published, &self.targets);
         let signals = self.publisher.signals();

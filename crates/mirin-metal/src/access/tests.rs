@@ -5,6 +5,7 @@
 //! application is called.
 
 mod changes;
+mod fields;
 mod frames;
 mod random;
 mod screen;

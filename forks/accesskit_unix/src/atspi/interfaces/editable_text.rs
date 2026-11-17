@@ -30,8 +30,20 @@ impl EditableTextInterface {
             .map_err(self.map_error())
     }
 
-    fn insert_text(&self, _position: i32, _text: &str, _length: i32) -> fdo::Result<bool> {
-        Err(unsupported())
+    // mirin: inserted as a replacement of the empty range at `position`
+    // (accesskit_atspi_common's `insert_text`); `length` (bytes, -1 for all)
+    // cuts `text` at a character's edge.
+    fn insert_text(&self, position: i32, text: &str, length: i32) -> fdo::Result<bool> {
+        let text = usize::try_from(length).map_or(text, |length| {
+            let mut end = length.min(text.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            &text[..end]
+        });
+        self.0
+            .insert_text(position, text)
+            .map_err(self.map_error())
     }
 
     fn copy_text(&self, _start_pos: i32, _end_pos: i32) -> fdo::Result<()> {
@@ -42,8 +54,11 @@ impl EditableTextInterface {
         Err(unsupported())
     }
 
-    fn delete_text(&self, _start_pos: i32, _end_pos: i32) -> fdo::Result<bool> {
-        Err(unsupported())
+    // mirin: deleted as a replacement of the range by nothing.
+    fn delete_text(&self, start_pos: i32, end_pos: i32) -> fdo::Result<bool> {
+        self.0
+            .delete_text(start_pos, end_pos)
+            .map_err(self.map_error())
     }
 
     fn paste_text(&self, _position: i32) -> fdo::Result<bool> {

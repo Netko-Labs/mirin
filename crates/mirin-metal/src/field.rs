@@ -194,6 +194,14 @@ impl Field {
         }
     }
 
+    /// The selection's ends as chars, the anchor first and the caret second
+    /// (both the caret when nothing is selected): a screen reader's view.
+    pub(crate) fn ends(&self) -> (usize, usize) {
+        let len = self.len();
+        let cursor = self.cursor.min(len);
+        (self.anchor.map_or(cursor, |anchor| anchor.min(len)), cursor)
+    }
+
     pub(crate) fn has_selection(&self) -> bool {
         !self.selection().is_empty()
     }
