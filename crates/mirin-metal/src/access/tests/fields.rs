@@ -227,3 +227,41 @@ fn what_can_be_pressed_or_focused_without_a_name_is_found() {
     screen.update();
     assert_eq!(screen.nameless(), ["bare", "close"]);
 }
+
+#[test]
+fn a_secure_field_with_another_role_is_still_secret() {
+    // `secure` decides, never the role: a secure field that says it is a
+    // search (or a combo box) publishes a bullet a character, typed or not.
+    let mut screen = Screen::new(
+        r#"{"type":"view","props":{"id":"1"},"children":[
+            {"type":"input","props":{"id":"pin","value":"secret","secure":true,"access":{"role":"search","label":"PIN"}}},
+            {"type":"input","props":{"id":"code","value":"","secure":true,"access":{"role":"combobox","label":"Code"}}}
+        ]}"#,
+    );
+    screen.update();
+    let bullets = |count: usize| "\u{2022}".repeat(count);
+    let pin = node_id("pin");
+    assert_eq!(screen.heard(pin).unwrap().role(), Role::SearchInput);
+    assert_eq!(screen.text(pin).unwrap().text, bullets(6));
+
+    screen.focus(Some("pin"), Some("secret!"));
+    screen.update();
+    let text = screen.text(pin).unwrap();
+    assert_eq!(
+        (text.text, text.count, text.caret),
+        (bullets(7), 7, Some(7))
+    );
+    assert_eq!(
+        screen.heard(pin).unwrap().value(),
+        Some(bullets(7).as_str())
+    );
+
+    screen.focus(Some("code"), Some("4821"));
+    screen.update();
+    let code = node_id("code");
+    assert_eq!(screen.text(code).unwrap().text, bullets(4));
+    assert_eq!(
+        screen.heard(code).unwrap().value(),
+        Some(bullets(4).as_str())
+    );
+}

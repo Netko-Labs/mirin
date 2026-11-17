@@ -17,7 +17,7 @@ use accesskit::{Node, NodeId, Role};
 
 use super::follow::Frames;
 use super::fragment::{Fragment, Making, Place};
-use super::published::Kept;
+use super::published::{Field, Kept};
 use super::tree::{self, node_id, Facts, ROOT};
 use crate::layout::scroll_group;
 use crate::patch::Document;
@@ -77,7 +77,7 @@ impl<'a> Walk<'a> {
         id: NodeId,
         base: Node,
         element: Option<&str>,
-        field: bool,
+        field: Field,
         frame: Option<u64>,
     ) {
         self.built += 1;
@@ -214,13 +214,18 @@ impl<'a> Walk<'a> {
                     return;
                 }
                 let id = node_id(&place.key());
-                self.keep(id, tree::text_node(words), None, false, None);
+                self.keep(id, tree::text_node(words), None, Field::None, None);
                 making.own.push(id);
                 out.push(id);
             }
             NodeSpec::Input { props } => {
                 let id = node_id(&props.id);
-                self.keep(id, tree::field_node(props), Some(&props.id), true, None);
+                let field = if props.secure {
+                    Field::Secure
+                } else {
+                    Field::Plain
+                };
+                self.keep(id, tree::field_node(props), Some(&props.id), field, None);
                 making.placed = true;
                 making.own.push(id);
                 out.push(id);
@@ -289,7 +294,7 @@ impl<'a> Walk<'a> {
                 if walks {
                     node.set_children(inner);
                 }
-                self.keep(node_id, node, Some(id), false, frame_used);
+                self.keep(node_id, node, Some(id), Field::None, frame_used);
                 making.own.push(node_id);
                 making.out.push(node_id);
                 true
@@ -298,7 +303,7 @@ impl<'a> Walk<'a> {
             None if frame_used.is_some() => {
                 let mut node = Node::new(Role::GenericContainer);
                 node.set_children(inner);
-                self.keep(node_id, node, None, false, frame_used);
+                self.keep(node_id, node, None, Field::None, frame_used);
                 making.own.push(node_id);
                 making.out.push(node_id);
                 true
@@ -318,7 +323,7 @@ impl<'a> Walk<'a> {
         let mut top = Vec::new();
         self.child(self.document, Place::Top, &mut making, &mut top);
         let window = tree::window_node(self.facts.title, top);
-        self.keep(ROOT, window, None, false, None);
+        self.keep(ROOT, window, None, Field::None, None);
         making.own.push(ROOT);
         making.out.push(ROOT);
         self.finish(making, "", self.document.generation(), None, false)

@@ -51,10 +51,10 @@ pub(super) struct Kept {
     pub(super) space: Option<u64>,
     pub(super) frame: Option<u64>,
     pub(super) place: Placement,
-    /// A field: its text is published as runs, and with the keyboard what
-    /// is typed stands for the driver's value (a bullet a character in a
-    /// password field).
-    pub(super) field: bool,
+    /// Whether it is a field, and a secure one: its text is published as
+    /// runs, and with the keyboard what is typed stands for the driver's
+    /// value (a bullet a character in a secure field).
+    pub(super) field: Field,
     /// The update that last made it.
     pub(super) stamp: u64,
 }
@@ -78,7 +78,7 @@ impl Kept {
                 node.set_active_descendant(active);
             }
         }
-        let laid = self.field.then(|| {
+        let laid = (self.field != Field::None).then(|| {
             let selection = overlay.and_then(|overlay| overlay.selection);
             let laid = text::lay(id, node.value().unwrap_or_default(), selection);
             node.set_children(laid.ids());
@@ -89,6 +89,18 @@ impl Kept {
         });
         (node, laid)
     }
+}
+
+/// Whether a node is a field, and whether its words are secret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Field {
+    /// Not a field: no text runs, nothing typed laid over it.
+    None,
+    /// A field whose words are published.
+    Plain,
+    /// A secure field (`secure`, whatever its role): only a bullet a
+    /// character is ever published.
+    Secure,
 }
 
 /// How far a node may be from where its element was painted and still be
@@ -177,8 +189,10 @@ impl Published {
             (takes && kept.element.as_deref() == Some(element)).then_some((id, kept))
         });
         let overlay = focused.and_then(|(node, kept)| {
-            let secure = kept.base.role() == Role::PasswordInput;
-            let typed = facts.typed.filter(|_| kept.field);
+            // Secure by the field's own `secure`, never by its role: a
+            // secure field may say it is a search.
+            let secure = kept.field == Field::Secure;
+            let typed = facts.typed.filter(|_| kept.field != Field::None);
             let value = typed.map(|typed| {
                 if secure {
                     hidden(typed)
