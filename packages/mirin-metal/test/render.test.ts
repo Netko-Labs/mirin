@@ -560,14 +560,25 @@ describe("TextInput", () => {
         }),
         createElement(TextInput, { value: "", testID: "body", multiline: true }),
         createElement(TextInput, { value: "", testID: "line", tabBehavior: "insert" }),
+        createElement(TextInput, {
+          value: "",
+          testID: "note",
+          multiline: true,
+          tabBehavior: "insert",
+          onShiftTab: () => {},
+        }),
       ),
       transport,
     );
     await nextCommit();
     const tree = JSON.parse(transport.sent.at(-1) ?? "");
     expect(tree.children[0].props.insertTab).toBe(true);
+    expect(tree.children[0].props.shiftTabKey).toBeUndefined();
     expect(tree.children[1].props.insertTab).toBeUndefined();
     expect(tree.children[2].props.insertTab).toBeUndefined();
+    // With onShiftTab, Tab types a tab and Shift+Tab is the app's.
+    expect(tree.children[3].props.insertTab).toBe(true);
+    expect(tree.children[3].props.shiftTabKey).toBe(true);
     root.unmount();
   });
 

@@ -388,6 +388,7 @@ pub(crate) fn render_input(
     let multiline = props.multiline;
     let submit_on_enter = props.submit_on_enter;
     let insert_tab = props.insert_tab;
+    let shift_tab_key = props.shift_tab_key;
     let secure = props.secure;
     let on_change = props.on_change;
     let on_submit = props.on_submit;
@@ -409,7 +410,7 @@ pub(crate) fn render_input(
                 multiline,
                 submit_on_enter,
                 insert_tab,
-                shift_tab_to_driver: insert_tab && on_key,
+                shift_tab_to_driver: insert_tab && shift_tab_key,
                 secure,
                 clipboard: &mut clipboard,
                 lines,
@@ -451,7 +452,8 @@ pub(crate) fn render_input(
                 }
             }
             Edit::Key(key) => {
-                if on_key {
+                // Shift+Tab reaches a field that asked for it (`shiftTabKey`) alone.
+                if on_key || key == "Shift+Tab" {
                     view.events.key(&key_id, key);
                 }
             }

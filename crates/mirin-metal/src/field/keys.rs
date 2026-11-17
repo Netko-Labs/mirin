@@ -52,10 +52,9 @@ pub(crate) struct KeyEnv<'a> {
     /// moving the keyboard on; Shift+Tab still moves it back, and
     /// Ctrl/Cmd+Tab on.
     pub(crate) insert_tab: bool,
-    /// In a field that types tabs, Shift+Tab goes to the driver
-    /// (`onKeyPress("Shift+Tab")`: a list item outdented) instead of moving
-    /// the keyboard back, when the driver listens for keys;
-    /// Ctrl/Cmd+Shift+Tab still moves it.
+    /// In a field that types tabs, Shift+Tab goes to the driver (a field's
+    /// `shiftTabKey`, `onShiftTab`: a list item outdented) instead of moving
+    /// the keyboard back; Ctrl/Cmd+Shift+Tab still moves it.
     pub(crate) shift_tab_to_driver: bool,
     /// A secure field never gives its text to the clipboard.
     pub(crate) secure: bool,

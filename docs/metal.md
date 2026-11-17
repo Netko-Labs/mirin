@@ -673,7 +673,7 @@ keep its own width, or give one `flex: 1`; nothing is kept from a text's earlier
 frame measures the words it has: `render::one_line_tests`),
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
 (`onKeyPress` reports Escape, and ArrowUp and ArrowDown in a single-line field,
-for list navigation, and Shift+Tab in a field that types tabs), React Native's `selection` (`{ start, end }`, controlled),
+for list navigation), React Native's `selection` (`{ start, end }`, controlled),
 `onSelectionChange` (called with `{ start, end }`; a selection the field made
 in a text the app has since replaced, which arrives late, is not passed on:
 `lib/field-texts.ts` follows what each field holds, from its `change` events
@@ -705,9 +705,10 @@ after land in the next field: a title, then its body), `submitBehavior`
 (`"submit"` makes Enter submit a multiline field instead of breaking its line:
 a title that wraps but is one paragraph; Ctrl/Cmd+Enter always submits) and `tabBehavior`
 (`"insert"` makes Tab type a tab in a multiline field instead of moving the keyboard on: a text
-editor's document; Shift+Tab still moves it back and Ctrl/Cmd+Tab on, unless the field has
-`onKeyPress`: then Shift+Tab is the app's, `onKeyPress("Shift+Tab")` (a list item outdented),
-the keyboard stays, and Ctrl/Cmd+Shift+Tab moves it back) and `tabSize` (how far
+editor's document; Shift+Tab still moves it back and Ctrl/Cmd+Tab on) and `onShiftTab` (with
+`"insert"`: Shift+Tab is the app's, a list item outdented, the keyboard staying, and
+Ctrl/Cmd+Shift+Tab moves it back; wire `shiftTabKey`, the event a `key` of `"Shift+Tab"`; the
+host says `shiftTabKey` in its `protocol` line) and `tabSize` (how far
 apart the tab stops are, in `0`s of the field's font: 4 unless given; see "Tab stops"); a run's `color` may be
 translucent (GPUI blends a highlight's color over the text's, so the host
 sends it opaque with its alpha as a fade),

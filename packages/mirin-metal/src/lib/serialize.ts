@@ -72,6 +72,7 @@ interface InputNodeProps {
   focusNextOnSubmit?: boolean;
   submitOnEnter?: boolean;
   insertTab?: boolean;
+  shiftTabKey?: boolean;
   tabSize?: number;
   onKey?: boolean;
   selection?: { start: number; end: number; textHash?: number };
@@ -326,6 +327,8 @@ function inputProps(instance: InputInstance): InputNodeProps {
   if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
   if (input.multiline && input.submitBehavior === "submit") props.submitOnEnter = true;
   if (input.multiline && input.tabBehavior === "insert") props.insertTab = true;
+  if (input.multiline && input.tabBehavior === "insert" && input.onShiftTab)
+    props.shiftTabKey = true;
   const tabSize = tabStops(input.tabSize);
   if (tabSize !== undefined) props.tabSize = tabSize;
   if (input.onKeyPress) props.onKey = true;

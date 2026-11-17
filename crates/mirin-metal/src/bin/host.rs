@@ -611,6 +611,11 @@ fn main() {
         // This host opens a surface that says `"opaque":true` opaque
         // (`surface.rs`); one from before refuses that surface.
         "opaqueSurface": true,
+        // This host draws a run's `mono` (a run's own family) and takes a
+        // field's `shiftTabKey` (Shift+Tab to the driver, `onShiftTab`); one
+        // from before refuses a tree with either.
+        "runFont": true,
+        "shiftTabKey": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and

@@ -531,10 +531,16 @@ export interface TextInputProps extends AccessibilityProps {
   /**
    * What Tab does in a multiline field: "focus" (the default) moves the keyboard to the next
    * control; "insert" types a tab, for a document's text (a text editor). Shift+Tab still moves
-   * the keyboard back (unless `onKeyPress` is given: then it is the app's), and Ctrl/Cmd+Tab
-   * on. A single-line field always moves it.
+   * the keyboard back (unless `onShiftTab` is given), and Ctrl/Cmd+Tab on. A single-line field
+   * always moves it.
    */
   tabBehavior?: "focus" | "insert";
+  /**
+   * In a multiline field with `tabBehavior="insert"`: Shift+Tab is the app's (a list item
+   * outdented) and the keyboard stays; Ctrl/Cmd+Shift+Tab still moves it back. Needs a host
+   * whose `protocol` event says `shiftTabKey` (an older one refuses the tree).
+   */
+  onShiftTab?: () => void;
   /**
    * How far apart the field's tab stops are, counted in the width of its font's "0" (CSS's
    * `tab-size` in `ch`): 4 unless given, from 1 to 64. A tab moves what follows it to the next
@@ -544,11 +550,9 @@ export interface TextInputProps extends AccessibilityProps {
   tabSize?: number;
   /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
-   * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret). In a
-   * multiline field with `tabBehavior="insert"`, Shift+Tab too ("Shift+Tab": a list item
-   * outdented): the keyboard stays, and Ctrl/Cmd+Shift+Tab moves it back instead.
+   * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
    */
-  onKeyPress?: (key: TextInputKey) => void;
+  onKeyPress?: (key: "Escape" | "ArrowUp" | "ArrowDown") => void;
   /**
    * Controlled caret and selection, as React Native's: offsets into `value` (JavaScript
    * string indices). When it changes, or the native buffer is reset, the field selects
@@ -596,7 +600,7 @@ export interface TextInputProps extends AccessibilityProps {
   testID?: string;
 }
 
-/** A key a field gives its app (`TextInput`'s `onKeyPress`). */
+/** A key a field gives its app (`TextInput`'s `onKeyPress`, and `onShiftTab` for "Shift+Tab"). */
 export type TextInputKey = "Escape" | "ArrowUp" | "ArrowDown" | "Shift+Tab";
 
 /** A range of a field's text washed in `color` (`TextInput`'s `highlights`). */
@@ -763,7 +767,10 @@ export type NativeEvent =
    * `scroll` from one that reports a scroll view's offset (`onScroll`) and
    * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), `imageError` from
    * one that says when an image cannot be drawn (`onError`),
-   * and `opaqueSurface` from one that opens a surface that says `opaque` so.
+   * `opaqueSurface` from one that opens a surface that says `opaque` so,
+   * `runFont` from one that draws a `TextRun`'s `fontFamily` (an older host
+   * refuses a tree with it), and `shiftTabKey` from one that takes a
+   * field's `onShiftTab` (an older host refuses that field).
    */
   | {
       type: "protocol";
@@ -778,6 +785,8 @@ export type NativeEvent =
       scroll?: boolean;
       imageError?: boolean;
       opaqueSurface?: boolean;
+      runFont?: boolean;
+      shiftTabKey?: boolean;
     }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),

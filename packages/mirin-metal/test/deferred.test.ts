@@ -68,4 +68,9 @@ test("a host that opens a surface opaque says so", () => {
   expect(
     parseNativeEvent('{"type":"protocol","nodeId":"root","patches":1,"opaqueSurface":true}'),
   ).toEqual({ type: "protocol", nodeId: "root", patches: 1, opaqueSurface: true });
+  expect(
+    parseNativeEvent(
+      '{"type":"protocol","nodeId":"root","patches":1,"runFont":true,"shiftTabKey":true}',
+    ),
+  ).toEqual({ type: "protocol", nodeId: "root", patches: 1, runFont: true, shiftTabKey: true });
 });

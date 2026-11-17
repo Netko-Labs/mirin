@@ -423,6 +423,11 @@ pub struct InputProps {
     /// on (a document's text); Shift+Tab and Ctrl/Cmd+Tab still move it.
     #[serde(default)]
     pub insert_tab: bool,
+    /// With `insert_tab`: Shift+Tab is reported to the driver (a `key`
+    /// event, "Shift+Tab": a list item outdented, `onShiftTab`) instead of
+    /// moving the keyboard back.
+    #[serde(default)]
+    pub shift_tab_key: bool,
     /// How far apart the field's tab stops are, in `0`s of its font; GPUI's
     /// default (4) without it.
     #[serde(default)]
@@ -555,6 +560,7 @@ impl Default for InputProps {
             focus_next_on_submit: false,
             submit_on_enter: false,
             insert_tab: false,
+            shift_tab_key: false,
             tab_size: None,
             on_key: false,
             selection: None,
@@ -772,7 +778,19 @@ mod tests {
         let mut inputs = Vec::new();
         collect_inputs(&tree, &mut inputs);
         assert!(inputs[0].insert_tab);
+        assert!(!inputs[0].shift_tab_key);
         assert_eq!(inputs[0].tab_size, None);
+    }
+
+    #[test]
+    fn a_multiline_input_can_give_shift_tab_to_the_driver() {
+        let tree = parse_tree(
+            r#"{"type":"input","props":{"id":"note","value":"","multiline":true,"insertTab":true,"shiftTabKey":true}}"#,
+        )
+        .expect("valid tree must parse");
+        let mut inputs = Vec::new();
+        collect_inputs(&tree, &mut inputs);
+        assert!(inputs[0].insert_tab && inputs[0].shift_tab_key);
     }
 
     #[test]

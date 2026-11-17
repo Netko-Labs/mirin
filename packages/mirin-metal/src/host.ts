@@ -85,6 +85,8 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             ...(record.scroll === true ? { scroll: true } : {}),
             ...(record.imageError === true ? { imageError: true } : {}),
             ...(record.opaqueSurface === true ? { opaqueSurface: true } : {}),
+            ...(record.runFont === true ? { runFont: true } : {}),
+            ...(record.shiftTabKey === true ? { shiftTabKey: true } : {}),
           }
         : null;
     case "settled":
