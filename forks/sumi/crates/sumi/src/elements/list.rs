@@ -902,11 +902,25 @@ impl StateInner {
         let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
-        let old_scroll_top = self.scroll_top(scroll_top);
+        // mirin: an anchor after the last row (`scroll_to_end`, below) is
+        // the end.
+        let old_scroll_top = self.scroll_top(scroll_top).min(scroll_max);
         let new_scroll_top = (old_scroll_top - delta.y).max(px(0.)).min(scroll_max);
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.set_scroll_anchor(None);
+        } else if self.alignment == ListAlignment::Top
+            && delta.y < px(0.)
+            && scroll_max > px(0.)
+            && new_scroll_top >= scroll_max
+        {
+            // mirin: scrolled down to the end, the end: anchored after the
+            // last row, as an offset there is (`set_offset_from_scrollbar`).
+            let item_count = self.items.summary().count;
+            self.set_scroll_anchor(Some(ListOffset {
+                item_ix: item_count,
+                offset_in_item: px(0.),
+            }));
         } else {
             let (start, ..) =
                 self.items
@@ -1444,6 +1458,24 @@ impl StateInner {
         }
 
         self.follow_state.stop_following();
+
+        // mirin: an offset at the end, outside a drag (a driver's scrollTo
+        // past the end), is the end: anchored after the last row, so the
+        // layout walks back from it, as `scroll_to_end` does. Rows not laid
+        // out yet count at an estimate, and an offset into that length
+        // stopped short of the last row when the rows there were taller.
+        if self.alignment == ListAlignment::Top
+            && self.scrollbar_drag_start_height.is_none()
+            && scroll_max > px(0.)
+            && new_scroll_top >= scroll_max
+        {
+            let item_count = self.items.summary().count;
+            self.set_scroll_anchor(Some(ListOffset {
+                item_ix: item_count,
+                offset_in_item: px(0.),
+            }));
+            return;
+        }
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.set_scroll_anchor(None);
@@ -3912,5 +3944,105 @@ mod test {
             .w_full()
             .h_full()
         }
+    }
+}
+
+// mirin: an offset at a list's end shows its last row.
+#[cfg(test)]
+mod mirin_end_tests {
+    use crate::{
+        self as sumi, AppContext, Context, Element, IntoElement, ListAlignment, ListState, Render,
+        ScrollDelta, ScrollEvent, Styled, TestAppContext, Window, div, list, point, px, size,
+    };
+
+    /// Forty rows, counted at 20 px each before they are laid out; the last
+    /// ten are 60 px (a detail's last paragraphs, wrapped).
+    struct Rows(ListState);
+
+    impl Render for Rows {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            list(self.0.clone(), |ix, _, _| {
+                let height = if ix >= 30 { 60. } else { 20. };
+                div().h(px(height)).w_full().into_any()
+            })
+            .w_full()
+            .h_full()
+        }
+    }
+
+    #[sumi::test]
+    fn an_offset_at_the_end_shows_the_last_row_whole(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(40, ListAlignment::Top, px(0.));
+        let draw = |cx: &mut sumi::VisualTestContext, state: &ListState| {
+            let state = state.clone();
+            cx.draw(
+                point(px(0.), px(0.)),
+                size(px(100.), px(100.)),
+                move |_, cx| cx.new(|_| Rows(state)).into_any_element(),
+            );
+        };
+        draw(cx, &state);
+        // The rows not laid out counted at the height of one that is, as
+        // mirin's `list.rs` does once a frame has laid one out.
+        let _ = state.clone().with_uniform_item_height(px(20.));
+        // What a driver's `scrollTo` past the end does: the offset, clamped
+        // to the list's length as counted so far.
+        state.set_offset_from_scrollbar(point(px(0.), px(-1.0e6)));
+        draw(cx, &state);
+        draw(cx, &state);
+        let viewport = state.viewport_bounds();
+        let last = state
+            .bounds_for_item(39)
+            .expect("the last row is laid out at the end");
+        assert!(
+            (last.bottom() - viewport.bottom()).abs() < px(0.5),
+            "the last row ends at {:?}, the list at {:?}",
+            last.bottom(),
+            viewport.bottom()
+        );
+    }
+
+    #[sumi::test]
+    fn scrolled_down_to_the_end_the_last_row_shows_whole(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        // Rows above the viewport are measured (mirin's lists keep 400 px).
+        let state = ListState::new(40, ListAlignment::Top, px(100.));
+        let draw = |cx: &mut sumi::VisualTestContext, state: &ListState| {
+            let state = state.clone();
+            cx.draw(
+                point(px(0.), px(0.)),
+                size(px(100.), px(100.)),
+                move |_, cx| cx.new(|_| Rows(state)).into_any_element(),
+            );
+        };
+        draw(cx, &state);
+        let _ = state.clone().with_uniform_item_height(px(20.));
+        // The wheel, far down at once.
+        let wheel = |cx: &mut sumi::VisualTestContext, dy: f32| {
+            cx.simulate_event(ScrollEvent {
+                position: point(px(50.), px(50.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+                ..Default::default()
+            });
+        };
+        wheel(cx, -1.0e6);
+        draw(cx, &state);
+        draw(cx, &state);
+        let viewport = state.viewport_bounds();
+        let last = state
+            .bounds_for_item(39)
+            .expect("the last row is laid out at the end");
+        assert!((last.bottom() - viewport.bottom()).abs() < px(0.5));
+        // And back up a little: the list moves from where it shows.
+        wheel(cx, 30.);
+        draw(cx, &state);
+        let last = state.bounds_for_item(39).expect("still laid out");
+        assert!(
+            (last.bottom() - viewport.bottom() - px(30.)).abs() < px(0.5),
+            "back up 30: the last row ends at {:?}, the list at {:?}",
+            last.bottom(),
+            viewport.bottom()
+        );
     }
 }

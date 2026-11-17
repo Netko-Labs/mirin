@@ -641,6 +641,14 @@ patches change it in place, in order (section "Patches").
     the row at its top, not by pixels). A row brought in by
     `scrollIntoView` from far away is first placed by those estimates and,
     once it and its neighbours are laid out, put at the edge it came by.
+    The end is the end, whatever the estimate (2026-11-17): an offset at
+    a list's end (`scrollTo` past it, `scrollToEnd`) and the wheel taking
+    a list down to its end anchor it after its last row, so the layout
+    walks back from there (GPUI's `scroll_to_end`). Before, the offset
+    went into the length as estimated, and when the rows there were
+    taller than the estimate the list stopped short: a launcher detail of
+    105 Markdown blocks scrolled to its end showed half its last paragraph
+    (`sumi` `list::mirin_end_tests`).
     What it costs a list of 5,000 rows when one row's props change
     (`list::tests::what_a_changed_row_costs_a_long_list`, release): 0.41
     ms, as the splice before it (0.41 ms; 0.11 of it is finding the rows
