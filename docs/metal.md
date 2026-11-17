@@ -350,7 +350,9 @@ patches change it in place, in order (section "Patches").
   Styled runs (`src/runs.rs`): `runs` is a list of `{"start","end"}` (UTF-16
   offsets into the value, as the selection's) with how that text is drawn:
   `color`, `background` (a wash behind it), `weight`, `italic`, `underline`,
-  `strikethrough`, `size`, and `press`. The value stays plain text; runs only
+  `strikethrough`, `size`, `press`, and `mono` (`true`: the run in the
+  monospace family, code in a note; `false`: in the body font, inside a
+  monospace field). The value stays plain text; runs only
   change how it is drawn, so the caret, the selection and every edit work as
   in plain text (a Markdown note drawn formatted as it is typed: its
   `**bold**` bold, its markers faded). Where runs overlap the later one wins,
@@ -366,7 +368,12 @@ patches change it in place, in order (section "Patches").
   click would have put the caret). A placeholder and a `secure` field draw
   plain. At most 8192 runs are drawn. The host names `MIRIN_METAL_RUNS`
   (`RUNS_MARKER`) for a driver checking for this; an older host refuses a
-  tree with `runs`. A `secure` field takes no input
+  tree with `runs`. A run's family goes to the text as a family override
+  (`StyledText::with_font_family_overrides`; GPUI's highlights carry no
+  family), which mirin's sumi cuts at the override's edges: Zed's changed
+  only the text runs that lay wholly inside one, so code inside a bold run
+  kept the body font. The host names `MIRIN_METAL_RUN_FONT`
+  (`RUN_FONT_MARKER`); an older host refuses a tree whose runs carry `mono`. A `secure` field takes no input
   method: while it (or nothing that takes text) has the keyboard, text input
   is off, so what is typed there never reaches one. The host names
   `MIRIN_METAL_IME` (`IME_MARKER`) for a driver checking for this.
@@ -666,7 +673,7 @@ keep its own width, or give one `flex: 1`; nothing is kept from a text's earlier
 frame measures the words it has: `render::one_line_tests`),
 `<TextInput value onChangeText onSubmitEditing onKeyPress multiline autoFocus style>`
 (`onKeyPress` reports Escape, and ArrowUp and ArrowDown in a single-line field,
-for list navigation), React Native's `selection` (`{ start, end }`, controlled),
+for list navigation, and Shift+Tab in a field that types tabs), React Native's `selection` (`{ start, end }`, controlled),
 `onSelectionChange` (called with `{ start, end }`; a selection the field made
 in a text the app has since replaced, which arrives late, is not passed on:
 `lib/field-texts.ts` follows what each field holds, from its `change` events
@@ -688,7 +695,8 @@ refusing an edit: the keys typed after the refused one are typed again on
 `value` and heard, on a host that says `revisionRebase`) and
 `selectionColor` on it,
 `runs` (`TextRun`: `start`, `end`, `color`, `backgroundColor`, `fontWeight`,
-`fontStyle`, `textDecorationLine`, `fontSize`, `press`) and `onRunPress`
+`fontStyle`, `textDecorationLine`, `fontSize`, `press`, `fontFamily`:
+`"monospace"` or `"default"`) and `onRunPress`
 (called with `{ run, offset, modifiers }`),
 `highlights` (`TextHighlight[]`, `{ start, end, color }`; an empty list sends
 nothing), `lineNumbers` (`{ width, color }`) and `focusNextOnSubmit` (Enter
@@ -697,7 +705,9 @@ after land in the next field: a title, then its body), `submitBehavior`
 (`"submit"` makes Enter submit a multiline field instead of breaking its line:
 a title that wraps but is one paragraph; Ctrl/Cmd+Enter always submits) and `tabBehavior`
 (`"insert"` makes Tab type a tab in a multiline field instead of moving the keyboard on: a text
-editor's document; Shift+Tab still moves it back and Ctrl/Cmd+Tab on) and `tabSize` (how far
+editor's document; Shift+Tab still moves it back and Ctrl/Cmd+Tab on, unless the field has
+`onKeyPress`: then Shift+Tab is the app's, `onKeyPress("Shift+Tab")` (a list item outdented),
+the keyboard stays, and Ctrl/Cmd+Shift+Tab moves it back) and `tabSize` (how far
 apart the tab stops are, in `0`s of the field's font: 4 unless given; see "Tab stops"); a run's `color` may be
 translucent (GPUI blends a highlight's color over the text's, so the host
 sends it opaque with its alpha as a fade),
@@ -1166,8 +1176,19 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   is taken for an emoji font by its PostScript name, `NotoColorEmoji`, as
   upstream does: another colour font (Twemoji) is still drawn as plain
   outlines or not at all.
+- **An emoji is drawn as an emoji** (2026-11-17). cosmic-text's fallback
+  on Linux lists Noto Sans Symbols before Noto Color Emoji, so a character
+  both have came out as a black outline among coloured neighbours: U+1F610
+  😐 and a few dozen faces and signs. `sumi-wgpu`'s `emoji.rs` reads each
+  grapheme's presentation: `Emoji_Presentation=Yes` without U+FE0E, or any
+  emoji with U+FE0F, is shaped with the colour font first (the family of
+  the face named `NotoColorEmoji`, else the first installed of Noto Color
+  Emoji, Twemoji, Apple Color Emoji, Segoe UI Emoji, JoyPixels); an emoji
+  with U+FE0E is shaped with the first text face that has it (cosmic-text's
+  own last resort sorts emoji faces first), looked for once per character.
 - Tests: `crates/mirin-metal/tests/text_weight.rs` and `tests/emoji.rs`,
-  with small fonts cut from Noto Sans and Noto Color Emoji (`tests/fonts/`).
+  with small fonts cut from Noto Sans, Noto Sans Symbols and Noto Color
+  Emoji (`tests/fonts/`).
 
 ### Unified title bar (Dashi)
 
