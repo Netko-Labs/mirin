@@ -62,12 +62,15 @@ impl Units {
     }
 }
 
-/// How a field's text is drawn: its highlights (sorted, apart) and each
-/// paragraph's size (`None`: the field's own; empty: none is sized).
+/// How a field's text is drawn: its highlights (sorted, apart), each
+/// paragraph's size (`None`: the field's own; empty: none is sized), and
+/// the stretches drawn in another family (sorted, apart; `true` monospace,
+/// `false` the body font).
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Styled {
     pub(crate) highlights: Vec<(Range<usize>, HighlightStyle)>,
     pub(crate) sizes: Vec<Option<Pixels>>,
+    pub(crate) families: Vec<(Range<usize>, bool)>,
 }
 
 /// The runs of a field holding `buffer`, drawn as `text` whose buffer chars
@@ -84,9 +87,13 @@ pub(crate) fn style(
     let byte = |index: usize| bytes[index.min(bytes.len() - 1)];
     let mut layers = Vec::new();
     let mut sized = Vec::new();
+    let mut families = Vec::new();
     for run in runs.iter().take(MAX_RUNS) {
         let chars = units.chars(run);
         let range = byte(chars.start)..byte(chars.end);
+        if let Some(mono) = run.mono.filter(|_| !range.is_empty()) {
+            families.push((range.clone(), mono));
+        }
         if let Some(size) = run.size.filter(|size| size.is_finite()) {
             sized.push((range.clone(), size.clamp(SIZE_RANGE.0, SIZE_RANGE.1)));
         }
@@ -100,6 +107,7 @@ pub(crate) fn style(
     Styled {
         highlights: flatten(&layers),
         sizes: paragraph_sizes(text, &sized),
+        families: crate::runs::families::flatten(&families),
     }
 }
 
@@ -238,6 +246,8 @@ fn paragraph_sizes(text: &str, sized: &[(Range<usize>, f32)]) -> Vec<Option<Pixe
     }
     sizes
 }
+
+pub(crate) mod families;
 
 #[cfg(test)]
 mod tests;

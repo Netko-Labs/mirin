@@ -13,9 +13,21 @@ import type {
   Modifiers,
   NativeEvent,
   NativeHostTransport,
+  TextInputKey,
   TitleBarStyle,
   ToplevelEvent,
 } from "./types.ts";
+
+const TEXT_INPUT_KEYS: ReadonlySet<unknown> = new Set<TextInputKey>([
+  "Escape",
+  "ArrowUp",
+  "ArrowDown",
+  "Shift+Tab",
+]);
+
+function isTextInputKey(value: unknown): value is TextInputKey {
+  return TEXT_INPUT_KEYS.has(value);
+}
 
 /** One NDJSON line from the host as an object, or null. */
 function parseRecord(line: string): Record<string, unknown> | null {
@@ -74,6 +86,8 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             ...(record.imageError === true ? { imageError: true } : {}),
             ...(record.opaqueSurface === true ? { opaqueSurface: true } : {}),
             ...(record.fieldText === true ? { fieldText: true } : {}),
+            ...(record.runFont === true ? { runFont: true } : {}),
+            ...(record.shiftTabKey === true ? { shiftTabKey: true } : {}),
           }
         : null;
     case "settled":
@@ -238,9 +252,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
       };
     }
     case "key":
-      return record.value === "Escape" || record.value === "ArrowUp" || record.value === "ArrowDown"
-        ? { type: "key", nodeId, value: record.value }
-        : null;
+      return isTextInputKey(record.value) ? { type: "key", nodeId, value: record.value } : null;
     default:
       return null;
   }

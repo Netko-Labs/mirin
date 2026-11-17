@@ -531,9 +531,16 @@ export interface TextInputProps extends AccessibilityProps {
   /**
    * What Tab does in a multiline field: "focus" (the default) moves the keyboard to the next
    * control; "insert" types a tab, for a document's text (a text editor). Shift+Tab still moves
-   * the keyboard back, and Ctrl/Cmd+Tab on. A single-line field always moves it.
+   * the keyboard back (unless `onShiftTab` is given), and Ctrl/Cmd+Tab on. A single-line field
+   * always moves it.
    */
   tabBehavior?: "focus" | "insert";
+  /**
+   * In a multiline field with `tabBehavior="insert"`: Shift+Tab is the app's (a list item
+   * outdented) and the keyboard stays; Ctrl/Cmd+Shift+Tab still moves it back. Needs a host
+   * whose `protocol` event says `shiftTabKey` (an older one refuses the tree).
+   */
+  onShiftTab?: () => void;
   /**
    * How far apart the field's tab stops are, counted in the width of its font's "0" (CSS's
    * `tab-size` in `ch`): 4 unless given, from 1 to 64. A tab moves what follows it to the next
@@ -593,6 +600,9 @@ export interface TextInputProps extends AccessibilityProps {
   testID?: string;
 }
 
+/** A key a field gives its app (`TextInput`'s `onKeyPress`, and `onShiftTab` for "Shift+Tab"). */
+export type TextInputKey = "Escape" | "ArrowUp" | "ArrowDown" | "Shift+Tab";
+
 /** A range of a field's text washed in `color` (`TextInput`'s `highlights`). */
 export interface TextHighlight {
   start: number;
@@ -623,6 +633,8 @@ export interface TextRun {
   fontSize?: number;
   /** A press on the run is reported (`onRunPress`) instead of placing the caret: a checkbox in the text. */
   press?: boolean;
+  /** Draws the run in the monospace family (code) or, in a monospace field, the body font. */
+  fontFamily?: "monospace" | "default";
 }
 
 /** A press on a field's pressable run. */
@@ -715,7 +727,7 @@ export type NativeEvent =
    */
   | { type: "change"; nodeId: string; value: string; baseHash?: number; textHash?: number }
   | { type: "submit"; nodeId: string; value: string }
-  | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
+  | { type: "key"; nodeId: string; value: TextInputKey }
   /** `textHash` names the text the offsets are into (lib/text-hash.ts); an older host leaves it out. */
   | ({ type: "selection"; nodeId: string; textHash?: number } & TextSelection)
   | { type: "runpress"; nodeId: string; run: number; offset: number; modifiers: Modifiers }
@@ -756,9 +768,11 @@ export type NativeEvent =
    * takes `scrollTo` and `scrollIntoView` (`ViewHandle`), `imageError` from
    * one that says when an image cannot be drawn (`onError`),
    * `opaqueSurface` from one that opens a surface that says `opaque` so,
-   * and `fieldText` from one whose fields publish their text to screen
-   * readers and agents and that takes the `settext` and `inserttext`
-   * simulations.
+   * `runFont` from one that draws a `TextRun`'s `fontFamily` (an older host
+   * refuses a tree with it), `shiftTabKey` from one that takes a field's
+   * `onShiftTab` (an older host refuses that field), and `fieldText` from
+   * one whose fields publish their text to screen readers and agents and
+   * that takes the `settext` and `inserttext` simulations.
    */
   | {
       type: "protocol";
@@ -774,6 +788,8 @@ export type NativeEvent =
       imageError?: boolean;
       opaqueSurface?: boolean;
       fieldText?: boolean;
+      runFont?: boolean;
+      shiftTabKey?: boolean;
     }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),

@@ -38,6 +38,9 @@ swash.workspace = true
 tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"] }
 unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
+# mirin: emoji presentation (src/emoji.rs); the version cosmic-text's
+# dependencies already build.
+unicode-properties = { version = "0.1", default-features = false, features = ["emoji"] }
 sumi-util.workspace = true
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)

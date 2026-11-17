@@ -227,6 +227,7 @@ fn a_secure_field_never_gives_its_text_away() {
         multiline: false,
         submit_on_enter: false,
         insert_tab: false,
+        shift_tab_to_driver: false,
         secure: true,
         clipboard: &mut board,
         lines: None,

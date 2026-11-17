@@ -72,6 +72,7 @@ interface InputNodeProps {
   focusNextOnSubmit?: boolean;
   submitOnEnter?: boolean;
   insertTab?: boolean;
+  shiftTabKey?: boolean;
   tabSize?: number;
   onKey?: boolean;
   selection?: { start: number; end: number; textHash?: number };
@@ -272,6 +273,7 @@ interface InputRunProps {
   strikethrough?: boolean;
   size?: number;
   press?: boolean;
+  mono?: boolean;
 }
 
 function serializeRun(run: TextRun): InputRunProps {
@@ -285,6 +287,7 @@ function serializeRun(run: TextRun): InputRunProps {
   if (run.textDecorationLine === "line-through") props.strikethrough = true;
   if (run.fontSize !== undefined) props.size = run.fontSize;
   if (run.press) props.press = true;
+  if (run.fontFamily) props.mono = run.fontFamily === "monospace";
   return props;
 }
 
@@ -324,6 +327,8 @@ function inputProps(instance: InputInstance): InputNodeProps {
   if (input.focusNextOnSubmit) props.focusNextOnSubmit = true;
   if (input.multiline && input.submitBehavior === "submit") props.submitOnEnter = true;
   if (input.multiline && input.tabBehavior === "insert") props.insertTab = true;
+  if (input.multiline && input.tabBehavior === "insert" && input.onShiftTab)
+    props.shiftTabKey = true;
   const tabSize = tabStops(input.tabSize);
   if (tabSize !== undefined) props.tabSize = tabSize;
   if (input.onKeyPress) props.onKey = true;

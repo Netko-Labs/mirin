@@ -1,5 +1,6 @@
 mod color_glyph; // mirin:
 mod cosmic_text_system;
+mod emoji; // mirin:
 mod wgpu_atlas;
 mod wgpu_context;
 mod wgpu_pipelines; // mirin:

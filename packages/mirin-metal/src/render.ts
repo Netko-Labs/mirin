@@ -124,7 +124,8 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
         input(event.nodeId)?.onSubmitEditing?.(event.value);
         break;
       case "key":
-        input(event.nodeId)?.onKeyPress?.(event.value);
+        if (event.value === "Shift+Tab") input(event.nodeId)?.onShiftTab?.();
+        else input(event.nodeId)?.onKeyPress?.(event.value);
         break;
       case "selection":
         // A selection in a text the app has since replaced is late: its offsets are not into the value.

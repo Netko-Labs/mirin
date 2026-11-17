@@ -38,6 +38,7 @@ export type {
   SvgProps,
   TextHighlight,
   TextInputDefaultProps,
+  TextInputKey,
   TextInputProps,
   TextInputStyle,
   TextProps,

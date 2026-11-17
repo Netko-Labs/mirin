@@ -24,9 +24,17 @@ typographic family and style say "Mirin Test Weights", "Thin").
 `python make_weights.py /usr/share/fonts/google-noto/NotoSans-Thin.ttf /usr/share/fonts/google-noto/NotoSans-Regular.ttf .`
 
 `MirinTestEmoji.ttf`, family "Mirin Test Emoji", is for `tests/emoji.rs`:
-one glyph, U+1F600, cut from Noto Color Emoji's COLRv1 build
+two glyphs, U+1F600 and U+1F610, cut from Noto Color Emoji's COLRv1 build
 (`Noto-COLRv1.ttf`, Google, SIL Open Font License 1.1, the same text as
 `OFL.txt` under its own notice, "Copyright 2022 Google Inc.", which the
 font's name table keeps). Its PostScript name is still "NotoColorEmoji":
 that is how sumi knows an emoji font. `make_emoji.py` made it:
 `python make_emoji.py /usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf .`
+
+`MirinTestSymbols-Regular.ttf`, family "Mirin Test Symbols", is the other
+half of `tests/emoji.rs`: U+1F610 NEUTRAL FACE alone, as an outline, cut
+from Noto Sans Symbols (`NotoSansSymbols[wght].ttf` at 400, The Noto
+Project Authors, SIL Open Font License 1.1: `OFL.txt`), renamed. A text
+font that holds an emoji with emoji presentation, found before the colour
+font. `make_symbols.py` made it:
+`python make_symbols.py '/usr/share/fonts/google-noto-vf/NotoSansSymbols[wght].ttf' .`

@@ -3882,6 +3882,7 @@ dependencies = [
  "swash",
  "tiny-skia",
  "unicode-bidi",
+ "unicode-properties",
  "unicode-segmentation",
  "wgpu",
  "zed-font-kit",

@@ -26,6 +26,8 @@ use swash::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::emoji::Presentation; // mirin: emoji presentation
+
 pub struct CosmicTextSystem {
     state: RwLock<CosmicTextSystemState>,
     // mirin: the system's fonts are read on a thread of their own, started
@@ -76,6 +78,10 @@ struct CosmicTextSystemState {
     weight_instances: HashMap<(FontId, u16), FontId>,
     system_font_fallback: String,
     missing_glyph_sink: Option<Arc<dyn MissingGlyphSink>>,
+    /// mirin: the colour emoji family (`emoji.rs`), once looked for.
+    emoji_family: Option<Option<Arc<str>>>,
+    /// mirin: the text family drawing each char asked for as text (U+FE0E).
+    text_families: HashMap<char, Option<Arc<str>>>,
 }
 
 struct LoadedFont {
@@ -242,6 +248,8 @@ impl CosmicTextSystem {
                 weight_instances: HashMap::default(),
                 system_font_fallback: system_font_fallback.to_string(),
                 missing_glyph_sink: None,
+                emoji_family: None,                // mirin:
+                text_families: HashMap::default(), // mirin:
             }),
             loading: Mutex::new(loading),
             loaded: OnceLock::new(),
@@ -281,6 +289,8 @@ impl CosmicTextSystem {
                 weight_instances: HashMap::default(),
                 system_font_fallback: system_font_fallback.to_string(),
                 missing_glyph_sink: None,
+                emoji_family: None,                // mirin:
+                text_families: HashMap::default(), // mirin:
             }),
             loading: Mutex::new(None),
             loaded: OnceLock::new(),
@@ -419,6 +429,26 @@ impl PlatformTextSystem for CosmicTextSystem {
 }
 
 impl CosmicTextSystemState {
+    // mirin: emoji presentation.
+    /// The installed colour emoji family, looked for once.
+    fn emoji_family(&mut self) -> Option<Arc<str>> {
+        if self.emoji_family.is_none() {
+            let found = crate::emoji::emoji_family(self.font_system.db());
+            self.emoji_family = Some(found.map(Arc::from));
+        }
+        self.emoji_family.clone().flatten()
+    }
+
+    // mirin: emoji presentation.
+    /// The first text family that has `ch`, looked for once per char.
+    fn text_family(&mut self, ch: char) -> Option<Arc<str>> {
+        let db = self.font_system.db();
+        self.text_families
+            .entry(ch)
+            .or_insert_with(|| crate::emoji::text_family(db, ch).map(Arc::from))
+            .clone()
+    }
+
     fn loaded_font(&self, font_id: FontId) -> &LoadedFont {
         &self.loaded_fonts[font_id.0]
     }
@@ -466,6 +496,8 @@ impl CosmicTextSystemState {
     #[profiling::function]
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.font_ids_by_family_cache.clear();
+        self.emoji_family = None; // mirin: emoji presentation
+        self.text_families.clear();
         let db = self.font_system.db_mut();
         for bytes in fonts {
             db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(bytes)));
@@ -979,6 +1011,8 @@ impl CosmicTextSystemState {
         font_runs: &[FontRun],
     ) -> LineLayout {
         let mut attrs_list = AttrsList::new(&Attrs::new());
+        // mirin: emoji presentation (`emoji.rs`).
+        let emoji_family = self.emoji_family();
         let mut offs = 0;
         for run in font_runs {
             let run_end = offs + run.len;
@@ -1023,6 +1057,17 @@ impl CosmicTextSystemState {
                     Some(ix) => &fallback_attrs[ix],
                 };
                 attrs_list.add_span(span.start..span.end, attrs);
+            }
+            // mirin: a grapheme drawn as an emoji asks the colour font
+            // first, and one that asks for text a text font that has it.
+            for (range, presentation) in crate::emoji::presentations(text, offs..run_end) {
+                let family = match presentation {
+                    Presentation::Emoji => emoji_family.clone(),
+                    Presentation::Text(ch) => self.text_family(ch),
+                };
+                if let Some(family) = family {
+                    attrs_list.add_span(range, &properties.attributes(run.font_id, &*family));
+                }
             }
             offs = run_end;
         }

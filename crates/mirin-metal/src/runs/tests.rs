@@ -209,3 +209,37 @@ fn an_opaque_run_over_a_translucent_one_drops_its_fade() {
     );
     assert!(styled.highlights[0].1.fade_out.is_some());
 }
+
+#[test]
+fn a_family_run_is_a_byte_range_of_the_drawn_text_and_draws_nothing_else() {
+    // "é `x`": the code span (UTF-16 2..5) is bytes 3..6.
+    let buffer = "é `x`";
+    let styled = style(
+        &[InputRun {
+            mono: Some(true),
+            ..run(2, 5)
+        }],
+        buffer,
+        buffer,
+        &bytes(buffer),
+        None,
+    );
+    assert_eq!(styled.families, vec![(3..6, true)]);
+    // A family alone is no highlight: the text keeps its color and weight.
+    assert!(styled.highlights.is_empty());
+}
+
+#[test]
+fn an_empty_family_run_is_dropped() {
+    let styled = style(
+        &[InputRun {
+            mono: Some(true),
+            ..run(3, 3)
+        }],
+        "abcdef",
+        "abcdef",
+        &bytes("abcdef"),
+        None,
+    );
+    assert!(styled.families.is_empty());
+}
