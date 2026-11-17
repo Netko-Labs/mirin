@@ -58,7 +58,10 @@ impl Touched {
                 touched
             }
             NodeSpec::Input { .. } => Self::INPUTS | Self::FOCUS,
-            NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => Self::NONE,
+            NodeSpec::Text { .. }
+            | NodeSpec::Svg { .. }
+            | NodeSpec::Image { .. }
+            | NodeSpec::Dots { .. } => Self::NONE,
         }
     }
 

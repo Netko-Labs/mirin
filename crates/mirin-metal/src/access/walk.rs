@@ -230,7 +230,7 @@ impl<'a> Walk<'a> {
                 making.own.push(id);
                 out.push(id);
             }
-            NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
+            NodeSpec::Svg { .. } | NodeSpec::Image { .. } | NodeSpec::Dots { .. } => {}
         }
     }
 

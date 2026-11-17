@@ -16,6 +16,7 @@
 import { createContext, type ReactElement, useContext } from "react";
 import { jsx } from "react/jsx-runtime";
 import type {
+  DotsProps,
   ImageProps,
   SvgProps,
   TextInputDefaultProps,
@@ -29,6 +30,7 @@ export const TEXT_TYPE = "mirin-text";
 export const INPUT_TYPE = "mirin-input";
 export const SVG_TYPE = "mirin-svg";
 export const IMAGE_TYPE = "mirin-image";
+export const DOTS_TYPE = "mirin-dots";
 
 /**
  * React's `jsx` for a host type of this renderer. Type-only cast: React's
@@ -72,4 +74,9 @@ export function Svg(props: SvgProps): ReactElement {
 /** A raster image from a local file. */
 export function Image(props: ImageProps): ReactElement {
   return host(IMAGE_TYPE, props);
+}
+
+/** A row or field of dots, drawn by the host in one paint (see `DotsProps`). */
+export function Dots(props: DotsProps): ReactElement {
+  return host(DOTS_TYPE, props);
 }

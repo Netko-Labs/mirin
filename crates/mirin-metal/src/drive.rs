@@ -765,6 +765,14 @@ impl Drive {
                     turn.min_size = Some((width, height));
                 }
                 HostMessage::Driver(DriverMessage::Scroll(command)) => turn.scrolls.push(command),
+                HostMessage::Driver(DriverMessage::ReduceMotion(reduce)) => {
+                    // The host's, kept across hides: a window drawn later stands still too.
+                    if crate::pulse::set_reduce_motion(reduce) {
+                        if let Some(window) = self.window {
+                            let _ = window.update(cx, |_view, _window, cx| cx.notify());
+                        }
+                    }
+                }
                 HostMessage::Open(options) => {
                     // What came before the open is what it shows.
                     self.hold(&mut turn);

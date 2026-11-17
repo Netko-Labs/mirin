@@ -73,6 +73,7 @@ export interface ViewNodeProps {
   scrollX?: boolean;
   clip?: boolean;
   opacity?: number;
+  pulse?: { from?: number; to?: number; periodMs?: number; fps?: number };
   onPress?: boolean;
   onHover?: boolean;
   onPointer?: boolean;
@@ -216,6 +217,7 @@ const ORDER = [
   "scrollX",
   "clip",
   "opacity",
+  "pulse",
   "focusRingColor",
   "focusable",
   "focusGroup",
@@ -613,6 +615,19 @@ export function viewHeadJson(id: string, props: ViewProps, root: boolean, scroll
       case "onHoverChange":
         truthy(SLOT.onHover, props.onHoverChange && true);
         break;
+      case "pulse": {
+        const { pulse } = props;
+        if (pulse) {
+          // Only what it says, each a finite number: the host takes the rest as its defaults.
+          const said = Object.fromEntries(
+            (["from", "to", "periodMs", "fps"] as const)
+              .filter((key) => Number.isFinite(pulse[key]))
+              .map((key) => [key, pulse[key]]),
+          );
+          put(SLOT.pulse, said);
+        }
+        break;
+      }
       case "dragFiles": {
         const { dragFiles } = props;
         if (dragFiles && dragFiles.paths.length > 0) {

@@ -5,6 +5,7 @@
 
 use serde::Deserialize;
 
+pub use crate::dots::DotsProps;
 pub use crate::grid::GridTrack;
 
 /// One node in the UI tree. The JSON shape is React-element-like:
@@ -36,6 +37,9 @@ pub enum NodeSpec {
     Svg { props: SvgProps },
     /// A raster image from a local file path.
     Image { props: ImageProps },
+    /// A row or field of dots in two colours, drawn in one paint and no
+    /// element per dot (`dots.rs`): progress, a history, a picture in dots.
+    Dots { props: DotsProps },
 }
 
 impl NodeSpec {
@@ -56,6 +60,7 @@ impl NodeSpec {
             NodeSpec::Input { props } => Some(props.id.as_str()),
             NodeSpec::Svg { props } => props.id.as_deref(),
             NodeSpec::Image { props } => props.id.as_deref(),
+            NodeSpec::Dots { props } => props.id.as_deref(),
         }
     }
 }
@@ -188,6 +193,9 @@ pub struct ViewProps {
     /// Clip overflowing children.
     pub clip: bool,
     pub opacity: Option<f32>,
+    /// The opacity in a loop, a few steps a second, still under Reduce
+    /// Motion (`pulse.rs`); multiplies `opacity`.
+    pub pulse: Option<crate::pulse::Pulse>,
     /// Emit a `press` event carrying this node's `id` on click/tap.
     pub on_press: bool,
     /// Emit `hover` events (`hovered: true|false`) for this node (needs `id`).
@@ -319,6 +327,10 @@ pub struct TextProps {
     pub weight: Weight,
     /// Use the system monospace family.
     pub mono: bool,
+    /// Use the display cut of the system family (`Inter Display` where it is
+    /// installed, the sans family otherwise; `fonts.rs`): for numbers and
+    /// titles at 20 px and up. `mono` wins over it.
+    pub display: bool,
     /// Keep on one line and end with an ellipsis instead of wrapping.
     pub truncate: bool,
     pub opacity: Option<f32>,
@@ -603,14 +615,22 @@ pub enum Justify {
     Between,
 }
 
+/// A text's weight, CSS's nine (`fonts.rs` draws each; a family without that
+/// face draws the nearest it has). Before 2026-11-17 only `normal` to `bold`
+/// were taken; a host that takes the rest says `"fontWeights":true`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Weight {
+    Thin,
+    Extralight,
+    Light,
     #[default]
     Normal,
     Medium,
     Semibold,
     Bold,
+    Extrabold,
+    Black,
 }
 
 /// Parse a UI tree from its JSON envelope.
@@ -648,7 +668,10 @@ pub(crate) fn collect_inputs<'a>(node: &'a NodeSpec, out: &mut Vec<&'a InputProp
                 collect_inputs(child, out);
             }
         }
-        NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
+        NodeSpec::Text { .. }
+        | NodeSpec::Svg { .. }
+        | NodeSpec::Image { .. }
+        | NodeSpec::Dots { .. } => {}
         NodeSpec::Input { props } => out.push(props),
     }
 }

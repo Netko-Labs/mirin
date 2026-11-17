@@ -1,6 +1,7 @@
 /** Internal host-instance tree the reconciler mutates between commits. */
 
 import type {
+  DotsProps,
   ImageProps,
   SvgProps,
   TextInputProps,
@@ -73,6 +74,11 @@ export interface SvgInstance extends InstanceBase {
   props: SvgProps;
 }
 
+export interface DotsInstance extends InstanceBase {
+  kind: "dots";
+  props: DotsProps;
+}
+
 export interface ImageInstance extends InstanceBase {
   kind: "image";
   props: ImageProps;
@@ -83,7 +89,8 @@ export type HostInstance =
   | TextInstance
   | InputInstance
   | SvgInstance
-  | ImageInstance;
+  | ImageInstance
+  | DotsInstance;
 export type HostNode = HostInstance | RawTextInstance;
 /** What a node is attached to: another instance, or a root's container (a portal's target is an instance). */
 export type HostParent = HostInstance | Container;

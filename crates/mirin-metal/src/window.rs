@@ -98,6 +98,9 @@ pub enum DriverMessage {
     /// Scroll a view to an offset, or a node into view (`{"scrollTo": …}`,
     /// `{"scrollIntoView": …}`; `scroll.rs`), after the trees sent before it.
     Scroll(ScrollCommand),
+    /// Turn Reduce Motion on or off for the host (`{"reduceMotion": true}`):
+    /// pulsing views stand still while it is on (`pulse.rs`).
+    ReduceMotion(bool),
 }
 
 /// Renderer-owned editing state of one `input` node.
@@ -190,6 +193,8 @@ pub(crate) struct RootView {
     pub(crate) boundaries: crate::retain::Boundaries,
     /// While a retained subtree is built: its group (`sim::LayoutMap`).
     pub(crate) group: Option<u64>,
+    /// Views whose opacity loops, and the timer for their next step (`pulse.rs`).
+    pub(crate) pulses: crate::pulse::Pulses,
 }
 
 /// A view with `onKeyDown`: its focus, and whether it still has to take it.
@@ -236,6 +241,7 @@ impl RootView {
             focus: crate::focus::FocusState::new(cx),
             boundaries: crate::retain::Boundaries::default(),
             group: None,
+            pulses: crate::pulse::Pulses::default(),
         };
         view.boundaries.sync(None, &view.tree, false, cx);
         view.focus.sync(&view.tree, cx);
@@ -472,7 +478,9 @@ impl Render for RootView {
             self.files_gone(window);
         }
         let tree = Rc::clone(self.tree.tree());
+        self.pulses.begin();
         let content = render_node(&tree, self, window, cx);
+        self.pulses.schedule(cx);
         record_root_bounds(&self.layout, &self.events, &tree, window.viewport_size());
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
         let root = crate::focus::key_root(capture_root(content, cx), self, cx);

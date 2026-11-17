@@ -25,6 +25,11 @@ function Counter() {
 render(<Counter />, spawnNativeHost(pathToMirinNativeHost));
 ```
 
+A window draws one tree: give `render` one root element. Siblings at the
+root (a fragment of two views) are not drawn after the first, and the
+renderer says so once (`console.warn`, "only the first is drawn") whenever
+the count of roots changes; wrap them in one `<View>`.
+
 ## How it works
 
 A custom React renderer (`react-reconciler`) hosts `<View>`/`<Text>`. Each

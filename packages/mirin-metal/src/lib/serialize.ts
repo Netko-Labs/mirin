@@ -7,6 +7,7 @@
 
 import type {
   Color,
+  FontWeightName,
   LineNumbers,
   TextHighlight,
   TextInputStyle,
@@ -14,6 +15,7 @@ import type {
   TextStyle,
 } from "../types.ts";
 import type {
+  DotsInstance,
   HostInstance,
   HostNode,
   ImageInstance,
@@ -31,8 +33,9 @@ interface TextNodeProps {
   id?: string;
   color?: Color;
   size?: number;
-  weight?: "normal" | "medium" | "semibold" | "bold";
+  weight?: FontWeightName;
   mono?: boolean;
+  display?: boolean;
   truncate?: boolean;
   opacity?: number;
   align?: "left" | "center" | "right";
@@ -123,17 +126,48 @@ interface ImageNode {
   };
 }
 
-/** Every node but a view, whose head `view-props.ts` writes as text. */
-type TreeNode = TextNode | InputNode | SvgNode | ImageNode;
+interface DotsNode {
+  type: "dots";
+  props: {
+    id?: string;
+    count: number;
+    rows?: number;
+    pitch: number;
+    radius: number;
+    lit?: number;
+    color?: Color;
+    unlitColor?: Color;
+    head?: number;
+    headColor?: Color;
+    headRing?: boolean;
+    cells?: string;
+    opacity?: number;
+  };
+}
 
-const WEIGHT: Record<NonNullable<TextStyle["fontWeight"]>, TextNodeProps["weight"]> = {
+/** Every node but a view, whose head `view-props.ts` writes as text. */
+type TreeNode = TextNode | InputNode | SvgNode | ImageNode | DotsNode;
+
+/** A weight as the host names it; `normal` (400) is left out of the node. */
+const WEIGHT: Record<NonNullable<TextStyle["fontWeight"]>, FontWeightName | "normal"> = {
   normal: "normal",
+  "100": "thin",
+  "200": "extralight",
+  "300": "light",
+  "400": "normal",
   "500": "medium",
   "600": "semibold",
   "700": "bold",
+  "800": "extrabold",
+  "900": "black",
+  thin: "thin",
+  extralight: "extralight",
+  light: "light",
   medium: "medium",
   semibold: "semibold",
   bold: "bold",
+  extrabold: "extrabold",
+  black: "black",
 };
 
 /**
@@ -185,6 +219,8 @@ function head(
       return serializeSvg(node, id);
     case "image":
       return serializeImage(node, id, options.imageErrors === true);
+    case "dots":
+      return serializeDots(node, id);
   }
 }
 
@@ -220,6 +256,36 @@ function serializeImage(
   return { type: "image", props };
 }
 
+/** A count as the host takes it: a whole number from 0. */
+function count(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : undefined;
+}
+
+function serializeDots(instance: DotsInstance, id: string | undefined): DotsNode {
+  const p = instance.props;
+  const props: DotsNode["props"] = {
+    ...(id === undefined ? {} : { id }),
+    count: count(p.count) ?? 0,
+    pitch: p.pitch,
+    radius: p.radius,
+  };
+  const rows = count(p.rows);
+  if (rows !== undefined) props.rows = rows;
+  const lit = count(p.lit);
+  if (lit !== undefined) props.lit = lit;
+  if (p.color) props.color = p.color;
+  if (p.unlitColor) props.unlitColor = p.unlitColor;
+  const head = count(p.head);
+  if (head !== undefined) props.head = head;
+  if (p.headColor) props.headColor = p.headColor;
+  if (p.headRing) props.headRing = true;
+  if (p.cells !== undefined) props.cells = p.cells;
+  if (p.opacity !== undefined) props.opacity = p.opacity;
+  return { type: "dots", props };
+}
+
 function serializeText(instance: TextInstance, id: string | undefined): TextNode {
   // One string is the text's own (`shouldSetTextContent`), several its nodes.
   const own = ownText(instance.props);
@@ -247,8 +313,10 @@ function textNode(
   const props: TextNodeProps = id === undefined ? {} : { id };
   if (style.color) props.color = style.color;
   if (style.fontSize !== undefined) props.size = style.fontSize;
-  if (style.fontWeight && style.fontWeight !== "normal") props.weight = WEIGHT[style.fontWeight];
+  const weight = style.fontWeight === undefined ? undefined : WEIGHT[style.fontWeight];
+  if (weight !== undefined && weight !== "normal") props.weight = weight;
   if (style.fontFamily === "monospace") props.mono = true;
+  if (style.fontFamily === "display") props.display = true;
   if (numberOfLines === 1) props.truncate = true;
   if (style.opacity !== undefined) props.opacity = style.opacity;
   if (style.textAlign && style.textAlign !== "left") props.align = style.textAlign;
@@ -267,7 +335,7 @@ interface InputRunProps {
   end: number;
   color?: Color;
   background?: Color;
-  weight?: "normal" | "medium" | "semibold" | "bold";
+  weight?: "normal" | FontWeightName;
   italic?: boolean;
   underline?: boolean;
   strikethrough?: boolean;

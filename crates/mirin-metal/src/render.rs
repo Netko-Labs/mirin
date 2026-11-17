@@ -50,6 +50,7 @@ pub(crate) fn render_node(
         NodeSpec::Input { props } => render_input(props, view, window, cx),
         NodeSpec::Svg { props } => render_svg(props),
         NodeSpec::Image { props } => render_image(props, view),
+        NodeSpec::Dots { props } => crate::dots::render_dots(props),
     }
 }
 
@@ -217,6 +218,10 @@ fn render_view_content(
     cx: &mut Context<RootView>,
 ) -> AnyElement {
     let mut element = styled_view(props);
+    if let Some(pulse) = &props.pulse {
+        let reduce = crate::pulse::reduced();
+        element = element.opacity(view.pulses.opacity(pulse, props.opacity, reduce));
+    }
     if std::mem::take(&mut view.keeps_length) && keeps_length_in_scroll(props) {
         element = element.flex_shrink_0();
     }
@@ -567,7 +572,10 @@ pub(crate) fn watches_layout(node: &NodeSpec) -> bool {
 pub(crate) fn node_id(node: &NodeSpec) -> Option<String> {
     match node {
         NodeSpec::View { props, .. } => props.id.clone(),
-        NodeSpec::Text { .. } | NodeSpec::Svg { .. } | NodeSpec::Image { .. } => None,
+        NodeSpec::Text { .. }
+        | NodeSpec::Svg { .. }
+        | NodeSpec::Image { .. }
+        | NodeSpec::Dots { .. } => None,
         NodeSpec::Input { props } => Some(props.id.clone()),
     }
 }
@@ -585,14 +593,13 @@ fn render_text(props: &TextProps, children: &[String]) -> AnyElement {
     if let Some(size) = props.size {
         element = element.text_size(px(size));
     }
-    element = match props.weight {
-        Weight::Normal => element,
-        Weight::Medium => element.font_weight(FontWeight::MEDIUM),
-        Weight::Semibold => element.font_weight(FontWeight::SEMIBOLD),
-        Weight::Bold => element.font_weight(FontWeight::BOLD),
-    };
+    if props.weight != Weight::Normal {
+        element = element.font_weight(crate::fonts::font_weight(props.weight));
+    }
     if props.mono {
         element = element.font_family(mono_family());
+    } else if props.display {
+        element = element.font_family(crate::fonts::display_family());
     }
     if props.truncate {
         element = one_line(element);
@@ -730,12 +737,7 @@ pub(crate) fn warm_weights(tree: &NodeSpec) {
 /// The weights the texts and fields of `node` are drawn in, each once.
 fn text_weights(node: &NodeSpec, found: &mut Vec<FontWeight>) {
     let mut note = |weight: Weight| {
-        let weight = match weight {
-            Weight::Normal => FontWeight::NORMAL,
-            Weight::Medium => FontWeight::MEDIUM,
-            Weight::Semibold => FontWeight::SEMIBOLD,
-            Weight::Bold => FontWeight::BOLD,
-        };
+        let weight = crate::fonts::font_weight(weight);
         if !found.contains(&weight) {
             found.push(weight);
         }
@@ -755,11 +757,11 @@ fn text_weights(node: &NodeSpec, found: &mut Vec<FontWeight>) {
                 .filter_map(|run| run.weight)
                 .for_each(note);
         }
-        NodeSpec::Svg { .. } | NodeSpec::Image { .. } => {}
+        NodeSpec::Svg { .. } | NodeSpec::Image { .. } | NodeSpec::Dots { .. } => {}
     }
 }
 
-fn fontconfig_family(pattern: &str) -> Option<SharedString> {
+pub(crate) fn fontconfig_family(pattern: &str) -> Option<SharedString> {
     std::process::Command::new("fc-match")
         .args(["-f", "%{family}", pattern])
         .output()

@@ -88,6 +88,10 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             ...(record.fieldText === true ? { fieldText: true } : {}),
             ...(record.runFont === true ? { runFont: true } : {}),
             ...(record.shiftTabKey === true ? { shiftTabKey: true } : {}),
+            ...(record.fontWeights === true ? { fontWeights: true } : {}),
+            ...(record.displayFont === true ? { displayFont: true } : {}),
+            ...(record.dots === true ? { dots: true } : {}),
+            ...(record.pulse === true ? { pulse: true } : {}),
           }
         : null;
     case "settled":
@@ -380,6 +384,11 @@ export interface NativeHostOptions {
    */
   titleBar?: TitleBarStyle;
   /**
+   * Start with Reduce Motion on (`MIRIN_METAL_REDUCE_MOTION=1`): pulsing
+   * views stand still until `setReduceMotion(false)`.
+   */
+  reduceMotion?: boolean;
+  /**
    * Answer closes from outside (the compositor's close control, a shell's
    * close or quit) yourself (`MIRIN_METAL_CLOSE=ask`): the window stays and
    * a `close-request` event arrives; `close()` closes it, or the app asks
@@ -440,6 +449,7 @@ export function spawnNativeHost(
   }
   if (options.surface !== undefined) env.MIRIN_METAL_SURFACE = JSON.stringify(options.surface);
   if (options.titleBar !== undefined) env.MIRIN_METAL_TITLEBAR = options.titleBar;
+  if (options.reduceMotion === true) env.MIRIN_METAL_REDUCE_MOTION = "1";
   if (options.askToClose) env.MIRIN_METAL_CLOSE = "ask";
   if (options.textAntialiasing !== undefined) env.MIRIN_METAL_TEXT = options.textAntialiasing;
   Object.assign(env, options.env);
@@ -552,6 +562,10 @@ export function spawnNativeHost(
     },
     hide() {
       child.stdin.write('{"hide":true}\n');
+      void child.stdin.flush();
+    },
+    setReduceMotion(reduce) {
+      child.stdin.write(`${JSON.stringify({ reduceMotion: reduce === true })}\n`);
       void child.stdin.flush();
     },
     close() {
