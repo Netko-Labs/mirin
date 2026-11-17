@@ -148,6 +148,11 @@ describe("parseNativeEvent", () => {
       nodeId: "7",
       value: "Escape",
     });
+    expect(parseNativeEvent('{"type":"key","nodeId":"7","value":"Shift+Tab"}')).toEqual({
+      type: "key",
+      nodeId: "7",
+      value: "Shift+Tab",
+    });
     expect(parseNativeEvent('{"type":"key","nodeId":"7","value":"F5"}')).toBeNull();
     expect(parseNativeEvent('{"type":"selection","nodeId":"7","start":1,"end":3}')).toEqual({
       type: "selection",
@@ -368,6 +373,8 @@ describe("TextInput", () => {
             backgroundColor: "#00000010",
             textDecorationLine: "underline",
           },
+          { start: 1, end: 3, fontFamily: "monospace" },
+          { start: 3, end: 4, fontFamily: "default" },
         ],
         onRunPress: (event: { run: number; offset: number; modifiers: { shift: boolean } }) =>
           pressed.push({ run: event.run, offset: event.offset, shift: event.modifiers.shift }),
@@ -381,6 +388,8 @@ describe("TextInput", () => {
       { start: 2, end: 5, color: "#3E8A72", press: true },
       { start: 6, end: 14, weight: "bold", italic: true, strikethrough: true },
       { start: 0, end: 14, background: "#00000010", underline: true, size: 20 },
+      { start: 1, end: 3, mono: true },
+      { start: 3, end: 4, mono: false },
     ]);
     transport.emit({
       type: "runpress",

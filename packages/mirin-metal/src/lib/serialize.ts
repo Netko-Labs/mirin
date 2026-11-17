@@ -272,6 +272,7 @@ interface InputRunProps {
   strikethrough?: boolean;
   size?: number;
   press?: boolean;
+  mono?: boolean;
 }
 
 function serializeRun(run: TextRun): InputRunProps {
@@ -285,6 +286,7 @@ function serializeRun(run: TextRun): InputRunProps {
   if (run.textDecorationLine === "line-through") props.strikethrough = true;
   if (run.fontSize !== undefined) props.size = run.fontSize;
   if (run.press) props.press = true;
+  if (run.fontFamily) props.mono = run.fontFamily === "monospace";
   return props;
 }
 

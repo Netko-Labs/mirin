@@ -149,6 +149,7 @@ pub(crate) fn render_input(
         crate::runs::Styled {
             highlights: highlights(&display),
             sizes: Vec::new(),
+            families: Vec::new(),
         }
     } else {
         crate::runs::style(
@@ -166,6 +167,9 @@ pub(crate) fn render_input(
     }
     if props.multiline && !styled.sizes.is_empty() {
         text = text.with_paragraph_sizes(styled.sizes);
+    }
+    if !styled.families.is_empty() {
+        text = text.with_font_family_overrides(crate::runs::families::overrides(&styled.families));
     }
     let layout = text.layout().clone();
     // The driver's highlights, behind the text and under the selection.
@@ -405,6 +409,7 @@ pub(crate) fn render_input(
                 multiline,
                 submit_on_enter,
                 insert_tab,
+                shift_tab_to_driver: insert_tab && on_key,
                 secure,
                 clipboard: &mut clipboard,
                 lines,
@@ -413,7 +418,9 @@ pub(crate) fn render_input(
         };
         // A key the field took stops here: the text it typed must not reach
         // the input handler as well (GPUI hands an unhandled key's text to it).
-        if !matches!(outcome, Edit::None | Edit::Key(_)) {
+        // Shift+Tab sent to the driver is taken too: nothing else moves the
+        // keyboard or types it.
+        if !matches!(outcome, Edit::None | Edit::Key(_)) || outcome == Edit::Key("Shift+Tab") {
             cx.stop_propagation();
         }
         match outcome {

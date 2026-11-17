@@ -479,6 +479,9 @@ pub struct InputRun {
     pub strikethrough: bool,
     pub size: Option<f32>,
     pub press: bool,
+    /// The run's family: monospace (`true`, code) or the field's body font
+    /// (`false`, in a monospace field); absent, the field's own.
+    pub mono: Option<bool>,
 }
 
 /// A field's selection: UTF-16 offsets into its text (JavaScript's string

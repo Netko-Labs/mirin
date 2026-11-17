@@ -52,6 +52,11 @@ pub(crate) struct KeyEnv<'a> {
     /// moving the keyboard on; Shift+Tab still moves it back, and
     /// Ctrl/Cmd+Tab on.
     pub(crate) insert_tab: bool,
+    /// In a field that types tabs, Shift+Tab goes to the driver
+    /// (`onKeyPress("Shift+Tab")`: a list item outdented) instead of moving
+    /// the keyboard back, when the driver listens for keys;
+    /// Ctrl/Cmd+Shift+Tab still moves it.
+    pub(crate) shift_tab_to_driver: bool,
     /// A secure field never gives its text to the clipboard.
     pub(crate) secure: bool,
     pub(crate) clipboard: &'a mut dyn Clipboard,
@@ -177,6 +182,9 @@ impl Field {
             "tab" if env.multiline && env.insert_tab && !command && !modifiers.shift => {
                 self.insert_str("\t");
                 Edit::Changed
+            }
+            "tab" if env.multiline && env.insert_tab && env.shift_tab_to_driver && !command => {
+                Edit::Key("Shift+Tab")
             }
             "tab" => {
                 if modifiers.shift {

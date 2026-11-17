@@ -503,25 +503,45 @@ impl StyledText {
         self
     }
 
+    // mirin: an override's edges cut the runs. Zed's version changed only
+    // the runs that lay wholly inside an override, so a code span inside a
+    // bold or coloured run (one run across both edges) kept its run's
+    // family; mirin's styled runs (a field's `fontFamily`) need it exact.
     fn apply_font_family_overrides(
-        runs: &mut [TextRun],
+        runs: &mut Vec<TextRun>,
         overrides: &[(Range<usize>, SharedString)],
     ) {
+        if overrides.is_empty() {
+            return;
+        }
+        let mut out = Vec::with_capacity(runs.len() + overrides.len() * 2);
         let mut byte_offset = 0;
         let mut override_idx = 0;
-        for run in runs.iter_mut() {
+        for run in runs.drain(..) {
             let run_end = byte_offset + run.len;
-            while override_idx < overrides.len() && overrides[override_idx].0.end <= byte_offset {
-                override_idx += 1;
-            }
-            if override_idx < overrides.len() {
-                let (ref range, ref family) = overrides[override_idx];
-                if byte_offset >= range.start && run_end <= range.end {
-                    run.font.family = family.clone();
+            let mut at = byte_offset;
+            while at < run_end {
+                while override_idx < overrides.len() && overrides[override_idx].0.end <= at {
+                    override_idx += 1;
                 }
+                let (end, family) = match overrides.get(override_idx) {
+                    Some((range, family)) if range.start <= at => {
+                        (range.end.min(run_end), Some(family))
+                    }
+                    Some((range, _)) => (range.start.min(run_end), None),
+                    None => (run_end, None),
+                };
+                let mut piece = run.clone();
+                piece.len = end - at;
+                if let Some(family) = family {
+                    piece.font.family = family.clone();
+                }
+                out.push(piece);
+                at = end;
             }
             byte_offset = run_end;
         }
+        *runs = out;
     }
 
     /// Set the text runs for this piece of text.
@@ -568,7 +588,7 @@ impl Element for StyledText {
         });
 
         if let Some(ref overrides) = font_family_overrides {
-            let runs =
+            let runs: &mut Vec<TextRun> =
                 runs.get_or_insert_with(|| vec![window.text_style().to_run(self.text.len())]);
             Self::apply_font_family_overrides(runs, overrides);
         }
@@ -1652,5 +1672,70 @@ mod mirin_truncate_tests {
         assert!(!needs_refit(Some(px(120.)), px(118.), px(120.3)));
         // Cut at 90, drawn at 120: more of it shows.
         assert!(needs_refit(Some(px(90.)), px(88.), px(120.)));
+    }
+}
+
+// mirin: an override's edges cut the runs.
+#[cfg(test)]
+mod mirin_family_override_tests {
+    use super::StyledText;
+    use crate::{FontWeight, SharedString, TextRun, font};
+
+    fn run(len: usize, weight: FontWeight) -> TextRun {
+        let mut font = font("Body");
+        font.weight = weight;
+        TextRun {
+            len,
+            font,
+            color: Default::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    fn shape(runs: &[TextRun]) -> Vec<(usize, String, FontWeight)> {
+        runs.iter()
+            .map(|run| (run.len, run.font.family.to_string(), run.font.weight))
+            .collect()
+    }
+
+    #[test]
+    fn an_override_cuts_the_runs_at_its_edges() {
+        // "plain bold code bold": one bold run (6..20) holds the code (11..15).
+        let mut runs = vec![run(6, FontWeight::NORMAL), run(14, FontWeight::BOLD)];
+        let mono: SharedString = "Mono".into();
+        StyledText::apply_font_family_overrides(&mut runs, &[(11..15, mono)]);
+        assert_eq!(
+            shape(&runs),
+            vec![
+                (6, "Body".into(), FontWeight::NORMAL),
+                (5, "Body".into(), FontWeight::BOLD),
+                (4, "Mono".into(), FontWeight::BOLD),
+                (5, "Body".into(), FontWeight::BOLD),
+            ]
+        );
+    }
+
+    #[test]
+    fn overrides_across_runs_and_at_the_ends() {
+        let mut runs = vec![run(4, FontWeight::NORMAL), run(4, FontWeight::BOLD)];
+        let a: SharedString = "A".into();
+        let b: SharedString = "B".into();
+        StyledText::apply_font_family_overrides(&mut runs, &[(0..2, a), (3..8, b)]);
+        let families: Vec<(usize, String)> = shape(&runs)
+            .into_iter()
+            .map(|(len, family, _)| (len, family))
+            .collect();
+        assert_eq!(
+            families,
+            vec![
+                (2, "A".into()),
+                (1, "Body".into()),
+                (1, "B".into()),
+                (4, "B".into()),
+            ]
+        );
+        assert_eq!(runs.iter().map(|run| run.len).sum::<usize>(), 8);
     }
 }

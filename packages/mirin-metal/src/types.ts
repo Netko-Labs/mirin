@@ -531,7 +531,8 @@ export interface TextInputProps extends AccessibilityProps {
   /**
    * What Tab does in a multiline field: "focus" (the default) moves the keyboard to the next
    * control; "insert" types a tab, for a document's text (a text editor). Shift+Tab still moves
-   * the keyboard back, and Ctrl/Cmd+Tab on. A single-line field always moves it.
+   * the keyboard back (unless `onKeyPress` is given: then it is the app's), and Ctrl/Cmd+Tab
+   * on. A single-line field always moves it.
    */
   tabBehavior?: "focus" | "insert";
   /**
@@ -543,9 +544,11 @@ export interface TextInputProps extends AccessibilityProps {
   tabSize?: number;
   /**
    * Navigation keys the input doesn't use itself (a launcher's list): Escape, and
-   * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret).
+   * ArrowUp / ArrowDown in a single-line field (a multiline one moves its caret). In a
+   * multiline field with `tabBehavior="insert"`, Shift+Tab too ("Shift+Tab": a list item
+   * outdented): the keyboard stays, and Ctrl/Cmd+Shift+Tab moves it back instead.
    */
-  onKeyPress?: (key: "Escape" | "ArrowUp" | "ArrowDown") => void;
+  onKeyPress?: (key: TextInputKey) => void;
   /**
    * Controlled caret and selection, as React Native's: offsets into `value` (JavaScript
    * string indices). When it changes, or the native buffer is reset, the field selects
@@ -593,6 +596,9 @@ export interface TextInputProps extends AccessibilityProps {
   testID?: string;
 }
 
+/** A key a field gives its app (`TextInput`'s `onKeyPress`). */
+export type TextInputKey = "Escape" | "ArrowUp" | "ArrowDown" | "Shift+Tab";
+
 /** A range of a field's text washed in `color` (`TextInput`'s `highlights`). */
 export interface TextHighlight {
   start: number;
@@ -623,6 +629,8 @@ export interface TextRun {
   fontSize?: number;
   /** A press on the run is reported (`onRunPress`) instead of placing the caret: a checkbox in the text. */
   press?: boolean;
+  /** Draws the run in the monospace family (code) or, in a monospace field, the body font. */
+  fontFamily?: "monospace" | "default";
 }
 
 /** A press on a field's pressable run. */
@@ -715,7 +723,7 @@ export type NativeEvent =
    */
   | { type: "change"; nodeId: string; value: string; baseHash?: number; textHash?: number }
   | { type: "submit"; nodeId: string; value: string }
-  | { type: "key"; nodeId: string; value: "Escape" | "ArrowUp" | "ArrowDown" }
+  | { type: "key"; nodeId: string; value: TextInputKey }
   /** `textHash` names the text the offsets are into (lib/text-hash.ts); an older host leaves it out. */
   | ({ type: "selection"; nodeId: string; textHash?: number } & TextSelection)
   | { type: "runpress"; nodeId: string; run: number; offset: number; modifiers: Modifiers }

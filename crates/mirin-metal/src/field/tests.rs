@@ -91,6 +91,7 @@ pub(super) fn press_in(
         multiline,
         submit_on_enter: false,
         insert_tab: false,
+        shift_tab_to_driver: false,
         secure: false,
         clipboard: board,
         lines,
@@ -167,6 +168,7 @@ fn enter_submits_a_multiline_field_that_submits_on_enter() {
         multiline: true,
         submit_on_enter: true,
         insert_tab: false,
+        shift_tab_to_driver: false,
         secure: false,
         clipboard: &mut board,
         lines: None,
@@ -185,6 +187,7 @@ fn tab_types_a_tab_in_a_multiline_field_that_asks_for_it() {
         multiline: true,
         submit_on_enter: false,
         insert_tab: true,
+        shift_tab_to_driver: false,
         secure: false,
         clipboard: &mut board,
         lines: None,
@@ -202,6 +205,29 @@ fn tab_types_a_tab_in_a_multiline_field_that_asks_for_it() {
     env.insert_tab = true;
     env.multiline = false;
     assert_eq!(field.key(&key("tab", None), &mut env), Edit::FocusNext);
+}
+
+#[test]
+fn shift_tab_goes_to_a_driver_that_listens_in_a_field_that_types_tabs() {
+    let mut field = Field::new("- milk");
+    let mut board = Board::default();
+    let mut env = KeyEnv {
+        multiline: true,
+        submit_on_enter: false,
+        insert_tab: true,
+        shift_tab_to_driver: true,
+        secure: false,
+        clipboard: &mut board,
+        lines: None,
+    };
+    // Notes outdents the item; the keyboard stays and the text is the driver's to change.
+    assert_eq!(field.key(&shift("tab"), &mut env), Edit::Key("Shift+Tab"));
+    assert_eq!(field.buffer, "- milk");
+    // Ctrl+Shift+Tab still moves the keyboard back, and Tab still types.
+    let mut back = ctrl("tab");
+    back.modifiers.shift = true;
+    assert_eq!(field.key(&back, &mut env), Edit::FocusPrevious);
+    assert_eq!(field.key(&key("tab", None), &mut env), Edit::Changed);
 }
 
 #[test]
