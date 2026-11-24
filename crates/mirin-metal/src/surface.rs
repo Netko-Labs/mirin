@@ -400,7 +400,10 @@ mod tests {
     fn lock_surfaces_take_nothing_else() {
         assert!(matches!(
             parse_surface(r#"{"role":"lock"}"#, "x"),
-            Ok(Surface::Lock { opaque: false, output: None })
+            Ok(Surface::Lock {
+                opaque: false,
+                output: None
+            })
         ));
         assert!(parse_surface(r#"{"role":"lock","layer":"overlay"}"#, "x").is_err());
         assert!(parse_surface(r#"{"role":"lock","namespace":"lock"}"#, "x").is_err());
