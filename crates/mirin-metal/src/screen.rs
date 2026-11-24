@@ -78,11 +78,12 @@ pub(crate) async fn wait_for_screen(
     let started = Instant::now();
     loop {
         if cx.update(|cx| place(surface, cx)) != Placement::Unknown {
+            // Said once, so a report from real hardware shows the wait.
             if started.elapsed() >= LOOK_EVERY {
-                crate::trace::log(format_args!(
-                    "screen {name} known after {} ms",
+                eprintln!(
+                    "[mirin-metal] waited {} ms for screen {name} to be known",
                     started.elapsed().as_millis()
-                ));
+                );
             }
             return Ok(());
         }
