@@ -263,6 +263,16 @@ fn render_view_content(
         });
     }
 
+    // A surface with its own keyboard says where it is: the ring, now (`focus/`).
+    if props.focus_ring_shown {
+        if let Some(ring) = props
+            .id
+            .as_deref()
+            .and_then(|id| crate::focus::shown_ring(id, props, view, window))
+        {
+            element = element.child(ring);
+        }
+    }
     // Interaction and scrolling need a stable element id. A view without
     // them gets none: GPUI keeps element state per id'd element, carried
     // from frame to frame, which large trees pay for on every frame.

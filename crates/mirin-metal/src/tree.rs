@@ -273,6 +273,11 @@ pub struct ViewProps {
     /// While it is in the tree, Tab and Shift+Tab stay inside it (a sheet);
     /// the last trap in document order holds them.
     pub focus_trap: bool,
+    /// Draw the focus ring here now, as if the keyboard were on it: a
+    /// surface that keeps its own keyboard says where it is (needs `id`).
+    /// The ring's color is the nearest `focusRingColor`, as for a stop; it
+    /// shows only while the window is active.
+    pub focus_ring_shown: bool,
     /// The focus ring's color for this view and the focusable views inside
     /// it (the nearest one set wins).
     pub focus_ring_color: Option<String>,
@@ -397,6 +402,12 @@ pub struct InputProps {
     pub background: Option<String>,
     #[serde(default)]
     pub padding: f32,
+    /// The room before and after the text, in place of `padding` at that side
+    /// (a glyph drawn over the field's start).
+    #[serde(default)]
+    pub padding_left: Option<f32>,
+    #[serde(default)]
+    pub padding_right: Option<f32>,
     #[serde(default)]
     pub corner_radius: f32,
     #[serde(default)]
@@ -557,6 +568,8 @@ impl Default for InputProps {
             placeholder_color: None,
             background: None,
             padding: 0.0,
+            padding_left: None,
+            padding_right: None,
             corner_radius: 0.0,
             border_color: None,
             focus_border_color: None,

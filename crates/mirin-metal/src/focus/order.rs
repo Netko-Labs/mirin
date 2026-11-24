@@ -37,6 +37,8 @@ pub(crate) struct Order {
     pub traps: Vec<String>,
     /// Every `onWindowKey` view; the last one hears the keys.
     pub window_keys: Vec<String>,
+    /// Views that show the ring now (`focusRingShown`), with its color.
+    pub shown: Vec<(String, u32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -66,6 +68,9 @@ impl Order {
                     inner.ring = ring;
                 }
                 if let Some(id) = props.id.as_deref() {
+                    if props.focus_ring_shown {
+                        self.shown.push((id.to_owned(), inner.ring));
+                    }
                     if props.focusable {
                         let access = props.access.as_ref();
                         let selected = access.is_some_and(|access| {
@@ -111,6 +116,14 @@ impl Order {
             | NodeSpec::Image { .. }
             | NodeSpec::Dots { .. } => {}
         }
+    }
+
+    /// The ring's color on a view that shows it now (`focusRingShown`).
+    pub(crate) fn shown_ring(&self, id: &str) -> Option<u32> {
+        self.shown
+            .iter()
+            .find(|(each, _)| each == id)
+            .map(|(_, ring)| *ring)
     }
 
     pub(crate) fn stop(&self, id: &str) -> Option<&Stop> {
@@ -314,6 +327,22 @@ mod tests {
                 .expect("a bare focusable view must parse"),
         );
         assert_eq!(bare.stop("x").map(|stop| stop.ring), Some(DEFAULT_RING));
+    }
+
+    #[test]
+    fn a_shown_ring_takes_the_nearest_color_and_needs_no_stop() {
+        let tree = parse_tree(
+            r##"{"type":"view","props":{"focusRingColor":"#6e56cf"},"children":[
+                {"type":"view","props":{"id":"tile","focusRingShown":true}},
+                {"type":"view","props":{"id":"rest"}}
+            ]}"##,
+        )
+        .expect("a grid of tiles must parse");
+        let order = super::Order::of(&tree);
+        assert_eq!(order.shown_ring("tile"), Some(0x6e56_cfff));
+        assert_eq!(order.shown_ring("rest"), None);
+        // It is drawn, not a place Tab goes.
+        assert!(order.stop("tile").is_none());
     }
 
     #[test]

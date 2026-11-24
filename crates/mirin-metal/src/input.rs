@@ -69,6 +69,14 @@ pub(crate) fn render_input(
             element.p(px(props.padding))
         };
     }
+    // A side of its own (a glyph drawn over the field's start).
+    let (left, right) = sides(props);
+    if let Some(left) = props.padding_left {
+        element = element.pl(px(left));
+    }
+    if let Some(right) = props.padding_right {
+        element = element.pr(px(right));
+    }
     // Line numbers take room at the text's left (`marks.rs`).
     let line_numbers = props
         .line_numbers
@@ -76,7 +84,7 @@ pub(crate) fn render_input(
         .filter(|_| props.multiline && !props.secure)
         .and_then(|numbers| Some((numbers.width.max(0.0), parse_color(&numbers.color)?)));
     if let Some((width, _)) = line_numbers {
-        element = element.pl(px(props.padding + width));
+        element = element.pl(px(left + width));
     }
     // Flex first so an explicit `minHeight` below wins over its zero minimum.
     if props.flex > 0.0 {
@@ -296,7 +304,7 @@ pub(crate) fn render_input(
             display.text.clone(),
             Rc::clone(&state.scroll),
         );
-        let padding = props.padding;
+        let padding = (left, right);
         element = element.child(
             sumi::canvas(
                 |bounds, _, _| bounds,
@@ -505,5 +513,37 @@ impl Clipboard for SystemClipboard<'_> {
 fn tell_caret(reported: &CaretReported, at: Option<sumi::Bounds<sumi::Pixels>>, window: &Window) {
     if at.is_some() && reported.replace(at) != at {
         window.invalidate_character_coordinates();
+    }
+}
+
+/// The room at the text's left and right: `paddingLeft` and `paddingRight`
+/// where given, else `padding`.
+fn sides(props: &InputProps) -> (f32, f32) {
+    (
+        props.padding_left.unwrap_or(props.padding),
+        props.padding_right.unwrap_or(props.padding),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sides;
+    use crate::tree::InputProps;
+
+    #[test]
+    fn a_side_of_its_own_wins_over_padding_and_the_other_keeps_it() {
+        let props = InputProps {
+            padding: 6.0,
+            padding_left: Some(26.0),
+            ..InputProps::default()
+        };
+        assert_eq!(sides(&props), (26.0, 6.0));
+        assert_eq!(
+            sides(&InputProps {
+                padding: 4.0,
+                ..InputProps::default()
+            }),
+            (4.0, 4.0)
+        );
     }
 }

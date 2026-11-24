@@ -210,7 +210,10 @@ patches change it in place, in order (section "Patches").
   headColor headRing cells opacity />`.
 - `input`: `id` (required), `value`, `placeholder`, `multiline`, `secure`
   (bullets instead of text), `mono`, `size`,
-  `color`, `placeholderColor`, `background`, `padding`, `cornerRadius`,
+  `color`, `placeholderColor`, `background`, `padding`, `paddingLeft` and
+  `paddingRight` (a side of its own over `padding`'s: a glyph drawn over the
+  field's start keeps its text clear; the caret follows inside them),
+  `cornerRadius`,
   `borderColor`, `focusBorderColor`, `width`, `height`, `minHeight`, `flex`,
   `fill`, `autofocus`, `onChange`, `onSubmit`, `onKey`, `selection`
   (`{"start","end"}`), `onSelection`, `selectionColor`, `runs`, `highlights`
@@ -945,6 +948,11 @@ in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
   view that clips cuts it). Its color is the nearest `focusRingColor` on the
   way up (`#RRGGBB[AA]`), else a blue. Fields keep their
   `focusBorderColor` instead.
+- `focusRingShown` on a view (with an `id`): it draws the same ring now, as
+  if the keyboard were on it, while its window is active. It is for a
+  surface that keeps its own keyboard (a grid the arrows walk in two
+  directions) and says where it is, so nothing draws a ring by hand. It is
+  not a Tab stop. A host that draws it names `MIRIN_METAL_FOCUS_SHOWN`.
 - The window's keys: when no field, `onKeyDown` view, or focusable view
   has the keyboard, the window itself does (a focus handle on the outermost
   element), so keys still arrive. Every key that reaches it and that the

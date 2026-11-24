@@ -59,6 +59,8 @@ interface InputNodeProps {
   placeholderColor?: Color;
   background?: Color;
   padding?: number;
+  paddingLeft?: number;
+  paddingRight?: number;
   cornerRadius?: number;
   borderColor?: Color;
   focusBorderColor?: Color;
@@ -381,6 +383,8 @@ function inputProps(instance: InputInstance): InputNodeProps {
   if (style.placeholderColor) props.placeholderColor = style.placeholderColor;
   if (style.backgroundColor) props.background = style.backgroundColor;
   if (style.padding !== undefined) props.padding = style.padding;
+  if (style.paddingLeft !== undefined) props.paddingLeft = style.paddingLeft;
+  if (style.paddingRight !== undefined) props.paddingRight = style.paddingRight;
   if (style.borderRadius !== undefined) props.cornerRadius = style.borderRadius;
   if (style.borderColor) props.borderColor = style.borderColor;
   if (style.focusBorderColor) props.focusBorderColor = style.focusBorderColor;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
-import { View } from "../src/components.ts";
+import { TextInput, View } from "../src/components.ts";
 import { parseNativeEvent } from "../src/host.ts";
 import { render } from "../src/render.ts";
 import type {
@@ -88,6 +88,29 @@ describe("focus props", () => {
     expect(keys).toEqual([
       { key: "v", ctrl: true, alt: false, shift: false, meta: false, repeat: false, pasted: "42" },
     ]);
+  });
+
+  test("a ring shown by the surface, and a field's sides of its own, serialize", async () => {
+    const transport = fakeTransport();
+    render(
+      createElement(
+        View,
+        { style: { focusRingColor: "#6e56cf" } },
+        createElement(View, { focusRingShown: true }),
+        createElement(View, { focusRingShown: false }),
+        createElement(TextInput, {
+          value: "",
+          style: { padding: 6, paddingLeft: 26, paddingRight: 8 },
+        }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const tree = JSON.parse(transport.sent.at(-1) ?? "{}") as Node;
+    const [shown, hidden, field] = tree.children ?? [];
+    expect(shown?.props.focusRingShown).toBe(true);
+    expect(hidden?.props.focusRingShown).toBeUndefined();
+    expect(field?.props).toMatchObject({ padding: 6, paddingLeft: 26, paddingRight: 8 });
   });
 
   test("a press carries the modifiers held, and none from an older host", async () => {
