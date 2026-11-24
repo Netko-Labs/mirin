@@ -307,7 +307,9 @@ export interface LockSurfaceOptions {
   opaque?: boolean;
   /**
    * The screen it covers, by output name; the first the compositor
-   * advertised when unset or when no screen has that name. A lock screen on
+   * advertised when unset. A screen the host doesn't know yet (plugged in a
+   * moment ago) is waited for, up to 3 s; if it never comes the host opens
+   * nothing and ends, never covering another screen instead. A lock screen on
    * every screen is one host per screen (the compositor takes a lock from
    * each, and unlocks them all at the first unlock).
    */
@@ -330,7 +332,10 @@ export interface LayerSurfaceOptions {
   namespace?: string;
   /**
    * The screen to show on, by its output name ("eDP-1", "DP-2"); the
-   * compositor picks when unset or when no screen has that name. For a
+   * compositor picks when unset. A screen the host doesn't know yet (plugged
+   * in a moment ago) is waited for, up to 3 s; if it never comes the host
+   * opens nothing and ends (open it again), never showing on another
+   * screen. For a
    * surface on every screen, open one host per screen.
    */
   output?: string;

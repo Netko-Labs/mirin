@@ -1186,6 +1186,19 @@ swash (rasterising), in `forks/sumi/crates/sumi-wgpu`.
   and a transparent surface of one host draw in different kinds. What was
   the host's went: the redraw it forced on a change, and the number in
   every retained subtree's version that made each draw anew.
+- **A surface opens on the screen it names, or not at all** (2026-11-24).
+  A layer or lock surface's `output` is a connector name; the host finds
+  the display of that name among those it knows. A screen plugged in a
+  moment ago is a `wl_output` the host binds when the compositor announces
+  it, and its name arrives a round trip later. A warm spare host (Dashi
+  keeps one, started before the screen came) asked at once to open the new
+  screen's menu bar didn't know the name yet, opened with no screen, and the
+  compositor put it on its first screen: two bars on one screen, none on
+  the other. It showed with a slow compositor (a debug build) and is likely
+  with a screen that wakes slowly (NVIDIA). Now the host waits for the screen
+  it is asked for, up to 3 s (`src/screen.rs`), and if it never comes opens
+  nothing and ends with the reason on stderr, so the driver can ask again;
+  `with_role` refuses a name it doesn't know instead of dropping it.
 - **A layer surface draws grays unless it says it is opaque** (2026-11-15).
   Subpixel antialiasing blends a glyph into what is behind it a channel at
   a time (red, green and blue each have their own coverage; the engine's
