@@ -297,7 +297,7 @@ function parseLayoutNode(value: unknown): LayoutNode[] {
  * A Wayland layer-shell surface (a panel, a dock, a launcher) instead of a
  * window: the `windows.*.surface` shape from docs/api-design.md §1a. A
  * `{ role: "lock" }` surface locks the session (ext-session-lock) and takes
- * no other options but `opaque`; it unlocks only through `unlock()`.
+ * no other options but `opaque` and `output`; it unlocks only through `unlock()`.
  */
 export type SurfaceOptions = LayerSurfaceOptions | LockSurfaceOptions;
 
@@ -305,6 +305,13 @@ export interface LockSurfaceOptions {
   role: "lock";
   /** As a layer surface's (`LayerSurfaceOptions.opaque`). */
   opaque?: boolean;
+  /**
+   * The screen it covers, by output name; the first the compositor
+   * advertised when unset or when no screen has that name. A lock screen on
+   * every screen is one host per screen (the compositor takes a lock from
+   * each, and unlocks them all at the first unlock).
+   */
+  output?: string;
 }
 
 export interface LayerSurfaceOptions {

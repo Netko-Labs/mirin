@@ -1,7 +1,8 @@
 //! Window surface roles beyond ordinary toplevels: a `surface` description
 //! (the `windows.*.surface` shape in docs/api-design.md §1a) parsed into a
 //! layer surface, or a session-lock surface (`role: "lock"`, which takes no
-//! other options), and the window options that open it ([`with_role`]).
+//! other options but `opaque` and `output`), and the window options that
+//! open it ([`with_role`]).
 //! `popup` is reserved.
 
 use serde::Deserialize;
@@ -107,7 +108,8 @@ pub(crate) fn with_role(
 ) -> WindowOptions {
     let screen = match surface {
         Some(Surface::Layer(layer)) => layer.output.as_deref(),
-        _ => None,
+        Some(Surface::Lock { output, .. }) => output.as_deref(),
+        None => None,
     }
     .and_then(|name| {
         cx.displays()
@@ -183,9 +185,13 @@ pub enum Surface {
     Layer(LayerSurface),
     /// Locks the session; it unlocks only on `{"unlock": true}` from the
     /// driver, never because the process went away. `opaque` as a layer
-    /// surface's (`Surface::is_opaque`).
+    /// surface's (`Surface::is_opaque`). `output` is the screen it covers,
+    /// by name (the first the compositor advertised when unset or unknown):
+    /// a lock screen on every screen is one host per screen, as a layer
+    /// surface on every screen is.
     Lock {
         opaque: bool,
+        output: Option<String>,
     },
 }
 
@@ -201,7 +207,7 @@ impl Surface {
     pub fn is_opaque(&self) -> bool {
         match self {
             Self::Layer(layer) => layer.opaque,
-            Self::Lock { opaque } => *opaque,
+            Self::Lock { opaque, .. } => *opaque,
         }
     }
 }
@@ -215,28 +221,9 @@ pub const OPAQUE_SURFACE_MARKER: &str = "MIRIN_METAL_OPAQUE_SURFACE";
 pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, String> {
     let spec: SurfaceSpec =
         serde_json::from_str(json).map_err(|error| format!("invalid surface: {error}"))?;
-    match spec.role.as_deref() {
-        None | Some("layer") => {}
-        Some("lock") => {
-            let layered = spec.layer.is_some()
-                || !spec.anchor.is_empty()
-                || spec.exclusive_zone.is_some()
-                || spec.keyboard.is_some()
-                || spec.margin.is_some()
-                || spec.namespace.is_some();
-            if layered || spec.output.is_some() {
-                return Err("a lock surface takes no other options but opaque".into());
-            }
-            return Ok(Surface::Lock {
-                opaque: spec.opaque,
-            });
-        }
-        Some("popup") => return Err("surface role \"popup\" is not supported yet".into()),
-        Some(role) => return Err(format!("unknown surface role \"{role}\"")),
-    }
     // One screen by its output name ("eDP-1"); "all" (a surface per screen)
     // is the driver's to do, by opening one host per screen.
-    let output = match spec.output {
+    let output = match spec.output.clone() {
         None => None,
         Some(name)
             if !name.is_empty()
@@ -252,6 +239,26 @@ pub fn parse_surface(json: &str, fallback_namespace: &str) -> Result<Surface, St
             ))
         }
     };
+    match spec.role.as_deref() {
+        None | Some("layer") => {}
+        Some("lock") => {
+            let layered = spec.layer.is_some()
+                || !spec.anchor.is_empty()
+                || spec.exclusive_zone.is_some()
+                || spec.keyboard.is_some()
+                || spec.margin.is_some()
+                || spec.namespace.is_some();
+            if layered {
+                return Err("a lock surface takes no other options but opaque and output".into());
+            }
+            return Ok(Surface::Lock {
+                opaque: spec.opaque,
+                output,
+            });
+        }
+        Some("popup") => return Err("surface role \"popup\" is not supported yet".into()),
+        Some(role) => return Err(format!("unknown surface role \"{role}\"")),
+    }
     let layer = match spec.layer.as_deref() {
         None | Some("top") => Layer::Top,
         Some("background") => Layer::Background,
@@ -393,10 +400,26 @@ mod tests {
     fn lock_surfaces_take_nothing_else() {
         assert!(matches!(
             parse_surface(r#"{"role":"lock"}"#, "x"),
-            Ok(Surface::Lock { opaque: false })
+            Ok(Surface::Lock {
+                opaque: false,
+                output: None
+            })
         ));
         assert!(parse_surface(r#"{"role":"lock","layer":"overlay"}"#, "x").is_err());
         assert!(parse_surface(r#"{"role":"lock","namespace":"lock"}"#, "x").is_err());
+    }
+
+    #[test]
+    fn a_lock_surface_names_its_screen() {
+        // One host per screen: each covers the screen it names.
+        let Ok(Surface::Lock { output, .. }) =
+            parse_surface(r#"{"role":"lock","output":"HDMI-A-1"}"#, "x")
+        else {
+            panic!("not a lock surface");
+        };
+        assert_eq!(output.as_deref(), Some("HDMI-A-1"));
+        assert!(parse_surface(r#"{"role":"lock","output":"all"}"#, "x").is_err());
+        assert!(parse_surface(r#"{"role":"lock","output":""}"#, "x").is_err());
     }
 
     #[test]
@@ -416,7 +439,7 @@ mod tests {
             .unwrap()
             .is_opaque());
         let lock = parse_surface(r#"{"role":"lock","opaque":true}"#, "x").unwrap();
-        assert!(matches!(lock, Surface::Lock { opaque: true }));
+        assert!(matches!(lock, Surface::Lock { opaque: true, .. }));
         assert!(lock.is_opaque());
         assert!(parse_surface(r#"{"opaque":"yes"}"#, "x").is_err());
     }

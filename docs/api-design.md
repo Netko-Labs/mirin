@@ -99,8 +99,10 @@ export default defineConfig({
   what is left unpainted is black. Default false: transparent where the
   tree is, text in grays (docs/metal.md §4). The alpha host already opens layer surfaces through
   `spawnNativeHost(binary, { surface })` (docs/metal.md §6). A `lock` surface
-  locks the session (ext-session-lock-v1) on the first output and takes no
-  other options but `opaque`; it unlocks only when the driver calls `unlock()` on the host
+  locks the session (ext-session-lock-v1) on the screen its `output` names
+  (the first the compositor advertised when unset or unknown) and takes no
+  other options but `opaque` and `output`; a lock screen on every screen is
+  one host per screen. It unlocks only when the driver calls `unlock()` on the host
   transport (the host line `{"unlock": true}`). If the host exits or is killed
   first, the session stays locked, so a crashing lock screen never unlocks.
 - `windows.*.titleBar` is Metal-only: `"standard"` (default) or `"unified"`. A
