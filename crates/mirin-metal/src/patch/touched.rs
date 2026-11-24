@@ -44,6 +44,7 @@ impl Touched {
                 if props.focusable
                     || props.focus_group
                     || props.focus_trap
+                    || props.focus_ring_shown
                     || props.on_window_key
                     || props.focus_ring_color.is_some()
                 {

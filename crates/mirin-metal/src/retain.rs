@@ -307,6 +307,7 @@ fn pure_view(props: &ViewProps, children: &[NodeSpec]) -> bool {
     !(props.focusable
         || props.focus_group
         || props.focus_trap
+        || props.focus_ring_shown
         || props.selects_on_focus
         || props.focus_ring_color.is_some()
         || props.on_window_key

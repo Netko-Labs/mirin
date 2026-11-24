@@ -55,15 +55,15 @@ pub(crate) fn follow(scroll: f32, line: Line) -> f32 {
 }
 
 /// After a paint: take the shift that keeps the caret (before byte `caret`
-/// of `text`) in view in the field's padding box `field` less `padding`, and
-/// draw again when it moved.
+/// of `text`) in view in the field's padding box `field` less its padding at
+/// each side (`padding`: left, right), and draw again when it moved.
 pub(crate) fn follow_after_paint(
     scroll: &Rc<Cell<f32>>,
     layout: &TextLayout,
     text: &str,
     caret: Option<usize>,
     field: Bounds<Pixels>,
-    padding: f32,
+    padding: (f32, f32),
     window: &mut Window,
 ) {
     let (Some(start), Some(end)) = (
@@ -77,8 +77,8 @@ pub(crate) fn follow_after_paint(
         left: f32::from(start.x),
         right: f32::from(end.x),
         caret: caret.and_then(|index| caret_point(laid, text, index).map(|at| f32::from(at.x))),
-        shown_left: f32::from(field.left()) + padding,
-        shown_right: f32::from(field.right()) - padding - CARET_ROOM,
+        shown_left: f32::from(field.left()) + padding.0,
+        shown_right: f32::from(field.right()) - padding.1 - CARET_ROOM,
     };
     let next = follow(scroll.get(), line);
     if (next - scroll.get()).abs() >= 0.5 {

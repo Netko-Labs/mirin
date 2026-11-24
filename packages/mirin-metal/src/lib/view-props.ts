@@ -106,6 +106,7 @@ export interface ViewNodeProps {
   focusGroup?: boolean;
   selectsOnFocus?: boolean;
   focusTrap?: boolean;
+  focusRingShown?: boolean;
   focusRingColor?: Color;
   onWindowKey?: boolean;
 }
@@ -252,6 +253,7 @@ const ORDER = [
   "onPress",
   "onHover",
   "access",
+  "focusRingShown",
 ] as const satisfies ReadonlyArray<keyof ViewNodeProps>;
 
 type Field = (typeof ORDER)[number];
@@ -571,6 +573,9 @@ export function viewHeadJson(id: string, props: ViewProps, root: boolean, scroll
         break;
       case "focusTrap":
         truthy(SLOT.focusTrap, props.focusTrap && true);
+        break;
+      case "focusRingShown":
+        truthy(SLOT.focusRingShown, props.focusRingShown && true);
         break;
       case "onWindowKeyDown":
         truthy(SLOT.onWindowKey, props.onWindowKeyDown && true);

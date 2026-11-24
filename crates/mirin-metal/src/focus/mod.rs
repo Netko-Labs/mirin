@@ -150,20 +150,46 @@ pub(crate) fn track(
     };
     element = element.track_focus(handle);
     if let Some(color) = view.focus.ring_on(id, window) {
-        let out = RING_OFFSET + RING_WIDTH;
-        element = element.child(
-            div()
-                .absolute()
-                .top(px(-out))
-                .left(px(-out))
-                .right(px(-out))
-                .bottom(px(-out))
-                .border_2()
-                .border_color(rgba(color))
-                .rounded(px(props.corner_radius + out)),
-        );
+        element = element.child(ring(color, props.corner_radius));
     }
     element
+}
+
+/// Named by a host binary that draws `focusRingShown`: a driver checks for it
+/// before it sends the prop (an older host refuses a tree with it).
+pub const FOCUS_SHOWN_MARKER: &str = "MIRIN_METAL_FOCUS_SHOWN";
+
+/// The ring a view with `focusRingShown` draws now, in its color; none while
+/// the window is inactive, as a focused view's.
+pub(crate) fn shown_ring(
+    id: &str,
+    props: &ViewProps,
+    view: &RootView,
+    window: &Window,
+) -> Option<Div> {
+    let color = view.focus.order.shown_ring(id)?;
+    if !window.is_window_active() {
+        return None;
+    }
+    thread_local!(static TRACED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    if !TRACED.with(|traced| traced.replace(true)) {
+        crate::trace::log(format_args!("{FOCUS_SHOWN_MARKER}: a view showed the ring"));
+    }
+    Some(ring(color, props.corner_radius))
+}
+
+/// The ring itself: 2 px of `color`, 2 px out, round with the view.
+fn ring(color: u32, corner_radius: f32) -> Div {
+    let out = RING_OFFSET + RING_WIDTH;
+    div()
+        .absolute()
+        .top(px(-out))
+        .left(px(-out))
+        .right(px(-out))
+        .bottom(px(-out))
+        .border_2()
+        .border_color(rgba(color))
+        .rounded(px(corner_radius + out))
 }
 
 /// The outermost element: it holds the window's own focus and hears every

@@ -181,6 +181,13 @@ export interface TextInputStyle {
   fontFamily?: "monospace" | "default";
   backgroundColor?: Color;
   padding?: number;
+  /**
+   * The room before and after the text, in place of `padding`'s at that
+   * side: a field with a glyph drawn over its start (a search field's
+   * magnifier) keeps its own edge and focus border, its text clear of it.
+   */
+  paddingLeft?: number;
+  paddingRight?: number;
   borderRadius?: number;
   borderColor?: Color;
   /** Border while focused; falls back to `borderColor`. */
@@ -445,6 +452,15 @@ export interface ViewProps extends AccessibilityProps {
   selectsOnFocus?: boolean;
   /** While it is shown, Tab and ⇧Tab stay inside it (a sheet, a dialog); the last one in the tree holds them. */
   focusTrap?: boolean;
+  /**
+   * Draw the focus ring on this view now, as if the keyboard had moved
+   * there: for a surface that keeps its own keyboard (a grid the arrows walk
+   * in two directions) and says where it is. The ring is the focus ring's
+   * own (`focusRingColor`, 2 px wide, 2 px out, round with the view), shown
+   * only while the window is active, so no surface draws a ring by hand.
+   * Needs a host that names `MIRIN_METAL_FOCUS_SHOWN`.
+   */
+  focusRingShown?: boolean;
   /**
    * The keys no focused control takes: while no field or `onKeyDown` view
    * has the keyboard (the window has it, or a `focusable` view that doesn't
