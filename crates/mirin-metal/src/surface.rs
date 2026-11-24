@@ -98,25 +98,24 @@ impl LayerSurface {
 }
 
 /// `options` for a window of that role: a layer surface or the lock screen;
-/// with none, a toplevel. A layer surface that names its screen opens on the
-/// display of that name. Off Linux there is neither role: the window is a
-/// toplevel.
+/// with none, a toplevel. A surface that names its screen opens on the
+/// display of that name, and on no other: one this host doesn't know is an
+/// error (`screen.rs`; the caller waits for it first). Off Linux there is
+/// neither role: the window is a toplevel.
 pub(crate) fn with_role(
     options: WindowOptions,
     surface: Option<&Surface>,
     cx: &App,
-) -> WindowOptions {
-    let screen = match surface {
-        Some(Surface::Layer(layer)) => layer.output.as_deref(),
-        Some(Surface::Lock { output, .. }) => output.as_deref(),
-        None => None,
-    }
-    .and_then(|name| {
-        cx.displays()
-            .into_iter()
-            .find(|display| display.name().as_deref() == Some(name))
-    })
-    .map(|display| display.id());
+) -> Result<WindowOptions, String> {
+    let screen = match crate::screen::place(surface, cx) {
+        crate::screen::Placement::Anywhere => None,
+        crate::screen::Placement::On(id) => Some(id),
+        crate::screen::Placement::Unknown => {
+            return Err(crate::screen::unknown_screen(
+                crate::screen::named(surface).unwrap_or_default(),
+            ))
+        }
+    };
     #[cfg(target_os = "linux")]
     let kind = match surface {
         Some(Surface::Lock { .. }) => sumi::WindowKind::SessionLock,
@@ -132,12 +131,12 @@ pub(crate) fn with_role(
         Some(_) => None,
         None => options.inactive_frame_interval,
     };
-    WindowOptions {
+    Ok(WindowOptions {
         kind,
         display_id: screen.or(options.display_id),
         inactive_frame_interval,
         ..options
-    }
+    })
 }
 
 #[derive(Deserialize)]

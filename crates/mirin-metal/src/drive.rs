@@ -112,6 +112,14 @@ pub fn run(
                 for reason in std::mem::take(&mut first.resyncs) {
                     ask_resync(&events, reason);
                 }
+                // A surface on a screen the host hasn't heard of yet waits for it (screen.rs).
+                if let Err(error) =
+                    crate::screen::wait_for_screen(options.surface.as_ref(), cx).await
+                {
+                    eprintln!("[mirin-metal] failed to open window: {error}");
+                    cx.update(|cx| cx.quit());
+                    return;
+                }
                 let opened = cx.update(|cx| {
                     open_window(
                         cx,
@@ -310,7 +318,14 @@ fn open_window(
             .map(|(width, height)| size(px(width), px(height))),
         ..Default::default()
     };
-    let window_options = crate::surface::with_role(window_options, options.surface.as_ref(), cx);
+    let window_options =
+        match crate::surface::with_role(window_options, options.surface.as_ref(), cx) {
+            Ok(window_options) => window_options,
+            Err(error) => {
+                eprintln!("[mirin-metal] failed to open window: {error}");
+                return None;
+            }
+        };
     let layout = LayoutMap::default();
     let event_sender = EventSender::new(events, layout.clone());
     let chrome_events = event_sender.clone();
@@ -776,7 +791,7 @@ impl Drive {
                 HostMessage::Open(options) => {
                     // What came before the open is what it shows.
                     self.hold(&mut turn);
-                    if !self.open(*options, cx) {
+                    if !self.open(*options, cx).await {
                         return false;
                     }
                 }
@@ -1017,7 +1032,7 @@ impl Drive {
 
     /// Open the window, drawing the newest tree the driver sent. False when
     /// the platform refused (the host quits, as it always has).
-    fn open(&mut self, options: NativeUiOptions, cx: &mut AsyncApp) -> bool {
+    async fn open(&mut self, options: NativeUiOptions, cx: &mut AsyncApp) -> bool {
         let Some(resident) = &self.resident else {
             eprintln!("[mirin-metal-host] rejected line: the window is already open");
             return true;
@@ -1030,6 +1045,13 @@ impl Drive {
             Some(tree) => (tree, false),
             None => (Document::new((resident.initial_for)(&options)), true),
         };
+        // A warm host asked for a screen plugged in since it started may not
+        // know that screen yet: it waits for it (screen.rs).
+        if let Err(error) = crate::screen::wait_for_screen(options.surface.as_ref(), cx).await {
+            eprintln!("[mirin-metal-host] failed to open window: {error}");
+            cx.update(|cx| cx.quit());
+            return false;
+        }
         let events = self.events.clone();
         let opened = cx
             .update(|cx| open_window(cx, &options, tree, placeholder, events, self.access.clone()));

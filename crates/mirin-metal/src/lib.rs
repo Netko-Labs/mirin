@@ -44,6 +44,7 @@ mod pulse;
 mod render;
 mod retain;
 mod runs;
+mod screen;
 mod scroll;
 mod scrollbar;
 mod selection;
