@@ -110,6 +110,7 @@ export interface ViewNodeProps {
   focusTrap?: boolean;
   focusRingShown?: boolean;
   focusRingColor?: Color;
+  focusRingGapColor?: Color;
   onWindowKey?: boolean;
 }
 
@@ -223,6 +224,7 @@ const ORDER = [
   "pulse",
   "material",
   "focusRingColor",
+  "focusRingGapColor",
   "focusable",
   "focusGroup",
   "selectsOnFocus",
@@ -521,6 +523,9 @@ function styleProps(style: ViewStyle): void {
         break;
       case "focusRingColor":
         truthy(SLOT.focusRingColor, value);
+        break;
+      case "focusRingGapColor":
+        truthy(SLOT.focusRingGapColor, value);
         break;
       case "alignSelf":
         if (style.alignSelf) put(SLOT.alignSelf, ALIGN[style.alignSelf]);

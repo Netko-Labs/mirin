@@ -191,7 +191,7 @@ fn load_quad(instance_id: u32) -> Quad {
 }
 
 fn load_shadow(instance_id: u32) -> Shadow {
-    var cursor = instance_cursor(instance_id * 28u);
+    var cursor = instance_cursor(instance_id * 32u);
     return Shadow(
         read_word(&cursor),
         read_f32(&cursor),
@@ -201,6 +201,7 @@ fn load_shadow(instance_id: u32) -> Shadow {
         read_hsla(&cursor),
         read_bounds(&cursor),
         read_corners(&cursor),
+        read_bounds(&cursor),
         read_word(&cursor),
         read_word(&cursor),
     );

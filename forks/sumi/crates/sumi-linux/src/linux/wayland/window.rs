@@ -69,6 +69,8 @@ pub(crate) struct Callbacks {
     button_layout_changed: Option<Box<dyn FnMut()>>,
     // mirin: the compositor's traffic-light area changed.
     chrome_changed: Option<Box<dyn FnMut()>>,
+    // mirin: the compositor started or stopped drawing glass, or its tone changed.
+    glass_changed: Option<Box<dyn FnMut()>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -754,7 +756,10 @@ impl WaylandWindowState {
     }
 
     pub fn is_transparent(&self) -> bool {
-        self.draws_decorations() || self.background_appearance != WindowBackgroundAppearance::Opaque
+        self.draws_decorations()
+            || self.background_appearance != WindowBackgroundAppearance::Opaque
+            // mirin: glass shows through the window where its panes are.
+            || self.glass.has_panes()
     }
 
     // mirin: an opaque layer or lock surface.
@@ -1212,6 +1217,7 @@ impl WaylandWindowStatePtr {
     /// material's fill comes or goes (`glass.rs`).
     pub fn glass_changed(&self) {
         self.request_redraw();
+        self.glass_said();
     }
 
     /// mirin: the compositor says whether it draws this surface's panes
@@ -1220,6 +1226,28 @@ impl WaylandWindowStatePtr {
     pub fn set_glass_drawn(&self, drawn: bool) {
         if self.state.borrow_mut().glass.set_drawn(drawn) {
             self.request_redraw();
+            self.glass_said();
+        }
+    }
+
+    /// mirin: the colour behind the surface's first pane
+    /// (`dashi_glass_v1.tone`); a change is told to the window's observers.
+    #[cfg(feature = "dashi")]
+    pub fn set_glass_tone(&self, rgb: u32) {
+        if self.state.borrow_mut().glass.set_tone(rgb) {
+            self.glass_said();
+        }
+    }
+
+    /// Tells the window's observers that glass changed (drawn, or its tone).
+    fn glass_said(&self) {
+        let callback = self.callbacks.borrow_mut().glass_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            let mut callbacks = self.callbacks.borrow_mut();
+            if callbacks.glass_changed.is_none() {
+                callbacks.glass_changed = Some(callback);
+            }
         }
     }
 
@@ -2279,6 +2307,15 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().chrome_changed = Some(callback);
     }
 
+    // mirin: Dashi's glass.
+    fn glass_tone(&self) -> Option<u32> {
+        self.borrow().glass.tone()
+    }
+
+    fn on_glass_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().glass_changed = Some(callback);
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
         let state = &mut *state;
@@ -2323,12 +2360,27 @@ impl PlatformWindow for WaylandWindow {
             } else {
                 Vec::new()
             };
+            let had_panes = state.glass.has_panes();
             state.glass.frame(
                 panes,
                 &state.surface,
                 &state.globals,
                 &mut state.background_effects,
             );
+            // An opaque window (an app's) with glass in it: its surface takes
+            // alpha and promises no opaque region while it has panes, so the
+            // glass under a view with no fill shows (`is_transparent`).
+            let has_panes = state.glass.has_panes();
+            if has_panes != had_panes {
+                let transparent = has_panes
+                    || state.background_appearance != WindowBackgroundAppearance::Opaque
+                    || (state.decorations == WindowDecorations::Client
+                        && state.surface_state.toplevel().is_some());
+                renderer.update_transparency(transparent);
+                if has_panes {
+                    state.surface.set_opaque_region(None);
+                }
+            }
         }
         if renderer.draw(scene) {
             state.presentation = PresentationState::Presented;

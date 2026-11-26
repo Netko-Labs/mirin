@@ -285,6 +285,11 @@ pub struct ViewProps {
     /// The focus ring's color for this view and the focusable views inside
     /// it (the nearest one set wins).
     pub focus_ring_color: Option<String>,
+    /// A band of this color just inside the ring, for this view and the
+    /// focusable views inside it (the nearest one set wins): where the ring
+    /// crosses something lit in a color it would vanish on (Dashi's accent,
+    /// KB-2), the band keeps it seen.
+    pub focus_ring_gap_color: Option<String>,
     /// Emit `windowkey` for the keys no focused control takes: while nothing
     /// has the keyboard, or a `focusable` view has it and doesn't use the key
     /// (needs `id`). Never takes the keyboard itself; the last such view in

@@ -310,6 +310,7 @@ fn pure_view(props: &ViewProps, children: &[NodeSpec]) -> bool {
         || props.focus_ring_shown
         || props.selects_on_focus
         || props.focus_ring_color.is_some()
+        || props.focus_ring_gap_color.is_some()
         || props.on_window_key
         || props.on_key_down
         || props.scroll

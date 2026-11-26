@@ -15,7 +15,9 @@
 //! same: the compositor keeps double-buffered state until it is set again.
 
 use sumi::{Bounds, Corners, GlassMaterial, GlassPane, Pixels, Size, point, px, size};
+use wayland_client::WEnum;
 use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::Capability;
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 
 use super::client::Globals;
@@ -108,6 +110,8 @@ pub(super) struct WindowGlass {
     sent: Vec<WirePane>,
     /// The compositor said it draws this surface's panes (`drawing`).
     drawn: bool,
+    /// The colour behind the first pane, as the compositor last said (`tone`).
+    tone: Option<u32>,
 }
 
 /// Whether glass can be drawn for a window on this connection now: Dashi's
@@ -192,6 +196,18 @@ impl WindowGlass {
         std::mem::replace(&mut self.drawn, drawn) != drawn
     }
 
+    /// The colour behind the first pane (`0xRRGGBB`), as the compositor last said.
+    pub(super) fn tone(&self) -> Option<u32> {
+        self.tone
+    }
+
+    /// The compositor's `tone`; whether it changed.
+    #[cfg_attr(not(feature = "dashi"), allow(dead_code))]
+    pub(super) fn set_tone(&mut self, rgb: u32) -> bool {
+        let rgb = rgb & 0xff_ffff;
+        self.tone.replace(rgb) != Some(rgb)
+    }
+
     /// Whether the compositor holds panes of this window's now.
     pub(super) fn has_panes(&self) -> bool {
         !self.sent.is_empty()
@@ -213,6 +229,22 @@ impl WindowGlass {
             glass.destroy();
         }
     }
+}
+
+/// The `blur` capability's bit. ext-background-effect-v1 as wayland-protocols
+/// 0.32.9 ships it says `value="0"` (a typo upstream fixed later); the
+/// protocol, and Dashi, send bit 1.
+const BLUR_BIT: u32 = 1;
+
+/// Whether the background effect manager's `capabilities` says it blurs.
+/// The bits are read whatever wayland-rs made of them: with the typo above,
+/// `capabilities(1)` arrives as `Unknown(1)`, and no window ever had glass.
+pub(super) fn blur_capability(flags: WEnum<Capability>) -> bool {
+    let bits = match flags {
+        WEnum::Value(flags) => flags.bits(),
+        WEnum::Unknown(bits) => bits,
+    };
+    bits & BLUR_BIT != 0
 }
 
 #[cfg(test)]
@@ -340,5 +372,14 @@ mod tests {
             rounded.iter().any(|&(x, y, _, _)| y == 0 && x > 50),
             "a cut corner"
         );
+    }
+
+    #[test]
+    fn blur_is_read_from_the_bits_whatever_wayland_rs_made_of_them() {
+        use super::{WEnum, blur_capability};
+        assert!(blur_capability(WEnum::Unknown(1)));
+        assert!(blur_capability(WEnum::Unknown(3)));
+        assert!(!blur_capability(WEnum::Unknown(0)));
+        assert!(!blur_capability(WEnum::Unknown(2)));
     }
 }

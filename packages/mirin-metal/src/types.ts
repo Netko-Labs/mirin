@@ -120,6 +120,14 @@ export interface ViewStyle {
    * out from the view, rounded to its `borderRadius` plus 4.
    */
   focusRingColor?: Color;
+  /**
+   * A band of this color, 1.5 px, just inside the focus ring, for this view
+   * and the `focusable` views inside it (the nearest one set wins): where the
+   * ring crosses something lit in a color it would vanish on, the band keeps
+   * it seen (Dashi's white gap on the accent). Needs a host whose `protocol`
+   * event says `focusGap` (an older one refuses the tree).
+   */
+  focusRingGapColor?: Color;
 }
 
 /** A text's weight: CSS's numbers and names. */
@@ -910,6 +918,7 @@ export type NativeEvent =
       dots?: boolean;
       pulse?: boolean;
       glass?: boolean;
+      focusGap?: boolean;
     }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),
@@ -940,6 +949,19 @@ export type NativeEvent =
   | { type: "resize"; nodeId: string; bounds: Bounds }
   | { type: "layout"; nodeId: "root"; nodes: LayoutNode[] }
   | ({ type: "chrome"; nodeId: "root" } & WindowChrome)
+  /**
+   * The window's glass, on Dashi (`useWindowGlass`): whether the compositor
+   * draws its `material` views' panes, and the colour behind the first one
+   * (`#rrggbb`; null until it says). Sent when either changes; a host whose
+   * `protocol` event says `focusGap` sends it.
+   */
+  | { type: "glass"; nodeId: "root"; drawing: boolean; tone: string | null }
+  /**
+   * The window became the active one or stopped being it (`useWindowActive`):
+   * a selection in a window without focus turns neutral. A host whose
+   * `protocol` event says `focusGap` sends it.
+   */
+  | { type: "active"; nodeId: "root"; active: boolean }
   /** A newly opened window painted its first frame (once per open). */
   | { type: "frame"; nodeId: "root" }
   /**

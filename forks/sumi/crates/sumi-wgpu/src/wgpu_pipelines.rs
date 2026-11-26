@@ -170,9 +170,12 @@ pub(crate) struct WgpuPipelines {
 impl WgpuPipelines {
     /// Whether the target takes colors multiplied by their alpha, which
     /// the shaders are told in the globals (upstream kept it with the
-    /// pipelines it built).
+    /// pipelines it built). mirin: `Inherit` too, which a surface offers
+    /// when it can't say (Mesa's Venus): a Wayland compositor (and an X11
+    /// one) composites a buffer's alpha as premultiplied, so straight alpha
+    /// there shows a 10 % white fill as solid white over a dark backdrop.
     pub fn premultiplied_alpha(&self) -> bool {
-        self.key.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied
+        premultiplies(self.key.alpha_mode)
     }
 
     pub fn quads(&self) -> &wgpu::RenderPipeline {
@@ -442,5 +445,28 @@ impl WgpuPipelines {
             started.elapsed().as_secs_f64() * 1000.0
         );
         pipeline
+    }
+}
+
+/// Whether a surface in `mode` takes premultiplied colors (`premultiplied_alpha`).
+fn premultiplies(mode: wgpu::CompositeAlphaMode) -> bool {
+    matches!(
+        mode,
+        wgpu::CompositeAlphaMode::PreMultiplied | wgpu::CompositeAlphaMode::Inherit
+    )
+}
+
+#[cfg(test)]
+mod premultiplied_tests {
+    #[test]
+    fn inherit_is_premultiplied_as_wayland_composites_it() {
+        assert!(super::premultiplies(
+            wgpu::CompositeAlphaMode::PreMultiplied
+        ));
+        assert!(super::premultiplies(wgpu::CompositeAlphaMode::Inherit));
+        assert!(!super::premultiplies(wgpu::CompositeAlphaMode::Opaque));
+        assert!(!super::premultiplies(
+            wgpu::CompositeAlphaMode::PostMultiplied
+        ));
     }
 }

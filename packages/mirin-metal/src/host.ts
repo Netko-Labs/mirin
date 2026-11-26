@@ -55,6 +55,17 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
   if (record.type === "chrome") {
     return parseChromeEvent(record);
   }
+  if (record.type === "active") {
+    return record.nodeId === "root" && typeof record.active === "boolean"
+      ? { type: "active", nodeId: "root", active: record.active }
+      : null;
+  }
+  if (record.type === "glass") {
+    const { drawing, tone } = record;
+    if (record.nodeId !== "root" || typeof drawing !== "boolean") return null;
+    const said = typeof tone === "string" && /^#[0-9a-f]{6}$/i.test(tone) ? tone : null;
+    return { type: "glass", nodeId: "root", drawing, tone: said };
+  }
   if (record.type === "frame" || record.type === "close-request") {
     return record.nodeId === "root" ? { type: record.type, nodeId: "root" } : null;
   }
@@ -93,6 +104,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             ...(record.dots === true ? { dots: true } : {}),
             ...(record.pulse === true ? { pulse: true } : {}),
             ...(record.glass === true ? { glass: true } : {}),
+            ...(record.focusGap === true ? { focusGap: true } : {}),
           }
         : null;
     case "settled":

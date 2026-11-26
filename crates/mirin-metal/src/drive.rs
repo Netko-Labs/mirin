@@ -329,6 +329,8 @@ fn open_window(
     let layout = LayoutMap::default();
     let event_sender = EventSender::new(events, layout.clone());
     let chrome_events = event_sender.clone();
+    let glass_events = event_sender.clone();
+    let active_events = event_sender.clone();
     let close_events = event_sender.clone();
     let visibility_events = event_sender.clone();
     let opened = cx.open_window(window_options, |_window, cx| {
@@ -400,6 +402,34 @@ fn open_window(
                 chrome_events.chrome(Chrome::effective(requested, controls));
             })
             .detach();
+    });
+    // Report the glass whenever the compositor starts or stops drawing it,
+    // or says another colour is behind it (on Dashi; elsewhere never, and
+    // the driver keeps its fills and neutral inks).
+    let _ = window.update(cx, |_view, window, _cx| {
+        let mut said: Option<(bool, Option<u32>)> = None;
+        window
+            .observe_glass(move |window, _cx| {
+                let now = (window.is_glass_available(), window.glass_tone());
+                if said != Some(now) {
+                    said = Some(now);
+                    glass_events.glass(now.0, now.1);
+                }
+            })
+            .detach();
+    });
+    // Report the window becoming active or not (a selection in a window
+    // without focus turns neutral); the first word is the platform's.
+    let _ = window.update(cx, |_view, window, cx| {
+        let mut said: Option<bool> = None;
+        cx.observe_window_activation(window, move |_view, window, _cx| {
+            let now = window.is_window_active();
+            if said != Some(now) {
+                said = Some(now);
+                active_events.active(now);
+            }
+        })
+        .detach();
     });
     // A driver that answers closes itself: the window stays, and the
     // driver hears of it (it ends the host to close, or asks first).

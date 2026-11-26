@@ -954,6 +954,12 @@ in `focus/order.rs`). A host that has it names `MIRIN_METAL_FOCUS`
   surface that keeps its own keyboard (a grid the arrows walk in two
   directions) and says where it is, so nothing draws a ring by hand. It is
   not a Tab stop. A host that draws it names `MIRIN_METAL_FOCUS_SHOWN`.
+- `focusRingGapColor` (a style, `#RRGGBB[AA]`): a band of that color,
+  `GAP_WIDTH` 1.5 px, just inside the ring, for the view and the focusable
+  views inside it (the nearest one set wins). Where the ring would cross
+  something lit in a color it vanishes on (Dashi's accent under its purple
+  ring), the band keeps it seen. A host that draws it says `focusGap` in
+  its `protocol` line; an older one refuses a tree with it.
 - The window's keys: when no field, `onKeyDown` view, or focusable view
   has the keyboard, the window itself does (a focus handle on the outermost
   element), so keys still arrive. Every key that reaches it and that the
@@ -1350,7 +1356,7 @@ launcher, banners, sheets), `thick` (the focused window's sidebar), `paper`
   its XML (dashi-comp's `crates/dashi-comp/protocols/dashi-chrome-v1.xml`,
   with a `PROTOCOL.md` beside it); `forks/sumi/crates/sumi-linux/protocols/`
   holds a byte-for-byte copy. At most 16 panes a commit (the host keeps the
-  backmost 16) and a radius of at most 512. The `tone` event is not read yet.
+  backmost 16) and a radius of at most 512. Its `tone` reaches the app (below).
 - **When there is none.** Panes are sent while the compositor offers
   `dashi_chrome_manager_v1` version 2 and `ext_background_effect_manager_v1`
   with its `blur` capability. The view leaves its `background` out
@@ -1364,6 +1370,28 @@ launcher, banners, sheets), `thick` (the focused window's sidebar), `paper`
   When the capability or `drawing` changes, the window is drawn again. Without the `dashi` cargo feature there is never glass. A
   window that asked for sumi's whole-window blur
   (`WindowBackgroundAppearance::Blurred`) keeps it, and its panes are not sent.
+- **What the app hears.** `useWindowGlass()` gives `{ available, drawing,
+  tone }`: whether the host takes `material` (its `protocol` line says
+  `glass`), whether the compositor draws the panes now (`dashi_glass_v1`'s
+  `drawing`), and the colour behind the first pane (`tone`, `#rrggbb`,
+  blurred and lifted, before the tint), so words on the glass can lean to
+  it; the host sends a `glass` event when either changes (`observe_glass`
+  in sumi's window). `useWindowActive()` says whether the window is the
+  active one (an `active` event on each change; true until the host says),
+  and `useHostProtocol()` the host's `protocol` line, so a view sends a prop
+  only to a host that draws it. A host that sends them says `focusGap`.
+- **In a window.** An app's window is opaque, but while a frame of it has
+  panes its surface takes alpha (premultiplied, as Wayland composites it;
+  `Inherit` counts as premultiplied) and promises no opaque region, so
+  glass under a view with no fill shows; the window goes opaque again
+  with its next resize once the panes are gone. The blur capability is
+  read from its bits: wayland-protocols 0.32.9's XML says `blur` is 0, the
+  protocol and Dashi send 1.
+- **Shadows.** A view's drop shadow is cut out of the view itself
+  (`Shadow::caster_bounds`, its corners in `corner_radii`), as CSS clips an
+  outer `box-shadow` to outside the border box: a material view paints no
+  fill while the compositor draws its glass, and its shadow never darkens
+  the glass from inside.
 - **Kept drawings.** A material view is never part of a retained subtree
   (`retain.rs` `pure_view`): a kept drawing would paint no pane. A view that
   virtualizes its rows cannot be glass; put the list inside one.

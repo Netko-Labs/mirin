@@ -890,6 +890,7 @@ struct Shadow {
     Hsla color;
     Bounds shape_bounds;
     Corners shape_corner_radii;
+    Bounds caster_bounds;
     uint inset;
     uint pad; // align to 8 bytes
 };
@@ -1004,6 +1005,11 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
         alpha = 1.0 - alpha;
         float element_distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
         alpha *= saturate(0.5 - element_distance);
+    }
+    else if (shadow.caster_bounds.size.x > 0. && shadow.caster_bounds.size.y > 0.) {
+        // mirin: a drop shadow is cut out of its caster, as CSS clips it to outside the border box.
+        float caster_distance = quad_sdf(input.position.xy, shadow.caster_bounds, shadow.corner_radii);
+        alpha *= saturate(0.5 + caster_distance);
     }
 
     return input.color * float4(1., 1., 1., alpha);

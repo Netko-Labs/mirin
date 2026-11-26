@@ -1839,9 +1839,7 @@ impl Dispatch<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ()
         let ext_background_effect_manager_v1::Event::Capabilities { flags } = event else {
             return;
         };
-        let blurs = flags
-            .into_result()
-            .is_ok_and(|flags| flags.contains(ext_background_effect_manager_v1::Capability::Blur));
+        let blurs = super::glass::blur_capability(flags);
         let client = this.get_client();
         let state = client.borrow_mut();
         if state.globals.blur_capable.replace(blurs) == blurs {

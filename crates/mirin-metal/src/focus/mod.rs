@@ -117,13 +117,13 @@ impl FocusState {
             .map(|(id, _)| id.as_str())
     }
 
-    /// The ring's color when `id` is to show one now.
-    fn ring_on(&self, id: &str, window: &Window) -> Option<u32> {
+    /// The ring's color and gap when `id` is to show one now.
+    fn ring_on(&self, id: &str, window: &Window) -> Option<(u32, Option<u32>)> {
         let focused = self.handles.get(id)?.is_focused(window);
         if !ring_shows(self.visible, focused, window.is_window_active()) {
             return None;
         }
-        self.order.stop(id).map(|stop| stop.ring)
+        self.order.stop(id).map(|stop| (stop.ring, stop.gap))
     }
 }
 
@@ -149,8 +149,8 @@ pub(crate) fn track(
         return element;
     };
     element = element.track_focus(handle);
-    if let Some(color) = view.focus.ring_on(id, window) {
-        element = element.child(ring(color, props.corner_radius));
+    if let Some((color, gap)) = view.focus.ring_on(id, window) {
+        element = element.child(ring(color, gap, props.corner_radius));
     }
     element
 }
@@ -167,7 +167,7 @@ pub(crate) fn shown_ring(
     view: &RootView,
     window: &Window,
 ) -> Option<Div> {
-    let color = view.focus.order.shown_ring(id)?;
+    let (color, gap) = view.focus.order.shown_look(id)?;
     if !window.is_window_active() {
         return None;
     }
@@ -175,13 +175,19 @@ pub(crate) fn shown_ring(
     if !TRACED.with(|traced| traced.replace(true)) {
         crate::trace::log(format_args!("{FOCUS_SHOWN_MARKER}: a view showed the ring"));
     }
-    Some(ring(color, props.corner_radius))
+    Some(ring(color, gap, props.corner_radius))
 }
 
-/// The ring itself: 2 px of `color`, 2 px out, round with the view.
-fn ring(color: u32, corner_radius: f32) -> Div {
+/// The band of a ring's gap (`focusRingGapColor`): this wide, just inside the
+/// ring, so what it crosses never meets the ring's color (Dashi's KB-2: 1.5
+/// of `onAccent` where the ring crosses the accent).
+pub(crate) const GAP_WIDTH: f32 = 1.5;
+
+/// The ring itself: 2 px of `color`, 2 px out, round with the view; with a
+/// `gap`, a band of it just inside the ring.
+fn ring(color: u32, gap: Option<u32>, corner_radius: f32) -> Div {
     let out = RING_OFFSET + RING_WIDTH;
-    div()
+    let ring = div()
         .absolute()
         .top(px(-out))
         .left(px(-out))
@@ -189,7 +195,22 @@ fn ring(color: u32, corner_radius: f32) -> Div {
         .bottom(px(-out))
         .border_2()
         .border_color(rgba(color))
-        .rounded(px(corner_radius + out))
+        .rounded(px(corner_radius + out));
+    let Some(gap) = gap else {
+        return ring;
+    };
+    // The band sits inside the ring's border box: from the ring's inner edge in.
+    ring.child(
+        div()
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .right(px(0.0))
+            .bottom(px(0.0))
+            .border(px(GAP_WIDTH))
+            .border_color(rgba(gap))
+            .rounded(px(corner_radius + RING_OFFSET)),
+    )
 }
 
 /// The outermost element: it holds the window's own focus and hears every

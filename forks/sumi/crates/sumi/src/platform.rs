@@ -1373,6 +1373,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_glass_available(&self) -> bool {
         false
     }
+    // mirin: Dashi's glass.
+    /// The colour behind the window's first pane of glass as the compositor
+    /// last said it (`0xRRGGBB`, blurred and lifted, before the tint), so
+    /// words on the glass can lean to it; `None` until it says.
+    fn glass_tone(&self) -> Option<u32> {
+        None
+    }
+    // mirin: Dashi's glass.
+    /// Called when `is_glass_available` or `glass_tone` changes.
+    fn on_glass_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;

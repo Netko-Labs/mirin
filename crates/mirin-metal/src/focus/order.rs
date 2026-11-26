@@ -25,6 +25,8 @@ pub(crate) struct Stop {
     pub selected: bool,
     /// The ring's color (`0xRRGGBBAA`).
     pub ring: u32,
+    /// The band just inside the ring (`focusRingGapColor`), if any.
+    pub gap: Option<u32>,
 }
 
 /// The tree's focus facts, in document order.
@@ -37,8 +39,8 @@ pub(crate) struct Order {
     pub traps: Vec<String>,
     /// Every `onWindowKey` view; the last one hears the keys.
     pub window_keys: Vec<String>,
-    /// Views that show the ring now (`focusRingShown`), with its color.
-    pub shown: Vec<(String, u32)>,
+    /// Views that show the ring now (`focusRingShown`), with its color and gap.
+    pub shown: Vec<(String, u32, Option<u32>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -46,6 +48,7 @@ struct Context<'a> {
     group: Option<&'a str>,
     trap: Option<&'a str>,
     ring: u32,
+    gap: Option<u32>,
 }
 
 impl Order {
@@ -55,6 +58,7 @@ impl Order {
             group: None,
             trap: None,
             ring: DEFAULT_RING,
+            gap: None,
         };
         order.walk(tree, context);
         order
@@ -67,9 +71,12 @@ impl Order {
                 if let Some(ring) = props.focus_ring_color.as_deref().and_then(parse_color) {
                     inner.ring = ring;
                 }
+                if let Some(gap) = props.focus_ring_gap_color.as_deref().and_then(parse_color) {
+                    inner.gap = Some(gap);
+                }
                 if let Some(id) = props.id.as_deref() {
                     if props.focus_ring_shown {
-                        self.shown.push((id.to_owned(), inner.ring));
+                        self.shown.push((id.to_owned(), inner.ring, inner.gap));
                     }
                     if props.focusable {
                         let access = props.access.as_ref();
@@ -83,6 +90,7 @@ impl Order {
                             trap: context.trap.map(str::to_owned),
                             selected,
                             ring: inner.ring,
+                            gap: inner.gap,
                         });
                     }
                     if props.focus_group {
@@ -110,6 +118,7 @@ impl Order {
                 trap: context.trap.map(str::to_owned),
                 selected: false,
                 ring: context.ring,
+                gap: context.gap,
             }),
             NodeSpec::Text { .. }
             | NodeSpec::Svg { .. }
@@ -118,12 +127,12 @@ impl Order {
         }
     }
 
-    /// The ring's color on a view that shows it now (`focusRingShown`).
-    pub(crate) fn shown_ring(&self, id: &str) -> Option<u32> {
+    /// The ring's color and gap on a view that shows it now (`focusRingShown`).
+    pub(crate) fn shown_look(&self, id: &str) -> Option<(u32, Option<u32>)> {
         self.shown
             .iter()
-            .find(|(each, _)| each == id)
-            .map(|(_, ring)| *ring)
+            .find(|(each, _, _)| each == id)
+            .map(|(_, ring, gap)| (*ring, *gap))
     }
 
     pub(crate) fn stop(&self, id: &str) -> Option<&Stop> {
@@ -339,10 +348,38 @@ mod tests {
         )
         .expect("a grid of tiles must parse");
         let order = super::Order::of(&tree);
-        assert_eq!(order.shown_ring("tile"), Some(0x6e56_cfff));
-        assert_eq!(order.shown_ring("rest"), None);
+        assert_eq!(order.shown_look("tile"), Some((0x6e56_cfff, None)));
+        assert_eq!(order.shown_look("rest"), None);
         // It is drawn, not a place Tab goes.
         assert!(order.stop("tile").is_none());
+    }
+
+    #[test]
+    fn a_gap_is_the_nearest_one_set_for_stops_and_shown_rings() {
+        let tree = parse_tree(
+            r##"{"type":"view","props":{"focusRingColor":"#6e56cf"},"children":[
+                {"type":"view","props":{"id":"plain","focusable":true}},
+                {"type":"view","props":{"id":"lit","focusRingGapColor":"#ffffff","focusable":true},"children":[
+                    {"type":"view","props":{"id":"knob","focusable":true}},
+                    {"type":"view","props":{"id":"shown","focusRingShown":true}}
+                ]}
+            ]}"##,
+        )
+        .expect("a lit header with a knob must parse");
+        let order = super::Order::of(&tree);
+        assert_eq!(order.stop("plain").map(|stop| stop.gap), Some(None));
+        assert_eq!(
+            order.stop("lit").map(|stop| stop.gap),
+            Some(Some(0xffff_ffff))
+        );
+        assert_eq!(
+            order.stop("knob").map(|stop| (stop.ring, stop.gap)),
+            Some((0x6e56_cfff, Some(0xffff_ffff)))
+        );
+        assert_eq!(
+            order.shown_look("shown"),
+            Some((0x6e56_cfff, Some(0xffff_ffff)))
+        );
     }
 
     #[test]
