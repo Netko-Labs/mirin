@@ -12,6 +12,11 @@ export type Color = string;
 /** A length in pixels, or a percentage of the parent (`"50%"`). */
 export type Dimension = number | `${number}%`;
 
+/** A drop shadow preset. */
+export type ShadowPreset = "xs" | "sm" | "md" | "lg" | "xl";
+/** One shadow spelled out: `x y blur spread #colour`, in points. */
+export type SpelledShadow = `${number} ${number} ${number} ${number} #${string}`;
+
 /** Flexbox-flavored layout + appearance for a `<View>`. */
 export interface ViewStyle {
   flexDirection?: "row" | "column";
@@ -109,8 +114,12 @@ export interface ViewStyle {
   borderLeftWidth?: number;
   borderRightWidth?: number;
   borderColor?: Color;
-  /** Drop shadow preset. */
-  shadow?: "xs" | "sm" | "md" | "lg" | "xl";
+  /**
+   * Drop shadow: a preset, or one shadow spelled out as CSS's `box-shadow` without units,
+   * `"x y blur spread #rrggbbaa"` (`"0 0 30 3 #00737e99"`: a glow in an ink). A host from before
+   * spelled shadows draws none for one.
+   */
+  shadow?: ShadowPreset | SpelledShadow;
   /** `overflow: "hidden"` clips; `"scroll"` scrolls vertically, `"scroll-x"` horizontally, `"scroll-both"` both ways. */
   overflow?: "visible" | "hidden" | "scroll" | "scroll-x" | "scroll-both";
   opacity?: number;
