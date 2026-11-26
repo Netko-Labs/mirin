@@ -108,6 +108,8 @@ pub(super) struct WindowGlass {
     sent: Vec<WirePane>,
     /// The compositor said it draws this surface's panes (`drawing`).
     drawn: bool,
+    /// The colour behind the first pane, as the compositor last said (`tone`).
+    tone: Option<u32>,
 }
 
 /// Whether glass can be drawn for a window on this connection now: Dashi's
@@ -190,6 +192,18 @@ impl WindowGlass {
     #[cfg_attr(not(feature = "dashi"), allow(dead_code))]
     pub(super) fn set_drawn(&mut self, drawn: bool) -> bool {
         std::mem::replace(&mut self.drawn, drawn) != drawn
+    }
+
+    /// The colour behind the first pane (`0xRRGGBB`), as the compositor last said.
+    pub(super) fn tone(&self) -> Option<u32> {
+        self.tone
+    }
+
+    /// The compositor's `tone`; whether it changed.
+    #[cfg_attr(not(feature = "dashi"), allow(dead_code))]
+    pub(super) fn set_tone(&mut self, rgb: u32) -> bool {
+        let rgb = rgb & 0xff_ffff;
+        self.tone.replace(rgb) != Some(rgb)
     }
 
     /// Whether the compositor holds panes of this window's now.

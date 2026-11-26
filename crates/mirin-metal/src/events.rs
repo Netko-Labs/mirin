@@ -107,6 +107,15 @@ pub enum EventKind {
     /// compositor's window controls cover. Sent when the window opens and on
     /// every change (node id is `"root"`).
     Chrome(Chrome),
+    /// The window's glass (node id is `"root"`): whether the compositor
+    /// draws its `material` views' panes, and the colour behind the first
+    /// one (`#rrggbb`, none until it says), so words on the glass lean to
+    /// it. Sent when either changes.
+    Glass { drawing: bool, tone: Option<String> },
+    /// The window became the active one, or stopped being it (node id is
+    /// `"root"`): a selection in a window without focus turns neutral. Sent
+    /// on each change; a window opens inactive until the platform says.
+    Active { active: bool },
     /// A newly opened window painted its first frame (node id is `"root"`),
     /// so a driver can time an open; sent once per open.
     Frame,
@@ -234,6 +243,8 @@ impl EventKind {
             EventKind::Resize => "resize",
             EventKind::Drop(_) => "drop",
             EventKind::Chrome(_) => "chrome",
+            EventKind::Glass { .. } => "glass",
+            EventKind::Active { .. } => "active",
             EventKind::Frame => "frame",
             EventKind::Settled { .. } => "settled",
             EventKind::CloseRequest => "close-request",
@@ -259,6 +270,8 @@ impl EventKind {
             | EventKind::Resize
             | EventKind::Drop(_)
             | EventKind::Chrome(_)
+            | EventKind::Glass { .. }
+            | EventKind::Active { .. }
             | EventKind::Frame
             | EventKind::Settled { .. }
             | EventKind::CloseRequest => None,
@@ -429,6 +442,15 @@ impl EventSender {
 
     pub(crate) fn chrome(&self, chrome: Chrome) {
         self.send("root", EventKind::Chrome(chrome));
+    }
+
+    pub(crate) fn glass(&self, drawing: bool, tone: Option<u32>) {
+        let tone = tone.map(|rgb| format!("#{:06x}", rgb & 0xff_ffff));
+        self.send("root", EventKind::Glass { drawing, tone });
+    }
+
+    pub(crate) fn active(&self, active: bool) {
+        self.send("root", EventKind::Active { active });
     }
 
     pub(crate) fn frame(&self) {

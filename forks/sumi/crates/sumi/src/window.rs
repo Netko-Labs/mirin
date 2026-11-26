@@ -1366,6 +1366,7 @@ pub struct Window {
     pub(crate) appearance_observers: SingleSubscriberSet<AnyObserver>,
     pub(crate) button_layout_observers: SingleSubscriberSet<AnyObserver>,
     pub(crate) chrome_observers: SingleSubscriberSet<AnyObserver>, // mirin:
+    pub(crate) glass_observers: SingleSubscriberSet<AnyObserver>,  // mirin:
     active: Rc<Cell<bool>>,
     visibility: WindowVisibility,
     pub(crate) visibility_observers:
@@ -2422,6 +2423,21 @@ impl Window {
                     .log_err();
             }
         }));
+        // mirin: the compositor started or stopped drawing the glass, or
+        // the colour behind it changed.
+        platform_window.on_glass_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window
+                            .glass_observers
+                            .clone()
+                            .retain(|callback| callback(window, cx));
+                    })
+                    .log_err();
+            }
+        }));
         platform_window.on_active_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
@@ -2673,6 +2689,7 @@ impl Window {
             appearance_observers: SingleSubscriberSet::new(),
             button_layout_observers: SingleSubscriberSet::new(),
             chrome_observers: SingleSubscriberSet::new(), // mirin:
+            glass_observers: SingleSubscriberSet::new(),  // mirin:
             active,
             visibility,
             visibility_observers: SingleSubscriberSet::new(),
@@ -2907,6 +2924,26 @@ impl Window {
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         self.chrome_observers.insert(Box::new(move |window, cx| {
+            callback(window, cx);
+            true
+        }))
+    }
+
+    // mirin: Dashi's glass.
+    /// The colour behind the window's first pane of glass, as the compositor
+    /// last said it (`0xRRGGBB`), or `None` until it says.
+    pub fn glass_tone(&self) -> Option<u32> {
+        self.platform_window.glass_tone()
+    }
+
+    // mirin: see `glass_tone`.
+    /// Registers a callback to be invoked when `is_glass_available` or
+    /// `glass_tone` changes.
+    pub fn observe_glass(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        self.glass_observers.insert(Box::new(move |window, cx| {
             callback(window, cx);
             true
         }))
@@ -5574,6 +5611,10 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
+        // mirin: the shadow is cut out of its caster (CSS), so it never
+        // shows through a view without a fill.
+        let caster_bounds = self.cover_bounds(bounds);
+        let caster_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
             if shadow.inset {
                 continue;
@@ -5595,10 +5636,11 @@ impl Window {
                 // drawing it there gives.
                 bounds: shape_bounds.dilate((blur_radius * 3.).ceil()),
                 content_mask,
-                corner_radii: Corners::default(),
+                corner_radii: caster_corner_radii,
                 color: shadow.color.opacity(opacity),
                 shape_bounds,
                 shape_corner_radii: corner_radii.scale(scale_factor),
+                caster_bounds,
                 inset: false.into(),
                 pad: 0,
             });
@@ -5644,6 +5686,7 @@ impl Window {
                 color: shadow.color.opacity(opacity),
                 shape_bounds: self.cover_bounds(hole),
                 shape_corner_radii: hole_corner_radii.scale(scale_factor),
+                caster_bounds: Bounds::default(),
                 inset: true.into(),
                 pad: 0,
             });

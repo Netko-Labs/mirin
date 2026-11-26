@@ -83,9 +83,10 @@ mod title_bar {
         }
     }
 
-    // The compositor says whether it draws the surface's panes; the window
-    // paints its fills while it does not. mirin reads no `tone` yet (the
-    // words' colour leaning to the backdrop is the app's, later).
+    // The compositor says whether it draws the surface's panes (the window
+    // paints its fills while it does not) and the colour behind the first
+    // one (`tone`), which the window tells its observers: words on the
+    // glass lean to it.
     impl Dispatch<dashi_glass_v1::DashiGlassV1, ObjectId> for WaylandClientStatePtr {
         fn event(
             this: &mut Self,
@@ -95,17 +96,20 @@ mod title_bar {
             _: &Connection,
             _: &QueueHandle<Self>,
         ) {
-            let dashi_glass_v1::Event::Drawing { drawing } = event else {
-                return;
-            };
-            let drawn = matches!(drawing.into_result(), Ok(dashi_glass_v1::Drawing::Material));
             let client = this.get_client();
             let mut state = client.borrow_mut();
             let Some(window) = get_window(&mut state, surface_id) else {
                 return;
             };
             drop(state);
-            window.set_glass_drawn(drawn);
+            match event {
+                dashi_glass_v1::Event::Drawing { drawing } => {
+                    let drawn =
+                        matches!(drawing.into_result(), Ok(dashi_glass_v1::Drawing::Material));
+                    window.set_glass_drawn(drawn);
+                }
+                dashi_glass_v1::Event::Tone { rgb } => window.set_glass_tone(rgb),
+            }
         }
     }
 

@@ -187,3 +187,31 @@ fn a_pane_inside_a_kept_subtree_is_painted_every_frame(cx: &mut TestAppContext) 
         assert_eq!(panes.len(), 1, "frame {frame}");
     }
 }
+
+/// A view's shadow is cut out of the view itself, as CSS clips a box
+/// shadow to outside the border box: a material view (no fill while the
+/// compositor draws glass) never shows its own shadow through it.
+#[sumi::test]
+fn a_shadow_is_cut_out_of_its_caster(cx: &mut TestAppContext) {
+    let tree = r##"{"type":"view","props":{"id":"1","fill":true,"padding":20},"children":[
+      {"type":"view","props":{"id":"panel","height":60,"material":"regular","cornerRadius":14,
+        "background":"#f8f8fa","shadow":"xl"}}]}"##;
+    let cx = open(cx, tree, 200.0, 120.0);
+    let (_, drawn) = draw(cx);
+    // The test platform draws at scale 2: device pixels are twice the points.
+    let shadows: Vec<&String> = drawn
+        .iter()
+        .filter(|line| line.starts_with("Shadow"))
+        .collect();
+    assert!(!shadows.is_empty(), "the panel casts a shadow");
+    for shadow in shadows {
+        assert!(
+            shadow.contains("caster_bounds: Bounds { origin: Point { x: 40px (scaled), y: 40px (scaled) }, size: Size { 320px (scaled) × 120px (scaled) } }"),
+            "cut out of the panel: {shadow}"
+        );
+        assert!(
+            shadow.contains("corner_radii: Corners { top_left: 28px (scaled)"),
+            "with its corners: {shadow}"
+        );
+    }
+}

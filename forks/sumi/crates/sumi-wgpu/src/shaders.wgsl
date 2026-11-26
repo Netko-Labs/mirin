@@ -1014,6 +1014,8 @@ struct Shadow {
     // inset shadow.
     shape_bounds: Bounds,
     shape_corner_radii: Corners,
+    // mirin: a drop shadow's caster (its corners are `corner_radii`), cut out of the shadow.
+    caster_bounds: Bounds,
     // 0 = drop shadow, 1 = inset shadow.
     inset: u32,
     pad: u32, // align to 8 bytes
@@ -1133,6 +1135,12 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
         alpha = 1.0 - alpha;
         let element_distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
         alpha *= saturate(0.5 - element_distance);
+    }
+    else if (shadow.caster_bounds.size.x > 0.0 && shadow.caster_bounds.size.y > 0.0) {
+        // mirin: a drop shadow is cut out of its caster, as CSS clips it to outside the border
+        // box: the complement of the caster's own antialiased coverage.
+        let caster_distance = quad_sdf(input.position.xy, shadow.caster_bounds, shadow.corner_radii);
+        alpha *= saturate(0.5 + caster_distance);
     }
 
     return blend_color(input.color, alpha);

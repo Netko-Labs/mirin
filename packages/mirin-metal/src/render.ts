@@ -8,7 +8,15 @@
 import type { ReactNode } from "react";
 import ReactReconciler from "react-reconciler";
 import { ConcurrentRoot } from "react-reconciler/constants";
-import { ChromeStore, chromeFromEvent, withChrome } from "./chrome.ts";
+import {
+  ActiveStore,
+  ChromeStore,
+  chromeFromEvent,
+  GlassStore,
+  ProtocolStore,
+  withChrome,
+  withGlass,
+} from "./chrome.ts";
 import { FieldTexts } from "./lib/field-texts.ts";
 import { announces, HOST_WORD_MS } from "./lib/handshake.ts";
 import { hostConfig } from "./lib/host-config.ts";
@@ -62,6 +70,9 @@ export function createPortal(children: ReactNode, container: unknown, key?: stri
 export function render(element: ReactNode, transport: NativeTransport): NativeRoot {
   const fields = new FieldTexts();
   const chrome = new ChromeStore();
+  const glass = new GlassStore();
+  const active = new ActiveStore();
+  const said = new ProtocolStore();
   const container: Container = {
     kind: "root",
     children: [],
@@ -190,7 +201,15 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
       case "chrome":
         chrome.set(chromeFromEvent(event));
         break;
+      case "glass":
+        glass.hear(event);
+        break;
+      case "active":
+        active.hear(event);
+        break;
       case "protocol":
+        glass.hear(event);
+        said.hear(event);
         heard();
         sync.hostPatches(event.patches, {
           rebase: event.rebase === true,
@@ -225,7 +244,12 @@ export function render(element: ReactNode, transport: NativeTransport): NativeRo
     () => {},
     null,
   );
-  reconciler.updateContainer(withChrome(chrome, element), root, null, null);
+  reconciler.updateContainer(
+    withChrome(chrome, withGlass(glass, active, said, element)),
+    root,
+    null,
+    null,
+  );
 
   return {
     unmount() {

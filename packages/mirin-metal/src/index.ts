@@ -1,4 +1,11 @@
-export { useWindowChrome } from "./chrome.ts";
+export {
+  NO_GLASS,
+  useHostProtocol,
+  useWindowActive,
+  useWindowChrome,
+  useWindowGlass,
+  type WindowGlass,
+} from "./chrome.ts";
 export {
   Dots,
   Image,

@@ -608,6 +608,12 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
         quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
     alpha *= saturate(0.5 - element_distance);
   }
+  else if (shadow.caster_bounds.size.width > 0. && shadow.caster_bounds.size.height > 0.) {
+    // mirin: a drop shadow is cut out of its caster, as CSS clips it to outside the border box.
+    float caster_distance =
+        quad_sdf(input.position.xy, shadow.caster_bounds, shadow.corner_radii);
+    alpha *= saturate(0.5 + caster_distance);
+  }
 
   return input.color * float4(1., 1., 1., alpha);
 }

@@ -47,6 +47,7 @@ impl Touched {
                     || props.focus_ring_shown
                     || props.on_window_key
                     || props.focus_ring_color.is_some()
+                    || props.focus_ring_gap_color.is_some()
                 {
                     touched |= Self::FOCUS;
                 }

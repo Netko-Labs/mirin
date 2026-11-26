@@ -387,6 +387,13 @@ fn event_line(event: &NativeUiEvent) -> serde_json::Value {
             None => serde_json::Value::Null,
         };
     }
+    if let EventKind::Active { active } = &event.kind {
+        line["active"] = serde_json::json!(active);
+    }
+    if let EventKind::Glass { drawing, tone } = &event.kind {
+        line["drawing"] = serde_json::json!(drawing);
+        line["tone"] = serde_json::json!(tone);
+    }
     if let EventKind::Settled {
         quiet,
         scene,
@@ -660,6 +667,9 @@ fn main() {
         // This host takes a view's `material` (glass, `glass.rs`); one from
         // before refuses a tree with it.
         "glass": true,
+        // This host draws a ring's `focusRingGapColor` and reports the
+        // window's glass (`glass`: drawn or not, and the backdrop's tone).
+        "focusGap": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and

@@ -1183,6 +1183,7 @@ impl Primitive {
             Primitive::Shadow(shadow) => {
                 shadow.bounds.origin += by;
                 shadow.shape_bounds.origin += by;
+                shadow.caster_bounds.origin += by;
                 shadow.content_mask = mask;
             }
             Primitive::Quad(quad) => {
@@ -1572,6 +1573,12 @@ pub struct Shadow {
     pub color: Hsla,
     pub shape_bounds: Bounds<ScaledPixels>,
     pub shape_corner_radii: Corners<ScaledPixels>,
+    /// mirin: a drop shadow's caster (with `corner_radii` its corners), out
+    /// of which the shadow is cut, as CSS clips an outer `box-shadow` to
+    /// outside the border box: a view with no fill (glass) shows no shadow
+    /// inside itself. Empty for an inset shadow, which is clipped to
+    /// `bounds` instead.
+    pub caster_bounds: Bounds<ScaledPixels>,
     pub inset: PaddedBool32,
     pub pad: u32, // align to 8 bytes
 }
