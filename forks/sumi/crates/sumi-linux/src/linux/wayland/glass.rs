@@ -15,7 +15,9 @@
 //! same: the compositor keeps double-buffered state until it is set again.
 
 use sumi::{Bounds, Corners, GlassMaterial, GlassPane, Pixels, Size, point, px, size};
+use wayland_client::WEnum;
 use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::Capability;
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 
 use super::client::Globals;
@@ -229,6 +231,22 @@ impl WindowGlass {
     }
 }
 
+/// The `blur` capability's bit. ext-background-effect-v1 as wayland-protocols
+/// 0.32.9 ships it says `value="0"` (a typo upstream fixed later); the
+/// protocol, and Dashi, send bit 1.
+const BLUR_BIT: u32 = 1;
+
+/// Whether the background effect manager's `capabilities` says it blurs.
+/// The bits are read whatever wayland-rs made of them: with the typo above,
+/// `capabilities(1)` arrives as `Unknown(1)`, and no window ever had glass.
+pub(super) fn blur_capability(flags: WEnum<Capability>) -> bool {
+    let bits = match flags {
+        WEnum::Value(flags) => flags.bits(),
+        WEnum::Unknown(bits) => bits,
+    };
+    bits & BLUR_BIT != 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,5 +372,14 @@ mod tests {
             rounded.iter().any(|&(x, y, _, _)| y == 0 && x > 50),
             "a cut corner"
         );
+    }
+
+    #[test]
+    fn blur_is_read_from_the_bits_whatever_wayland_rs_made_of_them() {
+        use super::{WEnum, blur_capability};
+        assert!(blur_capability(WEnum::Unknown(1)));
+        assert!(blur_capability(WEnum::Unknown(3)));
+        assert!(!blur_capability(WEnum::Unknown(0)));
+        assert!(!blur_capability(WEnum::Unknown(2)));
     }
 }

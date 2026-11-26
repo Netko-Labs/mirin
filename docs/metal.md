@@ -1380,6 +1380,13 @@ launcher, banners, sheets), `thick` (the focused window's sidebar), `paper`
   active one (an `active` event on each change; true until the host says),
   and `useHostProtocol()` the host's `protocol` line, so a view sends a prop
   only to a host that draws it. A host that sends them says `focusGap`.
+- **In a window.** An app's window is opaque, but while a frame of it has
+  panes its surface takes alpha (premultiplied, as Wayland composites it;
+  `Inherit` counts as premultiplied) and promises no opaque region, so
+  glass under a view with no fill shows; the window goes opaque again
+  with its next resize once the panes are gone. The blur capability is
+  read from its bits: wayland-protocols 0.32.9's XML says `blur` is 0, the
+  protocol and Dashi send 1.
 - **Shadows.** A view's drop shadow is cut out of the view itself
   (`Shadow::caster_bounds`, its corners in `corner_radii`), as CSS clips an
   outer `box-shadow` to outside the border box: a material view paints no

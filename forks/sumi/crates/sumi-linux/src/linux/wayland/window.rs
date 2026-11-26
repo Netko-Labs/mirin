@@ -756,7 +756,10 @@ impl WaylandWindowState {
     }
 
     pub fn is_transparent(&self) -> bool {
-        self.draws_decorations() || self.background_appearance != WindowBackgroundAppearance::Opaque
+        self.draws_decorations()
+            || self.background_appearance != WindowBackgroundAppearance::Opaque
+            // mirin: glass shows through the window where its panes are.
+            || self.glass.has_panes()
     }
 
     // mirin: an opaque layer or lock surface.
@@ -2357,12 +2360,27 @@ impl PlatformWindow for WaylandWindow {
             } else {
                 Vec::new()
             };
+            let had_panes = state.glass.has_panes();
             state.glass.frame(
                 panes,
                 &state.surface,
                 &state.globals,
                 &mut state.background_effects,
             );
+            // An opaque window (an app's) with glass in it: its surface takes
+            // alpha and promises no opaque region while it has panes, so the
+            // glass under a view with no fill shows (`is_transparent`).
+            let has_panes = state.glass.has_panes();
+            if has_panes != had_panes {
+                let transparent = has_panes
+                    || state.background_appearance != WindowBackgroundAppearance::Opaque
+                    || (state.decorations == WindowDecorations::Client
+                        && state.surface_state.toplevel().is_some());
+                renderer.update_transparency(transparent);
+                if has_panes {
+                    state.surface.set_opaque_region(None);
+                }
+            }
         }
         if renderer.draw(scene) {
             state.presentation = PresentationState::Presented;
