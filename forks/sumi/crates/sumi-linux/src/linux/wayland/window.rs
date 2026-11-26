@@ -756,10 +756,11 @@ impl WaylandWindowState {
     }
 
     pub fn is_transparent(&self) -> bool {
-        self.draws_decorations()
-            || self.background_appearance != WindowBackgroundAppearance::Opaque
-            // mirin: glass shows through the window where its panes are.
-            || self.glass.has_panes()
+        !promises_opaque(
+            self.background_appearance,
+            self.draws_decorations(),
+            self.glass.has_panes(),
+        )
     }
 
     // mirin: an opaque layer or lock surface.
@@ -837,6 +838,51 @@ impl PresentationState {
             Self::Unpresented | Self::RetryBeforeFirstPresent => Self::RetryBeforeFirstPresent,
             Self::Presented | Self::RetryAfterPresent => Self::RetryAfterPresent,
         }
+    }
+}
+
+/// mirin: whether a window may promise the compositor it is opaque: an opaque
+/// background, no decorations of its own (their shadows and corners are
+/// translucent), and no glass panes (the glass shows through the window
+/// where its panes are, so a promise would have the compositor draw it
+/// black there).
+fn promises_opaque(
+    background: WindowBackgroundAppearance,
+    draws_decorations: bool,
+    has_panes: bool,
+) -> bool {
+    background == WindowBackgroundAppearance::Opaque && !draws_decorations && !has_panes
+}
+
+#[cfg(test)]
+mod opaque_tests {
+    use super::promises_opaque;
+    use sumi::WindowBackgroundAppearance;
+
+    #[test]
+    fn a_window_with_glass_panes_never_promises_to_be_opaque() {
+        assert!(promises_opaque(
+            WindowBackgroundAppearance::Opaque,
+            false,
+            false
+        ));
+        // A configure (a focus change, a resize) while the window has panes
+        // must not promise the opaque region the frame took away.
+        assert!(!promises_opaque(
+            WindowBackgroundAppearance::Opaque,
+            false,
+            true
+        ));
+        assert!(!promises_opaque(
+            WindowBackgroundAppearance::Opaque,
+            true,
+            false
+        ));
+        assert!(!promises_opaque(
+            WindowBackgroundAppearance::Transparent,
+            false,
+            false
+        ));
     }
 }
 
@@ -2767,10 +2813,11 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
 
     // Client decorations include transparent shadows and antialiased corners,
     // so don't promise the compositor an opaque region.
-    // mirin: a layer or lock surface draws none (`draws_decorations`).
-    if state.background_appearance == WindowBackgroundAppearance::Opaque
-        && !state.draws_decorations()
-    {
+    // mirin: a layer or lock surface draws none (`draws_decorations`); a
+    // window with glass panes promises none either (`promises_opaque`): a
+    // configure while it has them (a focus change) made it opaque, black
+    // where its glass should show.
+    if opaque {
         region.add(
             area.origin.x,
             area.origin.y,
