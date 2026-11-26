@@ -41,14 +41,20 @@ impl GlassMaterial {
     }
 }
 
-/// One pane of glass in a frame: where it is in the window (logical pixels,
-/// already clipped by whatever clips the element that painted it), how round
-/// its corners are, and its material. Panes are kept in paint order, back to
-/// front.
+/// One pane of glass in a frame: where it shows in the window (logical
+/// pixels, already clipped by whatever clips the element that painted it),
+/// its whole shape (its corners are where the element's are, even where a
+/// scrolled list cuts it), how round its corners are, and its material.
+/// Panes are kept in paint order, back to front.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlassPane {
-    /// Its rectangle in window coordinates.
+    /// What of it shows, in window coordinates.
     pub bounds: Bounds<Pixels>,
+    /// The whole pane, unclipped, in window coordinates: `bounds` is the
+    /// part of it that shows. A platform that can cut a pane draws this
+    /// shape inside `bounds`, so a clipped pane is cut straight instead of
+    /// rounded again at the clip.
+    pub shape: Bounds<Pixels>,
     /// The radius of all four corners.
     pub corner_radius: Pixels,
     /// What it is made of.
