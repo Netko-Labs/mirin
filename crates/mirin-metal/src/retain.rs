@@ -317,6 +317,8 @@ fn pure_view(props: &ViewProps, children: &[NodeSpec]) -> bool {
         || props.height_transition_ms.is_some()
         // Its opacity follows the clock (`pulse.rs`).
         || props.pulse.is_some()
+        // Its pane is painted with each frame (`glass.rs`).
+        || props.material.is_some()
         || props.drag_files.is_some()
         || props.on_drop
         || crate::list::virtualizes(props, children))

@@ -9,7 +9,7 @@ import { createElement, Fragment, useState } from "react";
 import { Dots, Text, View } from "../src/components.ts";
 import { parseNativeEvent } from "../src/host.ts";
 import { render } from "../src/render.ts";
-import type { NativeEvent, NativeTransport } from "../src/types.ts";
+import type { Material, NativeEvent, NativeTransport } from "../src/types.ts";
 
 interface FakeTransport extends NativeTransport {
   sent: string[];
@@ -145,6 +145,42 @@ describe("pulse", () => {
       displayFont: true,
       dots: true,
       pulse: true,
+    });
+  });
+});
+
+describe("glass", () => {
+  test("a view says its material, and nothing for one the host has no name for", async () => {
+    const transport = fakeTransport();
+    const root = render(
+      createElement(
+        View,
+        null,
+        createElement(View, {
+          style: { backgroundColor: "#f8f8fa", borderRadius: 16 },
+          material: "regular",
+        }),
+        // A name from another platform's materials, cast past the type as JS could send it.
+        createElement(View, { material: "liquidGlass" as unknown as Material }),
+      ),
+      transport,
+    );
+    await nextCommit();
+    const [panel, stray] = lastTree(transport).children;
+    expect(panel?.props.material).toBe("regular");
+    expect(panel?.props.background).toBe("#f8f8fa");
+    expect(panel?.props.cornerRadius).toBe(16);
+    expect(stray?.props.material).toBeUndefined();
+    root.unmount();
+  });
+
+  test("the host's word is parsed", () => {
+    const line = '{"type":"protocol","nodeId":"root","patches":1,"glass":true}';
+    expect(parseNativeEvent(line)).toEqual({
+      type: "protocol",
+      nodeId: "root",
+      patches: 1,
+      glass: true,
     });
   });
 });
