@@ -1384,7 +1384,10 @@ launcher, banners, sheets), `thick` (the focused window's sidebar), `paper`
   panes its surface takes alpha (premultiplied, as Wayland composites it;
   `Inherit` counts as premultiplied) and promises no opaque region, so
   glass under a view with no fill shows; the window goes opaque again
-  with its next resize once the panes are gone. The blur capability is
+  with its next resize once the panes are gone. A configure while it has
+  panes (a focus change, a resize) keeps the promise off too
+  (`promises_opaque`): before, a window whose panes were there from its
+  first frames (a sidebar) was drawn black where its glass should show. The blur capability is
   read from its bits: wayland-protocols 0.32.9's XML says `blur` is 0, the
   protocol and Dashi send 1.
 - **Shadows.** A view's drop shadow is cut out of the view itself
