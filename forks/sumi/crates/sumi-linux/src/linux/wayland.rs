@@ -4,6 +4,7 @@ mod cursor;
 mod dashi; // mirin: Dashi's own protocols, behind the `dashi` feature.
 mod display;
 mod drag_icon; // mirin: a file drag's icon.
+mod glass; // mirin: a window's panes of glass, sent with its frame.
 mod popup;
 mod serial;
 mod window;

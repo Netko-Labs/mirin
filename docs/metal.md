@@ -133,7 +133,8 @@ patches change it in place, in order (section "Patches").
   `borderWidth` (1 or 2), `borderColor`, `scroll` (vertical), `scrollX`, `clip`, `opacity`,
   `onPress`, `onScroll` and `scrollThrottle` (a scroll view's offset, "Scroll views" below),
   `pulse` (`{"from","to","periodMs","fps"}`: the view's opacity in a loop,
-  below). `id` is required for `onPress`, `hoverBackground`, and `scroll`
+  below), `material` (`thin|regular|thick|paper|veil`: glass the compositor
+  draws, "Glass (Dashi)" in §4). `id` is required for `onPress`, `hoverBackground`, and `scroll`
   (GPUI keeps per-element state for those); the TypeScript side sends one for
   every node.
 - `pulse` (`src/pulse.rs`): the view's opacity goes from `to` (1) down to
@@ -1280,9 +1281,10 @@ toolbar run to the top edge and the window controls float over the content.
 Metal does this on Dashi's compositor through a Dashi-private protocol,
 `dashi-chrome-v1` (`dashi_chrome_manager_v1.get_chrome(toplevel)` makes a
 `dashi_chrome_v1`; `set_style(standard | unified)`; the event
-`controls(x, y, width, height)`). The XML lives in dashi-comp
-(`comp/protocols/dashi-chrome-v1.xml`) and is copied into the GPUI fork
-(`forks/gpui/protocols/`).
+`controls(x, y, width, height)`). The XML lives in Dashi
+(`protocols/dashi-chrome-v1.xml`, with its `PROTOCOL.md`) and is copied into
+sumi-linux (`forks/sumi/crates/sumi-linux/protocols/`) and dashi-comp; version 2
+adds glass ("Glass (Dashi)" below).
 
 - **Ask for it.** `spawnNativeHost(binary, { titleBar: "unified" })`, or
   `MIRIN_METAL_TITLEBAR=unified`. The value is `standard` (default) or
@@ -1318,6 +1320,61 @@ Metal does this on Dashi's compositor through a Dashi-private protocol,
 - **First frame.** The hook starts at `standard / null` until the first
   `chrome` event, which arrives at startup; an app that pads by `controls`
   re-lays out once.
+
+### Glass (Dashi)
+
+A view with `material` is a pane of glass: the compositor fills it with that
+material (what is behind the window, blurred, saturated and tinted, as Dashi's
+shell sets each material's look), rounded at the view's `cornerRadius`
+(`crates/mirin-metal/src/glass.rs`). The five names are Dashi's Frost
+materials: `thin` (the bar, the Dock), `regular` (menus, Control Center, the
+launcher, banners, sheets), `thick` (the focused window's sidebar), `paper`
+(widgets) and `veil` (the lock screen's band).
+
+- **With its frame.** The view paints its pane while the frame paints
+  (`Window::paint_glass`, sumi's `glass.rs`): its bounds as laid out in that
+  frame, clipped by what clips it (`clip`, a scroll view), a scroll view's own
+  box rather than its content's, its border included. The panes ride in the
+  frame's `Scene` (`Scene::glass`, back to front), and the Wayland window sends
+  them just before it presents that scene (sumi-linux
+  `wayland/glass.rs`): the blur region on `ext-background-effect-v1` (the
+  union of the panes, each corner cut in one-pixel steps as the whole-window
+  blur does) and `dashi_glass_v1` (`clear`, or one `add_pane` per pane with
+  its exact radius and level), so the commit that shows the frame carries
+  both. A panel that
+  grows never shows glass a frame behind it, which a rect sent from
+  `onLayout` over the shell's IPC did (the blur spike). Nothing is sent while
+  the panes stay the same.
+- **The protocol.** `dashi-chrome-v1` version 2 (`get_glass(surface)`, any
+  surface: a layer surface, a popup, a lock surface, a toplevel). Dashi owns
+  its XML (dashi-comp's `crates/dashi-comp/protocols/dashi-chrome-v1.xml`,
+  with a `PROTOCOL.md` beside it); `forks/sumi/crates/sumi-linux/protocols/`
+  holds a byte-for-byte copy. At most 16 panes a commit (the host keeps the
+  backmost 16) and a radius of at most 512. The `tone` event is not read yet.
+- **When there is none.** Panes are sent while the compositor offers
+  `dashi_chrome_manager_v1` version 2 and `ext_background_effect_manager_v1`
+  with its `blur` capability. The view leaves its `background` out
+  (`Window::is_glass_available`) once the surface's `dashi_glass_v1` says
+  `drawing(material)`: the compositor tints, or draws the material's solid
+  twin itself (Reduce Transparency). Until then (the first frame with a
+  pane makes the object), and when it says `none` (the person turned glass
+  off for the app), and wherever there is no protocol (KDE, GNOME, an older
+  Dashi), the view paints its `background` as before: give it the
+  material's solid twin. Without the protocols nothing is bound or sent.
+  When the capability or `drawing` changes, the window is drawn again. Without the `dashi` cargo feature there is never glass. A
+  window that asked for sumi's whole-window blur
+  (`WindowBackgroundAppearance::Blurred`) keeps it, and its panes are not sent.
+- **Kept drawings.** A material view is never part of a retained subtree
+  (`retain.rs` `pure_view`): a kept drawing would paint no pane. A view that
+  virtualizes its rows cannot be glass; put the list inside one.
+- **Protocol line.** A host that takes `material` says `"glass":true` (names
+  `MIRIN_METAL_GLASS`); one from before refuses a tree with it, so a driver
+  sends it only to a host that said so. `@mirinjs/metal`: `<View material="regular">`.
+- **Tests.** `glass::tests` (panes as laid out, a resize's first frame, back to
+  front, clipped, the border, the fill only while there is no glass, kept
+  subtrees, and the scene the platform presents) and sumi-linux's
+  `wayland::glass::tests` (whole pixels, clipping, the radius clamp, the
+  materials' numbers, the packed array, the region).
 
 ### Files: drag and drop (Wayland)
 

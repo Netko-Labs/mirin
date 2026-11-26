@@ -92,6 +92,7 @@ function nativeEventFromRecord(record: Record<string, unknown>): NativeEvent | n
             ...(record.displayFont === true ? { displayFont: true } : {}),
             ...(record.dots === true ? { dots: true } : {}),
             ...(record.pulse === true ? { pulse: true } : {}),
+            ...(record.glass === true ? { glass: true } : {}),
           }
         : null;
     case "settled":

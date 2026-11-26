@@ -119,6 +119,8 @@ pub struct WaylandWindowState {
     appearance: WindowAppearance,
     kde_blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     background_effects: Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1>,
+    // mirin: the panes of glass sent with the last frame (`glass.rs`).
+    glass: super::glass::WindowGlass,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
@@ -337,7 +339,7 @@ impl WaylandSurfaceState {
             .titlebar
             .as_ref()
             .is_some_and(|titlebar| titlebar.appears_transparent)
-            .then_some(globals.title_bar_manager.as_ref())
+            .then_some(globals.chrome_manager.as_ref())
             .flatten()
             .map(|manager| dashi::TitleBar::unified(manager, &toplevel, &globals.qh, surface.id()));
 
@@ -717,6 +719,7 @@ impl WaylandWindowState {
             app_id: options.app_id,
             kde_blur: None,
             background_effects: None,
+            glass: Default::default(),
             viewport,
             globals,
             outputs: HashMap::default(),
@@ -904,6 +907,9 @@ impl Drop for WaylandWindow {
         if let Some(blur) = &state.kde_blur {
             blur.release();
         }
+
+        // mirin: the glass object, no dependencies either.
+        state.glass.destroy();
 
         // Destroy background effects, this has no dependencies.
         if let Some(background_effects) = &state.background_effects {
@@ -1200,6 +1206,21 @@ impl WaylandWindowStatePtr {
     fn request_redraw(&self) {
         self.state.borrow_mut().redraw_requested = true;
         self.schedule_frame();
+    }
+
+    /// mirin: the compositor started or stopped blurring: draw again, so a
+    /// material's fill comes or goes (`glass.rs`).
+    pub fn glass_changed(&self) {
+        self.request_redraw();
+    }
+
+    /// mirin: the compositor says whether it draws this surface's panes
+    /// (`dashi_glass_v1.drawing`); a change draws again.
+    #[cfg(feature = "dashi")]
+    pub fn set_glass_drawn(&self, drawn: bool) {
+        if self.state.borrow_mut().glass.set_drawn(drawn) {
+            self.request_redraw();
+        }
     }
 
     fn update_ime_enabled(&self) {
@@ -2149,6 +2170,13 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().background_appearance
     }
 
+    fn is_glass_available(&self) -> bool {
+        let state = self.borrow();
+        state.background_appearance != WindowBackgroundAppearance::Blurred
+            && super::glass::supported(&state.globals)
+            && state.glass.is_drawn()
+    }
+
     fn is_subpixel_rendering_supported(&self) -> bool {
         let client = self.borrow().client.get_client();
         let state = client.borrow();
@@ -2285,6 +2313,22 @@ impl PlatformWindow for WaylandWindow {
         if state.pending_frame_callback.is_none() {
             let callback = state.surface.frame(&state.globals.qh, state.surface.id());
             state.pending_frame_callback = Some(callback);
+        }
+        // mirin: the frame's glass, before the present that commits it, so
+        // the same commit carries the frame and its panes (`glass.rs`). The
+        // whole-window blur owns the region while it is on.
+        if state.background_appearance != WindowBackgroundAppearance::Blurred {
+            let panes = if super::glass::supported(&state.globals) {
+                super::glass::wire_panes(&scene.glass, state.bounds.size)
+            } else {
+                Vec::new()
+            };
+            state.glass.frame(
+                panes,
+                &state.surface,
+                &state.globals,
+                &mut state.background_effects,
+            );
         }
         if renderer.draw(scene) {
             state.presentation = PresentationState::Presented;
@@ -2504,7 +2548,7 @@ impl PlatformWindow for WaylandWindow {
     // linked into every app and never started.
 }
 
-fn add_rounded_rect(
+pub(super) fn add_rounded_rect(
     area: Bounds<i32>,
     radii: Corners<Pixels>,
     mut add_rectangle: impl FnMut(i32, i32, i32, i32),
@@ -2715,6 +2759,11 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
                 .as_ref()
                 .unwrap()
                 .set_blur_region(Some(&region));
+            // mirin: the region is the whole window's now; glass sends its
+            // own again once the window stops blurring.
+            state.glass.yield_region();
+        } else if state.glass.has_panes() {
+            // mirin: the glass's panes keep the object (`glass.rs`).
         } else if let Some(background_effects) = state.background_effects.take() {
             background_effects.destroy();
         }

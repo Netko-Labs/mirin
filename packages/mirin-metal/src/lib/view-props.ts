@@ -13,6 +13,7 @@ import type {
   Dimension,
   GridPlacement,
   GridTrack,
+  Material,
   ViewProps,
   ViewStyle,
 } from "../types.ts";
@@ -74,6 +75,7 @@ export interface ViewNodeProps {
   clip?: boolean;
   opacity?: number;
   pulse?: { from?: number; to?: number; periodMs?: number; fps?: number };
+  material?: Material;
   onPress?: boolean;
   onHover?: boolean;
   onPointer?: boolean;
@@ -219,6 +221,7 @@ const ORDER = [
   "clip",
   "opacity",
   "pulse",
+  "material",
   "focusRingColor",
   "focusable",
   "focusGroup",
@@ -257,6 +260,15 @@ const ORDER = [
 ] as const satisfies ReadonlyArray<keyof ViewNodeProps>;
 
 type Field = (typeof ORDER)[number];
+
+/** The materials a host takes; anything else is left out, not sent to be refused. */
+const MATERIALS: ReadonlySet<string> = new Set<Material>([
+  "thin",
+  "regular",
+  "thick",
+  "paper",
+  "veil",
+]);
 const SLOT = Object.fromEntries(ORDER.map((field, slot) => [field, slot])) as Record<Field, number>;
 
 /** `"field":`, by slot. */
@@ -633,6 +645,11 @@ export function viewHeadJson(id: string, props: ViewProps, root: boolean, scroll
         }
         break;
       }
+      case "material":
+        if (props.material !== undefined && MATERIALS.has(props.material)) {
+          put(SLOT.material, props.material);
+        }
+        break;
       case "dragFiles": {
         const { dragFiles } = props;
         if (dragFiles && dragFiles.paths.length > 0) {

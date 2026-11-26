@@ -196,6 +196,10 @@ pub struct ViewProps {
     /// The opacity in a loop, a few steps a second, still under Reduce
     /// Motion (`pulse.rs`); multiplies `opacity`.
     pub pulse: Option<crate::pulse::Pulse>,
+    /// Glass: the compositor fills the view with this material, rounded at
+    /// `cornerRadius`; `background` is painted only where it does not
+    /// (`glass.rs`).
+    pub material: Option<crate::glass::Material>,
     /// Emit a `press` event carrying this node's `id` on click/tap.
     pub on_press: bool,
     /// Emit `hover` events (`hovered: true|false`) for this node (needs `id`).

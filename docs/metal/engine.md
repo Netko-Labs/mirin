@@ -65,7 +65,7 @@ Principles:
    The budgets in section 6 are the bar. A change that breaks one doesn't
    land.
 4. **Dashi is the first platform, not the only one.** Dashi's own Wayland
-   protocol (the unified title bar, `dashi-chrome-v1`) sits in one `dashi`
+   protocol (the unified title bar and glass, `dashi-chrome-v1`) sits in one `dashi`
    module of `sumi-linux` behind a `dashi` feature, so a plain Linux, macOS
    or Windows app builds without it. Layer surfaces (wlr-layer-shell),
    session lock (ext-session-lock-v1) and file drags (wl_data_device) are
@@ -526,9 +526,11 @@ memory can set it for its hosts, and should measure first.
 **The `dashi` feature.** `sumi-linux`'s `dashi` module
 (`src/linux/wayland/dashi.rs`, with the protocol's bindings in
 `dashi/chrome.rs`) holds what is Dashi's own: the unified title bar
-(`dashi-chrome-v1`), its global, its object and its events. `sumi-platform`
+(`dashi-chrome-v1`), its global, its object and its events, and since its
+version 2 each surface's glass (`GlassPanes`, sent by `wayland/glass.rs`
+with the frame; `docs/metal.md` "Glass (Dashi)"). `sumi-platform`
 passes the feature on and `crates/mirin-metal` enables it by default.
-Without it the module is two types that are never made, so the Wayland
+Without it the module is types that are never made, so the Wayland
 client and window need no condition; nothing is bound, a window that asks
 for a transparent title bar keeps the compositor's (xdg-decoration) and
 `chrome_controls` answers `None`: what any compositor but Dashi gives

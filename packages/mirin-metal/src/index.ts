@@ -36,6 +36,7 @@ export type {
   KeyDownInfo,
   LayoutNode,
   LineNumbers,
+  Material,
   Modifiers,
   NativeEvent,
   NativeHostTransport,

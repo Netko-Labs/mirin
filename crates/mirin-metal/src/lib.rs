@@ -26,6 +26,7 @@ mod field;
 mod focus;
 mod follow;
 mod fonts;
+mod glass;
 #[cfg(target_os = "linux")]
 pub mod gpu;
 mod grid;
@@ -66,6 +67,7 @@ pub use drive::{run, run_deferred, HostMessage, OPEN_MIN_SIZE_MARKER, RESIDENT_M
 pub use events::{EventKind, Modifiers, NativeUiEvent, PointerPhase};
 pub use focus::FOCUS_MARKER;
 pub use fonts::{DISPLAY_FONT_MARKER, FONT_WEIGHTS_MARKER};
+pub use glass::{Material, GLASS_MARKER};
 pub use media::IMAGE_ERROR_MARKER;
 pub use patch::{parse_patch, PatchOp, PATCH_MARKER, PATCH_PROTOCOL};
 pub use pulse::{Pulse, PULSE_MARKER};

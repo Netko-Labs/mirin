@@ -467,6 +467,17 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Simulates the compositor starting or stopping to draw the window's glass.
+    pub fn simulate_window_glass_available(&self, window_handle: AnyWindowHandle, available: bool) {
+        self.test_window(window_handle)
+            .simulate_glass_available(available);
+    }
+
+    /// The panes of glass the window's last presented scene carried.
+    pub fn window_presented_glass(&self, window_handle: AnyWindowHandle) -> Vec<crate::GlassPane> {
+        self.test_window(window_handle).presented_glass()
+    }
+
     /// Simulates a change in whether the platform is presenting the window.
     pub fn simulate_window_visibility_change(
         &self,
@@ -1022,6 +1033,28 @@ impl VisualTestContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_resize(&self, size: Size<Pixels>) {
         self.simulate_window_resize(self.window, size)
+    }
+
+    /// Simulates the compositor starting or stopping to draw this window's glass.
+    pub fn simulate_glass_available(&self, available: bool) {
+        self.simulate_window_glass_available(self.window, available)
+    }
+
+    /// The panes of glass this window's last presented scene carried.
+    pub fn presented_glass(&self) -> Vec<crate::GlassPane> {
+        self.window_presented_glass(self.window)
+    }
+
+    /// Delivers a frame request that draws and presents, as the platform's
+    /// frame source does after a change.
+    pub fn simulate_presented_frame(&self) {
+        self.cx
+            .test_window(self.window)
+            .simulate_frame_request(crate::RequestFrameOptions {
+                require_presentation: true,
+                force_render: true,
+                ..Default::default()
+            });
     }
 
     /// Simulates a change in whether the platform is presenting this window.

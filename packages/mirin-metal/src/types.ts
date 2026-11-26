@@ -534,10 +534,24 @@ export interface ViewProps extends AccessibilityProps {
    * older one refuses the tree).
    */
   pulse?: Pulse;
+  /**
+   * Glass: the compositor fills the view with this material (what is behind
+   * the window, blurred and tinted), rounded at the style's `borderRadius`,
+   * in the same frame that draws the view, so a panel that resizes never
+   * shows glass a frame behind. Linux, on Dashi (`dashi-chrome-v1` v2 and
+   * `ext-background-effect-v1`). Where the compositor draws no glass, the
+   * view paints its `backgroundColor` instead: give it the material's solid
+   * twin. Needs a host whose `protocol` event says `glass` (an older one
+   * refuses the tree).
+   */
+  material?: Material;
   /** Stable handle for checks and tools (`root.nodeId(testID)`); never rendered. */
   testID?: string;
   children?: ReactNode;
 }
+
+/** A view's glass (`ViewProps.material`), as Dashi's Frost names them. */
+export type Material = "thin" | "regular" | "thick" | "paper" | "veil";
 
 /** A view's breathing (`ViewProps.pulse`). */
 export interface Pulse {
@@ -895,6 +909,7 @@ export type NativeEvent =
       displayFont?: boolean;
       dots?: boolean;
       pulse?: boolean;
+      glass?: boolean;
     }
   /**
    * The answer to a `settle` simulation: the window has settled (`quiet`),

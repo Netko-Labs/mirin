@@ -55,8 +55,9 @@ pub(crate) fn render_node(
 }
 
 /// A `div` carrying every layout and appearance prop of a view (not its
-/// children, identity, or interaction).
-fn styled_view(props: &ViewProps) -> Div {
+/// children, identity, or interaction). `background` is left out where the
+/// compositor fills the view with its material (`glass.rs`).
+fn styled_view(props: &ViewProps, paints_background: bool) -> Div {
     let mut element = div();
     element = match props.direction {
         Direction::Column => element.flex().flex_col(),
@@ -168,7 +169,12 @@ fn styled_view(props: &ViewProps) -> Div {
         Some(Justify::Between) => element.justify_between(),
         None => element,
     };
-    if let Some(color) = props.background.as_deref().and_then(parse_color) {
+    if let Some(color) = props
+        .background
+        .as_deref()
+        .filter(|_| paints_background)
+        .and_then(parse_color)
+    {
         element = element.bg(rgba(color));
     }
     if props.corner_radius > 0.0 {
@@ -217,7 +223,7 @@ fn render_view_content(
     window: &mut Window,
     cx: &mut Context<RootView>,
 ) -> AnyElement {
-    let mut element = styled_view(props);
+    let mut element = styled_view(props, crate::glass::paints_background(props, window));
     if let Some(pulse) = &props.pulse {
         let reduce = crate::pulse::reduced();
         element = element.opacity(view.pulses.opacity(pulse, props.opacity, reduce));
@@ -242,6 +248,17 @@ fn render_view_content(
         view.group = Some(group);
         content = Some(group);
         markers = 1;
+    }
+    // A material view's pane, before its children: panes are painted back
+    // to front, so a pane inside it is drawn over it (`glass.rs`).
+    let scroll = props
+        .id
+        .as_deref()
+        .and_then(|id| view.scrolls.get(id))
+        .cloned();
+    if let Some(pane) = crate::glass::pane(props, scroll) {
+        element = element.child(pane);
+        markers += 1;
     }
     let mut element = element.children(children.iter().map(|child| {
         view.keeps_length = scrolls_along;

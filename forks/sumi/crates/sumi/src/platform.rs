@@ -1367,6 +1367,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     // mirin: Dashi's unified title bar.
     /// Called when `chrome_controls` changes.
     fn on_chrome_changed(&self, _callback: Box<dyn FnMut()>) {}
+    /// Whether the platform draws glass for this window now: the panes of a
+    /// drawn scene (`Scene::glass`) reach a compositor that fills them. When
+    /// it changes, the platform asks for the window to be drawn again.
+    fn is_glass_available(&self) -> bool {
+        false
+    }
     fn draw(&self, scene: &Scene);
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;

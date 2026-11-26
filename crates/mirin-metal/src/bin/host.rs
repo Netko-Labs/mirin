@@ -13,8 +13,8 @@ use mirin_metal::{
     parse_patch, parse_surface, parse_tree, run, run_deferred, DriverMessage, EventKind,
     HostMessage, NativeUiEvent, NativeUiOptions, ScrollCommand, SimCommand, Surface, TitleBar,
     ACTIVATION_MARKER, DISPLAY_FONT_MARKER, DOTS_MARKER, FIELD_TEXT_MARKER, FONT_WEIGHTS_MARKER,
-    IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER, OPEN_MIN_SIZE_MARKER, PATCH_MARKER, PATCH_PROTOCOL,
-    PULSE_MARKER, REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
+    GLASS_MARKER, IMAGE_ERROR_MARKER, OPAQUE_SURFACE_MARKER, OPEN_MIN_SIZE_MARKER, PATCH_MARKER,
+    PATCH_PROTOCOL, PULSE_MARKER, REBASE_MARKER, RESIDENT_MARKER, SCROLL_MARKER, SETTLE_MARKER,
 };
 
 /// Privileged APIs a driver can ask for (`MIRIN_METAL_CAPABILITIES`, comma
@@ -608,6 +608,9 @@ fn main() {
     mirin_metal::trace::log(format_args!(
         "{PULSE_MARKER}: a view's opacity in a loop, still under reduceMotion"
     ));
+    mirin_metal::trace::log(format_args!(
+        "{GLASS_MARKER}: a view's material, glass the compositor draws with its frame"
+    ));
     write_line(&serde_json::json!({
         "type": "protocol",
         "nodeId": "root",
@@ -654,6 +657,9 @@ fn main() {
         // This host loops a view's opacity (`pulse`) a few steps a second and
         // takes the `reduceMotion` line (`pulse.rs`).
         "pulse": true,
+        // This host takes a view's `material` (glass, `glass.rs`); one from
+        // before refuses a tree with it.
+        "glass": true,
     }));
     // `MIRIN_METAL_DEFERRED=1`: start GPUI now, open the window when the
     // driver's `{"open": {...}}` line comes (a host kept warm), and hide and

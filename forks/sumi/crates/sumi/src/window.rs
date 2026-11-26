@@ -4758,6 +4758,12 @@ impl Window {
         Self::frame_drawn(&self.rendered_frame)
     }
 
+    /// The panes of glass of the last frame drawn (for tests).
+    #[doc(hidden)]
+    pub fn last_glass_drawn(&self) -> Vec<crate::GlassPane> {
+        self.rendered_frame.scene.glass.clone()
+    }
+
     /// mirin: what the last frame drawn paints over what, whatever its
     /// draw orders' numbers (`Scene::stacking`; for tests, quadratic).
     #[doc(hidden)]
@@ -5101,6 +5107,38 @@ impl Window {
             hitbox_id: None,
             style,
         })
+    }
+
+    /// Paints a pane of glass over `bounds` (window coordinates), clipped by
+    /// the current content mask: the compositor fills it with `material`
+    /// behind the window, in the frame being painted (`glass.rs`). Paint
+    /// nothing opaque under it. Panes go with the frame whether or not the
+    /// platform draws them; check [`Self::is_glass_available`] to decide on a
+    /// fill instead. This method should only be called during the paint phase.
+    pub fn paint_glass(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radius: Pixels,
+        material: crate::GlassMaterial,
+    ) {
+        self.invalidator.debug_assert_paint();
+        let shown = bounds.intersect(&self.content_mask().bounds);
+        if shown.size.width <= px(0.) || shown.size.height <= px(0.) {
+            return;
+        }
+        self.next_frame.scene.glass.push(crate::GlassPane {
+            bounds: shown,
+            corner_radius,
+            material,
+        });
+    }
+
+    /// Whether the platform draws this window's glass now
+    /// ([`Self::paint_glass`]). It can change while the window lives (the
+    /// compositor turns glass on or off); the window is drawn again when it
+    /// does.
+    pub fn is_glass_available(&self) -> bool {
+        self.platform_window.is_glass_available()
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
