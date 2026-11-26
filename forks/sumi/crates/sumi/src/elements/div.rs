@@ -4486,7 +4486,7 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, IntoElement,
-        Keystroke, MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas,
+        Keystroke, Modifiers, MouseMoveEvent, PlatformInput, TestAppContext, TouchEvent, TouchId, canvas,
         util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
@@ -4653,6 +4653,49 @@ mod tests {
         cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
         assert_eq!(*hover_transitions.borrow(), [true, false]);
+    }
+
+    #[sumi::test]
+    fn hover_listener_stays_ended_after_the_pointer_leaves_and_the_view_redraws(cx: &mut TestAppContext) {
+        // The pointer leaves the window over the target, then the view redraws (Dashi's Dock
+        // reflows when its icon stops being hovered): the target is not hovered again.
+        let hover_transitions = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let hover_transitions = hover_transitions.clone();
+            move |_, _| HoverListenerLayoutTestView {
+                target_left: px(0.),
+                hover_transitions,
+            }
+        });
+        let any_window = AnyWindowHandle::from(window);
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(point(px(10.), px(10.)), cx);
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+        cx.update_window(any_window, |_, window, cx| {
+            let left = PlatformInput::MouseExited(MouseExitEvent {
+                position: point(px(10.), px(10.)),
+                pressed_button: None,
+                modifiers: Modifiers::default(),
+            });
+            let _ = window.dispatch_event(left, cx);
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true, false]);
+        // Back in: hovered again.
+        cx.update_window(any_window, |_, window, cx| {
+            window.simulate_mouse_move(point(px(10.), px(10.)), cx);
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true, false, true]);
     }
 
     #[sumi::test]
