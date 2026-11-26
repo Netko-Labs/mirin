@@ -49,6 +49,10 @@ pub(crate) struct TestWindowState {
     appearance_change_callback: Option<Box<dyn FnMut()>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     frame_wake_count: Rc<Cell<usize>>,
+    /// Whether the window says it draws glass (`simulate_glass_available`).
+    glass_available: bool,
+    /// The panes of glass of the last scene presented.
+    presented_glass: Vec<crate::GlassPane>,
     frame_scheduled: bool,
     frame_callback_pending: bool,
     input_handler: Option<PlatformInputHandler>,
@@ -125,6 +129,8 @@ impl TestWindow {
             appearance_change_callback: None,
             request_frame_callback: None,
             frame_wake_count: Rc::new(Cell::new(0)),
+            glass_available: false,
+            presented_glass: Vec::new(),
             frame_scheduled: false,
             frame_callback_pending: false,
             input_handler: None,
@@ -233,6 +239,17 @@ impl TestWindow {
 
     pub fn text_input_state_changes(&self) -> Vec<TextInputStateChange> {
         self.0.lock().text_input_state_changes.clone()
+    }
+
+    /// Simulates the compositor starting or stopping to draw this window's
+    /// glass ([`PlatformWindow::is_glass_available`]).
+    pub fn simulate_glass_available(&mut self, available: bool) {
+        self.0.lock().glass_available = available;
+    }
+
+    /// The panes of glass the last presented scene handed to the platform.
+    pub fn presented_glass(&self) -> Vec<crate::GlassPane> {
+        self.0.lock().presented_glass.clone()
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -586,9 +603,14 @@ impl PlatformWindow for TestWindow {
         self.0.lock().appearance_change_callback = Some(callback);
     }
 
+    fn is_glass_available(&self) -> bool {
+        self.0.lock().glass_available
+    }
+
     fn draw(&self, scene: &Scene) {
         let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
+        state.presented_glass = scene.glass.clone();
         state.frame_callback_pending = true;
         state.frame_scheduled = true;
         let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);

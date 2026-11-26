@@ -1,5 +1,5 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Cell, RefCell, RefMut},
     hash::Hash,
     os::{
         fd::{AsRawFd, BorrowedFd, FromRawFd as _, RawFd},
@@ -262,12 +262,16 @@ pub struct Globals {
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     // mirin: session-lock surfaces for a lock screen.
     pub session_lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
-    // mirin: Dashi's unified title bar (`dashi.rs`); None on every other
-    // compositor, and without the `dashi` feature.
-    pub(super) title_bar_manager: Option<dashi::TitleBarManager>,
+    // mirin: Dashi's unified title bar and, since version 2, its glass
+    // (`dashi.rs`); None on every other compositor, and without the `dashi`
+    // feature.
+    pub(super) chrome_manager: Option<dashi::ChromeManager>,
     pub kde_blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
     pub background_effects_manager:
         Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
+    // mirin: whether the compositor blurs now (the background effect
+    // manager's `blur` capability), which glass needs (`glass.rs`).
+    pub(super) blur_capable: Rc<Cell<bool>>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
@@ -318,9 +322,10 @@ impl Globals {
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
             session_lock_manager: globals.bind(&qh, 1..=1, ()).ok(), // mirin:
-            title_bar_manager: dashi::bind_title_bar_manager(&globals, &qh), // mirin:
+            chrome_manager: dashi::bind_chrome_manager(&globals, &qh), // mirin:
             kde_blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             background_effects_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            blur_capable: Rc::default(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
@@ -1811,12 +1816,44 @@ delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShell
 delegate_noop!(WaylandClientStatePtr: ignore ext_session_lock_manager_v1::ExtSessionLockManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore xdg_positioner::XdgPositioner);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
-delegate_noop!(WaylandClientStatePtr: ignore ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1);
 delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
+
+// mirin: the compositor says whether it blurs; glass (`glass.rs`) follows it,
+// and every window is drawn again when it changes (a material's fill comes
+// or goes).
+impl Dispatch<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ()>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _: &ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1,
+        event: ext_background_effect_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let ext_background_effect_manager_v1::Event::Capabilities { flags } = event else {
+            return;
+        };
+        let blurs = flags
+            .into_result()
+            .is_ok_and(|flags| flags.contains(ext_background_effect_manager_v1::Capability::Blur));
+        let client = this.get_client();
+        let state = client.borrow_mut();
+        if state.globals.blur_capable.replace(blurs) == blurs {
+            return;
+        }
+        let windows: Vec<_> = state.windows.values().cloned().collect();
+        drop(state);
+        for window in windows {
+            window.glass_changed();
+        }
+    }
+}
 
 impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     fn event(

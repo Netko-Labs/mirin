@@ -4,7 +4,7 @@
     Copyright (c) Dashi contributors. MIT license.
   </copyright>
 
-  <description summary="window chrome style for toplevels">
+  <description summary="window chrome and glass for Dashi's surfaces">
     Dashi-private. By default dashi-comp draws a title bar above every window
     that accepts server-side decorations. This protocol lets an app put its own
     content in that strip: with the "unified" style there is no title bar, the
@@ -15,21 +15,28 @@
     toolbar areas, and zooms it from a double click with
     xdg_toplevel.set_maximized / unset_maximized. A press on a traffic light
     goes to the compositor, never to the surface.
+
+    Since version 2 it also says what ext-background-effect-v1's blur region
+    cannot: for each pane of glass on a surface, its corner radius and its
+    material (dashi_glass_v1).
   </description>
 
-  <interface name="dashi_chrome_manager_v1" version="1">
-    <description summary="creates window chrome controls">
-      A global that makes a dashi_chrome_v1 for an xdg_toplevel.
+  <interface name="dashi_chrome_manager_v1" version="2">
+    <description summary="creates window chrome controls and glass">
+      A global that makes a dashi_chrome_v1 for an xdg_toplevel and, since
+      version 2, a dashi_glass_v1 for any wl_surface.
     </description>
 
     <enum name="error">
       <entry name="chrome_exists" value="0"
              summary="the toplevel already has a dashi_chrome_v1"/>
+      <entry name="glass_exists" value="1" since="2"
+             summary="the surface already has a dashi_glass_v1"/>
     </enum>
 
     <request name="destroy" type="destructor">
       <description summary="destroy the manager">
-        Destroy the manager. Chrome objects it made stay valid.
+        Destroy the manager. Chrome and glass objects it made stay valid.
       </description>
     </request>
 
@@ -42,9 +49,20 @@
       <arg name="id" type="new_id" interface="dashi_chrome_v1"/>
       <arg name="toplevel" type="object" interface="xdg_toplevel"/>
     </request>
+
+    <request name="get_glass" since="2">
+      <description summary="get the glass of a surface">
+        Make the glass object of `surface` (a toplevel's, a layer surface's,
+        a popup's or a lock surface's). A surface has at most one; a second
+        request is a glass_exists protocol error until the first is
+        destroyed.
+      </description>
+      <arg name="id" type="new_id" interface="dashi_glass_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
   </interface>
 
-  <interface name="dashi_chrome_v1" version="1">
+  <interface name="dashi_chrome_v1" version="2">
     <description summary="chrome style of one toplevel">
       Sets how the compositor frames one toplevel. Destroying the object puts
       the toplevel back to the standard style.
@@ -97,6 +115,94 @@
       <arg name="y" type="int"/>
       <arg name="width" type="int"/>
       <arg name="height" type="int"/>
+    </event>
+  </interface>
+
+  <interface name="dashi_glass_v1" version="2">
+    <description summary="the panes of glass on one surface">
+      A surface's glass: rounded rectangles of it the compositor fills with a
+      material (what is behind, blurred, saturated and tinted, with grain, a
+      rim and a hairline, as the shell's look for that material says)
+      instead of the surface's own pixels there, which the client leaves
+      clear.
+
+      It goes with ext-background-effect-v1. The client sets the blur region
+      (ext_background_effect_surface_v1.set_blur_region) to the union of its
+      panes, rounded as a wl_region allows, and the panes here with their
+      exact radius and material, both before the same wl_surface.commit. The
+      compositor draws each pane clipped to the blur region; a pane outside
+      it shows no glass. A surface with a blur region and no panes (any app
+      that speaks only ext-background-effect-v1) is glass of the regular
+      material, the region's shape, at the compositor's corner radius for
+      windows.
+
+      Whether glass is drawn at all is ext-background-effect-v1's blur
+      capability (ext_background_effect_manager_v1.capabilities): without it
+      the client paints its own fill under each pane, and when it comes or
+      goes the client paints again. The compositor's own fallbacks (an opaque
+      twin for Reduce Transparency or a GPU that cannot blur, the wallpaper
+      only on battery saver) keep the capability: they are still drawn in
+      the panes, so the client still leaves them clear.
+
+      Destroying the object removes the panes on the next commit; the blur
+      region stays until the client unsets it.
+    </description>
+
+    <enum name="material">
+      <entry name="thin" value="0" summary="the bar, the Dock"/>
+      <entry name="regular" value="1"
+             summary="menus, Control Center, the launcher, banners, sheets"/>
+      <entry name="thick" value="2" summary="the focused window's sidebar"/>
+      <entry name="paper" value="3" summary="widgets"/>
+      <entry name="veil" value="4" summary="the lock screen's wallpaper band"/>
+    </enum>
+
+    <enum name="error">
+      <entry name="invalid_panes" value="0"
+             summary="the array is not whole panes, or a pane is malformed"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the glass object"/>
+    </request>
+
+    <request name="set_panes">
+      <description summary="set the panes of glass">
+        Replace the surface's panes with `panes`: whole panes of seven 32-bit
+        words each, in the host's byte order (as xdg_toplevel's states
+        array), one after another:
+
+          x, y, width, height   int: surface-local logical coordinates
+          radius                uint: corner radius in logical pixels, the
+                                same at all four corners; the compositor
+                                clamps it to half the shorter side
+          material              uint: a value of the material enum
+          ink                   uint: the weakest words' colour on the pane,
+                                0xAARRGGBB, for the contrast floor; 0 means
+                                the material's own ink
+
+        Panes are listed back to front: a later pane is drawn over an
+        earlier one, and sees it frosted. An empty array is no panes.
+
+        Double-buffered: applied on the next wl_surface.commit, with the
+        buffer and the blur region of that commit, so the glass always has
+        the shape of the frame that shows. The panes stay until set again.
+
+        An array whose size is not a multiple of 28 bytes, a negative width
+        or height, or a material outside the enum is an invalid_panes
+        protocol error. A pane of zero width or height is ignored.
+      </description>
+      <arg name="panes" type="array"/>
+    </request>
+
+    <event name="tone">
+      <description summary="the colour behind the glass">
+        The mean colour of what is behind the surface's panes, blurred and
+        saturated as drawn, 0xFFRRGGBB, so the client can lean the colour of
+        its words on glass toward it. Sent when it settles after a change,
+        at most once every 120 ms; a compositor may never send it.
+      </description>
+      <arg name="color" type="uint"/>
     </event>
   </interface>
 </protocol>

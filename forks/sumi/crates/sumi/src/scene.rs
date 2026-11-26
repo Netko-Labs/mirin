@@ -61,6 +61,10 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    /// The frame's panes of glass, back to front (`glass.rs`). They are not
+    /// primitives: the platform hands them to the compositor with the frame,
+    /// and a drawing copied from an earlier frame copies none.
+    pub glass: Vec<crate::GlassPane>,
     animations: Vec<SpriteAnimation>,
     /// mirin: while a retained subtree is drawn anew, how far what it puts
     /// in the scene reaches (`elements::retained`).
@@ -259,6 +263,7 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.glass.clear();
         self.animations.clear();
     }
 
