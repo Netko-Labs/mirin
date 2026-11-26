@@ -4486,8 +4486,8 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, IntoElement,
-        Keystroke, Modifiers, MouseMoveEvent, PlatformInput, TestAppContext, TouchEvent, TouchId, canvas,
-        util::FluentBuilder as _,
+        Keystroke, Modifiers, MouseMoveEvent, PlatformInput, TestAppContext, TouchEvent, TouchId,
+        canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -4656,7 +4656,9 @@ mod tests {
     }
 
     #[sumi::test]
-    fn hover_listener_stays_ended_after_the_pointer_leaves_and_the_view_redraws(cx: &mut TestAppContext) {
+    fn hover_listener_stays_ended_after_the_pointer_leaves_and_the_view_redraws(
+        cx: &mut TestAppContext,
+    ) {
         // The pointer leaves the window over the target, then the view redraws (Dashi's Dock
         // reflows when its icon stops being hovered): the target is not hovered again.
         let hover_transitions = Rc::new(RefCell::new(Vec::new()));
