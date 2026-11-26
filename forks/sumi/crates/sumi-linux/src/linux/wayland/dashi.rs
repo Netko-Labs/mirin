@@ -7,7 +7,8 @@
 //!   and hears where they are ([`TitleBar`]);
 //! - since its version 2, glass: each pane's corner radius and material
 //!   level, which `ext-background-effect-v1`'s region cannot say, and
-//!   whether the compositor draws them ([`GlassPanes`], sent by `glass.rs`).
+//!   whether the compositor draws them ([`GlassPanes`], sent by `glass.rs`);
+//!   since version 3, a pane cut to what shows of it, its shape kept.
 //!
 //! Without the feature nothing is bound, as on a compositor that lacks the
 //! global: the window keeps the standard title bar (xdg-decoration),
@@ -38,12 +39,13 @@ mod title_bar {
     pub(in crate::linux::wayland) type ChromeManager =
         dashi_chrome_manager_v1::DashiChromeManagerV1;
 
-    /// Version 1 has the title bar; version 2 adds glass.
+    /// Version 1 has the title bar; version 2 adds glass; version 3 cuts a
+    /// pane to what shows of it.
     pub(in crate::linux::wayland) fn bind_chrome_manager(
         globals: &GlobalList,
         qh: &QueueHandle<WaylandClientStatePtr>,
     ) -> Option<ChromeManager> {
-        globals.bind(qh, 1..=2, ()).ok()
+        globals.bind(qh, 1..=3, ()).ok()
     }
 
     /// A surface's panes of glass (`dashi_glass_v1`): their radius and
@@ -75,6 +77,13 @@ mod title_bar {
                 };
                 self.0
                     .add_pane(pane.x, pane.y, pane.width, pane.height, pane.radius, level);
+                // Only with version 3 (`wire_panes` makes no cut before it).
+                if let Some(cut) = pane.cut
+                    && self.0.version() >= dashi_glass_v1::REQ_CUT_PANE_SINCE
+                {
+                    self.0
+                        .cut_pane(cut.origin.x, cut.origin.y, cut.size.width, cut.size.height);
+                }
             }
         }
 

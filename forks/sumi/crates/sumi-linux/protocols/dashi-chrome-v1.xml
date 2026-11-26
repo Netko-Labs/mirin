@@ -22,11 +22,12 @@
     rectangle with a material level, and the compositor frosts what is behind
     them (dashi_glass_v1). The blur region of ext-background-effect-v1 says
     where for every compositor; these panes add what it can't: each pane's
-    corner radius and its material. Dashi owns this file (Dashi's
+    corner radius and its material. Version 3 cuts a pane to what clips it
+    on the surface (a list scrolled past it), its shape kept. Dashi owns this file (Dashi's
     crates/dashi-comp/protocols/, PROTOCOL.md beside it); mirin keeps a copy.
   </description>
 
-  <interface name="dashi_chrome_manager_v1" version="2">
+  <interface name="dashi_chrome_manager_v1" version="3">
     <description summary="creates window chrome controls and glass">
       A global that makes a dashi_chrome_v1 for an xdg_toplevel and, from
       version 2, a dashi_glass_v1 for any wl_surface.
@@ -123,7 +124,7 @@
     </event>
   </interface>
 
-  <interface name="dashi_glass_v1" version="2">
+  <interface name="dashi_glass_v1" version="3">
     <description summary="the panes of glass of one surface">
       A surface's panes of glass. Each pane is a rectangle in surface-local
       logical coordinates, its corners rounded to a radius, and a material
@@ -132,6 +133,10 @@
       words on it need it to keep their contrast), a grain, a light rim just
       inside its edge and a dark keel just outside. The surface paints no fill
       where its glass is; its translucent parts show the glass.
+
+      The panes are added back to front, in the order the surface paints
+      them: a pane added later is drawn over one added before it (a panel
+      on a pane that fills the surface).
 
       The panes are double-buffered: add_pane and clear change the pending
       list, and wl_surface.commit applies it, in the same commit as the
@@ -173,6 +178,8 @@
              summary="more than 16 panes in one commit"/>
       <entry name="invalid_pane" value="2"
              summary="a negative size, or a radius over 512"/>
+      <entry name="no_pane" value="3" since="3"
+             summary="cut_pane with no pane added since the last commit"/>
     </enum>
 
     <request name="destroy" type="destructor">
@@ -185,7 +192,8 @@
       <description summary="add a pane to the pending list">
         A rectangle in surface-local logical coordinates, its corner radius
         in logical pixels (held to half its shorter side), and its level.
-        Clipped to the surface. At most 16 panes a commit.
+        Drawn only on the surface, its shape kept (as cut_pane). At most 16
+        panes a commit.
       </description>
       <arg name="x" type="int"/>
       <arg name="y" type="int"/>
@@ -193,6 +201,22 @@
       <arg name="height" type="int"/>
       <arg name="radius" type="uint"/>
       <arg name="level" type="uint" enum="level"/>
+    </request>
+
+    <request name="cut_pane" since="3">
+      <description summary="show the pane added last only inside a rectangle">
+        The pane added last shows only inside this rectangle, in
+        surface-local logical coordinates: what clips it on the surface (a
+        list scrolled past it). Its shape stays the whole pane's: its
+        corners are where the pane's are, and an edge the rectangle crosses
+        is cut straight, with neither rim nor keel there. A pane not cut
+        shows whole. With no pane added since the last commit, a no_pane
+        protocol error.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
     </request>
 
     <request name="clear">
@@ -217,7 +241,9 @@
       <description summary="the backdrop's colour">
         The mean colour behind the surface's first pane, blurred and lifted, before
         the tint, as 0xRRGGBB (sRGB): words on the glass lean toward its hue.
-        Sent when it settles after a change, at most every 120 ms.
+        Sent at once for a surface's new panes and to a new dashi_glass_v1 of a
+        surface whose tone is known; then when it settles after a change, at
+        most every 120 ms, and once a second while it keeps changing.
       </description>
       <arg name="rgb" type="uint"/>
     </event>

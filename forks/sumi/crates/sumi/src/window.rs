@@ -5170,6 +5170,7 @@ impl Window {
         }
         self.next_frame.scene.glass.push(crate::GlassPane {
             bounds: shown,
+            shape: bounds,
             corner_radius,
             material,
         });

@@ -87,12 +87,14 @@ fn panes_are_the_views_as_laid_out_back_to_front(cx: &mut TestAppContext) {
         vec![
             GlassPane {
                 bounds: bounds(0.0, 0.0, 300.0, 200.0),
+                shape: bounds(0.0, 0.0, 300.0, 200.0),
                 corner_radius: px(16.0),
                 material: GlassMaterial::Regular,
             },
             // Inside the panel's padding, over it: after it.
             GlassPane {
                 bounds: bounds(20.0, 20.0, 260.0, 40.0),
+                shape: bounds(20.0, 20.0, 260.0, 40.0),
                 corner_radius: px(12.0),
                 material: GlassMaterial::Paper,
             },
@@ -138,6 +140,9 @@ fn a_pane_is_clipped_by_what_clips_its_view(cx: &mut TestAppContext) {
     let (panes, _) = draw(cx);
     assert_eq!(panes.len(), 1);
     assert_eq!(panes[0].bounds, bounds(0.0, 0.0, 100.0, 30.0));
+    // Its shape stays the whole view's: the platform cuts it straight at the clip, its corners
+    // where the view's are (Dashi's widget column over the Dock had them rounded at the cut).
+    assert_eq!(panes[0].shape, bounds(0.0, 0.0, 160.0, 30.0));
     assert_eq!(panes[0].material, GlassMaterial::Thin);
 }
 

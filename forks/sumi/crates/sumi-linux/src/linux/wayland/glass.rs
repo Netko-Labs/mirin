@@ -5,7 +5,11 @@
 //! in steps) and, for each pane, its exact radius and material level
 //! (Dashi's `dashi_glass_v1`, `dashi.rs`; the XML is dashi-comp's,
 //! `crates/dashi-comp/protocols/`). A panel that grows never shows glass a
-//! frame behind its content.
+//! frame behind its content. A pane something clips (a list scrolled past
+//! it) is sent whole and cut to what shows (`cut_pane`, version 3), so the
+//! compositor cuts it straight there instead of rounding the part that shows
+//! as a pane of its own (which read as a squashed card); an older Dashi gets
+//! the part that shows, as before.
 //!
 //! Panes are sent only where both protocols are and the compositor says it
 //! blurs; otherwise nothing is bound or sent. The app leaves its fills out
@@ -30,7 +34,8 @@ const MOST_PANES: usize = 16;
 const MOST_RADIUS: i32 = 512;
 
 /// A pane as `dashi_glass_v1.add_pane` sends it: whole surface-local
-/// logical pixels, its radius held to half its shorter side.
+/// logical pixels, its radius held to half its shorter side; and what of it
+/// shows (`cut_pane`), when that is less than all of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct WirePane {
     pub(super) x: i32,
@@ -40,12 +45,31 @@ pub(super) struct WirePane {
     pub(super) radius: u32,
     /// The protocol's `level` enum's value.
     pub(super) level: u32,
+    pub(super) cut: Option<Bounds<i32>>,
 }
 
 impl WirePane {
     fn bounds(&self) -> Bounds<i32> {
         Bounds::new(point(self.x, self.y), size(self.width, self.height))
     }
+}
+
+/// `bounds` in whole pixels, each edge rounded to the nearest (so two panes
+/// that touch still touch and never overlap).
+fn whole(bounds: Bounds<Pixels>) -> Bounds<i32> {
+    let edge = |value: Pixels| f32::from(value).round() as i32;
+    let (left, top) = (edge(bounds.left()), edge(bounds.top()));
+    let (right, bottom) = (edge(bounds.right()), edge(bounds.bottom()));
+    Bounds::new(point(left, top), size(right - left, bottom - top))
+}
+
+/// `a` and `b`'s overlap; none when they don't.
+fn overlap(a: Bounds<i32>, b: Bounds<i32>) -> Option<Bounds<i32>> {
+    let (left, top) = (a.origin.x.max(b.origin.x), a.origin.y.max(b.origin.y));
+    let right = (a.origin.x + a.size.width).min(b.origin.x + b.size.width);
+    let bottom = (a.origin.y + a.size.height).min(b.origin.y + b.size.height);
+    (right > left && bottom > top)
+        .then(|| Bounds::new(point(left, top), size(right - left, bottom - top)))
 }
 
 /// The protocol's number for `material` (its `level` enum).
@@ -59,32 +83,28 @@ fn level_number(material: GlassMaterial) -> u32 {
     }
 }
 
-/// The panes on a surface of `surface` size, in whole pixels: each edge
-/// rounded to the nearest pixel (so two panes that touch still touch and
-/// never overlap), clipped to the surface; a pane left empty is dropped.
-/// The first 16 (the backmost) are kept: a commit takes no more.
-pub(super) fn wire_panes(panes: &[GlassPane], surface: Size<Pixels>) -> Vec<WirePane> {
-    let edge = |value: Pixels| f32::from(value).round() as i32;
-    let (right_limit, bottom_limit) = (edge(surface.width), edge(surface.height));
+/// The panes on a surface of `surface` size, in whole pixels; a pane that
+/// shows nothing on the surface is dropped. With `cuts` (the compositor has
+/// `cut_pane`) each is its whole shape, cut to what shows of it when that is
+/// less; without, the part that shows, as a pane of its own. The first 16
+/// (the backmost) are kept: a commit takes no more.
+pub(super) fn wire_panes(panes: &[GlassPane], surface: Size<Pixels>, cuts: bool) -> Vec<WirePane> {
+    let on_surface = whole(Bounds::new(point(px(0.0), px(0.0)), surface));
     panes
         .iter()
         .filter_map(|pane| {
-            let left = edge(pane.bounds.left()).max(0);
-            let top = edge(pane.bounds.top()).max(0);
-            let right = edge(pane.bounds.right()).min(right_limit);
-            let bottom = edge(pane.bounds.bottom()).min(bottom_limit);
-            let (width, height) = (right - left, bottom - top);
-            if width <= 0 || height <= 0 {
-                return None;
-            }
+            let shows = overlap(whole(pane.bounds), on_surface)?;
+            let shape = if cuts { whole(pane.shape) } else { shows };
             let radius = f32::from(pane.corner_radius).round().max(0.0) as i32;
+            let (width, height) = (shape.size.width, shape.size.height);
             Some(WirePane {
-                x: left,
-                y: top,
+                x: shape.origin.x,
+                y: shape.origin.y,
                 width,
                 height,
                 radius: radius.min(width / 2).min(height / 2).min(MOST_RADIUS) as u32,
                 level: level_number(pane.material),
+                cut: (shows != shape).then_some(shows),
             })
         })
         .take(MOST_PANES)
@@ -92,15 +112,46 @@ pub(super) fn wire_panes(panes: &[GlassPane], surface: Size<Pixels>) -> Vec<Wire
 }
 
 /// The blur region's rectangles for `panes`: each pane with its corners cut
-/// in one-pixel steps (as the whole-window blur does), back to back.
+/// in one-pixel steps (as the whole-window blur does), within what shows of
+/// it, back to back.
 pub(super) fn region_rects(panes: &[WirePane], mut add: impl FnMut(i32, i32, i32, i32)) {
     for pane in panes {
         add_rounded_rect(
             pane.bounds(),
             Corners::all(px(pane.radius as f32)),
-            &mut add,
+            |x, y, width, height| {
+                let row = Bounds::new(point(x, y), size(width, height));
+                let kept = pane.cut.map_or(Some(row), |cut| overlap(row, cut));
+                if let Some(kept) = kept {
+                    add(
+                        kept.origin.x,
+                        kept.origin.y,
+                        kept.size.width,
+                        kept.size.height,
+                    );
+                }
+            },
         );
     }
+}
+
+/// Whether the compositor cuts a pane to what shows (`cut_pane`, dashi-chrome-v1 version 3).
+pub(super) fn cuts(globals: &Globals) -> bool {
+    globals
+        .chrome_manager
+        .as_ref()
+        .is_some_and(|manager| dashi_cuts(manager))
+}
+
+#[cfg(feature = "dashi")]
+fn dashi_cuts(manager: &super::dashi::ChromeManager) -> bool {
+    use wayland_client::Proxy;
+    manager.version() >= 3
+}
+
+#[cfg(not(feature = "dashi"))]
+fn dashi_cuts(manager: &super::dashi::ChromeManager) -> bool {
+    match *manager {}
 }
 
 /// What a window has sent of its glass, and the object that sends the panes.
@@ -252,8 +303,10 @@ mod tests {
     use super::*;
 
     fn pane(x: f32, y: f32, width: f32, height: f32, radius: f32) -> GlassPane {
+        let bounds = Bounds::new(point(px(x), px(y)), size(px(width), px(height)));
         GlassPane {
-            bounds: Bounds::new(point(px(x), px(y)), size(px(width), px(height))),
+            bounds,
+            shape: bounds,
             corner_radius: px(radius),
             material: GlassMaterial::Regular,
         }
@@ -267,7 +320,12 @@ mod tests {
             height,
             radius,
             level,
+            cut: None,
         }
+    }
+
+    fn rect(x: i32, y: i32, width: i32, height: i32) -> Bounds<i32> {
+        Bounds::new(point(x, y), size(width, height))
     }
 
     const SURFACE: Size<Pixels> = Size {
@@ -283,6 +341,7 @@ mod tests {
                 pane(110.2, 20.6, 40.0, 50.0, 0.0),
             ],
             SURFACE,
+            false,
         );
         assert_eq!(panes[0], wire(10, 21, 100, 50, 12, 1));
         // The first ends at 110.2 → 110, where the second starts.
@@ -298,19 +357,61 @@ mod tests {
                 pane(50.0, 50.0, 0.3, 40.0, 0.0),
             ],
             SURFACE,
+            false,
         );
         assert_eq!(panes, vec![wire(0, 280, 80, 20, 8, 1)]);
     }
 
     #[test]
+    fn a_clipped_pane_is_sent_whole_and_cut_to_what_shows() {
+        // A widget 356 × 160, radius 18, its list cut at y 260: only its top 60 show.
+        let card = GlassPane {
+            bounds: Bounds::new(point(px(10.0), px(200.0)), size(px(356.0), px(60.0))),
+            shape: Bounds::new(point(px(10.0), px(200.0)), size(px(356.0), px(160.0))),
+            corner_radius: px(18.0),
+            material: GlassMaterial::Paper,
+        };
+        let panes = wire_panes(&[card], SURFACE, true);
+        assert_eq!(
+            panes,
+            vec![WirePane {
+                cut: Some(rect(10, 200, 356, 60)),
+                ..wire(10, 200, 356, 160, 18, 3)
+            }]
+        );
+        // The region is the pane's rounded shape within the cut: its top corners round,
+        // its foot straight at the cut, nothing below it.
+        let mut rows = Vec::new();
+        region_rects(&panes, |x, y, width, height| {
+            rows.push((x, y, width, height))
+        });
+        assert!(
+            rows.iter()
+                .all(|&(_, y, _, height)| y >= 200 && y + height <= 260)
+        );
+        assert!(
+            rows.iter().any(|&(x, y, _, _)| y == 200 && x > 10),
+            "a round top corner"
+        );
+        assert!(
+            rows.iter()
+                .any(|&(x, y, width, height)| x == 10 && width == 356 && y + height == 260),
+            "a straight foot"
+        );
+        // An older Dashi: the part that shows, as a pane of its own.
+        let old = wire_panes(&[card], SURFACE, false);
+        assert_eq!(old, vec![wire(10, 200, 356, 60, 18, 3)]);
+    }
+
+    #[test]
     fn the_radius_is_at_most_half_the_shorter_side_and_512() {
-        let panes = wire_panes(&[pane(0.0, 0.0, 200.0, 30.0, 40.0)], SURFACE);
+        let panes = wire_panes(&[pane(0.0, 0.0, 200.0, 30.0, 40.0)], SURFACE, true);
         assert_eq!(panes[0].radius, 15);
         let large = Size {
             width: px(4000.0),
             height: px(3000.0),
         };
-        let panes = wire_panes(&[pane(0.0, 0.0, 2000.0, 2000.0, 900.0)], large);
+        let panes = wire_panes(&[pane(0.0, 0.0, 2000.0, 2000.0, 900.0)], large, true);
         assert_eq!(panes[0].radius, 512);
     }
 
@@ -319,7 +420,7 @@ mod tests {
         let many: Vec<GlassPane> = (0..20)
             .map(|index| pane(index as f32 * 10.0, 0.0, 8.0, 8.0, 0.0))
             .collect();
-        let panes = wire_panes(&many, SURFACE);
+        let panes = wire_panes(&many, SURFACE, true);
         assert_eq!(panes.len(), 16);
         assert_eq!(panes[0].x, 0);
         assert_eq!(panes[15].x, 150);

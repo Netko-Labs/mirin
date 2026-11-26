@@ -1347,7 +1347,12 @@ launcher, banners, sheets), `thick` (the focused window's sidebar), `paper`
   union of the panes, each corner cut in one-pixel steps as the whole-window
   blur does) and `dashi_glass_v1` (`clear`, or one `add_pane` per pane with
   its exact radius and level), so the commit that shows the frame carries
-  both. A panel that
+  both. A pane something clips (a list scrolled past it) keeps its whole
+  shape (`GlassPane.shape`) beside what shows (`bounds`): with version 3 it is
+  sent whole and `cut_pane` to what shows, so the compositor cuts it straight
+  there with its own corners; before, the part that shows went as a pane of
+  its own and was rounded again at the cut (Dashi's widget column read as
+  squashed cards). An older Dashi still gets the part that shows. A panel that
   grows never shows glass a frame behind it, which a rect sent from
   `onLayout` over the shell's IPC did (the blur spike). Nothing is sent while
   the panes stay the same.
@@ -1356,7 +1361,9 @@ launcher, banners, sheets), `thick` (the focused window's sidebar), `paper`
   its XML (dashi-comp's `crates/dashi-comp/protocols/dashi-chrome-v1.xml`,
   with a `PROTOCOL.md` beside it); `forks/sumi/crates/sumi-linux/protocols/`
   holds a byte-for-byte copy. At most 16 panes a commit (the host keeps the
-  backmost 16) and a radius of at most 512. Its `tone` reaches the app (below).
+  backmost 16) and a radius of at most 512. Panes go back to front: a later
+  one is drawn over an earlier one. Version 3 adds `cut_pane` (above). Its
+  `tone` reaches the app (below).
 - **When there is none.** Panes are sent while the compositor offers
   `dashi_chrome_manager_v1` version 2 and `ext_background_effect_manager_v1`
   with its `blur` capability. The view leaves its `background` out

@@ -2402,7 +2402,8 @@ impl PlatformWindow for WaylandWindow {
         // whole-window blur owns the region while it is on.
         if state.background_appearance != WindowBackgroundAppearance::Blurred {
             let panes = if super::glass::supported(&state.globals) {
-                super::glass::wire_panes(&scene.glass, state.bounds.size)
+                let cuts = super::glass::cuts(&state.globals);
+                super::glass::wire_panes(&scene.glass, state.bounds.size, cuts)
             } else {
                 Vec::new()
             };
