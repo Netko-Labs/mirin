@@ -5,9 +5,9 @@
 //! - the unified title bar: a toplevel whose title bar appears transparent
 //!   asks Dashi to draw none and to put its traffic lights over the window,
 //!   and hears where they are ([`TitleBar`]);
-//! - since its version 2, glass: each pane's corner radius and material,
-//!   which `ext-background-effect-v1`'s region cannot say ([`GlassPanes`],
-//!   sent by `glass.rs`).
+//! - since its version 2, glass: each pane's corner radius and material
+//!   level, which `ext-background-effect-v1`'s region cannot say, and
+//!   whether the compositor draws them ([`GlassPanes`], sent by `glass.rs`).
 //!
 //! Without the feature nothing is bound, as on a compositor that lacks the
 //! global: the window keeps the standard title bar (xdg-decoration),
@@ -30,6 +30,7 @@ mod title_bar {
     use wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel;
 
     use super::chrome::{dashi_chrome_manager_v1, dashi_chrome_v1, dashi_glass_v1};
+    use crate::linux::wayland::glass::WirePane;
     use crate::linux::{WaylandClientStatePtr, get_window};
 
     /// Dashi's `dashi_chrome_manager_v1` global; `None` on every other
@@ -46,7 +47,8 @@ mod title_bar {
     }
 
     /// A surface's panes of glass (`dashi_glass_v1`): their radius and
-    /// material, double-buffered like the blur region that goes with them.
+    /// level, double-buffered like the blur region that goes with them. It
+    /// hears whether the compositor draws them (`drawing`).
     pub(in crate::linux::wayland) struct GlassPanes(dashi_glass_v1::DashiGlassV1);
 
     impl GlassPanes {
@@ -58,12 +60,22 @@ mod title_bar {
             qh: &QueueHandle<WaylandClientStatePtr>,
         ) -> Option<Self> {
             (manager.version() >= dashi_chrome_manager_v1::REQ_GET_GLASS_SINCE)
-                .then(|| Self(manager.get_glass(surface, qh, ())))
+                .then(|| Self(manager.get_glass(surface, qh, surface.id())))
         }
 
-        /// Sets the panes, packed as the protocol says (`glass::pack`).
-        pub(in crate::linux::wayland) fn set(&self, packed: Vec<u8>) {
-            self.0.set_panes(packed);
+        /// Replaces the panes for the next commit: `clear` for none, else a
+        /// new list (the first `add_pane` after a commit starts one).
+        pub(in crate::linux::wayland) fn set(&self, panes: &[WirePane]) {
+            if panes.is_empty() {
+                self.0.clear();
+            }
+            for pane in panes {
+                let Ok(level) = dashi_glass_v1::Level::try_from(pane.level) else {
+                    continue;
+                };
+                self.0
+                    .add_pane(pane.x, pane.y, pane.width, pane.height, pane.radius, level);
+            }
         }
 
         pub(in crate::linux::wayland) fn destroy(&self) {
@@ -71,9 +83,31 @@ mod title_bar {
         }
     }
 
-    // mirin reads no `tone` yet (the words' colour leaning to the backdrop
-    // is the app's, later).
-    delegate_noop!(WaylandClientStatePtr: ignore dashi_glass_v1::DashiGlassV1);
+    // The compositor says whether it draws the surface's panes; the window
+    // paints its fills while it does not. mirin reads no `tone` yet (the
+    // words' colour leaning to the backdrop is the app's, later).
+    impl Dispatch<dashi_glass_v1::DashiGlassV1, ObjectId> for WaylandClientStatePtr {
+        fn event(
+            this: &mut Self,
+            _: &dashi_glass_v1::DashiGlassV1,
+            event: dashi_glass_v1::Event,
+            surface_id: &ObjectId,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            let dashi_glass_v1::Event::Drawing { drawing } = event else {
+                return;
+            };
+            let drawn = matches!(drawing.into_result(), Ok(dashi_glass_v1::Drawing::Material));
+            let client = this.get_client();
+            let mut state = client.borrow_mut();
+            let Some(window) = get_window(&mut state, surface_id) else {
+                return;
+            };
+            drop(state);
+            window.set_glass_drawn(drawn);
+        }
+    }
 
     /// A toplevel's unified title bar: no compositor title bar, its traffic
     /// lights over the window. It lives with the toplevel and is destroyed
@@ -165,7 +199,10 @@ mod title_bar {
             match *manager {}
         }
 
-        pub(in crate::linux::wayland) fn set(&self, _packed: Vec<u8>) {
+        pub(in crate::linux::wayland) fn set(
+            &self,
+            _panes: &[crate::linux::wayland::glass::WirePane],
+        ) {
             match *self {}
         }
 

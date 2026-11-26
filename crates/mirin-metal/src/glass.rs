@@ -13,9 +13,10 @@
 //!
 //! While the platform draws glass (`Window::is_glass_available`), the view
 //! paints no `background`: the compositor tints. When it does not (another
-//! compositor, an older Dashi, glass turned off), nothing is sent and the
-//! view paints its `background` as any view does: the background is the
-//! material's fallback. A host that takes `material` says `"glass":true` in
+//! compositor or an older Dashi, where nothing is sent; glass turned off for
+//! the app; the first frame, before the compositor said), the view paints
+//! its `background` as any view does: the background is the material's
+//! fallback. A host that takes `material` says `"glass":true` in
 //! its `protocol` line (names `MIRIN_METAL_GLASS`); one from before refuses a
 //! tree with it.
 //!

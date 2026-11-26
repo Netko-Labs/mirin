@@ -1339,26 +1339,29 @@ launcher, banners, sheets), `thick` (the focused window's sidebar), `paper`
   them just before it presents that scene (sumi-linux
   `wayland/glass.rs`): the blur region on `ext-background-effect-v1` (the
   union of the panes, each corner cut in one-pixel steps as the whole-window
-  blur does) and `dashi_glass_v1.set_panes` (each pane's exact radius and
-  material), so the commit that shows the frame carries both. A panel that
+  blur does) and `dashi_glass_v1` (`clear`, or one `add_pane` per pane with
+  its exact radius and level), so the commit that shows the frame carries
+  both. A panel that
   grows never shows glass a frame behind it, which a rect sent from
   `onLayout` over the shell's IPC did (the blur spike). Nothing is sent while
   the panes stay the same.
 - **The protocol.** `dashi-chrome-v1` version 2 (`get_glass(surface)`, any
-  surface: a layer surface, a popup, a lock surface, a toplevel). Its XML is
-  Dashi's `protocols/dashi-chrome-v1.xml`, owned by the mirin side, with a
-  `PROTOCOL.md` beside it; `forks/sumi/crates/sumi-linux/protocols/` and
-  dashi-comp's `crates/dashi-comp/protocols/` hold byte-for-byte copies. Panes
-  are seven 32-bit words each (x, y, width, height, radius, material, ink; ink 0
-  is the material's own); the `tone` event is not read yet.
-- **When there is none.** Glass is on while the compositor offers
+  surface: a layer surface, a popup, a lock surface, a toplevel). Dashi owns
+  its XML (dashi-comp's `crates/dashi-comp/protocols/dashi-chrome-v1.xml`,
+  with a `PROTOCOL.md` beside it); `forks/sumi/crates/sumi-linux/protocols/`
+  holds a byte-for-byte copy. At most 16 panes a commit (the host keeps the
+  backmost 16) and a radius of at most 512. The `tone` event is not read yet.
+- **When there is none.** Panes are sent while the compositor offers
   `dashi_chrome_manager_v1` version 2 and `ext_background_effect_manager_v1`
-  with its `blur` capability (`Window::is_glass_available`). Then the view
-  paints no `background`: the compositor tints. Otherwise (KDE, GNOME, an
-  older Dashi, glass turned off for the app) the host binds nothing, sends
-  nothing, and the view paints its `background` as before: give it the
-  material's solid twin. When the capability comes or goes, every window is
-  drawn again. Without the `dashi` cargo feature there is never glass. A
+  with its `blur` capability. The view leaves its `background` out
+  (`Window::is_glass_available`) once the surface's `dashi_glass_v1` says
+  `drawing(material)`: the compositor tints, or draws the material's solid
+  twin itself (Reduce Transparency). Until then (the first frame with a
+  pane makes the object), and when it says `none` (the person turned glass
+  off for the app), and wherever there is no protocol (KDE, GNOME, an older
+  Dashi), the view paints its `background` as before: give it the
+  material's solid twin. Without the protocols nothing is bound or sent.
+  When the capability or `drawing` changes, the window is drawn again. Without the `dashi` cargo feature there is never glass. A
   window that asked for sumi's whole-window blur
   (`WindowBackgroundAppearance::Blurred`) keeps it, and its panes are not sent.
 - **Kept drawings.** A material view is never part of a retained subtree

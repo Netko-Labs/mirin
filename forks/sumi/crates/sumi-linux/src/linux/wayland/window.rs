@@ -1214,6 +1214,15 @@ impl WaylandWindowStatePtr {
         self.request_redraw();
     }
 
+    /// mirin: the compositor says whether it draws this surface's panes
+    /// (`dashi_glass_v1.drawing`); a change draws again.
+    #[cfg(feature = "dashi")]
+    pub fn set_glass_drawn(&self, drawn: bool) {
+        if self.state.borrow_mut().glass.set_drawn(drawn) {
+            self.request_redraw();
+        }
+    }
+
     fn update_ime_enabled(&self) {
         let mut state = self.state.borrow_mut();
         if !state.active {
@@ -2165,6 +2174,7 @@ impl PlatformWindow for WaylandWindow {
         let state = self.borrow();
         state.background_appearance != WindowBackgroundAppearance::Blurred
             && super::glass::supported(&state.globals)
+            && state.glass.is_drawn()
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
