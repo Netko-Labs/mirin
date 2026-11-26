@@ -1358,6 +1358,10 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
+    /// The pointer left the window (`MouseExited`) and hasn't come back: nothing is under it, though
+    /// `mouse_position` keeps where it last was. Without this, a redraw after the leave hit-tests that
+    /// last place and hovers what was there again (a layer surface that reflows on hover, Dashi's Dock).
+    pointer_outside: bool,
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
@@ -2681,6 +2685,7 @@ impl Window {
             default_prevented: true,
             mouse_position,
             mouse_hit_test: HitTest::default(),
+            pointer_outside: false,
             modifiers,
             capslock,
             scale_factor,
@@ -4514,7 +4519,7 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = self.hit_test_at_pointer(&self.next_frame);
 
         // Now actually paint the elements.
         #[cfg(feature = "profiler")]
@@ -6917,6 +6922,12 @@ impl Window {
         if self.last_input_modality != old_modality {
             self.refresh();
         }
+        // The pointer is outside from its leave until any other pointer event says where it is.
+        if matches!(event, PlatformInput::MouseExited(_)) {
+            self.pointer_outside = true;
+        } else if event.mouse_event().is_some() {
+            self.pointer_outside = false;
+        }
 
         // Handlers may set this to false by calling `stop_propagation`.
         cx.propagate_event = true;
@@ -7247,8 +7258,17 @@ impl Window {
         });
     }
 
+    /// What is under the pointer in `frame`: nothing while the pointer is outside the window.
+    fn hit_test_at_pointer(&self, frame: &Frame) -> HitTest {
+        if self.pointer_outside {
+            HitTest::default()
+        } else {
+            frame.hit_test(self.mouse_position)
+        }
+    }
+
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
-        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position());
+        self.mouse_hit_test = self.hit_test_at_pointer(&self.rendered_frame);
 
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
